@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/event-envelope.schema.json",
-  "x-graphhelm-schema-version": "1.0.0",
+  "x-graphhelm-schema-version": "1.1.0",
   "title": "GraphHelm Production Event Envelope",
   "type": "object",
   "required": [
@@ -882,6 +882,18 @@
       },
       "additionalProperties": false
     },
+    "agentPresenceDeclared": {
+      "type": "object",
+      "required": ["actorId", "actorType"],
+      "properties": {
+        "actorId": {"$ref": "#/$defs/actorId"},
+        "actorType": {"enum": ["owner", "human", "agent", "system"]},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"},
+        "effort": {"enum": ["low", "medium", "high"]},
+        "session": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"}
+      },
+      "additionalProperties": false
+    },
     "eventKind": {
       "oneOf": [
         {
@@ -1297,6 +1309,15 @@
             "data": {"$ref": "#/$defs/overdueException"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "agent_presence_declared"},
+            "data": {"$ref": "#/$defs/agentPresenceDeclared"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1347,7 +1368,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "dlq_redrive"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "dlq_returned"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "sweep_performed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

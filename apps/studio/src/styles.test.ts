@@ -200,3 +200,29 @@ describe("the stylesheet and the components agree", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * #1057 Codex P2: the declared-model badge is CONTAINED by the card it sits in.
+ *
+ * `.agent-blob` is 104px wide and the wire contract accepts a model name of up to 128 characters,
+ * so a badge with no width bound and no overflow treatment spilled across neighbouring agents and
+ * the canvas behind them. jsdom lays nothing out, so what is held here is the RULE: the same four
+ * declarations `.agent-name` already carries. `.agent-name` is checked by the same cell as its own
+ * control - if the name's containment ever goes, this says so rather than quietly comparing
+ * nothing to nothing.
+ */
+describe("the agent card contains its own text", () => {
+  const ruleBody = (selector: string): string => {
+    const opened = CODE.indexOf(selector + " {");
+    expect(opened, selector + " has a block rule of its own").toBeGreaterThanOrEqual(0);
+    return CODE.slice(opened, CODE.indexOf("}", opened));
+  };
+
+  it.each([".agent-name", ".agent-badge"])("%s is width-bounded and clipped", (selector) => {
+    const rule = ruleBody(selector);
+    expect(rule).toContain("max-width:");
+    expect(rule).toContain("overflow: hidden");
+    expect(rule).toContain("text-overflow: ellipsis");
+    expect(rule).toContain("white-space: nowrap");
+  });
+});

@@ -40,9 +40,9 @@
     },
     "event-envelope": {
       "id": "https://p50.dev/schemas/event-envelope.schema.json",
-      "documentVersion": "1.0.0",
+      "documentVersion": "1.1.0",
       "path": "schemas/event-envelope.schema.json",
-      "sha256": "sha256:8c7bda48e8b23189e5a4638f6269691854935c2e8759dd90677b9bd93ba73614"
+      "sha256": "sha256:09da36d418b2c5ccc8434f202babbabb4f92bb1d0621e1c1dca1047a902de791"
     },
     "evidence-record": {
       "id": "https://p50.dev/schemas/evidence-record.schema.json",

@@ -16,6 +16,8 @@
  * and keeps no copy.
  */
 
+import type { RuntimeEvent } from "./types";
+
 /** Where the dev server offers it. Same-origin by construction: a relative path cannot be pointed
  * at another host by configuration or by a stray environment variable. */
 const SESSION_PATH = "/__studio/session";
@@ -72,4 +74,62 @@ export async function devSession(
     // reaches the DOM and nothing else validates it.
     project: named.length > 0 && named.length <= 120 ? named : null,
   };
+}
+
+/**
+ * What one session told the room about its own model and effort.
+ *
+ * `effort` is the closed vocabulary the Runtime enforces (`low | medium | high`); `model` is an
+ * opaque string, because the set of models changes faster than this repository ships and an enum
+ * here would refuse a real declaration for no reason the operator could see.
+ */
+export interface AgentPresence {
+  model: string;
+  effort?: "low" | "medium" | "high";
+}
+
+/**
+ * The newest `agent_presence_declared` for each actor, across a run's whole event stream.
+ *
+ * NEWEST-WINS, PER ACTOR - not the stream's newest event overall. The Runtime records a fresh
+ * declaration only when it differs from that ACTOR's own previous one (a model switch mid-run),
+ * so one actor can own several of these events; this keeps the one with the highest `sequence`
+ * for each actor and drops the rest. An actor this stream never heard declare anything is simply
+ * absent from the result - there is no placeholder entry to render, because there is nothing the
+ * log can honestly say about that actor's model.
+ */
+export function newestPresenceByActor(events: RuntimeEvent[]): Record<string, AgentPresence> {
+  const newestSequence = new Map<string, number>();
+  // PROTOTYPE-FREE, and not as a precaution (#1057, Codex P2). `actorId` is a caller-chosen
+  // identifier, so `constructor` and `toString` are valid actor ids, and on a plain object literal
+  // `presence[id]` answers the inherited member for both - a truthy value the board renders as a
+  // badge for an actor that declared nothing. A null-prototype object has ordinary key semantics
+  // for every string, and keeps the `Record` shape every caller already indexes into.
+  const byActor: Record<string, AgentPresence> = Object.create(null) as Record<string, AgentPresence>;
+  for (const event of events) {
+    if (event.kind !== "agent_presence_declared") continue;
+    const payload =
+      event.payload !== null && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : {};
+    const actorId = typeof payload.actorId === "string" ? payload.actorId : null;
+    if (actorId === null) continue;
+    const model = typeof payload.model === "string" ? payload.model : null;
+    const seenAt = newestSequence.get(actorId);
+    if (seenAt !== undefined && seenAt >= event.sequence) continue;
+    newestSequence.set(actorId, event.sequence);
+    // A NEWEST RECORD WITH NO MODEL IS ABSENCE, SAID OUT LOUD (#1057). The Runtime writes one when
+    // a session names itself and declares no model, which is how a new session sharing a stable
+    // actor id supersedes the previous session's declaration. Skipping it here would leave the old
+    // model newest and the board would keep showing a dead session's model as the live one's - the
+    // exact defect the event exists to close. So it counts for NEWEST and then REMOVES the entry.
+    if (model === null) {
+      delete byActor[actorId];
+      continue;
+    }
+    const effort = payload.effort;
+    byActor[actorId] =
+      effort === "low" || effort === "medium" || effort === "high" ? { model, effort } : { model };
+  }
+  return byActor;
 }

@@ -1616,6 +1616,23 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   margin-left: 8px;
 }
 .agent-when { display: block; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+/* THE DECLARED CAPABILITY - only present when the session actually declared one; see board.tsx. */
+/* CONTAINED LIKE THE NAME ABOVE IT (#1057, Codex P2). The wire contract accepts a model name up to
+   128 characters, `.agent-blob` is 104px wide, and an unbroken 128-character mono string with no
+   `max-width` spilled across neighbouring agents and the canvas behind them. Same four
+   declarations `.agent-name` carries, and the same 100px: the badge is the name's second line and
+   has no reason to be wider than it. The full text stays reachable -- `board.tsx` puts it in the
+   element's `title`. */
+.agent-badge {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The empty board invites the first task instead of describing its own emptiness. */
 .board-empty {
   flex: 1;

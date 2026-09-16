@@ -1,5 +1,106 @@
 # Schema Changelog
 
+## event-envelope 1.1.0 - `agentPresenceDeclared` gains `session`, and `model` stops being required
+
+Two changes to the same unreleased `$defs/agentPresenceDeclared`, both inside the one legal 1.1.0
+Minor step the entry below already claims, and both compatible against the frozen 1.0.0 baseline
+(`schema check` reads the whole def as `schema definition added`, because the def does not exist
+there at all).
+
+- **`session`** - OPTIONAL, opaque, `minLength: 1`, `maxLength: 128`, `pattern: \S`: the same bound
+  the model carries, for the same reason (caller-controlled and persisted). It says WHICH session
+  is speaking. `graphhelm mcp` sends its own per-process nonce, the one its idempotency keys and
+  wake leases already carry, so a reader can join a declaration to the rest of that session's
+  traffic.
+- **`model` moved out of `required`.** An actor id is stable across sessions and a model is a
+  property of ONE session. While a session that declared nothing wrote no event at all, its silence
+  could not supersede the previous session's record, and a new session reusing a stable actor id
+  inherited a model that had stopped being true - the board showed a dead session's model as the
+  live one's. An event with an ABSENT `model` is how a session says "I declare nothing" out loud.
+
+**Nothing is inferred, and that has not changed.** A model is still never derived from a route, a
+default, or a user agent. The only new thing that can be written is an ABSENCE, and only by a
+session that named itself: the Runtime writes this shape when `X-GraphHelm-Actor-Session` is present
+and `X-GraphHelm-Actor-Model` is not, and writes nothing at all when neither is. A payload carrying
+neither `model` nor `session` is legal to the schema and is never produced - expressing "model
+absent implies session present" would mean an `anyOf` inside the def, a composition the comparator
+reads as a change of its own, for a shape no writer can reach.
+
+The Studio reads it the way it is meant: `newestPresenceByActor` counts a model-less record as the
+newest for that actor and then REMOVES the entry, so the board renders no badge rather than a stale
+one.
+
+## event-envelope 1.1.0 - `agent_presence_declared` added, wired writable, and `model` bounded
+
+A session that names the model it runs as, and optionally the effort it runs at, records that as an
+event of its own. Identity does NOT widen: `$defs/actor` stays closed and `PersistedActor` keeps
+`deny_unknown_fields`, because an actor id is stable while the model behind it is a property of one
+session. A new event kind is the only shape that can carry a changing fact about a stable actor.
+
+**`agentPresenceDeclared`** carries `actorId`, `actorType`, a `model` string and an optional
+`effort`. `model` is an opaque string and never an enum -- the set of models changes faster than
+this repository ships. `effort` is the closed vocabulary `low | medium | high`, because a closed
+enum is refusable and a free string is not. Absent is absent: a session that declares nothing
+produces no event, and no default or `"unknown"` is ever written as a value.
+
+**Additive by construction.** The change is a new branch in `$defs/eventKind`'s `oneOf`, discriminated
+by a `const` no sibling branch carries, plus a new payload under `$defs`. Nothing existing was
+edited and no `allOf` was touched: `compare_catalogs` compares composition BRANCH SETS, so an edited
+`allOf` branch reads as `composition ambiguous` and an added one reads as narrowing -- only a
+disjoint `oneOf` addition classifies as `composition widened`. Every document valid under the
+previous bytes is still valid.
+
+**`agent_presence_declared` is writable.** The top-level `oneOf` pairs `agent_presence_declared`
+with `scopeWithExecution`. Without that pairing an envelope of this kind matched ZERO top-level
+branches and the store answered a bare `Invalid` -- no diagnostic, no schema named, no kind named.
+That silence has cost this project eleven commits before
+(`core/events/tests/dlq_kinds_are_declared.rs`).
+
+**`scopeWithExecution`, not `projectScope`.** A declaration is a fact about a session, but the
+question it answers -- who is working THIS execution, and with what -- is asked of an execution.
+Recording it on the execution stream is what lets a reader meet the declaration in the same walk
+as the work it explains, and what lets "this model did this" be replayed rather than joined
+across streams.
+
+**Additive by construction, and MEASURED rather than assumed.** The top-level union is pinned
+UNPROVABLE (`union_provability.rs`, class B), so an addition there is not free by inspection: the
+prover cannot compare branches whose discriminating constraints live one level up. It CAN still
+decide this one, because the added branch carries a `const` on `kind.type` that no sibling
+carries. `compare_catalogs` classes it `Compatible`/`Minor`. A deliberately OVERLAPPING row
+(a second branch with an existing `const`) was run as the control and reports
+`oneOf overlap unprovable` -> `GHC003_BREAKING_CHANGE` at `/oneOf`, so the green above is the
+subject's and not the instrument's blindness.
+
+`$defs/actor` is still untouched and no `allOf` was edited or added.
+
+**`model` is bounded.** It was `{"type": "string", "minLength": 1}`: unbounded in length and
+satisfied by `" "`. It is a CALLER-CONTROLLED value that this repository PERSISTS and renders, so
+it now carries `maxLength: 128` and `pattern` `\S`.
+
+**128 is borrowed, not invented.** It is `OpaqueId`'s own cap, and a model name is the shape
+that cap was chosen for: an opaque, caller-chosen, identifier-like string this repository must
+not enumerate. The longest vendor name in play today is under 50 bytes.
+
+**`pattern` says the part `minLength` cannot.** `minLength: 1` accepts a single space, which
+renders as a blank badge -- present, unreadable, and indistinguishable from a rendering bug.
+`\S` is unanchored, so it means "contains at least one non-whitespace character", which is
+exactly the property wanted and nothing more.
+
+**Why the schema and not only the HTTP door.** The Runtime refuses an over-long, blank or
+non-ASCII `X-GraphHelm-Actor-Model` header before anything touches the store. That protects the
+one door this repository ships. The schema is what binds a producer that never passes through
+it. The append-time durable-content scan does NOT substitute for either: it caps the whole
+envelope and refuses secret-shaped strings, and has no per-field length rule at all -- a
+distinction previously misstated in a doc comment and now written down where it can be checked.
+
+**Additive against the frozen 1.0.0 baseline as a whole.** Every piece above -- the new kind, its
+wiring, and the bound on `model` -- reads against the 1.0.0 baseline as `schema definition added`
+or `composition widened`, never as a narrowing of anything a 1.0.0 document could rely on. This
+was previously shipped and reviewed as three separate version bumps (1.1.0, 1.2.0, 1.3.0) across
+three commits of one unreleased change; none of those numbers was ever published, so only the
+final one -- 1.1.0, the single legal Minor step from the 1.0.0 baseline -- makes a claim. The
+three narratives above are unchanged; only the three illegal version numbers were collapsed.
+
 ## context-provenance 1.0.0 - optional `root` (#1086)
 
 One OPTIONAL property, `root`: `"project"` or `"execution"`, the tree the node's search and reads

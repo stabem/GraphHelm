@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind, EvidenceId,
-    ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
+    AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind,
+    EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
     MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
     PersistedMemoryPublicationState, PersistedMemorySemanticState, PersistedTimestamp,
     PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
@@ -554,6 +554,39 @@ pub struct ExecutionProjection {
     /// inside its own detector.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub wake_mis_burns: BTreeMap<String, WakeMisBurn>,
+    /// #1054: WHO is working this execution and WHAT MODEL is behind them, as declared by the
+    /// agents themselves — keyed by actor id, last declaration wins.
+    ///
+    /// DECLARED, never inferred, and the absence of a key is the whole point. An actor who never
+    /// sent `X-GraphHelm-Actor-Model` has no entry here, and a reader must render that as "not
+    /// declared" rather than substituting a default, a route guess or the string `"unknown"`. A
+    /// constant is a fallback for an absent identity, never a replacement for a present one, and
+    /// here there is not even a fallback: nothing is written at all.
+    ///
+    /// Last-wins is correct because a declaration describes the session AT THE CURSOR, exactly as
+    /// `clearance_registry` describes membership at the cursor. After the fold this map means
+    /// "as of head"; answering "which model ran node X at sequence N?" from it is the
+    /// last-state-answering-a-per-sequence-question defect. The journal answers that; a replay to
+    /// N is how you ask it.
+    ///
+    /// `skip_serializing_if` is load-bearing rather than tidy, for the reason `declared_form`
+    /// records one field over: a projection is re-serialized to digest it, so a field that emitted
+    /// an empty object for every history written before this event existed would move all their
+    /// digests and break the frozen demonstrations.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_presence: BTreeMap<String, AgentPresence>,
+}
+
+/// One actor's newest presence declaration, and the envelope that carried it.
+///
+/// The sequence is kept because "which declaration is newest" is a question about the JOURNAL, and
+/// a value that cannot say where it came from cannot be cited. It is also what a renderer uses to
+/// tell a declaration made before a run from one made during it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPresence {
+    pub at_sequence: u64,
+    pub declared: AgentPresenceDeclared,
 }
 
 /// A consumption that burned an arming other than the one it captured.
@@ -2033,6 +2066,34 @@ fn apply_projection_event(
                     deadline,
                 },
             )?;
+        }
+        // #1054: a presence declaration is a fact about the SESSION, not about any node, so it
+        // touches no node state, no wait, no claim and no deadline. It only records who said they
+        // were here and with what. The fold is deliberately total: there is no history a
+        // declaration can make uninterpretable, so this arm never returns `Corrupt`.
+        //
+        // It does NOT check `payload.actor_id` against `event.actor`: the envelope's actor is who
+        // APPENDED the event and the payload's is who the declaration is ABOUT, and on this path
+        // they are the same actor only because the serve layer builds both from the one
+        // authenticated header pair. Folding in an equality the schema does not require would make
+        // a legal journal unreadable.
+        EventKind::AgentPresenceDeclared(payload) => {
+            let actor = payload.actor_id.to_string();
+            // Bounded on a NEW key only, like every sibling map: re-declaring for an actor already
+            // tracked replaces an entry and never grows the map, so a long-lived session cannot
+            // walk a projection into the limit by changing its model.
+            if !projection.agent_presence.contains_key(&actor)
+                && projection.agent_presence.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.agent_presence.insert(
+                actor,
+                AgentPresence {
+                    at_sequence: event.sequence,
+                    declared: payload.clone(),
+                },
+            );
         }
         EventKind::OverdueException(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {

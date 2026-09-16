@@ -968,23 +968,94 @@ fn the_two_context_capsule_copies_are_the_same_bytes() {
     );
 }
 
-/// The two `event-envelope` copies are the SAME blob (#836, H's review): a second schema with two
-/// copies and only one of them guarded is the shape the NEXT PR falls through, editing the live
-/// copy and forgetting the released one while this cell stayed silent because it only ever named
-/// Context Capsule.
+/// The released `event-envelope` copy is UNEDITED, and the live copy's divergence is DECLARED
+/// (#836, H's review; #1054).
 ///
-/// Two copies that agree today can drift tomorrow, and the released copy is the one nobody edits
-/// deliberately — so a divergence would appear as the released schema quietly falling behind.
+/// This cell was written as byte-identity between the two copies, because a second schema with two
+/// copies and only one of them guarded is the shape the NEXT PR falls through -- editing the live
+/// copy and forgetting the released one while the cell stayed silent because it only ever named
+/// Context Capsule. **What it guards against is SILENT DRIFT, not divergence**, which is what its
+/// own original words said: "the released copy is the one nobody edits deliberately -- so a
+/// divergence would appear as the released schema quietly falling behind."
+///
+/// `#1054` made the live copy diverge ON PURPOSE: `agent_presence_declared` joins `$defs/eventKind`
+/// as a disjoint `oneOf` branch and `documentVersion` moves to `1.1.0`, while
+/// `schemas/releases/1.0.0/` stays frozen BY RULE. Byte-identity can no longer be asserted.
+/// Deleting this cell, or editing the frozen release to satisfy it, would throw away the half that
+/// still holds -- and a cell that passes because it compares nothing is worse than the cell it
+/// replaced.
+///
+/// So it keeps BOTH halves, in the shape `core/schema-evolution/tests/baseline_origin.rs` already
+/// uses for its ledger of deliberate divergences: named, exact, and joined in the same commit that
+/// introduces them.
+///
+/// 1. **The released copy is pinned.** Any edit to `schemas/releases/1.0.0/event-envelope.schema.json`
+///    fails here. That is the invariant the original cell existed for, and it is untouched.
+/// 2. **The live copy may move, and must SAY SO.** A live copy that differs from the released one
+///    while still declaring the released `x-graphhelm-schema-version` is drift wearing the old
+///    version number -- exactly the silence this cell is against. Compare `baseline_origin.rs`,
+///    which spells the same rule "evolution has to say its own name".
+///
+/// **Pinned by git BLOB ID, not by a hash of working-tree bytes**, for the reason the sibling cell
+/// `the_bound_closed_artifacts_are_byte_identical_to_their_pins` records above: these files sit
+/// outside this package's `.gitattributes` rule and are checked out CRLF, so working-tree bytes are
+/// platform-dependent while a blob id is not. `hash-object` rather than `rev-parse HEAD:` is that
+/// SAME identity space read one step earlier, not a third convention: it applies git's clean filter,
+/// so it answers the stored id on every platform (measured on this file: `hash-object` gives
+/// `b8304acd`, matching `rev-parse HEAD:`, while `--no-filters` gives `59e37c31` and would not),
+/// and it reads the WORKING TREE, so an edit reddens this cell before it is committed rather than
+/// after.
 #[test]
-fn the_two_event_envelope_copies_are_the_same_bytes() {
+fn the_released_event_envelope_copy_is_pinned_and_its_live_divergence_is_declared() {
+    const RELEASED: &str = "schemas/releases/1.0.0/event-envelope.schema.json";
+    // Re-pinned when #1063 corrected the pre-release 1.0.0 baseline IN PLACE under D-037
+    // (`execution_form_declared` gained `name`, `objective` and `executor`). The pin is a drift
+    // detector, not a claim that the file is immutable: it moves only with a declared,
+    // reviewed baseline correction, never as a side effect of editing a live schema.
+    const RELEASED_BLOB: &str = "81de59f93c92b50c0bc133c5aa6474f3452db03f";
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let live = std::fs::read(repo.join("schemas/event-envelope.schema.json")).expect("live copy");
-    let released = std::fs::read(repo.join("schemas/releases/1.0.0/event-envelope.schema.json"))
-        .expect("released copy");
-    assert_eq!(
-        live, released,
-        "the live and released event-envelope schemas diverged"
+
+    let output = std::process::Command::new("git")
+        .args(["hash-object", RELEASED])
+        .current_dir(&repo)
+        .output()
+        .expect("git is available");
+    // CONTROL: a git that failed answers an empty stdout, and "" != the pin would fail LOUDLY but
+    // for the wrong reason -- a red that names the wrong defect sends the next reader to the wrong
+    // file. Neither the exit status nor the non-emptiness is assumed.
+    assert!(
+        output.status.success(),
+        "control: git could not hash {RELEASED}, so the pin below proves nothing"
     );
+    let blob = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    assert!(
+        !blob.is_empty(),
+        "control: git answered no blob id for {RELEASED}, so the pin below proves nothing"
+    );
+    assert_eq!(
+        blob, RELEASED_BLOB,
+        "{RELEASED} moved off its pin: a live schema's evolution is declared against the released copy rather than written into it, and a baseline correction re-pins this constant deliberately"
+    );
+
+    // The DECLARED divergence. The live copy is allowed to differ -- and if it does, it must carry
+    // a different declared version, or the change is the silent drift this cell exists for.
+    let live = std::fs::read(repo.join("schemas/event-envelope.schema.json")).expect("live copy");
+    let released = std::fs::read(repo.join(RELEASED)).expect("released copy");
+    if live != released {
+        let version = |bytes: &[u8]| -> String {
+            let document: serde_json::Value =
+                serde_json::from_slice(bytes).expect("the schema parses as JSON");
+            document["x-graphhelm-schema-version"]
+                .as_str()
+                .expect("every schema declares its own version")
+                .to_owned()
+        };
+        assert_ne!(
+            version(&live),
+            version(&released),
+            "the live event-envelope schema diverged from the released 1.0.0 copy while still declaring its version: evolution has to say its own name"
+        );
+    }
 }
 
 /// serde and `wire_name()` are TWO serialisers of one closed vocabulary, and they must agree.

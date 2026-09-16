@@ -21,6 +21,7 @@ import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Han
 
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, splitLint } from "../graph/model";
+import type { AgentPresence } from "../runtime/session";
 import { isAlarming } from "./format";
 import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point, type Stroke } from "../graph/board";
 
@@ -159,8 +160,10 @@ export function Board({
   onDrawConnections: () => void;
   busy: boolean;
   /** The room's roster, standing on the canvas as draggable blobs. Derived by App from the
-   * log; this component only places and moves them. */
-  crew?: Array<{ id: string; charter: string | null; lastAt?: string | null }>;
+   * log; this component only places and moves them. `presence` is the newest
+   * `agent_presence_declared` this actor has made, or absent when the actor never declared one -
+   * absence renders no badge at all, never a placeholder. */
+  crew?: Array<{ id: string; charter: string | null; lastAt?: string | null; presence?: AgentPresence | null }>;
   selectedAgent?: string | null;
   onSelectAgent?: (agentId: string | null) => void;
   /** The room's conversations, each one a bubble standing on the board. Derived by App from
@@ -979,7 +982,9 @@ export function Board({
         ))}
 
         <div className="cast" aria-label="Agents in this room">
-        {agentPlaces.map((agent) => (
+        {agentPlaces.map((agent) => {
+        const presence = crew.find((member) => member.id === agent.id)?.presence ?? null;
+        return (
           <article
             key={agent.id}
             className={`agent-blob ${selectedAgent === agent.id ? "picked" : ""} ${picked.has(`agent:${agent.id}`) ? "multi" : ""}`}
@@ -1017,6 +1022,28 @@ export function Board({
                 {initialOf(agent.id)}
               </span>
               <span className="agent-name" title={agent.id}>{agent.id}</span>
+              {/* THE DECLARED CAPABILITY - never inferred from a route or a default. A session
+                * that declared nothing produced no `agent_presence_declared` event at all, so
+                * `presence` is null and this renders NOTHING: no "unknown", no placeholder. A
+                * declaration with no effort renders the model alone, with no dangling separator. */}
+              {presence &&
+                (() => {
+                  const declaration = presence.effort
+                    ? `${presence.model} · ${presence.effort}`
+                    : presence.model;
+                  return (
+                    // The TITLE carries the declaration itself, not only the explanation: the
+                    // badge is clipped to the card's width (#1057, Codex P2), and a 128-character
+                    // model name would otherwise be unreadable with no way to see the rest.
+                    <span
+                      className="agent-badge"
+                      aria-hidden="true"
+                      title={`${declaration} — declared by the session, never inferred`}
+                    >
+                      {declaration}
+                    </span>
+                  );
+                })()}
               {/* Presentation only: the blob's accessible name stays the agent's id alone. */}
               <span className="agent-when" aria-hidden="true">
                 Seen {ago(crew.find((member) => member.id === agent.id)?.lastAt)} ago
@@ -1026,7 +1053,8 @@ export function Board({
               )}
             </button>
           </article>
-        ))}
+        );
+        })}
         </div>
 
         {talkPlaces.map(({ talk, at }) => (

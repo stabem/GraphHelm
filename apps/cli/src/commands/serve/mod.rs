@@ -19,11 +19,12 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use graphhelm_events::PreparedAppend;
 use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EventEnvelope, EventKind, OpaqueId, PersistedActor, PersistedActorType,
-    RepositoryScope, SweepCaller,
+    ActorId, AgentPresenceDeclared, DeclaredEffort, Diagnostic, EventEnvelope, EventKind, NewEvent,
+    OpaqueId, PersistedActor, PersistedActorType, RepositoryScope, Sensitivity, SweepCaller,
 };
 use graphhelm_runtime::driver::ImmediateCancelRequest;
 
@@ -919,6 +920,22 @@ struct MutationIdentity {
     /// header value was reused across two different request bodies.
     idempotency_header: String,
     if_match: Option<u64>,
+    /// #1054: the model this session DECLARED for itself, or `None` because it declared
+    /// nothing. There is no third state and no default: absent stays absent all the way to
+    /// the journal, where it is the absence of an event rather than an event carrying a
+    /// guess.
+    declared_model: Option<String>,
+    /// #1054: only ever `Some` alongside `declared_model` -- an effort without a model is
+    /// refused at the header edge, because it describes a thing nobody named.
+    declared_effort: Option<DeclaredEffort>,
+    /// #1057: WHICH SESSION is speaking, opaque and minted by the client, or `None` from a caller
+    /// that names no session at all.
+    ///
+    /// An actor id is stable across sessions and a model is a property of ONE session, so without
+    /// this the two cannot be told apart in the journal: a later session reusing the id and
+    /// declaring nothing inherited the previous session's model forever, because "declared
+    /// nothing" was said by writing no event, and silence cannot supersede a record.
+    declared_session: Option<String>,
 }
 
 /// The maximum accepted length of the caller-supplied `Idempotency-Key` header, before any suffix
@@ -929,6 +946,15 @@ struct MutationIdentity {
 /// both satisfy) with headroom to spare. The arithmetic: 64 (header) + 1 (dash) + 9 (the longest
 /// suffix any mutation uses, `"cancelled"`) + 1 (dash) + 16 (digest, `DIGEST_HEX_LEN`) = 91 <= 128.
 const IDEMPOTENCY_HEADER_MAX_LEN: usize = 64;
+/// #1054: the maximum accepted length of `X-GraphHelm-Actor-Model`, in bytes.
+///
+/// 128 is not a fresh number: it is `OpaqueId`'s own cap (`core/protocols/src/persistence.rs`'s
+/// `is_opaque_id`), and a model name is exactly the shape that cap was chosen for -- an opaque,
+/// caller-chosen, identifier-like string this repository must not enumerate. The longest vendor
+/// name in play today is under 50 bytes, so the cap refuses abuse without refusing anyone's real
+/// model. The SAME number is written into the schema as `maxLength`, so a producer that never
+/// passes through this header still cannot put an unbounded string in the journal.
+const ACTOR_MODEL_HEADER_MAX_LEN: usize = 128;
 /// Hex characters of the content digest folded into every derived event key — see
 /// `IDEMPOTENCY_HEADER_MAX_LEN`'s doc comment for the arithmetic this feeds, and
 /// `request_digest16`'s for why 16 is enough.
@@ -992,6 +1018,137 @@ fn parse_mutation_headers(
         )
     })?;
 
+    // #1054: the presence declaration, read HERE beside the actor it describes and refused the same
+    // way, through the same `mutation_bad_request` -- before anything touches the store, which is
+    // what makes "a refused request appends nothing, not even the signal it carried" true by
+    // construction rather than by a cleanup path that could be forgotten.
+    //
+    // Both headers are OPTIONAL, and their absence is not a failure: a session that declares
+    // nothing is a normal session, it simply gets no presence event. Neither header has a default.
+    //
+    // The model is CALLER-CONTROLLED AND PERSISTED, so it is BOUNDED here rather than trusted.
+    // Three bounds, each refused with its own message naming what was wrong -- one message covering
+    // three causes sends the next reader to the wrong one:
+    //
+    // - CHARSET. `HeaderValue` holds bytes 0x20..=0xFF, while `to_str` succeeds only for visible
+    //   ASCII, so a Latin-1 or otherwise non-ASCII byte is REPRESENTABLE on the wire and refused
+    //   here. This guard can fire; it is not decoration for something hyper already did.
+    // - LENGTH. `ACTOR_MODEL_HEADER_MAX_LEN`. Nothing upstream caps one header value at a useful
+    //   size, and the store's own scan bounds the WHOLE envelope rather than this field -- see
+    //   `AgentPresenceDeclared`'s doc comment, which cites that scan by file and line and says
+    //   exactly what it does and does not do.
+    // - NON-BLANK. `minLength: 1` accepts `" "`, which renders as a blank badge: present,
+    //   unreadable, and indistinguishable from a rendering bug.
+    //
+    // Read RAW rather than through `header_value`, on purpose: that helper maps an EMPTY value to
+    // `None`, i.e. to "this session declared nothing". For a header a client sends only when it has
+    // something to say, an empty value is a client defect, and answering it with silent absence
+    // hides the defect in the one place nobody looks. Present-and-blank is refused; truly absent
+    // stays absent.
+    let declared_model = match headers.get("x-graphhelm-actor-model") {
+        None => None,
+        Some(raw_model) => {
+            let Ok(value) = raw_model.to_str() else {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Model must contain only visible ASCII characters",
+                    "/actorModel",
+                ));
+            };
+            if value.len() > ACTOR_MODEL_HEADER_MAX_LEN {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Model must be at most 128 characters",
+                    "/actorModel",
+                ));
+            }
+            if value.trim().is_empty() {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Model must not be blank",
+                    "/actorModel",
+                ));
+            }
+            Some(value.to_owned())
+        }
+    };
+    // The vocabulary is CLOSED, which is the only reason this is refusable at all. A free string
+    // could only be recorded and hoped about; three named members can be checked.
+    //
+    // Read RAW rather than through `header_value`, for the reason the model is (#1057, Codex P2).
+    // That helper answers `None` for BOTH a missing header and a present-but-empty one, and it
+    // answers `None` again for a value `to_str()` cannot decode -- so `X-GraphHelm-Actor-Effort:`
+    // with an empty value, and one carrying a Latin-1 byte, each reached the store as "no effort
+    // declared" and the request succeeded. Both are PRESENT values outside the advertised closed
+    // vocabulary, and a client that sent either has a defect that silent absence hides in the one
+    // place nobody looks. Truly absent still stays absent.
+    let declared_effort = match headers.get("x-graphhelm-actor-effort") {
+        None => None,
+        Some(raw_effort) => {
+            let Ok(value) = raw_effort.to_str() else {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Effort must contain only visible ASCII characters",
+                    "/actorEffort",
+                ));
+            };
+            match value {
+                "low" => Some(DeclaredEffort::Low),
+                "medium" => Some(DeclaredEffort::Medium),
+                "high" => Some(DeclaredEffort::High),
+                _ => {
+                    return Err(mutation_bad_request(
+                        command,
+                        "X-GraphHelm-Actor-Effort must be \"low\", \"medium\" or \"high\"",
+                        "/actorEffort",
+                    ));
+                }
+            }
+        }
+    };
+    // An effort with no model is half a declaration. Recording it would leave a renderer to invent
+    // the other half, which is exactly the inference this whole feature forbids.
+    if declared_effort.is_some() && declared_model.is_none() {
+        return Err(mutation_bad_request(
+            command,
+            "X-GraphHelm-Actor-Effort requires X-GraphHelm-Actor-Model",
+            "/actorModel",
+        ));
+    }
+
+    // #1057: the session token, read RAW for the same reason the model is -- `header_value` maps an
+    // empty value to `None`, and a client that sends this header at all has something to say, so
+    // present-and-blank is a client defect rather than "no session". Bounded identically: visible
+    // ASCII, at most `ACTOR_MODEL_HEADER_MAX_LEN` bytes, not blank. It is caller-controlled and it
+    // is PERSISTED, so it is bounded at the door and again in the schema.
+    let declared_session = match headers.get("x-graphhelm-actor-session") {
+        None => None,
+        Some(raw_session) => {
+            let Ok(value) = raw_session.to_str() else {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Session must contain only visible ASCII characters",
+                    "/actorSession",
+                ));
+            };
+            if value.len() > ACTOR_MODEL_HEADER_MAX_LEN {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Session must be at most 128 characters",
+                    "/actorSession",
+                ));
+            }
+            if value.trim().is_empty() {
+                return Err(mutation_bad_request(
+                    command,
+                    "X-GraphHelm-Actor-Session must not be blank",
+                    "/actorSession",
+                ));
+            }
+            Some(value.to_owned())
+        }
+    };
+
     let digest = request_digest16(command, execution_id, body)?;
 
     let mut keys = Vec::with_capacity(suffixes.len());
@@ -1032,6 +1189,9 @@ fn parse_mutation_headers(
         request_body: body.clone(),
         idempotency_header: idempotency.to_owned(),
         if_match,
+        declared_model,
+        declared_effort,
+        declared_session,
     })
 }
 
@@ -1244,6 +1404,7 @@ async fn run_idempotent_mutation<'a>(
         wiring,
         MutationObservation {
             after_absent_preflight: std::future::ready(()),
+            after_presence_read: std::future::ready(()),
             post_append_conflict: || {},
         },
         run,
@@ -1255,8 +1416,16 @@ async fn run_idempotent_mutation<'a>(
 /// ready future and a no-op closure through `run_idempotent_mutation`; in-process tests can inject
 /// a Tokio rendezvous without adding an environment variable, wire route, sleep, filesystem
 /// write, or other behavior reachable from the shipped server.
-struct MutationObservation<A, C> {
+struct MutationObservation<A, P, C> {
     after_absent_preflight: A,
+    /// #1054: between `record_presence_declaration`'s READ of the stream and its APPEND to it.
+    ///
+    /// That gap is the whole subject of the race this seam exists to measure. Every other
+    /// interleaving in this function serializes by itself on a current-thread runtime -- the
+    /// presence path is synchronous once it starts, so without a suspension point planted INSIDE
+    /// it, two racing tasks simply take turns and the second one sees the first one's committed
+    /// declaration. A cell written without this seam would pass while measuring nothing.
+    after_presence_read: P,
     post_append_conflict: C,
 }
 
@@ -1266,7 +1435,11 @@ async fn run_idempotent_mutation_inner<'a>(
     command: &'static str,
     identity: MutationIdentity,
     wiring: ExecutorWiring,
-    observation: MutationObservation<impl Future<Output = ()> + Send, impl FnOnce() + Send>,
+    observation: MutationObservation<
+        impl Future<Output = ()> + Send,
+        impl Future<Output = ()> + Send,
+        impl FnOnce() + Send,
+    >,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
     match classify_existing_keys(events, execution, &identity) {
@@ -1316,6 +1489,33 @@ async fn run_idempotent_mutation_inner<'a>(
     let key = identity.keys[0].full.clone();
     match run(identity.actor.clone(), key).await {
         Ok(mut value) => {
+            // #1054 / #1057 Codex P1: THE DECLARATION IS RECORDED ONLY AFTER THE BODY
+            // COMMITTED. It used to be appended immediately before `run`, which meant a refused
+            // `start` (an invalid graph) or a refused `approve` (a state check) answered 400/409
+            // and still left `agent_presence_declared` behind it -- and for `start`, a STREAM
+            // that `execution list` reads as a run with no `ExecutionStarted` in it. The store is
+            // append-only, so nothing takes that back afterwards.
+            //
+            // The order is therefore work-then-declaration, and a reader meets the declaration
+            // beside the event that earned it rather than before it. That is the whole of what
+            // was given up, and it buys the narrower claim: a declaration now asserts who sent a
+            // request that SUCCEEDED.
+            if let Err(failure) = record_presence_declaration(
+                events,
+                execution,
+                &identity,
+                observation.after_presence_read,
+            )
+            .await
+            {
+                // NEVER SILENT. The mutation itself is durable at this point and cannot be
+                // unwound, so this arm reports a request that did half of what it was asked: the
+                // work landed, the declaration did not. It is reachable only from a store that
+                // stopped being writable between two adjacent calls, or from
+                // `PRESENCE_COMMIT_ATTEMPTS` consecutive lost races -- and a caller told nothing
+                // would leave a board showing a model that was never recorded.
+                return respond_failure(command, failure);
+            }
             // Milestone 05a follow-up Important: a fresh mutation success previously carried no
             // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`
             // did, both via `execution::status::execute`), forcing an extra GET per
@@ -1743,6 +1943,292 @@ fn if_match_conflict(command: &'static str, head: Option<u64>) -> Response {
 /// Best-effort current head for a conflict response's `currentHead`: `None` (omitted on the wire)
 /// only if even this read fails, which would mean the repository itself is unavailable — the
 /// conflict is still real and still worth reporting even then.
+/// # THE PRESENCE INVARIANT (#1054). Read this before changing anything below it.
+///
+/// > A presence declaration is appended when it DIFFERS FROM THE NEWEST declaration this actor
+/// > already has in this stream.
+///
+/// That is the rule for a request that REACHES this function. An earlier version ended the
+/// sentence "Nothing else suppresses it", which is FALSE and is the same overclaim class as the
+/// one the paragraph below exists to correct. Three things return before this function is called,
+/// and none of them writes a declaration:
+///
+/// - a header refusal in `parse_mutation_headers` -- a bad effort, a blank/over-long/non-ASCII
+///   model, or an effort with no model -- which is a 400 before anything touches the store;
+/// - any non-`Absent` outcome of the idempotency pre-flight (a recognised retry, a stuck partial,
+///   a divergent key reuse, a failed classification) and an `If-Match` mismatch, all of which
+///   return from `run_idempotent_mutation_inner` ABOVE its call to this function;
+/// - every READ path, which never enters this code at all.
+///
+/// A fourth was added by #1057's P1 and is the reason this function now runs LATE: a command body
+/// that REFUSES. The declaration is planned and written only after `run` answered `Ok`, so a
+/// `start` whose graph does not validate and an `approve` whose state check refuses each leave the
+/// journal exactly as they found it -- no declaration, and for `start` no stream either.
+///
+/// It is NOT "at most one per distinct `(actorId, model, effort)` per stream", which is what an
+/// earlier version of this comment and of #1054's own task brief both said. That sentence is
+/// FALSE about this code, and the sequence that separates the two readings is the FLIP-FLOP:
+/// `medium -> high -> medium` appends THREE events, and the third carries a triple the stream
+/// already holds. Under the false reading that third append is a bug; under the true one it is the
+/// point. `a_flip_flop_appends_a_third_declaration_because_newest_is_what_a_roster_answers` pins
+/// it, because a rule nobody can fail to obey is not a rule.
+///
+/// NEWEST-WINS IS THE RIGHT SEMANTICS, and the reason is what a roster is for: it answers "what is
+/// this agent running NOW". A dedup keyed on "has this triple ever appeared" would refuse to record
+/// a session going back to `medium`, and the roster would keep answering `high` forever -- a fact
+/// that stopped being true, preserved by the very mechanism meant to keep the journal honest.
+///
+/// What the comparison buys is therefore narrower than "no duplicates ever", and exactly worth
+/// having: an IMMEDIATE repeat is free. Without it every mutation would append, and a session
+/// sending a hundred signals would put a hundred identical declarations in the stream -- a journal
+/// whose size stopped meaning anything, and a roster that costs more to read on every request that
+/// did not change it.
+///
+/// The comparison is against the JOURNAL, not against any in-memory session state, because the
+/// Runtime holds no session state: a restarted server, a second client, and a replay all have to
+/// reach the same answer, and only the stream is common to all three.
+///
+/// EFFORT IS PART OF THE IDENTITY. A session that turns its thinking from `medium` to `high` has
+/// changed what it is, and a roster still answering `medium` would be reporting a fact that stopped
+/// being true. That is why the triple and not just the model.
+///
+/// PER ACTOR, not per stream. Two agents working one execution each declare their own model;
+/// comparing against the stream's newest would make each arrival erase the other's and the stream
+/// would grow on every alternating request.
+///
+/// AS OF THE READ, and that phrase is enforced rather than hoped for: see `PlannedPresence`, whose
+/// `expected_next_sequence` binds the append to the exact stream the decision was made against, so
+/// a stream that moved in between refuses the write instead of absorbing a stale decision.
+///
+/// ---
+///
+/// Decides whether this mutation's declaration is NEWS, and returns what to write if it is.
+///
+/// Reads only. `Ok(None)` means one of the two ways there is nothing to write: the caller declared
+/// nothing (and then no store is read at all), or this actor's NEWEST declaration in this stream
+/// already carries exactly this triple.
+/// A presence declaration that has been decided on but not yet written, CARRYING THE SEQUENCE THE
+/// DECISION WAS MADE AGAINST.
+///
+/// That field is the whole point of splitting the write in two. The dedup decision ("is this
+/// news?") is made from a READ of the stream, and the append happens later: without binding the two,
+/// a second writer can commit in between and both requests append the same triple, each having read
+/// a stream that honestly held no such declaration. That is not a hypothesis -- it is what this
+/// path DID, measured through the `after_presence_read` seam before this field existed: two
+/// attempts, two `200`s, two identical declarations in the journal.
+///
+/// `expected_next_sequence` closes it with the store's own optimistic-concurrency primitive.
+/// `append_locked` refuses when the stream's actual next sequence is not the one the request names
+/// (`EventRepositoryError::SequenceConflict`), and it makes that check INSIDE its exclusive lock,
+/// which is the only place in this system where "check and append" is one operation.
+///
+/// THE NUMBER IS DERIVED FROM THE HISTORY THAT MADE THE DECISION -- `history.last().sequence + 1`,
+/// or 1 for an empty stream -- and NOT from a `store.next_sequence(...)` call. That distinction is
+/// the whole guarantee, and getting it wrong is how the first version of this comment came to
+/// assert a safeguard the code did not provide.
+///
+/// `resolve_stream` and `next_sequence` are two INDEPENDENT `with_shared_lock` + `load_state`
+/// acquisitions (`core/events/src/local.rs:2647` and `:2668`). A writer committing between them
+/// answers a sequence NEWER than the snapshot the dedup decision was made against -- so the append
+/// names a number the store agrees with, lands, and the duplicate this field exists to prevent
+/// happens anyway. Two adjacent synchronous calls with no `await` between them is a small window,
+/// not a closed one, and "small" is not a property a comment may round to "closed".
+///
+/// Deriving from `history` removes the second snapshot entirely. The history IS the first opinion;
+/// `next_sequence` was a second one taken later against a state nobody consulted.
+///
+/// The two can DISAGREE only when something committed TO THIS STREAM in between. Not "when
+/// nothing committed in between" -- that was a false biconditional, and the counter-example is
+/// cheap: a writer committing to a DIFFERENT stream advances the store's state and leaves both
+/// numbers exactly where they were, because `next_sequence` is keyed per `stream_key`. So the
+/// agreement is not evidence that the store was idle; it is evidence about THIS stream only, and
+/// that is the whole of what the append needs.
+///
+/// The derivation is equivalent to the store's own for a quiescent stream, and that is checked
+/// rather than asserted (`the_planned_sequence_is_the_one_the_store_would_answer`). It holds
+/// because `build_envelopes` numbers a batch `expected_next_sequence + offset` and `append_locked`
+/// then stores `expected + count`, so a stream's sequences are contiguous and its next is always
+/// its last plus one (`core/events/src/local.rs:1241` and `:2029`).
+///
+/// IT ALSO FAILS SAFE, which is the property worth having when a derivation could be wrong. Too
+/// low, and the store refuses -- a conflict, never a duplicate. Too high cannot arise from
+/// `last + 1` over a real history. So the worst outcome of a stale read is a 409 the caller
+/// retries, and never a silently duplicated declaration.
+///
+/// This is deliberately NOT `execution::append_event`, which asks the store for `next_sequence`
+/// itself immediately before appending. That helper is correct for a caller whose decision does not
+/// depend on the stream's contents; here the decision does, so re-deriving the sequence at write
+/// time would discard the very fact that makes the write safe.
+struct PlannedPresence {
+    scope: RepositoryScope,
+    stream_id: OpaqueId,
+    expected_next_sequence: u64,
+    actor: PersistedActor,
+    declared: AgentPresenceDeclared,
+}
+
+fn plan_presence_declaration(
+    events: &Path,
+    execution: &str,
+    identity: &MutationIdentity,
+) -> Result<Option<PlannedPresence>, execution::Failure> {
+    // #1057: TWO ways there is something to record, and the second one is the fix.
+    //
+    // A caller that declares a MODEL records it, as it always did. A caller that names a SESSION
+    // records that session's boundary even with no model at all, because "this session declares
+    // nothing" has to be SAID: written as an event with no `model`. Expressed by silence it could
+    // never supersede the previous session's record, and a stable actor id reused by a new session
+    // inherited a model that had stopped being true.
+    //
+    // A caller that does neither is unchanged: no session, no model, nothing read and nothing
+    // written. That is every plain HTTP caller that never learned about either header.
+    if identity.declared_model.is_none() && identity.declared_session.is_none() {
+        return Ok(None);
+    }
+    let declared = AgentPresenceDeclared {
+        actor_id: identity.actor.id().clone(),
+        actor_type: identity.actor.actor_type(),
+        model: identity.declared_model.clone(),
+        effort: identity.declared_effort,
+        session: identity.declared_session.clone(),
+    };
+
+    let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
+    let (scope, stream, history) = execution::resolve_stream(&store, Some(execution))?;
+    if newest_declaration_for(&history, &declared).is_some_and(|newest| *newest == declared) {
+        return Ok(None);
+    }
+
+    // `resolve_stream` derived this string from an id it had already parsed, so the refusal below
+    // is unreachable on this path today. It is a refusal rather than an `expect` because
+    // unreachable-today is a property of the current arrangement, not of this function: a future
+    // `resolve_stream` that answered a stream name of its own choosing would turn an `expect` into
+    // a panic inside a live request.
+    let stream_id = OpaqueId::parse(stream).map_err(|_| {
+        execution::argument(
+            "the resolved stream id is not a valid identifier",
+            "/execution",
+        )
+    })?;
+    // Derived from THE HISTORY THE DECISION WAS MADE FROM, never from a fresh
+    // `store.next_sequence(...)` -- see `PlannedPresence` for why a second store read reopens the
+    // window this whole field exists to close. `history` is `read_replay_stream`'s raw, unfiltered
+    // stream, so its last event is the stream's head.
+    let expected_next_sequence = history
+        .last()
+        .map_or(1, |event| event.sequence.saturating_add(1));
+    Ok(Some(PlannedPresence {
+        scope,
+        stream_id,
+        expected_next_sequence,
+        actor: identity.actor.clone(),
+        declared,
+    }))
+}
+
+/// Writes a planned declaration AT THE SEQUENCE ITS DECISION WAS MADE AGAINST, so a stream that
+/// moved in between refuses the write instead of absorbing a stale decision.
+///
+/// Opens the store again rather than carrying one across the seam: `LocalEventRepository` takes its
+/// exclusive lock per call, and holding one open across a suspension point is how a test seam turns
+/// into a deadlock in production. Re-opening is safe precisely because the sequence travels in
+/// `planned` -- the second handle cannot quietly answer a newer number.
+fn commit_presence_declaration(
+    events: &Path,
+    planned: PlannedPresence,
+) -> Result<(), execution::Failure> {
+    let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
+    let request = PreparedAppend::new(
+        planned.scope,
+        planned.stream_id,
+        planned.expected_next_sequence,
+        vec![NewEvent::new(
+            execution::idempotency_key("presence"),
+            planned.actor,
+            Sensitivity::Internal,
+            EventKind::AgentPresenceDeclared(planned.declared),
+            vec![],
+            vec![],
+        )],
+        vec![],
+        vec![],
+    )
+    .map_err(|error| execution::repository_failure(&error))?;
+    store
+        .append_atomic(&request)
+        .map(|_| ())
+        .map_err(|error| execution::repository_failure(&error))
+}
+
+/// How many times a presence append may lose the head race before the request says so.
+///
+/// A conflict here is not a caller error and not a lost mutation: the command body has ALREADY
+/// committed, so retrying costs one more read of a stream the loser is not contending for on any
+/// second pass -- its re-plan either finds the winner's identical declaration and writes nothing,
+/// or names the new head. Three is a bound, not a tuned number: it exists so a pathological writer
+/// cannot spin this loop, and the third failure is REPORTED rather than swallowed.
+const PRESENCE_COMMIT_ATTEMPTS: usize = 3;
+
+/// Plans and writes this mutation's declaration, AFTER its command body committed.
+///
+/// `seam` is awaited exactly once, between the first plan's READ and its APPEND: that is the only
+/// suspension point the presence path has, and the race cell plants a barrier in it. Later attempts
+/// do not re-await it, because a seam that fired on every pass would rendezvous a retry with a task
+/// that already finished and hang the cell.
+///
+/// The loop exists because the order changed. While the declaration was written BEFORE the body, a
+/// lost race could be answered with a 409 and the caller could retry the whole request, nothing
+/// having landed. Now the body has already committed when this runs, so a 409 would name a conflict
+/// for a mutation that succeeded -- the caller would retry work that is already done. Re-planning
+/// is the honest answer instead: it reads the stream the winner just moved and, for the same triple,
+/// finds its own declaration already newest and writes nothing at all.
+async fn record_presence_declaration<P>(
+    events: &Path,
+    execution: &str,
+    identity: &MutationIdentity,
+    seam: P,
+) -> Result<(), execution::Failure>
+where
+    P: std::future::Future<Output = ()>,
+{
+    let mut seam = Some(seam);
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let Some(planned) = plan_presence_declaration(events, execution, identity)? else {
+            return Ok(());
+        };
+        if let Some(seam) = seam.take() {
+            seam.await;
+        }
+        match commit_presence_declaration(events, planned) {
+            Ok(()) => return Ok(()),
+            Err(failure)
+                if failure.code == "GHE001_SEQUENCE_CONFLICT"
+                    && attempts < PRESENCE_COMMIT_ATTEMPTS => {}
+            Err(failure) => return Err(failure),
+        }
+    }
+}
+
+/// The newest declaration in `history` made BY THE SAME ACTOR as `subject`.
+///
+/// Per actor, and that is the whole grain: two agents working one execution each declare their own
+/// model, and a comparison against "the newest declaration in the stream" would make each one's
+/// arrival erase the other's -- every mutation would then be news, and the stream would grow on
+/// every request, which is precisely the failure the comparison exists to prevent.
+fn newest_declaration_for<'a>(
+    history: &'a [EventEnvelope],
+    subject: &AgentPresenceDeclared,
+) -> Option<&'a AgentPresenceDeclared> {
+    history.iter().rev().find_map(|event| match &event.kind {
+        EventKind::AgentPresenceDeclared(declared) if declared.actor_id == subject.actor_id => {
+            Some(declared)
+        }
+        _ => None,
+    })
+}
+
 fn current_head(events: &Path, execution: &str) -> Option<u64> {
     let store = event_store(events).ok()?;
     let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
@@ -2356,6 +2842,12 @@ mod tests {
             }),
             idempotency_header: "unit-race".to_owned(),
             if_match: None,
+            // #1054: this cell is about a two-writer race on ONE derived key, so both attempts
+            // declare nothing. A declaration here would put a second append in front of the one
+            // being raced and change the subject.
+            declared_model: None,
+            declared_effort: None,
+            declared_session: None,
         };
         let before = current_head(&events, execution_id).unwrap();
         let rendezvous = Arc::new(tokio::sync::Barrier::new(2));
@@ -2377,6 +2869,9 @@ mod tests {
                     after_absent_preflight: async move {
                         rendezvous.wait().await;
                     },
+                    // Neither attempt declares, so the presence path returns `Ok(None)` before
+                    // this seam is ever reached and a ready future is the honest value here.
+                    after_presence_read: std::future::ready(()),
                     post_append_conflict: move || {
                         post_append_conflicts.fetch_add(1, Ordering::SeqCst);
                     },
@@ -2457,6 +2952,301 @@ mod tests {
                 "recognizedRetry": true,
                 "originalDecisionSequence": matching[0].sequence,
             })
+        );
+    }
+
+    /// #1054 fix round 2: the planned sequence is the one the STORE would answer, on a quiescent
+    /// stream.
+    ///
+    /// Round 2 replaced a `store.next_sequence(...)` call with a value derived from the history the
+    /// dedup decision was made from. That is a strictly better BINDING -- one snapshot instead of
+    /// two -- but it is only an improvement if the NUMBER is the same when nothing has moved. A
+    /// derivation that quietly answered something else would swap a rare duplicate for a constant
+    /// 409, which is worse and would look like a flaky store rather than like this line.
+    ///
+    /// So the store is asked directly and the two are compared. Not a reimplementation of the
+    /// derivation -- that would only assert that a line equals itself -- but the independent
+    /// authority the derivation replaced.
+    ///
+    /// WHAT IT DOES NOT DISCRIMINATE, stated so nobody reads more into it: this store numbers
+    /// streams from 1 with no gaps, so `history.len() + 1` and `history.last().sequence + 1` are
+    /// equal here and this cell cannot tell them apart. It pins equivalence with the store, which
+    /// is the property round 2 needed, and not the choice between those two spellings.
+    #[test]
+    fn the_planned_sequence_is_the_one_the_store_would_answer() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = directory.path().join("fixtures.json");
+        std::fs::write(
+            &fixtures,
+            serde_json::to_vec(&serde_json::json!({
+                "nodeOutcomes": {"implementation": "success", "deploy": "success"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("examples/graphs/software-feature.yaml");
+        let loaded = graphhelm_schema::load_graph(&graph).unwrap();
+        let version =
+            crate::commands::publish_loaded(&loaded, crate::commands::owner("owner-test")).unwrap();
+        let execution_id = "exec-unit-presence-sequence";
+        assert!(
+            execution::start::execute(
+                &version,
+                &events,
+                Some(&fixtures),
+                "supervised",
+                Some(execution_id),
+                execution::system_actor(),
+                OpaqueId::parse("unit-sequence-start-key").unwrap(),
+            )
+            .is_ok(),
+            "the fixture execution must start"
+        );
+
+        let identity = MutationIdentity {
+            actor: PersistedActor::new(
+                PersistedActorType::Agent,
+                ActorId::parse("agent-planner").unwrap(),
+            ),
+            keys: vec![DerivedKey {
+                prefix: "unit-sequence".to_owned(),
+                full: OpaqueId::parse("unit-sequence-0123456789abcdef").unwrap(),
+            }],
+            decision_kind: MutationDecisionKind::SignalRecorded,
+            request_body: serde_json::json!({}),
+            idempotency_header: "unit-sequence".to_owned(),
+            if_match: None,
+            declared_model: Some("claude-opus-5".to_owned()),
+            declared_effort: Some(DeclaredEffort::High),
+            declared_session: None,
+        };
+
+        // `execution::Failure` is not `Debug` (it carries operator-facing text and this crate keeps
+        // it off the derive list), so the failure arm is matched rather than `expect`ed.
+        let Ok(planned) = plan_presence_declaration(&events, execution_id, &identity) else {
+            panic!("planning must succeed on a readable store");
+        };
+        let planned = planned.expect("an undeclared triple on a fresh execution is news");
+
+        let store = event_store(&events).unwrap();
+        let from_the_store = store
+            .next_sequence(&planned.scope, planned.stream_id.as_str())
+            .unwrap();
+        assert_eq!(
+            planned.expected_next_sequence, from_the_store,
+            "the derived sequence must equal the store's own on a stream nothing else is writing"
+        );
+        // CONTROL: the fixture execution really has a history, so the equality above is not two
+        // ways of saying "empty". Without this a store that answered 1 to everything would pass.
+        assert!(
+            from_the_store > 1,
+            "CONTROL: the fixture stream must be non-empty for this comparison to mean anything"
+        );
+    }
+
+    /// #1054 fix round 1, Important 2 + #1057 Codex P1: TWO DECLARING WRITERS, and what actually
+    /// happens to the loser now that the declaration is written AFTER the command body.
+    ///
+    /// `plan_presence_declaration` READS the stream and `commit_presence_declaration` APPENDS to
+    /// it: two store calls, so the head can move in between. The reviewer asked which of two
+    /// outcomes occurs -- both attempts append the same triple, or one legitimate mutation turns
+    /// into an error -- and the answer is still NEITHER, but it is reached differently.
+    ///
+    /// While the declaration was written BEFORE the body, the loser was answered 409 and nothing
+    /// of its request had landed, so a retry was free. That ordering is what #1057's P1 removed: a
+    /// refused body must leave no declaration, so the declaration now follows the body. The loser's
+    /// signal has therefore ALREADY COMMITTED by the time its append is refused, and a 409 would
+    /// name a conflict for a mutation that succeeded. `record_presence_declaration` re-plans
+    /// instead, and the re-plan reads the winner's declaration and writes nothing.
+    ///
+    /// Measured here rather than argued:
+    ///
+    /// - exactly ONE presence event commits, so the duplicate outcome does not occur;
+    /// - BOTH attempts answer 200, because both signals really did land;
+    /// - the stream grows by exactly three events -- two signals and one declaration.
+    ///
+    /// THE SEAM IS LOAD-BEARING. `after_presence_read` suspends both tasks between their reads and
+    /// their appends. Without it, on this current-thread runtime, the presence path runs start to
+    /// finish without yielding, the two tasks simply take turns, and the second one READS the
+    /// first one's committed declaration and dedups -- a green cell measuring no race at all. It
+    /// fires on the FIRST plan only, deliberately: a seam that fired again on the retry would
+    /// rendezvous with a task that already finished and hang the cell.
+    #[tokio::test]
+    async fn two_declaring_writers_commit_one_declaration_and_both_mutations_land() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = directory.path().join("fixtures.json");
+        std::fs::write(
+            &fixtures,
+            serde_json::to_vec(&serde_json::json!({
+                "nodeOutcomes": {"implementation": "success", "deploy": "success"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("examples/graphs/software-feature.yaml");
+        let loaded = graphhelm_schema::load_graph(&graph).unwrap();
+        let version =
+            crate::commands::publish_loaded(&loaded, crate::commands::owner("owner-test")).unwrap();
+        let execution_id = "exec-unit-presence-race";
+        assert!(
+            execution::start::execute(
+                &version,
+                &events,
+                Some(&fixtures),
+                "supervised",
+                Some(execution_id),
+                execution::system_actor(),
+                OpaqueId::parse("unit-presence-start-key").unwrap(),
+            )
+            .is_ok(),
+            "the race fixture execution must start"
+        );
+
+        let actor = PersistedActor::new(
+            PersistedActorType::Agent,
+            ActorId::parse("agent-racer").unwrap(),
+        );
+        let evidence_out = directory.path().join("presence-race-evidence.json");
+        // DIFFERENT decision keys, deliberately. Sharing one would make the attempts race on the
+        // idempotency key -- the subject of the cell above -- and the presence race would never be
+        // reached. Here each command body is legitimately its own mutation, and the only thing
+        // they contend for is the stream head.
+        let identity = |nth: u8| {
+            let signal_value = serde_json::json!({
+                "id": format!("signal-unit-presence-{nth}"),
+                "source": {"type": "node", "id": "implementation"},
+                "type": "no_progress",
+                "severity": "high",
+                "description": "the deploy stage needs a manual review",
+                "evidence": ["exec-1"],
+                "emittedAt": "2026-08-13T00:00:00Z"
+            });
+            let prefix = format!("unit-presence-{nth}");
+            (
+                MutationIdentity {
+                    actor: actor.clone(),
+                    keys: vec![DerivedKey {
+                        full: OpaqueId::parse(format!("{prefix}-0123456789abcdef")).unwrap(),
+                        prefix,
+                    }],
+                    decision_kind: MutationDecisionKind::SignalRecorded,
+                    request_body: serde_json::json!({
+                        "signal": signal_value.clone(),
+                        "evidenceOut": evidence_out.clone(),
+                    }),
+                    idempotency_header: format!("unit-presence-{nth}"),
+                    if_match: None,
+                    // BOTH declare, and the same triple. That is the whole point: the dedup read
+                    // says "news" to both of them, because neither has committed yet.
+                    declared_model: Some("claude-opus-5".to_owned()),
+                    declared_effort: Some(DeclaredEffort::High),
+                    declared_session: None,
+                },
+                serde_json::to_vec(&signal_value).unwrap(),
+            )
+        };
+
+        let before = current_head(&events, execution_id).unwrap();
+        let rendezvous = Arc::new(tokio::sync::Barrier::new(2));
+
+        let attempt = |(identity, signal): (MutationIdentity, Vec<u8>)| {
+            let events_for_run = events.clone();
+            let evidence_out = evidence_out.clone();
+            let rendezvous = Arc::clone(&rendezvous);
+            run_idempotent_mutation_inner(
+                &events,
+                execution_id,
+                "execution.signal",
+                identity,
+                ExecutorWiring::FIXTURE_ONLY,
+                MutationObservation {
+                    after_absent_preflight: std::future::ready(()),
+                    after_presence_read: async move {
+                        rendezvous.wait().await;
+                    },
+                    post_append_conflict: || {},
+                },
+                move |event_actor, key| {
+                    Box::pin(async move {
+                        Ok(execution::signal::execute(
+                            &events_for_run,
+                            Some(execution_id),
+                            &signal,
+                            Some(&evidence_out),
+                            event_actor,
+                            key,
+                            None,
+                        )?)
+                    })
+                },
+            )
+        };
+
+        let (first, second) = tokio::join!(attempt(identity(1)), attempt(identity(2)));
+        let decode = |response: Response| async move {
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            )
+        };
+        let (first, second) = tokio::join!(decode(first), decode(second));
+
+        // Which task wins the presence race is a scheduling detail. What is NOT a detail is
+        // that neither caller is punished for it: both command bodies committed before the race
+        // began, so both answer 200.
+        assert_eq!(
+            [first.0, second.0],
+            [StatusCode::OK, StatusCode::OK],
+            "both mutations landed, so neither is told its own work conflicted: {} / {}",
+            first.1,
+            second.1
+        );
+
+        let store = event_store(&events).unwrap();
+        let Ok((_scope, _stream, history)) = execution::resolve_stream(&store, Some(execution_id))
+        else {
+            panic!("the race fixture history must remain readable");
+        };
+        let declarations = history
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    graphhelm_protocols::EventKind::AgentPresenceDeclared(_)
+                )
+            })
+            .count();
+        assert_eq!(
+            declarations, 1,
+            "two racing declarations of the same triple commit exactly one event"
+        );
+        let signals = history
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    graphhelm_protocols::EventKind::SignalRecorded(_)
+                )
+            })
+            .count();
+        assert_eq!(
+            signals, 2,
+            "both command bodies ran to completion before either declaration was planned"
+        );
+        assert_eq!(
+            current_head(&events, execution_id),
+            Some(before + 3),
+            "exactly three events committed in total: two signals and one declaration"
         );
     }
 

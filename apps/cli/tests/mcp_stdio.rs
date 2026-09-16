@@ -970,6 +970,11 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
             ("Idempotency-Key", "direct-signal-1"),
             ("X-GraphHelm-Actor", "agent-direct"),
             ("X-GraphHelm-Actor-Type", "agent"),
+            // #1057: the MCP surface names its session on every mutation, so a direct call it is
+            // compared against has to name one too. Without it the two sides are not the same
+            // story: one records a session boundary and the other cannot, and the delta this cell
+            // measures would be about the header rather than about the tool.
+            ("X-GraphHelm-Actor-Session", "direct-session-1"),
         ],
         &serde_json::json!({
             "signal": signal_envelope_value("signal-direct-1"),
@@ -1267,9 +1272,13 @@ fn run_story_over_http_data(directory: &Path) -> serde_json::Value {
         &serde_json::json!({"nodeOutcomes": {"implementation": "success", "deploy": "success"}}),
     );
     let evidence_out = directory.join("http-parity-evidence.json");
-    let actor: [(&str, &str); 2] = [
+    // #1057: the session token rides every MCP mutation, so the API half of this parity story
+    // names a session too. Otherwise the MCP side records one `agent_presence_declared` boundary
+    // the API side cannot, and `headSequence` differs for a reason that is not a parity defect.
+    let actor: [(&str, &str); 3] = [
         ("X-GraphHelm-Actor", "owner-parity"),
         ("X-GraphHelm-Actor-Type", "owner"),
+        ("X-GraphHelm-Actor-Session", "http-parity-session"),
     ];
 
     let step = |path: &str, key: &str, body: &serde_json::Value| -> serde_json::Value {

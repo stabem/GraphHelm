@@ -3,10 +3,11 @@ use std::{collections::BTreeMap, fmt};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode, FreshnessClass,
-    NodeOutcome, NodeState, OpaqueId, PersistedActor, PersistedDiagnostic, PersistedGraphVersion,
-    PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
-    SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
+    ActorId, ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode,
+    FreshnessClass, NodeOutcome, NodeState, OpaqueId, PersistedActor, PersistedActorType,
+    PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp, PolicyWaiver, RawSha256,
+    RepositoryScope, SemanticVersion, Sensitivity, SignalSeverity, SignalSourceKind,
+    SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -238,6 +239,7 @@ pub enum EventKind {
     DlqReturned(DlqReturned),
     SweepPerformed(SweepPerformed),
     OverdueException(OverdueException),
+    AgentPresenceDeclared(AgentPresenceDeclared),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -459,6 +461,7 @@ wire_names! {
     DlqReturned => "dlq_returned",
     SweepPerformed => "sweep_performed",
     OverdueException => "overdue_exception",
+    AgentPresenceDeclared => "agent_presence_declared",
 }
 
 impl EventKind {
@@ -1293,6 +1296,84 @@ pub struct OverdueException {
     /// The instant the episode was measured against. Recorded so a later reader can check the
     /// verdict without re-deriving it from a graph version that may since have moved.
     pub deadline: PersistedTimestamp,
+}
+
+/// #1054: how hard the declaring agent says it is thinking.
+///
+/// A CLOSED vocabulary, and that is the whole reason it is a type rather than a `String`: a closed
+/// set is refusable at the wire edge (`X-GraphHelm-Actor-Effort` outside it is a 400), while a free
+/// string can only be recorded and hoped about. The schema's `$defs/agentPresenceDeclared/effort`
+/// carries exactly these three members; the two are meant to be read together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeclaredEffort {
+    Low,
+    Medium,
+    High,
+}
+
+/// #1054: an agent saying WHICH MODEL is behind this session, and how hard it is set to think.
+///
+/// Declared, never inferred. Nothing in this codebase may derive a model from a route, a user
+/// agent, or a default constant: a session that declares nothing produces no event of this kind at
+/// all, so "absent" stays absent instead of being written down as a guess that later reads as
+/// measurement. That was once the whole story, and #1057 narrowed it: writing NOTHING says nothing,
+/// and silence cannot supersede an earlier session's record. So an event with an ABSENT `model` is
+/// now the one way a session says "I declare nothing", and it is written only by a session that
+/// named itself in `session`. Nothing is still ever inferred; the absence is just said out loud.
+///
+/// `model` is an opaque `String` and deliberately not an enum: the set of model names changes far
+/// faster than this repository ships, so an enum here would refuse correct values in the field.
+///
+/// WHAT BOUNDS IT, cited, because the previous version of this comment claimed a safeguard that
+/// did not exist and a comment asserting a safeguard is worse than no comment -- the next reader
+/// stops looking.
+///
+/// - The append-time scan is real and DOES run on this payload:
+///   `core/events/src/integrity.rs:124` (`validate_prepared_append`) serializes each event and
+///   calls `scan_safe_value`, which is `graphhelm_graph::validate_durable_content`
+///   (`core/graph/src/persistence.rs:446`). **But what it bounds is not this field.** It caps the
+///   TOTAL scanned bytes of the whole envelope (`MAX_CONTENT_SCAN_BYTES`), caps the serialized
+///   event (`MAX_EVENT_BYTES`), and refuses SECRET-SHAPED strings anywhere in it. There is no
+///   per-field length cap in that path and no charset rule. Reading it as "so `model` is bounded"
+///   is the mistake this paragraph exists to stop.
+/// - The per-field bound is therefore written twice, once at each door. At the HTTP door,
+///   `ACTOR_MODEL_HEADER_MAX_LEN` in `apps/cli/src/commands/serve/mod.rs` refuses a header over
+///   128 bytes, a blank one, and one that is not visible ASCII. In the SCHEMA, which is the only
+///   thing that binds a producer that never touches that door, `$defs/agentPresenceDeclared/model`
+///   carries `maxLength: 128` and `pattern` `\S` -- the same 128, and "at least one non-whitespace
+///   character", which is the part `minLength: 1` cannot say.
+///
+/// `effort` is `Option` with `skip_serializing_if`, and both halves are load-bearing. The schema
+/// lists `effort` under `properties` but NOT under `required`, with `additionalProperties: false`
+/// and a closed `enum` — so an absent effort must be an ABSENT KEY. Serializing `"effort": null`
+/// would satisfy neither the enum nor the absence, and the store would refuse the envelope with a
+/// bare `Invalid`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentPresenceDeclared {
+    pub actor_id: ActorId,
+    pub actor_type: PersistedActorType,
+    /// `None` is a DECLARATION, not a gap: "this session declared nothing". It is written only by
+    /// a session that named itself in `session` -- see that field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<DeclaredEffort>,
+    /// #1057: WHICH SESSION is speaking, opaque and minted by the client (`graphhelm mcp` uses its
+    /// own per-process nonce, the same one its idempotency keys and wake leases already carry).
+    ///
+    /// An actor id is STABLE across sessions; a model is a property of one session. Without this
+    /// field a later session reusing the id and declaring nothing inherited the previous session's
+    /// model forever, because "declared nothing" was expressed by writing no event -- and silence
+    /// cannot supersede a record. With it, a session's first mutation records its own boundary
+    /// even when it declares no model, and the newest record for the actor then honestly says
+    /// nothing is declared.
+    ///
+    /// Optional, because a plain HTTP caller that names no session keeps the older behaviour
+    /// exactly: it declares a model or it records nothing at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// One finding inside a gate verdict (M06 Task 1): severity, the claim, the evidence that

@@ -1,0 +1,2761 @@
+{
+    "status":  "RED",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "9b277afb32f7e1d14231eae0d56c8f04003035a5",
+    "pullRequest":  1057,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-1054-agent-presence-model-effort on origin IS this commit, read from the server",
+    "upstreamSha":  "9b277afb32f7e1d14231eae0d56c8f04003035a5",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true
+                 },
+    "requiredFeaturesExcluded":  [
+
+                                 ],
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "E:\\runner-targets\\ssd\\pr1057",
+    "queuedUtc":  "2026-09-16T18:28:31.0355017Z",
+    "runStartUtc":  "2026-09-16T18:28:31.0687239Z",
+    "slotWaitSecs":  0.033,
+    "runEndUtc":  "2026-09-16T18:45:26.9324291Z",
+    "canaryPassed":  true,
+    "psSuitesStartedEarly":  true,
+    "psSuitesOverlapped":  true,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  true,
+    "studioStartedEarly":  false,
+    "studioOverlapped":  false,
+    "pgMatricesStartedEarly":  true,
+    "pgMatricesOverlapped":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.243,
+                       "startedUtc":  "2026-09-16T18:28:31.2028192Z",
+                       "endedUtc":  "2026-09-16T18:28:34.4530059Z"
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.444,
+                       "startedUtc":  "2026-09-16T18:31:52.7131227Z",
+                       "endedUtc":  "2026-09-16T18:31:55.1574704Z"
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  23.689,
+                       "startedUtc":  "2026-09-16T18:31:55.1589794Z",
+                       "endedUtc":  "2026-09-16T18:32:18.8487742Z"
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  306.555,
+                       "startedUtc":  "2026-09-16T18:32:18.8507815Z",
+                       "endedUtc":  "2026-09-16T18:37:25.4137700Z",
+                       "outputTail":  [
+                                          "test a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window ... FAILED",
+                                          "test sleeper_arm_isolates_concurrent_fixtures_and_reuses_a_logical_rearm ... ok",
+                                          "test causal_transcript_refuses_marks_past_its_byte_bound ... ok",
+                                          "test a_silent_deadline_reports_a_silent_receipt_not_just_silence ... ok",
+                                          "test a_previous_cycles_receipt_never_claims_a_new_waiting ... ok",
+                                          "test a_horizon_already_past_answers_immediately_rather_than_waiting ... ok",
+                                          "test a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong ... ok",
+                                          "test wake_wait_exits_three_on_timeout_and_two_on_a_bad_id ... ok",
+                                          "test a_designed_phase3_delay_is_absorbed_by_the_receipt_wait ... ok",
+                                          "test a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append ... ok",
+                                          "test concurrent_sweeps_never_double_consume_a_lease ... ok",
+                                          "test a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline has been running for over 60 seconds",
+                                          "test a_lease_burned_stale_while_its_waiter_lived_names_the_rejection has been running for over 60 seconds",
+                                          "test a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis has been running for over 60 seconds",
+                                          "test a_ring_missed_and_a_re_arm_are_reported_as_different_worlds has been running for over 60 seconds",
+                                          "test a_second_cycles_burn_never_erases_the_first_armings_receipt has been running for over 60 seconds",
+                                          "test an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable has been running for over 60 seconds",
+                                          "test an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable ... ok",
+                                          "test a_lease_burned_stale_while_its_waiter_lived_names_the_rejection ... ok",
+                                          "test a_ring_missed_and_a_re_arm_are_reported_as_different_worlds ... ok",
+                                          "test a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline ... ok",
+                                          "test a_second_cycles_burn_never_erases_the_first_armings_receipt ... ok",
+                                          "test a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis ... ok",
+                                          "",
+                                          "failures:",
+                                          "",
+                                          "---- a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window stdout ----",
+                                          "",
+                                          "thread \u0027a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window\u0027 (83528) panicked at apps\\cli\\tests\\wake_http.rs:2211:13:",
+                                          "the sidecar is no longer running and its rendezvous is not present: ExitStatus(ExitStatus(2)): {\"ok\":false,\"command\":\"wake.wait\",\"data\":null,\"diagnostics\":[{\"code\":\"GHCLI017_WAKE_INVALID\",\"severity\":\"error\",\"message\":\"daa875f8915f7bb5 has no live lease on this execution: a waiter waits on its OWN lease, never on whichever one it finds\",\"path\":\"/sessionId\",\"source\":\"wake.wait\"}]}",
+                                          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+                                          "",
+                                          "",
+                                          "failures:",
+                                          "[gate] ... 3346 lines omitted between the first named failure above and the end of the stage, INCLUDING 2 further line(s) MATCHING THE FAILURE MARKER (marker lines, not distinct failures) -- this excerpt is NOT the whole story ...",
+                                          "",
+                                          "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+                                          "",
+                                          "error: 1 target failed:",
+                                          "    `-p graphhelm-cli --test wake_http`"
+                                      ]
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  28.513,
+                       "startedUtc":  "2026-09-16T18:37:25.6747581Z",
+                       "endedUtc":  "2026-09-16T18:37:54.1883120Z"
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  54.935,
+                       "startedUtc":  "2026-09-16T18:37:54.1893177Z",
+                       "endedUtc":  "2026-09-16T18:38:49.1255970Z"
+                   },
+                   {
+                       "name":  "cli: architect_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.462,
+                       "startedUtc":  "2026-09-16T18:38:49.1281015Z",
+                       "endedUtc":  "2026-09-16T18:38:50.5899953Z"
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.793,
+                       "startedUtc":  "2026-09-16T18:38:50.5914981Z",
+                       "endedUtc":  "2026-09-16T18:38:51.3849415Z"
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.212,
+                       "startedUtc":  "2026-09-16T18:38:51.3869504Z",
+                       "endedUtc":  "2026-09-16T18:38:53.5993584Z"
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.586,
+                       "startedUtc":  "2026-09-16T18:38:53.6008583Z",
+                       "endedUtc":  "2026-09-16T18:38:55.1870768Z"
+                   },
+                   {
+                       "name":  "cli: context_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.538,
+                       "startedUtc":  "2026-09-16T18:38:55.1885785Z",
+                       "endedUtc":  "2026-09-16T18:38:57.7265686Z"
+                   },
+                   {
+                       "name":  "cli: customs_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.948,
+                       "startedUtc":  "2026-09-16T18:38:57.7280713Z",
+                       "endedUtc":  "2026-09-16T18:39:00.6756998Z"
+                   },
+                   {
+                       "name":  "cli: delivery_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.561,
+                       "startedUtc":  "2026-09-16T18:39:00.6772083Z",
+                       "endedUtc":  "2026-09-16T18:39:04.2384095Z"
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.528,
+                       "startedUtc":  "2026-09-16T18:39:04.2404181Z",
+                       "endedUtc":  "2026-09-16T18:39:05.7688072Z"
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.285,
+                       "startedUtc":  "2026-09-16T18:39:05.7708060Z",
+                       "endedUtc":  "2026-09-16T18:39:07.0552104Z"
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.892,
+                       "startedUtc":  "2026-09-16T18:39:07.0567197Z",
+                       "endedUtc":  "2026-09-16T18:39:07.9498496Z"
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.987,
+                       "startedUtc":  "2026-09-16T18:39:07.9513532Z",
+                       "endedUtc":  "2026-09-16T18:39:08.9386247Z"
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.606,
+                       "startedUtc":  "2026-09-16T18:39:08.9401222Z",
+                       "endedUtc":  "2026-09-16T18:39:10.5462861Z"
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.373,
+                       "startedUtc":  "2026-09-16T18:39:10.5477929Z",
+                       "endedUtc":  "2026-09-16T18:39:11.9214885Z"
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.295,
+                       "startedUtc":  "2026-09-16T18:39:11.9224921Z",
+                       "endedUtc":  "2026-09-16T18:39:13.2183317Z"
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.818,
+                       "startedUtc":  "2026-09-16T18:39:13.2198308Z",
+                       "endedUtc":  "2026-09-16T18:39:15.0386983Z"
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.176,
+                       "startedUtc":  "2026-09-16T18:39:15.0401975Z",
+                       "endedUtc":  "2026-09-16T18:39:16.2156446Z"
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.977,
+                       "startedUtc":  "2026-09-16T18:39:16.2176518Z",
+                       "endedUtc":  "2026-09-16T18:39:18.1945117Z"
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.126,
+                       "startedUtc":  "2026-09-16T18:39:18.1960125Z",
+                       "endedUtc":  "2026-09-16T18:39:19.3216741Z"
+                   },
+                   {
+                       "name":  "cli: documents_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.595,
+                       "startedUtc":  "2026-09-16T18:39:19.3236957Z",
+                       "endedUtc":  "2026-09-16T18:39:29.9190491Z"
+                   },
+                   {
+                       "name":  "cli: documents_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.058,
+                       "startedUtc":  "2026-09-16T18:39:29.9205595Z",
+                       "endedUtc":  "2026-09-16T18:39:31.9793542Z"
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.142,
+                       "startedUtc":  "2026-09-16T18:39:31.9808563Z",
+                       "endedUtc":  "2026-09-16T18:39:33.1234009Z"
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.775,
+                       "startedUtc":  "2026-09-16T18:39:33.1244073Z",
+                       "endedUtc":  "2026-09-16T18:39:34.9012085Z"
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.864,
+                       "startedUtc":  "2026-09-16T18:39:34.9032127Z",
+                       "endedUtc":  "2026-09-16T18:39:40.7673499Z"
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.042,
+                       "startedUtc":  "2026-09-16T18:39:40.7693474Z",
+                       "endedUtc":  "2026-09-16T18:39:43.8120845Z"
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.741,
+                       "startedUtc":  "2026-09-16T18:39:43.8140973Z",
+                       "endedUtc":  "2026-09-16T18:39:45.5552025Z"
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.23,
+                       "startedUtc":  "2026-09-16T18:39:45.5572046Z",
+                       "endedUtc":  "2026-09-16T18:39:47.7870705Z"
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.061,
+                       "startedUtc":  "2026-09-16T18:39:47.7888671Z",
+                       "endedUtc":  "2026-09-16T18:39:48.8504213Z"
+                   },
+                   {
+                       "name":  "cli: http_helper_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.789,
+                       "startedUtc":  "2026-09-16T18:39:48.8524229Z",
+                       "endedUtc":  "2026-09-16T18:39:49.6410032Z"
+                   },
+                   {
+                       "name":  "cli: init_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.669,
+                       "startedUtc":  "2026-09-16T18:39:49.6430116Z",
+                       "endedUtc":  "2026-09-16T18:39:51.3127958Z"
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.388,
+                       "startedUtc":  "2026-09-16T18:39:51.3143076Z",
+                       "endedUtc":  "2026-09-16T18:39:52.7028935Z"
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.81,
+                       "startedUtc":  "2026-09-16T18:39:52.7049179Z",
+                       "endedUtc":  "2026-09-16T18:39:53.5142373Z"
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.5,
+                       "startedUtc":  "2026-09-16T18:39:53.5162672Z",
+                       "endedUtc":  "2026-09-16T18:39:55.0164645Z"
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.68,
+                       "startedUtc":  "2026-09-16T18:39:55.0179718Z",
+                       "endedUtc":  "2026-09-16T18:39:56.6979597Z"
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.168,
+                       "startedUtc":  "2026-09-16T18:39:56.6994608Z",
+                       "endedUtc":  "2026-09-16T18:39:57.8683994Z"
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.362,
+                       "startedUtc":  "2026-09-16T18:39:57.8699047Z",
+                       "endedUtc":  "2026-09-16T18:39:59.2326157Z"
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.664,
+                       "startedUtc":  "2026-09-16T18:39:59.2341236Z",
+                       "endedUtc":  "2026-09-16T18:40:02.8986944Z"
+                   },
+                   {
+                       "name":  "cli: mcp_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.039,
+                       "startedUtc":  "2026-09-16T18:40:02.9006937Z",
+                       "endedUtc":  "2026-09-16T18:40:03.9398466Z"
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.477,
+                       "startedUtc":  "2026-09-16T18:40:03.9413512Z",
+                       "endedUtc":  "2026-09-16T18:40:09.4187598Z"
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.823,
+                       "startedUtc":  "2026-09-16T18:40:09.4202597Z",
+                       "endedUtc":  "2026-09-16T18:40:10.2433563Z"
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.839,
+                       "startedUtc":  "2026-09-16T18:40:10.2449336Z",
+                       "endedUtc":  "2026-09-16T18:40:13.0851074Z"
+                   },
+                   {
+                       "name":  "cli: providerless_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.107,
+                       "startedUtc":  "2026-09-16T18:40:13.0876176Z",
+                       "endedUtc":  "2026-09-16T18:40:15.1947255Z"
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.825,
+                       "startedUtc":  "2026-09-16T18:40:15.1962355Z",
+                       "endedUtc":  "2026-09-16T18:40:18.0217217Z"
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.805,
+                       "startedUtc":  "2026-09-16T18:40:18.0237210Z",
+                       "endedUtc":  "2026-09-16T18:40:19.8280318Z"
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  25.737,
+                       "startedUtc":  "2026-09-16T18:40:19.8305470Z",
+                       "endedUtc":  "2026-09-16T18:40:45.5688473Z"
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.242,
+                       "startedUtc":  "2026-09-16T18:40:45.5703479Z",
+                       "endedUtc":  "2026-09-16T18:40:51.8128214Z"
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.605,
+                       "startedUtc":  "2026-09-16T18:40:51.8148210Z",
+                       "endedUtc":  "2026-09-16T18:40:53.4197719Z"
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.326,
+                       "startedUtc":  "2026-09-16T18:40:53.4217789Z",
+                       "endedUtc":  "2026-09-16T18:40:54.7477909Z"
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.044,
+                       "startedUtc":  "2026-09-16T18:40:54.7493122Z",
+                       "endedUtc":  "2026-09-16T18:40:55.7944920Z"
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.713,
+                       "startedUtc":  "2026-09-16T18:40:55.7965151Z",
+                       "endedUtc":  "2026-09-16T18:40:58.5097282Z"
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.429,
+                       "startedUtc":  "2026-09-16T18:40:58.5117388Z",
+                       "endedUtc":  "2026-09-16T18:41:02.9411008Z"
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.848,
+                       "startedUtc":  "2026-09-16T18:41:02.9426006Z",
+                       "endedUtc":  "2026-09-16T18:41:04.7906550Z"
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  63.309,
+                       "startedUtc":  "2026-09-16T18:41:04.7921719Z",
+                       "endedUtc":  "2026-09-16T18:42:08.1029000Z",
+                       "outputTail":  [
+                                          "test a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window ... FAILED",
+                                          "test shortening_a_horizon_is_accepted_and_named_with_both_instants ... ok",
+                                          "test lengthening_a_horizon_says_nothing_because_it_fails_safe ... ok",
+                                          "test waiting_on_a_lease_that_declared_no_bound_is_refused ... ok",
+                                          "test sleeper_arm_isolates_concurrent_fixtures_and_reuses_a_logical_rearm ... ok",
+                                          "test a_silent_deadline_reports_a_silent_receipt_not_just_silence ... ok",
+                                          "test causal_transcript_refuses_marks_past_its_byte_bound ... ok",
+                                          "test a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong ... ok",
+                                          "test a_previous_cycles_receipt_never_claims_a_new_waiting ... ok",
+                                          "test a_horizon_already_past_answers_immediately_rather_than_waiting ... ok",
+                                          "test wake_wait_exits_three_on_timeout_and_two_on_a_bad_id ... ok",
+                                          "test a_designed_phase3_delay_is_absorbed_by_the_receipt_wait ... ok",
+                                          "test a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append ... ok",
+                                          "test concurrent_sweeps_never_double_consume_a_lease ... ok",
+                                          "test a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline has been running for over 60 seconds",
+                                          "test a_lease_burned_stale_while_its_waiter_lived_names_the_rejection has been running for over 60 seconds",
+                                          "test a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis has been running for over 60 seconds",
+                                          "test a_ring_missed_and_a_re_arm_are_reported_as_different_worlds has been running for over 60 seconds",
+                                          "test a_second_cycles_burn_never_erases_the_first_armings_receipt has been running for over 60 seconds",
+                                          "test an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable has been running for over 60 seconds",
+                                          "test a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline ... ok",
+                                          "test a_lease_burned_stale_while_its_waiter_lived_names_the_rejection ... ok",
+                                          "test a_second_cycles_burn_never_erases_the_first_armings_receipt ... ok",
+                                          "test an_unreadable_store_at_the_deadline_stays_a_timeout_and_says_unreadable ... ok",
+                                          "[gate] ... 3 lines omitted between the first named failure above and the end of the stage ...",
+                                          "failures:",
+                                          "",
+                                          "---- a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window stdout ----",
+                                          "",
+                                          "thread \u0027a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window\u0027 (54032) panicked at apps\\cli\\tests\\wake_http.rs:2211:13:",
+                                          "the sidecar is no longer running and its rendezvous is not present: ExitStatus(ExitStatus(2)): {\"ok\":false,\"command\":\"wake.wait\",\"data\":null,\"diagnostics\":[{\"code\":\"GHCLI017_WAKE_INVALID\",\"severity\":\"error\",\"message\":\"018b9c4ac5bb2f0f has no live lease on this execution: a waiter waits on its OWN lease, never on whichever one it finds\",\"path\":\"/sessionId\",\"source\":\"wake.wait\"}]}",
+                                          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+                                          "",
+                                          "",
+                                          "failures:",
+                                          "    a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window",
+                                          "",
+                                          "test result: FAILED. 46 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.64s",
+                                          "",
+                                          "error: test failed, to rerun pass `-p graphhelm-cli --test wake_http`"
+                                      ]
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  70.134,
+                       "startedUtc":  "2026-09-16T18:42:08.1063977Z",
+                       "endedUtc":  "2026-09-16T18:43:18.2421814Z"
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.66,
+                       "startedUtc":  "2026-09-16T18:43:18.2442173Z",
+                       "endedUtc":  "2026-09-16T18:43:18.9042096Z"
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.518,
+                       "startedUtc":  "2026-09-16T18:43:18.9062153Z",
+                       "endedUtc":  "2026-09-16T18:43:19.4240196Z"
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.092,
+                       "startedUtc":  "2026-09-16T18:43:19.4255204Z",
+                       "endedUtc":  "2026-09-16T18:43:19.5174398Z"
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.362,
+                       "startedUtc":  "2026-09-16T18:43:19.5194389Z",
+                       "endedUtc":  "2026-09-16T18:43:19.8819205Z"
+                   },
+                   {
+                       "name":  "frozen release guard",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.592,
+                       "startedUtc":  "2026-09-16T18:43:19.8834197Z",
+                       "endedUtc":  "2026-09-16T18:43:22.4753589Z"
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  395.469,
+                       "startedUtc":  "2026-09-16T18:28:34.4867242Z",
+                       "endedUtc":  "2026-09-16T18:35:09.9558274Z"
+                   },
+                   {
+                       "name":  "PostgreSQL ignored matrix",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  204.737,
+                       "startedUtc":  "2026-09-16T18:37:25.6233756Z",
+                       "endedUtc":  "2026-09-16T18:40:50.3600061Z"
+                   },
+                   {
+                       "name":  "PostgreSQL matrix under a non-C collation",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  205.97,
+                       "startedUtc":  "2026-09-16T18:37:25.6498224Z",
+                       "endedUtc":  "2026-09-16T18:40:51.6199239Z"
+                   },
+                   {
+                       "name":  "apps/studio (npm)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  115.961,
+                       "startedUtc":  "2026-09-16T18:43:25.1912477Z",
+                       "endedUtc":  "2026-09-16T18:45:21.1520959Z"
+                   },
+                   {
+                       "name":  "required-features coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.518,
+                       "startedUtc":  "2026-09-16T18:45:21.1566143Z",
+                       "endedUtc":  "2026-09-16T18:45:21.6765631Z"
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "suspended_window",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\suspended_window-697d0ee3e72240d1.exe",
+                              "sha256":  "FCF60F69CC5A7F4B089BDDA18CC84FE26D277D13F4509E020DB4D387EAB96564",
+                              "mtimeUtc":  "2026-09-16T18:28:46.4718350Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "E59B154BD6EBA5A527B02E8030D68C66C539DD269EF2EDDC51B6452B80247845",
+                              "mtimeUtc":  "2026-09-16T18:28:47.0204064Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "7C6690CB308A52F3DB56045A197977E0B20DAF50661B70D608987971E507DCD2",
+                              "mtimeUtc":  "2026-09-16T18:28:49.2711845Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "9E67136720CC6CB257F666438B99061FDDDAC8FC2F0B5EA5F6C501C5AC034979",
+                              "mtimeUtc":  "2026-09-16T18:28:49.6376452Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "embodied_population",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\embodied_population-bc26a1930956746c.exe",
+                              "sha256":  "16904AD97A247F5F76275DDDA23AD7D98D050D71EFC5E6AE0CA7E62A4F2F1D5A",
+                              "mtimeUtc":  "2026-09-16T18:28:50.9249061Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "DED190CCDA759B94214380894B3CF53AA82D8EFE9B71C56F02533BA61557B1D8",
+                              "mtimeUtc":  "2026-09-16T18:28:51.0182817Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "257045020F8EF5F55DB286A0081FCA5E0BD1F7E395CFF1A786596937D6B0BBC2",
+                              "mtimeUtc":  "2026-09-16T18:28:51.1508909Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "2D6E2BB6330A638E212873A5E22573573C9FA11A10A3DAAB6AACC817684EFB2D",
+                              "mtimeUtc":  "2026-09-16T18:28:51.2035828Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "B9F363166DE87017FD6D4F3647033E8391266A993CE0C5DAD9359FB7F3C51A9E",
+                              "mtimeUtc":  "2026-09-16T18:28:51.3499240Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "8DDC53E41D97FA270D333628B50C6C7F00CDD98B607F7408D65E16F5260078C8",
+                              "mtimeUtc":  "2026-09-16T18:28:51.3745154Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "C5E839C6F5A3A75ACDD2F9C4ECF286551DB94894CB8C875F2D52EEB2F2439B5A",
+                              "mtimeUtc":  "2026-09-16T18:28:51.4176483Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "98A71AEBB4990CF581749B6F2D4A6635E2ED9C9FF720FE7C8DB212B1CC17519A",
+                              "mtimeUtc":  "2026-09-16T18:28:51.4457737Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "6BAB721F008F88B766D4DFE0243BB3EA6EB85CC7CFD92C86DF445FA27E8F6820",
+                              "mtimeUtc":  "2026-09-16T18:28:51.5213208Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "8536A751EE5E206AAC1AAD4DC58588129D4A6E9E61BA614A396666542040DB56",
+                              "mtimeUtc":  "2026-09-16T18:28:51.6056515Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "3F2141CE0368169FE4C9A04961E2B666B7676D12B0A176FC5D5B770574B24F4D",
+                              "mtimeUtc":  "2026-09-16T18:28:56.5817631Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "24B6B35CD805CA67D76968F403AC96E2D10C701F20F3077CEA84FB6FBBECACBB",
+                              "mtimeUtc":  "2026-09-16T18:28:56.7555410Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "D4F740C43B47585827EE183F3F5A72CB209E25376F271DA9B5FAA7C59E188315",
+                              "mtimeUtc":  "2026-09-16T18:28:56.8364982Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "29D626F1BE729DF7E64F28659C58E1C738291E183236E1A020C626939B42A606",
+                              "mtimeUtc":  "2026-09-16T18:28:56.9001051Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "DDCC9A8B7B8B2098412BB79E1C502BA5E273C4A55521D3C9004D7E4755BCCE27",
+                              "mtimeUtc":  "2026-09-16T18:28:56.9326157Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "06EE1789CA9AAFD07881F31F10BBB9C39D63E1504D50AB750A32A3253DBBAE09",
+                              "mtimeUtc":  "2026-09-16T18:28:57.0435740Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "F6179575FC1F97CEEBAE161C73A30C8DDFE9D6BA88BE77BA3015ED2E6E67C360",
+                              "mtimeUtc":  "2026-09-16T18:28:57.0755447Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "C55A6206C92583A848C92032EFE5EBA972DE7FBADDC3F797A4DF73DE4C997D5E",
+                              "mtimeUtc":  "2026-09-16T18:28:57.0915928Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "D07EC625A085133BB862DDC90450C4CE865FD9C5DF0C99DE87BB5BE11717953A",
+                              "mtimeUtc":  "2026-09-16T18:28:57.1016288Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "3254D6DF7B3B6605F4E72709134A6F5A8E066073FE9D20DFBF82BDEE97E78C65",
+                              "mtimeUtc":  "2026-09-16T18:28:57.2015122Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "306A8D35C28F91939ED28DCC559312E511F8D5BBA5F0CACB8BA6A4FEEF03F8FF",
+                              "mtimeUtc":  "2026-09-16T18:28:58.1899018Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "C04228C0F33451F65E11F7F03F45FDC08AB54D8D5A5E813DB430BC3993D61E84",
+                              "mtimeUtc":  "2026-09-16T18:28:59.3332107Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "only_declared_crates_write_the_repository",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\only_declared_crates_write_the_repository-23344476ee16cb9c.exe",
+                              "sha256":  "750FDF72A6543B0C24C2C1E0B3B1BE1165B21A8749915467A83A52816F22920C",
+                              "mtimeUtc":  "2026-09-16T18:28:59.3698463Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "E63FF1B2986FE76DC7F06AA217A9F6BC065221E6A174B355F21130DC38AAD0D7",
+                              "mtimeUtc":  "2026-09-16T18:28:59.4139618Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "8FB50924DCA16A7F93BDD90DAE4B5AD8EF9903FB5827D4EEDF774F47EB3FF2E0",
+                              "mtimeUtc":  "2026-09-16T18:28:59.4259944Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "F3F40B6EE21F1F61C8F069F0F51ACEBB62AE4C67FCAE8BACA9FD5F2EE45D1AE2",
+                              "mtimeUtc":  "2026-09-16T18:28:59.4249945Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "D3E4E756883103BA036817300695E5ECEB0D85B0EA15C10514A5024572CFB30F",
+                              "mtimeUtc":  "2026-09-16T18:28:59.5986694Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "8B47A0FC0569E63EE23BE8F7DD362823D90E530D1B642F30B60C3787422B57EC",
+                              "mtimeUtc":  "2026-09-16T18:29:00.4132062Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "C4E3E9B1248FD1E76A3697D3BE97959F380190AFBC9203CE006FD6541C6A0938",
+                              "mtimeUtc":  "2026-09-16T18:29:00.4775189Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "C249F0E223EBD798E24D86BB9BE844EC45C507D4CC4C5F555C2F258EE9ABB78D",
+                              "mtimeUtc":  "2026-09-16T18:29:01.1652983Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "3358952649299993E1D4D13A2CFD651792528A9F35708305C9E0296979C47209",
+                              "mtimeUtc":  "2026-09-16T18:29:01.1743611Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "7DE559F2F6A41D709ADC491A1D02F33EA119FFB3830BEEAB2207AEEA66F8D93B",
+                              "mtimeUtc":  "2026-09-16T18:29:01.7152750Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "6099514B817C85567B7E53047EF2DC8D6A8C02FB192F5FC8C59EED3E50FF50FA",
+                              "mtimeUtc":  "2026-09-16T18:29:02.0658620Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "8E5C7684D227D1E8C6D8C4B3C66F753BBD20D6A9A75E40D3762C7803AB01B666",
+                              "mtimeUtc":  "2026-09-16T18:29:02.1617670Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "BDD0D9BE94CBB884EBEDB0C18EAA03036FAEADD11A95848BA37EAB95F419DFA5",
+                              "mtimeUtc":  "2026-09-16T18:29:02.1085557Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "5B554F558260C83D09B3FFD41E7DAAA6E367D083E7FA544DB3DA3B87B20ACDFD",
+                              "mtimeUtc":  "2026-09-16T18:29:02.1788460Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "E250FE524F273D78E1E55C16367D2DEB1B00F362BDEABE64F729DF4BD5234EDE",
+                              "mtimeUtc":  "2026-09-16T18:29:02.3930588Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "60FA96205E281688055927391552589A859888DBBA475C1C993531D5BA4AD9A4",
+                              "mtimeUtc":  "2026-09-16T18:29:02.5377968Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "C6ED641064FF7A6AB9C61942999C596323AD1AB9957DD0D661C0A9A8A91D08DA",
+                              "mtimeUtc":  "2026-09-16T18:29:02.4651786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "B0D8C655F66B29CA0DB9159441D496A0ADE11B0CA10430EFE0D79573CBA4D450",
+                              "mtimeUtc":  "2026-09-16T18:29:02.4405849Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "0812C62956EA185C8FE31B5F32297ED6B6BCFBF250138C937BA3278DA914625B",
+                              "mtimeUtc":  "2026-09-16T18:29:02.4661776Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "82C558FBD05FFF63B0D54FE5AD420CF4369E8B5DCCC2C3EB2229BAD470DB220D",
+                              "mtimeUtc":  "2026-09-16T18:29:02.8996838Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "0E7A2A5E9C846AFB128634AE28B450AEF07AF05E8457572E78039476A90FEC65",
+                              "mtimeUtc":  "2026-09-16T18:29:03.6986589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "99EC3CAC7D75F2AE1EB479A69F5D608C6FF94B53C554BD5439C340FC193627DB",
+                              "mtimeUtc":  "2026-09-16T18:29:03.6775500Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "D32E57424853B3EBEFBBB4F0E1F13E2F040C68104FA980479532FEB2C8209DAE",
+                              "mtimeUtc":  "2026-09-16T18:29:03.7699537Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "AC953CF604B2CEEE2B10AF5E81B23782C4CB18BDD6534809BBB716CEE23A76AA",
+                              "mtimeUtc":  "2026-09-16T18:29:03.9441686Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "25810466301195DFD5A7F6852A6E70D563A116CAEEE28C6CC06E6B890C2A7CDA",
+                              "mtimeUtc":  "2026-09-16T18:29:04.3718470Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "D0BA3490DA51DB333E04B8BAD21F3B826BEEAAC3AA9AC731EC02043DCD796CCB",
+                              "mtimeUtc":  "2026-09-16T18:29:05.2975847Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "267EEFCE8150A794D5F11AD35BC9561A609285C3F79F7DE47AE580EB4EBEC1DE",
+                              "mtimeUtc":  "2026-09-16T18:29:05.5881550Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "A0F52DE70F6F54F7636255CFCEF6CC856812D3B45242B74698BD3C959B946023",
+                              "mtimeUtc":  "2026-09-16T18:29:05.7245905Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "69981D6520A3C319B645B655F09FA6CF4E322C330601F9E8B0B91C596A893266",
+                              "mtimeUtc":  "2026-09-16T18:29:05.7487500Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "F9AB328F598AF8E876813DD955E52FD93B3BF9D03787884AE0D469A9D5020E9A",
+                              "mtimeUtc":  "2026-09-16T18:29:07.2386369Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "31BD092035C586628CBBFF5DCD168A2CD90BE0AC9426F6F4FE98A8CF60D4C39D",
+                              "mtimeUtc":  "2026-09-16T18:29:07.2411481Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "2C6AE240B2C2112A4921455114C38ABB7256EDD6E254CE28B4196C57E79C32C8",
+                              "mtimeUtc":  "2026-09-16T18:29:07.3944494Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "2FA4511EFE1DA82845F945D7D5514E78D93DEAA4B6E99447A63F47683C23B544",
+                              "mtimeUtc":  "2026-09-16T18:29:07.4115043Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "90D85058A51A2A57E10016B3B140FA8E6A92E5DDEC806AEC4925B59F61E14CA1",
+                              "mtimeUtc":  "2026-09-16T18:29:07.5031887Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "D725A2C07F4E7568E00C4D6BA5729C756287DFDEEFC604101DD09F2AFFAB0EAC",
+                              "mtimeUtc":  "2026-09-16T18:29:07.5001759Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "6502E14583D02C0049EB198764F24AF3DEAE58703CFE2D6F8BE0C0CCB016A209",
+                              "mtimeUtc":  "2026-09-16T18:29:12.4890278Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "34FA9B6834E35FBE54241A4F9E25FC30A9C60FA8E681AE748DC696EBC0D9E35B",
+                              "mtimeUtc":  "2026-09-16T18:29:18.0348744Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "9C6A09DBEA738A05A2340AD9666C1DD0AE0E73F24E3052783A403B9F6967D0D1",
+                              "mtimeUtc":  "2026-09-16T18:29:15.6062831Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "92806FCD6557B6D97EDFBCC9A9C91A099BED05877AF1D4FFC08449B848326051",
+                              "mtimeUtc":  "2026-09-16T18:29:17.3481419Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "C70D2A992CFE6CCD24635AE89D1597A212865E1DDD04E87D2C28324C42151D74",
+                              "mtimeUtc":  "2026-09-16T18:29:18.1042041Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "21040DC3C6908EF66A5A5B870FC5C14B15CD8D924AF4E039563EE25E362A1694",
+                              "mtimeUtc":  "2026-09-16T18:29:19.6824615Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "49DC5527BD6EB9E24981B8C49B6CC5AEA21FE7F2014F31D0FCE3A1CEB115EEC8",
+                              "mtimeUtc":  "2026-09-16T18:29:18.1162329Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "A88DFA252C39AC34943F66BFCA968CF73603A31038E544E3D08352ADCB6E7608",
+                              "mtimeUtc":  "2026-09-16T18:29:21.3684260Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "9A293F4C4A3FD198EBF453371A5C875C386F516BFAFEC5A386922CEF5192E025",
+                              "mtimeUtc":  "2026-09-16T18:29:23.8394340Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "A25BCEED9187ED3136A1DC73275562FFA23A40CFBBFBD1F960194E8E6A1BC3AD",
+                              "mtimeUtc":  "2026-09-16T18:29:25.4849722Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "CEC8B4A2249016F115B4C68F31562A34326A341AEB27863CAE9E4E8F229436E0",
+                              "mtimeUtc":  "2026-09-16T18:29:28.4646522Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "C0B8291A45E83AE22B8EDF597589140DF042AE6165F9714B86C442AF4723A025",
+                              "mtimeUtc":  "2026-09-16T18:29:28.5527593Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "3EB3408F174D5E12D496254D5B96E8D959D8B17DA2948C6AC40B9503D9C3FBA5",
+                              "mtimeUtc":  "2026-09-16T18:29:28.5793249Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "7D1F458593132FC69CD04F17FB14739357B4247CF1E5C2AB41229FFEA9E089BF",
+                              "mtimeUtc":  "2026-09-16T18:29:28.9572052Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "8C35344E96B891AD238754E854FE38FCF97AD26204606F13D01F1B0A84F112BB",
+                              "mtimeUtc":  "2026-09-16T18:29:30.0896680Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "A9B6571275398DBED8E20F84069CEC143ED603648F26DF0B8985D5C09ACFB5A1",
+                              "mtimeUtc":  "2026-09-16T18:29:30.5713494Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "0A3AD0453821790B0FB05A2021A8923D95A87F067B5905C0E72F7460C0EE9C19",
+                              "mtimeUtc":  "2026-09-16T18:29:30.9665535Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "C467EF54E72A1471B866162996A4F1F7A0917331ECF8B2B9566C6AD21646AB5F",
+                              "mtimeUtc":  "2026-09-16T18:29:32.6996149Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "7AA1AF9490A7E0CB0673DEBE696AB62FE2471EF8CDCC1745B11C214A99CD83CC",
+                              "mtimeUtc":  "2026-09-16T18:29:35.0551569Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "8B1A6AFC7AAF8CE89A168236FE61A7B67EC37FE81AF7D4332BB877754EEE6694",
+                              "mtimeUtc":  "2026-09-16T18:29:35.0191991Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "03A2ACC67D5B07F110230859E9D725219EDA609A62A77B7581FA6C5E6A1178EF",
+                              "mtimeUtc":  "2026-09-16T18:29:35.1230311Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "B21550969776644ABD580B9CD7D2213B52A90A76FAC7FCCC6853A58D45549F97",
+                              "mtimeUtc":  "2026-09-16T18:29:35.0556580Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "1BCFA4082FC2F22BC3CB02CE7BEAC7FBCED1FEAD00D68D675BF76BB965817909",
+                              "mtimeUtc":  "2026-09-16T18:29:35.1355659Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\declared_gap_delta_application-a28376cc3b9d5db2.exe",
+                              "sha256":  "E8BF42DA51BA569F11340728EA1AF75AE1485FD742631138BCB4E35DF873283E",
+                              "mtimeUtc":  "2026-09-16T18:29:35.2731160Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "35402A9F9792695CC8E1F29EE8EF55D91F58EDC505357490CD43004F96645AFA",
+                              "mtimeUtc":  "2026-09-16T18:29:35.0913141Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "ADF6AE2EA933CEE5D0DDE8027D71B1558767F21442673907F9CCCCCC621E4FC1",
+                              "mtimeUtc":  "2026-09-16T18:29:35.2193403Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "4EDE00F69988BDDA1A1D4809941D3C7BCC3D10F89D42E974987B890E527BDB0A",
+                              "mtimeUtc":  "2026-09-16T18:29:35.1797210Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "2E59BCA00197EDB477FAD61B2303F8E4CA095053CE483FCB868B1D25987B3A3D",
+                              "mtimeUtc":  "2026-09-16T18:29:35.4489478Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "70BA17888113E292FF487856890455980BB9DE927A8C31B1642BA3A67FFB827D",
+                              "mtimeUtc":  "2026-09-16T18:29:35.8079995Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "54937DF8C1F2C6F4FAE9657FCF7DD019C2DEAAB92D2E20A252DF83C1A08F2DF9",
+                              "mtimeUtc":  "2026-09-16T18:29:35.5896991Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "ECD4F0139898D08852395474F0AB68E8E28B70C6A439425AF82A3470C8F3501A",
+                              "mtimeUtc":  "2026-09-16T18:29:35.7974690Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "FB9E806FEEE4B34940110852ED9D20C76FCCED761C23BDF843BDB6141450F123",
+                              "mtimeUtc":  "2026-09-16T18:29:35.8095086Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_verbs",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\customs_verbs-6876fb79d5413d4d.exe",
+                              "sha256":  "7C96B7C620127B367861698E0918EDB367C4A8AA276922830116ABC2533E5C3C",
+                              "mtimeUtc":  "2026-09-16T18:29:35.7974690Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "persisted_node_bytes",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\persisted_node_bytes-adbd348bb95f7f4f.exe",
+                              "sha256":  "7BEB8DB23A817319B6EE716F18C9FC0BBFD0ECE20E0A29B8B7CBF2C7CE10D35A",
+                              "mtimeUtc":  "2026-09-16T18:29:35.5460417Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "83FE2AAE8DDBD3FC62681C83EEB38184E45C59A5AD0B32C3F1E3A876578E9A3F",
+                              "mtimeUtc":  "2026-09-16T18:29:35.7974690Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "9FAC291729AF75F63624DA3517A455B559D2B49159F842364EC7AF6A4AB666AD",
+                              "mtimeUtc":  "2026-09-16T18:29:35.5610802Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "4C1CAE6FD174203A5961122C6F89EE25D518282DA253FAD236095A225A3EDE11",
+                              "mtimeUtc":  "2026-09-16T18:29:36.5564343Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "C97AB06C441E31F29ECC7A07CA9AB29C32F171B9FC72197C03F9C217D25F6694",
+                              "mtimeUtc":  "2026-09-16T18:29:35.7974690Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "E731E8F6E9EDC18DF7E9090A7910FEE10A644A5A45A58EF7F339248F46ACE781",
+                              "mtimeUtc":  "2026-09-16T18:29:35.7974690Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "9CE48AB8D1F5E8F24CA889A066356223AE17003962D63972EC39A457008DED80",
+                              "mtimeUtc":  "2026-09-16T18:29:39.2200290Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "D40B3915EA6B172D6F2CB5215CBFC61C1ABC4220FBDF0E9D4015B1AD54B55030",
+                              "mtimeUtc":  "2026-09-16T18:29:38.9922080Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "43B7E5A11B68547ACB9E972DAB004B9B06D1E973B638C6D4B25C4E3A791DA106",
+                              "mtimeUtc":  "2026-09-16T18:29:42.1498800Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_compiler-123eaabeb5aa5b7a.exe",
+                              "sha256":  "39FD64BD05516451269B00190682E58A4094920F151FAAA9DE94AF7C8B05ACA0",
+                              "mtimeUtc":  "2026-09-16T18:29:42.9330894Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-76d03ce2dae21b0e.exe",
+                              "sha256":  "4D294337F82F7483561326B4C48489848BE0C8E24F0E0E690CBAA6D23E17BC3B",
+                              "mtimeUtc":  "2026-09-16T18:29:43.3665116Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\authored_string_invariants-5c95410b7d9d9aa1.exe",
+                              "sha256":  "D747DB9016974F44CF49BCBE214F37BCE4FD5A6A0A770355C65683815A94AD82",
+                              "mtimeUtc":  "2026-09-16T18:29:44.2722904Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/architect#graphhelm-architect@0.1.0",
+                              "target":  "template",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\template-f73a54360d284028.exe",
+                              "sha256":  "D82065909352090929D9BFB8029DC8F32FFA2262973E8CB96DF1CBECCDA76F3A",
+                              "mtimeUtc":  "2026-09-16T18:29:44.2582353Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-08838b3e9550c37b.exe",
+                              "sha256":  "0D2842E0CDEC19C28912339925615CE5BD90CA00C34D669CBB342BFF9FCBA211",
+                              "mtimeUtc":  "2026-09-16T18:29:44.3480659Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\prompt_assembly-6199b025f4ce08d2.exe",
+                              "sha256":  "015A4CD19F97DDFF6E5B5B4DC1652F4DDDF048F5260E5F64EE6F0B7EC52B812E",
+                              "mtimeUtc":  "2026-09-16T18:29:44.3600999Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\blind_judge-85061938b07c03d4.exe",
+                              "sha256":  "AE6B52BCC7334A0259BE73283FE738E539CABABE7075AED04B451D8B1933CE19",
+                              "mtimeUtc":  "2026-09-16T18:29:44.4173896Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\failure_causes-664a7814ace40d7c.exe",
+                              "sha256":  "670BC1F6DDC2F1A19F6F5B5AB1D8029D272BCDCF869AECF6DB4198A018DFEE65",
+                              "mtimeUtc":  "2026-09-16T18:29:44.4459838Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/architect#graphhelm-architect@0.1.0",
+                              "target":  "catalog",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\catalog-e3bd6f3e982439d1.exe",
+                              "sha256":  "01944A25269CEFE1B09E3926CE6AAA7D0ED70E7AA10F0D0F16632D21333FFCFC",
+                              "mtimeUtc":  "2026-09-16T18:29:44.6798408Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\owner_output-359f8993fec6597a.exe",
+                              "sha256":  "E99D4A2DFF0559B0B559A8A01D2D1E3FB6D399728E93419C50191FEC8C11A978",
+                              "mtimeUtc":  "2026-09-16T18:29:44.7744948Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_accounting-96b9611b0893de8a.exe",
+                              "sha256":  "242730F7ED9BA5A75394A8F3D258F23FC133A65B73766161141E6CFA7E4EF7A7",
+                              "mtimeUtc":  "2026-09-16T18:29:44.8558860Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/architect#graphhelm-architect@0.1.0",
+                              "target":  "graphhelm_architect",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_architect-b124dc45e6df5d69.exe",
+                              "sha256":  "0FDDEBE8F8CCC351B18AEE3FE7CC787BBE1CB6BD595E87C60CD454319C57127D",
+                              "mtimeUtc":  "2026-09-16T18:29:44.9069879Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/architect#graphhelm-architect@0.1.0",
+                              "target":  "park_witness",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\park_witness-5f1ef3e8cccefebc.exe",
+                              "sha256":  "84B8CD0DD136CD47266F8E6E278B96FE8E55A281E0DDA299313264F84723FDFD",
+                              "mtimeUtc":  "2026-09-16T18:29:45.0546910Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "20F9E0E43C745EB500382D8D7FFD789A4F03B419E8DF2B20B7E9883F5B2208C8",
+                              "mtimeUtc":  "2026-09-16T18:29:47.4376588Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "82F9ECEF37EA5E0C99FB9B1531EE5F4E25F0139B03D9E7096ACA727FA8D97EAE",
+                              "mtimeUtc":  "2026-09-16T18:29:47.5488674Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/architect#graphhelm-architect@0.1.0",
+                              "target":  "golden",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\golden-d373e9fab8c0d9e3.exe",
+                              "sha256":  "957DBA35EC4A6E11584B7908EE5B8DEDA9214B01987DE62D5592F9CAB644120B",
+                              "mtimeUtc":  "2026-09-16T18:29:47.5568675Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\axis_completeness-958a5c4b3e6e6090.exe",
+                              "sha256":  "6B91549476CD009E69D10FE5628A1457420B9F49B07B30154CB5F3A68C30E5DF",
+                              "mtimeUtc":  "2026-09-16T18:30:01.0597236Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "5F7E76C55B97199C037FA06DA8022F90C94F09C58B3CEAA7C9DDED651D1856FD",
+                              "mtimeUtc":  "2026-09-16T18:29:48.1365561Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_url-12eb716fd9cefeab.exe",
+                              "sha256":  "2C0518775E2235E8B99DBC93088981863A625E68E538C7091C645E8835CCB3D5",
+                              "mtimeUtc":  "2026-09-16T18:30:06.1808196Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_cli-c5d1c6c9817fe0d7.exe",
+                              "sha256":  "98229984D840819ACD562B2D2F7A696D2C9B17D9BFC85D7FCD342769BE6DEEB8",
+                              "mtimeUtc":  "2026-09-16T18:30:06.4381125Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\retention-1cbaa4229c9bf304.exe",
+                              "sha256":  "02B6458E44C3A7D6B035515094E246C9D08BBB428FEA4EBE8EF2CF51C29EE06C",
+                              "mtimeUtc":  "2026-09-16T18:30:06.1808196Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_concurrency-4034771d95bd0b39.exe",
+                              "sha256":  "4CDBC82F73E239AEBD27CF5050D8FD1FF9735FE262CDFB2B5D22568BE881C296",
+                              "mtimeUtc":  "2026-09-16T18:30:06.7257458Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\broker_end_to_end-bb725af4815855d2.exe",
+                              "sha256":  "B4FF97F789084EB4E54CD2B78A32FF2177B4B347C96D158858AC11917BB1976D",
+                              "mtimeUtc":  "2026-09-16T18:30:06.7609084Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "providerless_journey",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\providerless_journey-af111435d9357a67.exe",
+                              "sha256":  "293B4DF9F2E24C8C194994835B8C6FC4B7DED44CD7D70984AF4BF9ACA5E8FF41",
+                              "mtimeUtc":  "2026-09-16T18:30:06.8588526Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\paired_driver-165db5e4e84a5c44.exe",
+                              "sha256":  "F88FE6EFA50A0BC9EF36644CD8E7BC0D9C14A317379124A1865EAF175A6DB136",
+                              "mtimeUtc":  "2026-09-16T18:30:06.8939901Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_journey",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_journey-9a7c4e68f70037c0.exe",
+                              "sha256":  "F15C1501FA598A02AAB6B97B08AF59EA9C45B4E04E10DF3644645BA5C4AF4750",
+                              "mtimeUtc":  "2026-09-16T18:30:07.2991233Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_journey-930cf325f3609120.exe",
+                              "sha256":  "1E65BB7B83FAA54D4BB3258AB5CBDF60586B22B20C03895907658FA0224500D8",
+                              "mtimeUtc":  "2026-09-16T18:30:07.8790018Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\retrieval-a18bd556642c753f.exe",
+                              "sha256":  "54C42F8B77E89B8E5974F31908BFB8A6743B392B4D3BF5F40495328214B65FE7",
+                              "mtimeUtc":  "2026-09-16T18:30:07.9192879Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_citation_fixtures-85377d736ac83c96.exe",
+                              "sha256":  "EDD2EBC1EDB721ACDA8283277950C22B8FB0EBBDFD62157505C6971CE1AE9B62",
+                              "mtimeUtc":  "2026-09-16T18:30:08.1610959Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\decoder-73994c6ee76ada31.exe",
+                              "sha256":  "308B57A66CDFB0672858F82A94242955CEFCEE34B4B005A996B50E5417839D1B",
+                              "mtimeUtc":  "2026-09-16T18:30:07.9368582Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\extension_lifecycle-151aeb26f3b964e3.exe",
+                              "sha256":  "68D2DBCD635F6F1A7E972B127039731806FAE75713EDC9561BF831FCC3C510AB",
+                              "mtimeUtc":  "2026-09-16T18:30:08.7800154Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "5012114DB7CC6F5B08F482507D19EC9E243E6AF0EF600930BE789879EFD9D82C",
+                              "mtimeUtc":  "2026-09-16T18:30:08.9674079Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\evaluator_policy-bbc74c65eadd2bca.exe",
+                              "sha256":  "C37826B876F0890378803F492EF8411AF234132DF238D0E5571E9551396D63A1",
+                              "mtimeUtc":  "2026-09-16T18:30:08.9674079Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\dry_run_pipeline-b3e806f73e6bccf5.exe",
+                              "sha256":  "2554786C42F3A6F6DA6E6982CED3873E4361143AF9D88AC0EE30398D67A53477",
+                              "mtimeUtc":  "2026-09-16T18:30:08.8150447Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\execution_cli-e8e2bc3191fc56fd.exe",
+                              "sha256":  "C40A557EAF0D6046CDA4499EBCFCEA10DB2070652329783BACB2894FA6AAA337",
+                              "mtimeUtc":  "2026-09-16T18:30:09.2301302Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\runtime_http-95ca43149ec25b5f.exe",
+                              "sha256":  "ABCE12A30BCA14E63C846F1AAA0225F4EBCF372E0044BD8BD869BFAA52867D1C",
+                              "mtimeUtc":  "2026-09-16T18:30:09.2366577Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_tool_host-2877cb05147aec28.exe",
+                              "sha256":  "970BA7C757EBB3CA72F5A4BAB7B2681765C96C141865103F408725B77AC0D3CA",
+                              "mtimeUtc":  "2026-09-16T18:30:08.9664062Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_chain",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_chain-fd5a2ac511a04280.exe",
+                              "sha256":  "A187D98B08360B3499476016BB4527144A4E930A781B1EDA4E503952B597DFF8",
+                              "mtimeUtc":  "2026-09-16T18:30:08.8926292Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\gate_nodes-584345427046c036.exe",
+                              "sha256":  "23ACA40CE33FD6C198B5B40A0A061B87A36A929E49211F5AF0022208E9F10AC4",
+                              "mtimeUtc":  "2026-09-16T18:30:08.4141430Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\tool_cli-56297ae1297ff2e0.exe",
+                              "sha256":  "C7A27A6F76E5B8920834A6255A830759EC2A5A0F957FE2B15614B6758A30AE81",
+                              "mtimeUtc":  "2026-09-16T18:30:11.3239708Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\isolation-cdb592d70fbea044.exe",
+                              "sha256":  "EF6B94463C28290A3AEA60AB2C556C10F705A323D7DDBCD7CAE9A5CDAB44FD92",
+                              "mtimeUtc":  "2026-09-16T18:30:10.5209584Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\migration-2a7492210acdabcf.exe",
+                              "sha256":  "E07A340FE653A10065017D2F335F17CC2C860BE5947D26527277F67332347CCF",
+                              "mtimeUtc":  "2026-09-16T18:30:10.0026849Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\concurrency-c85147712552c1af.exe",
+                              "sha256":  "03ECA76ED89CA5489E0875B45220A195359AC89F789FCAA60EC60D61E0C1D81B",
+                              "mtimeUtc":  "2026-09-16T18:30:10.0011749Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\projection-f31c71b2e7fc0eaa.exe",
+                              "sha256":  "36F5E6B4009585F9A49870C78CF4E449B030B02F356AD62EB4ED4BF314DF7B0A",
+                              "mtimeUtc":  "2026-09-16T18:30:10.5214615Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\fake_index_provider-632907ad49ab8e40.exe",
+                              "sha256":  "1368A0FCDC178547DBDEFF10849CA26279D07E16A70AF8304E1C8AFCCD230DBC",
+                              "mtimeUtc":  "2026-09-16T18:30:23.1789331Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\runner_cli-e1ee72bf765acdbd.exe",
+                              "sha256":  "87F24F5513AF227488096FF9C3B3BBCF7C4D7ED035AD67A9CE622E7B65591DF8",
+                              "mtimeUtc":  "2026-09-16T18:30:23.3377380Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_client_population-8bc58e2ce26d6928.exe",
+                              "sha256":  "F07E1975E11AC2AA3F531A866903EDE008A886AC8C892A0AC3C5CF1C56DB0539",
+                              "mtimeUtc":  "2026-09-16T18:30:23.5114269Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-966440bc95d400c4.exe",
+                              "sha256":  "C4BD0B77A9AB1FC4E97ACD50BF58DFDAD58D8017942031A7F09414E257A2EB62",
+                              "mtimeUtc":  "2026-09-16T18:30:23.6065805Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "delivery_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\delivery_cli-71d2ae2af894b633.exe",
+                              "sha256":  "DDB95695D2B11A4DE4F33DF4C582AEBF4A2ACD6FCA9A30040D0B83D1F3327086",
+                              "mtimeUtc":  "2026-09-16T18:30:23.6040768Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\attention_tag_domain-b011e299efa81752.exe",
+                              "sha256":  "2AE2DEC9BC25665D138F390FEEEC2FAA0DDA03EC017686552BEE73393F334909",
+                              "mtimeUtc":  "2026-09-16T18:30:25.8915680Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\surface_completeness-9204bcb62f5f4b42.exe",
+                              "sha256":  "391CD9C8FCB244B85B7639F4D47F668A88CBD821546DEED95884798FED268BCC",
+                              "mtimeUtc":  "2026-09-16T18:30:27.5700605Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\contained_session-96dfcea77ab493de.exe",
+                              "sha256":  "8B6505AEB070E82C8EE91F0C974B6BA61552EE0337448557CACDA084A063778A",
+                              "mtimeUtc":  "2026-09-16T18:30:26.5377353Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_redaction-e3a7f5665fc425fd.exe",
+                              "sha256":  "58FE60DF41246B18AEE9BA08B4D088411208BB3A422E4FDCEFA770D74C52C61A",
+                              "mtimeUtc":  "2026-09-16T18:30:27.8173396Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\gateway_cli-e419644bcc96d78b.exe",
+                              "sha256":  "7369E334D72112ECDBFF0B7CEC9E48F0E4755C5AEB4BDB46A1E1816FBAB4BF4C",
+                              "mtimeUtc":  "2026-09-16T18:30:28.0245825Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_excerpt_reader",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\workspace_excerpt_reader-5df34ff6d185d625.exe",
+                              "sha256":  "405580DF381658734F296ED8ADD6D8E0F69F23BA1257BC025F2D1407721AFB1E",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1400266Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\workspace_source_channel-d7df63e736233a22.exe",
+                              "sha256":  "B9CC20E6C5B30F0135709365C4FD40F9005170344273FB3EB123F9AB7B96AEAC",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1460835Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\workspace_containment-51c45dc87d3533b6.exe",
+                              "sha256":  "33404F6CF1E895F7F981610DF8F4BA040A2374ED948A9D61A3BA806FDD9E148B",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1420362Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\verified_executable-e1cbd61bd5f0c17b.exe",
+                              "sha256":  "695D79BEDF75D6680AFD219E6D624A0A3E5DDB7D11BDCA0AAF5DB7641AA17E99",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1968391Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\artifact_from_rows-c151f80148b7de47.exe",
+                              "sha256":  "BFDA153E081E23719DB653151A91D5544428AC9A24F518F44860498F46F6E66F",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1978457Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\workspace_cancellation-501b668fb22ba7b4.exe",
+                              "sha256":  "609943443D51EDCFAFF850FC85E4C272CF727F9AE80262947BBD0D8D47F71A1C",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1526050Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\cost_provenance-cfab38d0fc807a2b.exe",
+                              "sha256":  "E11FCEFB01D15F48000C6D83C98A2F4700B26FF927F22CBB8861878CF1E79B6B",
+                              "mtimeUtc":  "2026-09-16T18:30:28.2696503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\oracle_isolation-1fb9c48325e8081b.exe",
+                              "sha256":  "8081F640AEC323D1F9C1113EE2542CA473C50479677EC3BCD8FCC0D73B78D9FB",
+                              "mtimeUtc":  "2026-09-16T18:30:28.2696503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_benchmark-77588fa8df88f117.exe",
+                              "sha256":  "31ED83EABAF80144A6255CA298B1D5D3CF2E757133A21BA44BA04A9D1B6469A1",
+                              "mtimeUtc":  "2026-09-16T18:30:28.2721601Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\run_directory-f59fe0d643cd830b.exe",
+                              "sha256":  "BC86FB37495A7DA50CF88DC153DD8C5AEECDDB3979677547E9592EA6DF8AAF41",
+                              "mtimeUtc":  "2026-09-16T18:30:28.2696503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_runtime-7ebab5765e81f5cb.exe",
+                              "sha256":  "4218F03CD7F4E049E56CC7D20CCFA067B2DCB5B1130380257B163F1B151AE1AA",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1008422Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\cli_smoke-7ce1c17aaf6974ad.exe",
+                              "sha256":  "54768EB2ECD77C8B5DA88F6D722E6E7EF9A9B51E68BF452994E12A66BAA99AA6",
+                              "mtimeUtc":  "2026-09-16T18:30:28.9350086Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_capsule_authority-201894fe49fd7a8a.exe",
+                              "sha256":  "4D3B95151EF1BE0B860F3F058340F92574C16F2BB1E1AD62A3144B2F52824985",
+                              "mtimeUtc":  "2026-09-16T18:30:29.1451469Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\extension_cli-539bfd08de442b1b.exe",
+                              "sha256":  "2E369F0D9F85645A7E79938C449ED653CD0B13E0FE11BE32747326832EF2F3DE",
+                              "mtimeUtc":  "2026-09-16T18:30:28.1973455Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "execution_workspace",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\execution_workspace-ff2b7bf547af4d85.exe",
+                              "sha256":  "E430119593DAD866D8199E97D3F1E17DE06A35DDFE09524112E4F6206FAF401A",
+                              "mtimeUtc":  "2026-09-16T18:30:28.2696503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_capability-81813620e3434be3.exe",
+                              "sha256":  "831B6C2A5B773074D47A4A48E4E852ADDD966A83B34166B507BA171552FA8553",
+                              "mtimeUtc":  "2026-09-16T18:30:28.9350086Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\monitor_http-11ee974da43091d5.exe",
+                              "sha256":  "159FE59C20DB77D2E34BE52ACA8D8CA43072A4A4A13023BC1AA61C19CED34B99",
+                              "mtimeUtc":  "2026-09-16T18:30:29.7223422Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\fake_mcp_server-dae52e3fec616bc2.exe",
+                              "sha256":  "4E29896C8C13A272400F099A585597AD84A9B8A20245CCC5E45853FC7FCCAB05",
+                              "mtimeUtc":  "2026-09-16T18:30:30.1199925Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\repository_conformance-a200d4f89cbb9858.exe",
+                              "sha256":  "FFE4C8F28E2B94DA1C2BA6B1EA17E0E8840F00B81C2B4AC48A65C3C7998FA781",
+                              "mtimeUtc":  "2026-09-16T18:30:29.7452745Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\event_store_cli-ec8d61a5a74d8e5b.exe",
+                              "sha256":  "E637635964461E36F932A0D5C25E6A7F53CD035B1F98CA2C70A9CCEFC532202A",
+                              "mtimeUtc":  "2026-09-16T18:30:30.7728993Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\test_support_has_no_dead_helpers-4f15582889b26b89.exe",
+                              "sha256":  "BFD480F12FCAE4DC2F14BD9A89D276D695BA97F9C9403ACC91F6473DDBDA00E2",
+                              "mtimeUtc":  "2026-09-16T18:30:31.4296760Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\request_set_ceiling-1bf8f75f197df7e7.exe",
+                              "sha256":  "9F56A67C5E6EF041FF779DFE602DF5676E074356DE5575557576432E773EEBFA",
+                              "mtimeUtc":  "2026-09-16T18:30:31.4940948Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "http_helper_inventory",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\http_helper_inventory-a5e27cf664f740cc.exe",
+                              "sha256":  "574397175C3E677BAC8EDD111545B113028DD1D0CB665182C470D57519AF67E5",
+                              "mtimeUtc":  "2026-09-16T18:30:32.1792589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\driver_contract-1d1b49e1df680d7a.exe",
+                              "sha256":  "1E366F870A43EFAD8FC5E05F32CCAC2F7934269114A4095DDF71D9615A65DE03",
+                              "mtimeUtc":  "2026-09-16T18:30:31.7560202Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_package_inventory-b32f2899cb4dcf2d.exe",
+                              "sha256":  "C56F4D80CDEFD35B744FC64D644EC48A95B4400F858E1B7B025CFC2167A273BE",
+                              "mtimeUtc":  "2026-09-16T18:30:32.3342247Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\critical_miss-25619816af2fd454.exe",
+                              "sha256":  "4151C2BB22A4D6A8880EA768360C02215A5904BF689EA9223C7BF1D4E4842050",
+                              "mtimeUtc":  "2026-09-16T18:30:32.4994017Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_observer_trust-66dd3c4903f64542.exe",
+                              "sha256":  "2F1F667D933CECCCC0291A6BC8CB7A9363B904C077F2B0E5B496E83BB73D7298",
+                              "mtimeUtc":  "2026-09-16T18:30:32.3352227Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\resume_project_default-5a1d5d0c0aec06e7.exe",
+                              "sha256":  "E7455713B7D2051E26479514D2ECE2A8D9D8B0073D0903F34DDF573979BC1BF4",
+                              "mtimeUtc":  "2026-09-16T18:30:32.8852217Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_context_budget-343166c6788e4c24.exe",
+                              "sha256":  "9A99035A5665F62EC0228651036B0FC31DCE8A5E99518FBA0D5705291DCC9D29",
+                              "mtimeUtc":  "2026-09-16T18:30:32.9534383Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_promotion_policy-9582d52789bce64e.exe",
+                              "sha256":  "CAB806E3506AE7E432E321E2A3D72525276317D420BC5DE0D460EE11B84FA3D0",
+                              "mtimeUtc":  "2026-09-16T18:30:33.3996992Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\generate_retrieval-56681f8075163323.exe",
+                              "sha256":  "2840BFE661AF6D3121B974066FDAB53559B8E5BF696B7711C9ACA0B131DFCB6F",
+                              "mtimeUtc":  "2026-09-16T18:30:36.8823459Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\paired_contexts-1b1d2b8d4f58a482.exe",
+                              "sha256":  "3180CF90595EC67390D6861CC1FC8E2EFD5B4A6EBFF9D85D2A62958EEEBBF30C",
+                              "mtimeUtc":  "2026-09-16T18:30:34.3672853Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\sweep_cli-3ef369f0482b7b05.exe",
+                              "sha256":  "E42FE3E62B089A27CD498B01005CDD04050E9A721E352AFFC1C5689C4B563295",
+                              "mtimeUtc":  "2026-09-16T18:30:33.9038223Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\workspace_source_reader-0926e94bdbcffb91.exe",
+                              "sha256":  "29F24CBDE6A0A040D59382414C36974FF4D19D0097EAD067D86AB881BC344B51",
+                              "mtimeUtc":  "2026-09-16T18:30:33.7266568Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\generator_arming_site-20b0c4829849ebfa.exe",
+                              "sha256":  "047FD01D6BBBE1D7C71D03CABFAB5837C2C0939E194B596AFE09FA1CCEDB2617",
+                              "mtimeUtc":  "2026-09-16T18:30:34.9953400Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "init_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\init_cli-b6d4cbbe9d90b8cc.exe",
+                              "sha256":  "F6CCFCC0F80716ED0D67FC423AD75E8691B25C4C6E2C59804584AD6A5303DF8C",
+                              "mtimeUtc":  "2026-09-16T18:30:33.4251267Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\process_isolation-4f6ce051933e47a8.exe",
+                              "sha256":  "E18506496BAC003B20AD9C5CFF059BC0D62ECF46D0CD145AD88672E615F85D16",
+                              "mtimeUtc":  "2026-09-16T18:30:41.2912096Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_graph_contract-f652011a919d2b9d.exe",
+                              "sha256":  "45879F968F1A30937B2C2A74C011451A1685D30231C06891F1E8CE5AA7550396",
+                              "mtimeUtc":  "2026-09-16T18:30:41.3855894Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_codebase_memory_mcp-0a3221b4d4470f6d.exe",
+                              "sha256":  "670C9CB516A7A62B1FABA9069CF5B2C68BDED501AF5E138320F8B118BEFC04D4",
+                              "mtimeUtc":  "2026-09-16T18:30:41.4590164Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_development_benchmark-d210324186000576.exe",
+                              "sha256":  "B393D81E05B7E2D6C6E4A352990973312E98C8371E90718A7F8F2F2B2AB87966",
+                              "mtimeUtc":  "2026-09-16T18:30:41.5283134Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\pinned_snapshot-a82ea53321e88f5e.exe",
+                              "sha256":  "51526E44431E5B2657AC52AAD65B818914B0FC772983A308AEF825D8A9A72624",
+                              "mtimeUtc":  "2026-09-16T18:30:41.4411924Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\manifest_freeze-da8473f16b600c44.exe",
+                              "sha256":  "1109092A6E44DB6A381A6EB0D071CECE416621034D9828C012D40E622AF6437D",
+                              "mtimeUtc":  "2026-09-16T18:30:41.4312612Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\backup_restore-d6f24369dc915821.exe",
+                              "sha256":  "D447302B20804F39BB8EC9FD3A50557BDF13B17F42E6ED696FF3861DB9D6E16E",
+                              "mtimeUtc":  "2026-09-16T18:30:41.7677664Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\resume_atomicity-65dc189ac64501f7.exe",
+                              "sha256":  "B5FE77FFCF9D962F4F9FF400609B7F57B6E342E8418772C878E5561F8E3FA1A5",
+                              "mtimeUtc":  "2026-09-16T18:30:42.3404578Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\fake_tool-15d2f75bb1caa99f.exe",
+                              "sha256":  "1EEDCA076BE03C7E20DCE9EDD6C89566BB76A5C088711B2A86048AA29EFBB3C9",
+                              "mtimeUtc":  "2026-09-16T18:30:42.6938021Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_development_benchmark-f69af754a7a421bc.exe",
+                              "sha256":  "0E646F0D2D37CF208C07FC0EEC86572D75366DAE5213FC3554D04E88E546B9FA",
+                              "mtimeUtc":  "2026-09-16T18:30:42.7973392Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "architect_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\architect_cli-8e29584101733cf5.exe",
+                              "sha256":  "BFD49450E26604595DFE3E4AC5E799BFCC249F944BC41CAE95364F9DE9B9012E",
+                              "mtimeUtc":  "2026-09-16T18:30:43.3605698Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_plugin-0cce1aa1629b43d9.exe",
+                              "sha256":  "752E2F6D31553D33CDA69796E2C6AD7172291953A7D0633331F31BA43846CBB6",
+                              "mtimeUtc":  "2026-09-16T18:30:42.8204299Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\schema_cli-34d1671c7040a429.exe",
+                              "sha256":  "5F2A4440A70719D07F1A3C4B2F10FB7D3BF571BA570859453F345B62097FD1F3",
+                              "mtimeUtc":  "2026-09-16T18:30:43.3294681Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\ceiling_reproduction-dd3336a37a135bbc.exe",
+                              "sha256":  "B7C18CA4FED9D84DE0AE0ABE6C93A3DABCD4324873BFA6A0036A7DD2959883FB",
+                              "mtimeUtc":  "2026-09-16T18:30:43.7826985Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\zero_bar-f6fe8d737cbbdb97.exe",
+                              "sha256":  "02C2597359C74306B6DCA5E9092577C3BD10562CF2AD6E07992E5D978E3B34A9",
+                              "mtimeUtc":  "2026-09-16T18:30:44.0567421Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\live_provider-1d6018512697742e.exe",
+                              "sha256":  "588C8ADE0E95BA1E36E0505FC258601C75D938FA46C0392734AA697AF6F5CAD1",
+                              "mtimeUtc":  "2026-09-16T18:30:44.0612482Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\frozen_files-d7e8f6f04394950b.exe",
+                              "sha256":  "1A11455BEDFE78A975D31F88CE0E50156238489EAA5B393071FE6C66AB08CB36",
+                              "mtimeUtc":  "2026-09-16T18:30:44.0964054Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\amend_budget-2438598d439db320.exe",
+                              "sha256":  "3D351DD7CB1F51D776234872EEE16692BE7F84529361D2E58584E5C933AF6F6D",
+                              "mtimeUtc":  "2026-09-16T18:30:44.0979158Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_plugin-a5dac946ea3156c4.exe",
+                              "sha256":  "52DCD850DDFB4439ACDE006DAF6B75F2709241F8E3A6922242B216DD1CCAD7B3",
+                              "mtimeUtc":  "2026-09-16T18:30:43.9826416Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_cli-bd398fb0e513c2dd.exe",
+                              "sha256":  "BFBF566813EF0A22B9102D382B29E583EB3EC6A1754BE891882F1CB8F7700FC6",
+                              "mtimeUtc":  "2026-09-16T18:30:44.0964054Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "customs_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\customs_cli-3ea1d9715d95d370.exe",
+                              "sha256":  "337CE9A57363CAE27FA28EBF25F069F0CAC63033D40AB681F2567844B503EE6F",
+                              "mtimeUtc":  "2026-09-16T18:30:44.2512967Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\event_store_local_backup-885173c24136f6bf.exe",
+                              "sha256":  "684A3F2FB9CBB7C982FC3E8A3482895D6AECE009E7995A6B0BD1E13EBF71A7AC",
+                              "mtimeUtc":  "2026-09-16T18:30:45.4333548Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\mcp_stdio-9964e17ac9a942a0.exe",
+                              "sha256":  "B3C8ABE606399A51B694E36CA37AF8C345C3C8F47498533621ECA2B57B52EF88",
+                              "mtimeUtc":  "2026-09-16T18:30:46.0073729Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_surface_parity-3b87457d7413a67f.exe",
+                              "sha256":  "00705AE3DFA6457942E7D9B89CE1F88223D0952BA03E404643E7D01350C1AFE5",
+                              "mtimeUtc":  "2026-09-16T18:30:46.4917185Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\arm_symmetry-17ed96fc8d878c46.exe",
+                              "sha256":  "9372CA2A19ADFDDE165E7ACD7256C1522C7780C085DEECACD518501BB3C4DF97",
+                              "mtimeUtc":  "2026-09-16T18:30:55.9600959Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\gate_http-90c1e5df823f1054.exe",
+                              "sha256":  "748F605B3D23327EC487FBEEFC87982E456AD69087C931D94B0735940FCB0ED6",
+                              "mtimeUtc":  "2026-09-16T18:30:58.5464359Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "documents_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\documents_http-189564fbc28b85d8.exe",
+                              "sha256":  "AEC7A98ABF3AA5A56F280601BAE9268EEF50B968BFA7DF5CB492BAB5FB45A837",
+                              "mtimeUtc":  "2026-09-16T18:30:58.7865235Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\jpd_retry_semantics-d434ea112de0f626.exe",
+                              "sha256":  "1E7BEEB047D4193916D3FE1A7BE30D2AE995BDEFBB355CB627BD4744FB69E6F7",
+                              "mtimeUtc":  "2026-09-16T18:30:58.7550752Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\api_http-edd0fd34a1286cae.exe",
+                              "sha256":  "C031FF8C1972BB826AF632AAEC312C277B965E37710C281E0E833568C32F097D",
+                              "mtimeUtc":  "2026-09-16T18:30:58.8784900Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_contract_schemas-d7daf5e86d19300f.exe",
+                              "sha256":  "F42B46B66F214541DD625CC28C814E834AC2B277BAD600E21C4AD1F720A3E505",
+                              "mtimeUtc":  "2026-09-16T18:30:58.8599193Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\wake_http-4edb0a05658d35e3.exe",
+                              "sha256":  "1B328BE49044E378F938E5719F3F30D76A4088D4AC0F2A0790BAE803DBF875E6",
+                              "mtimeUtc":  "2026-09-16T18:30:58.8518947Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\contained_provider-a520f67c7d5ad561.exe",
+                              "sha256":  "1E6363883F5274479E597DEEF8E316DEBFC649468171A59163105992F478227B",
+                              "mtimeUtc":  "2026-09-16T18:30:59.6033631Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\shipped_package_coverage-d6cd8c8120d920c0.exe",
+                              "sha256":  "00FC62062ADE4E73B9305E127EF0BFE25B99504446E70941B5E9B499B78A4EE3",
+                              "mtimeUtc":  "2026-09-16T18:30:59.6569524Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "914D1A74DA6E64543DC0F64A4474DD3A3D5F5A662EF5CC8550C3E15FCFF38B6F",
+                              "mtimeUtc":  "2026-09-16T18:30:59.6589565Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "context_quality",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\context_quality-6f23e8295509ead0.exe",
+                              "sha256":  "AF34F501CD5A96BC33E2F28DCF124C04C82AC2BFB8B0F9AF9F886D092CC1F90D",
+                              "mtimeUtc":  "2026-09-16T18:30:59.5474671Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "CC5B8E670350A7B0B84B682E7C14590C100BEE91223C503B0A7E6EE7E9C48ECF",
+                              "mtimeUtc":  "2026-09-16T18:31:00.8023885Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "F91D5960A7712CE0FFA837BF7CA8385379DDE225ADE5E6FA3948B85A8F0686A0",
+                              "mtimeUtc":  "2026-09-16T18:31:00.8398255Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "1856ECD17C88FCF15211F1046139A14FA9E091A05B2853DCA49BEEB097A74BA9",
+                              "mtimeUtc":  "2026-09-16T18:31:00.4600478Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "documents_cli",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\documents_cli-9a345d7565cb185f.exe",
+                              "sha256":  "F636DEE413B02A9B6A3C968A96270044C1B1A16D8303031CD11A84F4C0EFF1D8",
+                              "mtimeUtc":  "2026-09-16T18:31:00.5880014Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "FBFA37D07A3A0D4F2948E7BB2B479A361FED2662DD62208D060F6C38C1CE2906",
+                              "mtimeUtc":  "2026-09-16T18:31:01.0167786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "6C8039BEF3D4D2531A7C372EC956B7574CFCE5D9940C898D753C1678B32EC582",
+                              "mtimeUtc":  "2026-09-16T18:31:01.0698843Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "1F160C108F98FF988D7FA2E5F3999530AC26557E44AA0088B2650E72075653B0",
+                              "mtimeUtc":  "2026-09-16T18:31:01.0990192Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "D32BEB72AD51AB55747579A9F9A583D02469A4A665CFAABB41CCB8D2F6CE0B1D",
+                              "mtimeUtc":  "2026-09-16T18:31:01.2757955Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "2F5244AE081024ACAAD41FF432C820A903BB689B4AA55F464022DBD619C4334F",
+                              "mtimeUtc":  "2026-09-16T18:31:05.1788085Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "67020E489781C93466D7C5365F445DBB2CC26DDC32C002BA6E197F77AB9AF8C3",
+                              "mtimeUtc":  "2026-09-16T18:31:02.8065795Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "C37763EEB1BEE1194B2CEB9FFAFE0AC067E98B02D74FF7CA7781084AAE775534",
+                              "mtimeUtc":  "2026-09-16T18:31:02.7049813Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "46D7D0F0AB50039740EA633C641CD01B0D8A8A752827D3A529A92C30E44F7720",
+                              "mtimeUtc":  "2026-09-16T18:31:02.6934281Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\development_sabotage-c3ecb68f86bb2600.exe",
+                              "sha256":  "9F4B6C454785C6C037D422637663165EFB7F7297A43E483F11FF5388C1B7D51F",
+                              "mtimeUtc":  "2026-09-16T18:31:01.5290817Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "70706C355335E4518374A5F97C555C5B590C7C8FD93494CFCDD43585E5EC06DC",
+                              "mtimeUtc":  "2026-09-16T18:31:09.5253956Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "51BA013778BEB10DE0644EEA8168626CA4051B5B72C07A40ED13F961EC2D7E73",
+                              "mtimeUtc":  "2026-09-16T18:31:02.7134932Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "C2DF0B52DE61C05897370301F3F1713AE436784A8FCE2E71D9208A23DA5A3EB7",
+                              "mtimeUtc":  "2026-09-16T18:31:09.7337883Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "D8B5C5C3F5F55434978E92F4D635271F0EFAC98C1B44DB4F5FEEC702B8F7129D",
+                              "mtimeUtc":  "2026-09-16T18:31:11.0228561Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "5E8304A948333CEB2E99652120ABE1418C21D4BF93976F5342F9A9AEB5CCEC98",
+                              "mtimeUtc":  "2026-09-16T18:31:11.0223508Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "406DEBFE2D3CE948DD90A5886B595F23703DF06812F55E1B28F6E07138B3D1CA",
+                              "mtimeUtc":  "2026-09-16T18:31:10.9706760Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "34181C7EF0C1E92998D8AA3AACBC55B744C2FFADC72D05DCB8D70AFBB08F09CA",
+                              "mtimeUtc":  "2026-09-16T18:31:11.2821917Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "26C079732214B11AB5D5AAE662FD51B857CAAECA4BA2691ED36A7E8EDC29E3AA",
+                              "mtimeUtc":  "2026-09-16T18:31:11.2965523Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "F683FAA6B645590703848A2D1106018BF7949105269AD3FBC89BC8E7721A6A36",
+                              "mtimeUtc":  "2026-09-16T18:31:11.2965523Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "64F8A23C61D38ED7685622A73886F0FBC3CEE5430A8E035C8F51F82C91835CCD",
+                              "mtimeUtc":  "2026-09-16T18:31:12.1474327Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "0D7235A0DEADF1649ECD63382021F315DC003E99EEF369609E206D147CF3FFB0",
+                              "mtimeUtc":  "2026-09-16T18:31:12.2692842Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm_postgres_event_store-770e541e474cc054.exe",
+                              "sha256":  "D7D34A22596F30DF0E8DE255458AE1B39B9B1C26CF19D462AF7F2F5CE1A7757A",
+                              "mtimeUtc":  "2026-09-16T18:31:13.8399472Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/runner-ssd/pr1057/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "E:\\runner-targets\\ssd\\pr1057\\debug\\deps\\graphhelm-c999808e35b8cecf.exe",
+                              "sha256":  "DDAD80E7F1718874D728A74D4DD96333591DB700AE3D0C5A9670A86686C04C63",
+                              "mtimeUtc":  "2026-09-16T18:31:13.0025044Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+                              "PostgreSQL ignored matrix":  {
+                                                                "verdict":  "measured",
+                                                                "executed":  43,
+                                                                "groups":  10,
+                                                                "stdoutLines":  93
+                                                            },
+                              "PostgreSQL matrix under a non-C collation":  {
+                                                                                "verdict":  "measured",
+                                                                                "executed":  43,
+                                                                                "groups":  10,
+                                                                                "stdoutLines":  93
+                                                                            }
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "E:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-16T18:28:31Z | gate cwd=D:\\runner-ssd\\pr1057 head=9b277afb32f7e1d14231eae0d56c8f04003035a5 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=47228 start=2026-09-16T18:28:30.3019780Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-16T18:28:31.1661734Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "absent",
+                          "path":  "E:/graphhelm-slot/SLOT.lock",
+                          "observedAtUtc":  "2026-09-16T18:45:21.7606735Z"
+                      },
+    "slotLockStartEndIdentical":  false,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: the selector escalated (schemas/)",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  false,
+    "targetBuildState":  {
+                             "contaminated":  false,
+                             "suspect":  false,
+                             "state":  "fresh",
+                             "reason":  "no target directory yet, so nothing is being reused"
+                         },
+    "overallPassed":  false
+}

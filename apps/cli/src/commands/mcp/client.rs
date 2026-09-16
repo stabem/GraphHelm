@@ -87,6 +87,14 @@ pub(crate) struct ApiClient {
     token: Zeroizing<String>,
     pub(crate) actor: String,
     pub(crate) actor_type: String,
+    model: Option<String>,
+    effort: Option<String>,
+    /// #1057: this process's own session token -- the SAME per-process nonce the idempotency keys
+    /// and the wake leases already carry, rather than a second random string meaning the same
+    /// thing. It rides every mutation, declared model or not: a session that declares nothing
+    /// still has to say WHICH session declared nothing, or the Runtime cannot tell it from the
+    /// previous session that reused this actor id.
+    session: String,
     transport: UreqTransport,
 }
 
@@ -96,18 +104,48 @@ impl ApiClient {
         token: Zeroizing<String>,
         actor: String,
         actor_type: String,
+        model: Option<String>,
+        effort: Option<String>,
+        session: String,
     ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             token,
             actor,
             actor_type,
+            model,
+            effort,
+            session,
             transport: UreqTransport::new(),
         }
     }
 
+    /// The attribution headers a mutation carries: actor identity, actor type, this process's
+    /// session token, and — only when declared — the model and effort the agent is running.
+    /// Absent is absent: a `None` model or effort emits no header at all, never an empty-string
+    /// one. Extracted so these can be asserted without a live server (Task 2, #1054).
+    ///
+    /// The session token is UNCONDITIONAL, and that is #1057's whole point: an undeclared session
+    /// that sent nothing would be indistinguishable from the previous session that reused this
+    /// actor id, and the board would keep showing that session's model as this one's.
+    pub(crate) fn mutation_headers(&self) -> Vec<(String, String)> {
+        let mut headers = vec![
+            ("X-GraphHelm-Actor".to_owned(), self.actor.clone()),
+            ("X-GraphHelm-Actor-Type".to_owned(), self.actor_type.clone()),
+            ("X-GraphHelm-Actor-Session".to_owned(), self.session.clone()),
+        ];
+        if let Some(model) = self.model.as_ref() {
+            headers.push(("X-GraphHelm-Actor-Model".to_owned(), model.clone()));
+        }
+        if let Some(effort) = self.effort.as_ref() {
+            headers.push(("X-GraphHelm-Actor-Effort".to_owned(), effort.clone()));
+        }
+        headers
+    }
+
     /// One API request: `GET`s carry the bearer token only; mutations additionally attach
-    /// the three attribution headers, with the idempotency key derived from the rpc id, and
+    /// the attribution headers ([`Self::mutation_headers`]), with the idempotency key derived
+    /// from the rpc id, and
     /// the optional `If-Match` head pin (CHAT_SURFACE_SPEC §3: optimistic concurrency is the
     /// chat's default choreography — a stale pin comes back as the API's own 409).
     pub(crate) fn request(
@@ -125,8 +163,7 @@ impl ApiClient {
         )];
         if let Some(key) = idempotency_key {
             headers.push(("Idempotency-Key".to_owned(), key.to_owned()));
-            headers.push(("X-GraphHelm-Actor".to_owned(), self.actor.clone()));
-            headers.push(("X-GraphHelm-Actor-Type".to_owned(), self.actor_type.clone()));
+            headers.extend(self.mutation_headers());
         }
         if let Some(head) = if_match {
             headers.push(("If-Match".to_owned(), head.to_string()));
@@ -201,6 +238,68 @@ mod tests {
             derive_key(nonce, &serde_json::json!("7")),
             "a number and its decimal string derive distinct keys"
         );
+    }
+
+    fn url() -> String {
+        "http://127.0.0.1:1".to_owned()
+    }
+
+    fn token() -> Zeroizing<String> {
+        Zeroizing::new("tok".to_owned())
+    }
+
+    #[test]
+    fn an_undeclared_model_emits_no_header_at_all() {
+        let client = ApiClient::new(
+            url(),
+            token(),
+            "a".into(),
+            "agent".into(),
+            None,
+            None,
+            "0123456789abcdef".to_owned(),
+        );
+        let names: Vec<_> = client
+            .mutation_headers()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            !names
+                .iter()
+                .any(|k| k.starts_with("X-GraphHelm-Actor-Model")),
+            "absent must send NO header, never an empty one: an empty string is a value"
+        );
+        // #1057: and yet the SESSION is named, because an undeclared session that said nothing at
+        // all could not be told from the previous session that reused this actor id.
+        assert!(
+            names.contains(&"X-GraphHelm-Actor-Session".to_owned()),
+            "an undeclared session still names itself: {names:?}"
+        );
+    }
+
+    #[test]
+    fn a_declared_model_and_effort_ride_their_own_headers() {
+        let client = ApiClient::new(
+            url(),
+            token(),
+            "a".into(),
+            "agent".into(),
+            Some("claude-opus-5".into()),
+            Some("medium".into()),
+            "0123456789abcdef".to_owned(),
+        );
+        let headers = client.mutation_headers();
+        assert!(headers.contains(&(
+            "X-GraphHelm-Actor-Model".to_owned(),
+            "claude-opus-5".to_owned()
+        )));
+        assert!(headers.contains(&("X-GraphHelm-Actor-Effort".to_owned(), "medium".to_owned())));
+        // #1057: the session token rides EVERY mutation, declared or not.
+        assert!(headers.contains(&(
+            "X-GraphHelm-Actor-Session".to_owned(),
+            "0123456789abcdef".to_owned()
+        )));
     }
 
     #[test]

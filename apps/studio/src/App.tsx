@@ -32,7 +32,7 @@ import {
   OPERATOR_ACTOR,
   newIdempotencyKey,
 } from "./runtime/client";
-import { devSession, type DevSession } from "./runtime/session";
+import { devSession, newestPresenceByActor, type AgentPresence, type DevSession } from "./runtime/session";
 import type {
   Briefing,
   EventPage,
@@ -1242,21 +1242,28 @@ export default function App({
   // every O(events) derivation below: these run inside the component body and App re-renders at
   // pointer-move frequency during a rail drag - rebuilding five full-array scans per frame was
   // main-thread work for data that only changes when the events identity does (round-4).
-  const crew = useMemo<Array<{ id: string; charter: string | null; lastAt: string | null }>>(() => {
+  const crew = useMemo<
+    Array<{ id: string; charter: string | null; lastAt: string | null; presence: AgentPresence | null }>
+  >(() => {
     const lastHeard = new Map<string, string>();
     for (const event of eventList) {
       if (event.actorId !== null && event.occurredAt !== null) lastHeard.set(event.actorId, event.occurredAt);
     }
+    // Each actor's own newest `agent_presence_declared`, from the SAME log this memo already
+    // scans - an actor that never declared is simply absent from this map, and stays absent on
+    // the row below rather than being given a placeholder.
+    const presence = newestPresenceByActor(eventList);
     return [
       ...Object.entries(personas).map(([id, charter]) => ({
         id,
         charter: charter || null,
         lastAt: lastHeard.get(id) ?? null,
+        presence: presence[id] ?? null,
       })),
       ...actorsInRoom(eventList, personas)
         // The operator is the person AT this screen, not a blob on it.
         .filter((id) => id !== OPERATOR_ACTOR.id)
-        .map((id) => ({ id, charter: null, lastAt: lastHeard.get(id) ?? null })),
+        .map((id) => ({ id, charter: null, lastAt: lastHeard.get(id) ?? null, presence: presence[id] ?? null })),
     ];
   }, [eventList, personas]);
 

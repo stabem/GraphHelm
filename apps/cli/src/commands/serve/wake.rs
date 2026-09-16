@@ -98,13 +98,19 @@ fn due_leases(events: &Path, execution: &str) -> Option<Vec<DueLease>> {
         .read_replay_stream(&stream.scope, &stream.stream_id)
         .ok()?;
     let projection = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).ok()?;
-    // Only NON-wake appends ring: bookkeeping past the cursor is not content.
+    // Only NON-wake appends ring: bookkeeping past the cursor is not content. A presence
+    // declaration is bookkeeping too (#1054): it is appended right after the mutation that
+    // armed the lease, by the same session, and counting it as content consumed the lease
+    // before the sleeper ever waited (gate 9b277afb, `wake_http`:
+    // a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window`).
     let content_head = history
         .iter()
         .filter(|event| {
             !matches!(
                 event.kind,
-                EventKind::WakeLease(_) | EventKind::WakeLeaseConsumed(_)
+                EventKind::WakeLease(_)
+                    | EventKind::WakeLeaseConsumed(_)
+                    | EventKind::AgentPresenceDeclared(_)
             )
         })
         .map(|event| event.sequence)

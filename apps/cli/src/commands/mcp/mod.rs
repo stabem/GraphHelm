@@ -33,7 +33,7 @@ fn refuse(message: &str, pointer: &str) -> Outcome {
 /// URL (userinfo-stripping rule), token from `--token-file` (the flag wins) or
 /// `GRAPHHELM_API_TOKEN` — never argv — with both-absent a refusal naming the two options,
 /// and the actor admitted by the same wire rules the serve layer applies.
-fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
+fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Outcome> {
     if !client::is_loopback_url(&args.url) {
         return Err(refuse(
             "--url must name a loopback authority (http://127.0.0.1:PORT, localhost, or \
@@ -89,6 +89,20 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
             "/actorType",
         ));
     }
+    if let Some(effort) = args.effort.as_deref()
+        && !matches!(effort, "low" | "medium" | "high")
+    {
+        return Err(refuse(
+            "--effort must be \"low\", \"medium\" or \"high\"",
+            "/effort",
+        ));
+    }
+    if args.effort.is_some() && args.model.is_none() {
+        return Err(refuse(
+            "--effort requires --model: an effort with no model names nothing",
+            "/model",
+        ));
+    }
     if args.capability_token_file.is_some() && args.package.is_none() {
         return Err(refuse(
             "--capability-token-file requires --package: the digest every presented tool call \
@@ -108,6 +122,9 @@ fn build_client(args: &McpArgs) -> Result<client::ApiClient, Outcome> {
         token,
         actor,
         args.actor_type.clone(),
+        args.model.clone(),
+        args.effort.clone(),
+        session,
     ))
 }
 
@@ -132,11 +149,10 @@ fn read_capability_token(
 }
 
 pub fn run(args: &McpArgs) -> Outcome {
-    let api = match build_client(args) {
-        Ok(api) => api,
-        Err(outcome) => return outcome,
-    };
-
+    // Minted BEFORE the client, because #1057 makes it part of the client's own attribution: this
+    // one nonce is the process's session identity everywhere -- the idempotency keys, the wake
+    // leases, and now `X-GraphHelm-Actor-Session`. One value rather than three means a reader of
+    // the journal can join a declaration to the leases and keys the same session took out.
     let mut nonce_bytes = [0_u8; 8];
     if getrandom::fill(&mut nonce_bytes).is_err() {
         return Outcome::internal(COMMAND, "the OS random source is unavailable");
@@ -145,6 +161,11 @@ pub fn run(args: &McpArgs) -> Outcome {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+
+    let api = match build_client(args, nonce.clone()) {
+        Ok(api) => api,
+        Err(outcome) => return outcome,
+    };
 
     let mut state = session::SessionState::new(nonce).with_client(api);
     if let Some(token_path) = &args.capability_token_file {

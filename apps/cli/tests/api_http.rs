@@ -1277,7 +1277,15 @@ fn connect_with_retry(address: &std::net::SocketAddr) -> std::io::Result<TcpStre
 /// connect under a full accept backlog retransmits for ~21s and outlives the caller's own
 /// deadline (the comment below is that measurement). Sharing the wrapper would push a retry
 /// policy onto four suites that never asked for one.
-fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
+/// #1054: the same GET, with arbitrary extra request headers. `raw_request` is this with an
+/// empty list, so the two cannot drift apart -- a read path that behaved differently under the
+/// helper one test uses than under the helper every other test uses would make either result
+/// unreadable.
+fn raw_request_with_headers(
+    url: &str,
+    token: Option<&str>,
+    extra_headers: &[(&str, &str)],
+) -> std::io::Result<RawResponse> {
     let started = Instant::now();
     let (host, port, path) = split_url(url);
     // A connect with no timeout cannot be retried. When the listener's accept backlog is full --
@@ -1298,6 +1306,9 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
     if let Some(token) = token {
         request.push_str(&format!("Authorization: Bearer {token}\r\n"));
     }
+    for (name, value) in extra_headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
     request.push_str("\r\n");
     write_within_deadline(
         &mut stream,
@@ -1316,6 +1327,10 @@ fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
         CLIENT_IO_HANG_GUARD,
     )?;
     parse_response(&String::from_utf8_lossy(&raw))
+}
+
+fn raw_request(url: &str, token: Option<&str>) -> std::io::Result<RawResponse> {
+    raw_request_with_headers(url, token, &[])
 }
 
 fn get_status(url: &str, token: Option<&str>) -> u16 {
@@ -6422,6 +6437,472 @@ fn the_architect_route_refuses_with_the_cli_codes_and_names_both_model_doors() {
     assert_eq!(reply["diagnostics"][0]["path"], "/maxNode");
 }
 
+// ---------------------------------------------------------------------------------------------
+// #1054 Task 4: the Runtime READS the declaration headers and RECORDS the declaration — once.
+//
+// Four properties, and the two NEGATIVES are the load-bearing ones: an undeclared session must
+// record no presence event at all, and a refused request must append nothing, not even the signal
+// it carried. A Runtime that appended nothing whatsoever would satisfy both negatives, so the
+// positives below do not stop at counting: they read the recorded payload back and assert its
+// fields, which no do-nothing implementation can produce.
+// ---------------------------------------------------------------------------------------------
+
+const PRESENCE_EXECUTION: &str = "exec-http-presence";
+
+/// One started execution behind one live server, with a counter so every request in a test carries
+/// a FRESH `Idempotency-Key` and a fresh signal id.
+///
+/// Fresh is not fussiness: two mutations sharing a bare `Idempotency-Key` with different bodies are
+/// refused as divergent (`classify_one_key`), and two sharing key AND body are absorbed as a retry
+/// that appends nothing. Either would make a head-sequence delta say something about idempotency
+/// rather than about presence, which is not the subject here.
+struct PresenceHarness {
+    _directory: tempfile::TempDir,
+    _guard: ServerGuard,
+    base: String,
+    token: String,
+    evidence_out: PathBuf,
+    issued: std::cell::Cell<u32>,
+}
+
+impl PresenceHarness {
+    fn start() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = all_success_fixtures(directory.path());
+        cli_start(&events, &fixtures, PRESENCE_EXECUTION);
+        let evidence_out = directory.path().join("presence-evidence.json");
+        let (guard, base, token) = serve(&events);
+        Self {
+            _directory: directory,
+            _guard: guard,
+            base,
+            token,
+            evidence_out,
+            issued: std::cell::Cell::new(0),
+        }
+    }
+
+    fn head(&self) -> u64 {
+        head_sequence(&self.base, &self.token, PRESENCE_EXECUTION)
+    }
+
+    /// One signal, carrying the three mandatory mutation headers plus whatever `declaration` adds.
+    fn signal_with_headers(&self, declaration: &[(&str, &str)]) -> (u16, Value) {
+        self.signal_as("agent-planner", declaration)
+    }
+
+    /// The same, from a NAMED actor. `signal_with_headers` is this with the suite's default actor,
+    /// so a change to one cannot leave the other behind.
+    fn signal_as(&self, actor: &str, declaration: &[(&str, &str)]) -> (u16, Value) {
+        let nth = self.issued.get() + 1;
+        self.issued.set(nth);
+        let key = format!("sig-presence-{nth}");
+        let mut headers: Vec<(&str, &str)> = vec![
+            ("Idempotency-Key", key.as_str()),
+            ("X-GraphHelm-Actor", actor),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        headers.extend_from_slice(declaration);
+        let body = serde_json::json!({
+            "signal": signal_envelope(&format!("signal-presence-{nth}"), "no_progress"),
+            "evidenceOut": self.evidence_out.to_str().unwrap(),
+        });
+        post_json(
+            &format!("{}/v1/executions/{PRESENCE_EXECUTION}/signal", self.base),
+            &self.token,
+            &headers,
+            &body,
+        )
+    }
+
+    fn declare(&self, model: &str, effort: &str) -> (u16, Value) {
+        self.signal_with_headers(&[
+            ("X-GraphHelm-Actor-Model", model),
+            ("X-GraphHelm-Actor-Effort", effort),
+        ])
+    }
+
+    fn presence_events(&self) -> Vec<Value> {
+        events_of_kind(
+            &self.base,
+            &self.token,
+            PRESENCE_EXECUTION,
+            "agent_presence_declared",
+        )
+    }
+}
+
+/// Every event of one kind in the tail, oldest first. `last_event_of_kind`'s sibling: a COUNT is
+/// what "recorded once" is a claim about, and a helper that can only answer "the newest one" cannot
+/// tell one declaration from four.
+fn events_of_kind(base: &str, token: &str, execution: &str, kind: &str) -> Vec<Value> {
+    let response = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(token),
+    );
+    let events = response["data"]["events"]
+        .as_array()
+        .unwrap_or_else(|| panic!("events tail carried no array: {response}"));
+    events
+        .iter()
+        .filter(|event| event["kind"]["type"] == kind)
+        .cloned()
+        .collect()
+}
+
+/// An IMMEDIATE repeat is free. The second declaration carries the same triple the actor's newest
+/// declaration already carries, so it is not news, and the stream must not grow by a copy of a fact
+/// it already holds.
+///
+/// Note the word "immediate": the rule is "differs from the NEWEST", not "this triple has never
+/// appeared". `a_flip_flop_appends_a_third_declaration_because_newest_is_what_a_roster_answers` is
+/// the cell that separates those two readings, and this one deliberately does not.
+#[test]
+fn a_declared_model_is_recorded_once_and_a_repeat_appends_nothing() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.declare("claude-opus-5", "medium");
+    assert_eq!(status, 200, "{reply}");
+    let after_first = server.head();
+
+    let (status, reply) = server.declare("claude-opus-5", "medium");
+    assert_eq!(status, 200, "{reply}");
+    let after_second = server.head();
+
+    assert!(
+        after_first > before + 1,
+        "the first declaration is recorded beside the signal: {before} -> {after_first}"
+    );
+    assert_eq!(
+        after_second,
+        after_first + 1,
+        "the repeat appends only the signal itself, not a second presence event"
+    );
+
+    // The positives must not be satisfiable by a Runtime that appends nothing: read the payload
+    // back and hold it to the values the headers carried.
+    let recorded = server.presence_events();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "exactly one presence event for two identical declarations: {recorded:?}"
+    );
+    let data = &recorded[0]["kind"]["data"];
+    assert_eq!(data["actorId"], "agent-planner");
+    assert_eq!(data["actorType"], "agent");
+    assert_eq!(data["model"], "claude-opus-5");
+    assert_eq!(data["effort"], "medium");
+    assert_eq!(
+        recorded[0]["actor"]["id"], "agent-planner",
+        "the envelope is attributed to the declaring agent, not to the CLI owner"
+    );
+}
+
+/// Effort is part of a declaration's IDENTITY. A session that turns its thinking up has changed
+/// what it is, and a roster that kept answering "medium" would be reporting a fact that stopped
+/// being true.
+#[test]
+fn a_changed_effort_mid_session_is_recorded_as_a_new_declaration() {
+    let server = PresenceHarness::start();
+    server.declare("claude-opus-5", "medium");
+    let mid = server.head();
+
+    server.declare("claude-opus-5", "high");
+    assert!(
+        server.head() > mid + 1,
+        "effort is part of a declaration's identity, so a change is news"
+    );
+
+    let recorded = server.presence_events();
+    assert_eq!(recorded.len(), 2, "two distinct triples, two events");
+    assert_eq!(recorded[0]["kind"]["data"]["effort"], "medium");
+    assert_eq!(recorded[1]["kind"]["data"]["effort"], "high");
+}
+
+/// ABSENT IS ABSENT. No default model, no `"unknown"` written as a value, no inference from the
+/// route — a session that declares nothing leaves no trace of a model anywhere.
+#[test]
+fn an_undeclared_session_records_no_presence_event() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.signal_with_headers(&[]);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        server.head(),
+        before + 1,
+        "absent must produce NO presence event -- only the signal"
+    );
+    assert!(
+        server.presence_events().is_empty(),
+        "an undeclared session leaves no presence event to render"
+    );
+}
+
+/// A model may be declared without an effort: `effort` is optional in the schema, so the absence
+/// must be an ABSENT KEY and not a written `null` — `additionalProperties: false` plus a closed
+/// enum refuses `null`, and the store would answer a bare `Invalid` with no kind named.
+#[test]
+fn a_model_declared_without_an_effort_records_the_model_and_omits_the_key() {
+    let server = PresenceHarness::start();
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Model", "claude-opus-5")]);
+    assert_eq!(status, 200, "{reply}");
+
+    let recorded = server.presence_events();
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["kind"]["data"]["model"], "claude-opus-5");
+    assert_eq!(
+        recorded[0]["kind"]["data"].get("effort"),
+        None,
+        "an absent effort is an absent key, never a null"
+    );
+}
+
+/// The vocabulary is CLOSED, which is the only reason it can be refused at all. And the refusal is
+/// total: the request is rejected before anything touches the store, so the signal it carried does
+/// not land either.
+#[test]
+fn an_effort_header_outside_the_vocabulary_is_a_400_and_records_nothing() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.signal_with_headers(&[
+        ("X-GraphHelm-Actor-Model", "m"),
+        ("X-GraphHelm-Actor-Effort", "spicy"),
+    ]);
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(
+        server.head(),
+        before,
+        "a refused request appends nothing, not even the signal it carried"
+    );
+    assert!(server.presence_events().is_empty());
+}
+
+/// An effort with no model names a property of a thing that was never named. It is refused for the
+/// same reason the vocabulary is closed: the alternative is recording half a declaration and
+/// letting a renderer invent the other half.
+#[test]
+fn an_effort_without_a_model_is_a_400_and_records_nothing() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.signal_with_headers(&[("X-GraphHelm-Actor-Effort", "high")]);
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorModel");
+    assert_eq!(
+        server.head(),
+        before,
+        "a refused request appends nothing, not even the signal it carried"
+    );
+    assert!(server.presence_events().is_empty());
+}
+
+/// A READ CARRIES NO DECLARATION — the property Task 2's own tests cannot lock, because they stop
+/// at what the client sends.
+///
+/// The client only sends these headers on mutations, so this cell asks the other half: if a
+/// GET-shaped request DID carry them, would the Runtime write one? It must not. A read is not a
+/// place a session announces itself, and a Runtime that recorded on reads would make the roster
+/// grow every time Studio refreshed. The declaration is set up first through a real mutation, so
+/// the session genuinely HAS a declared model at the moment the GET is made — otherwise this cell
+/// would pass for the trivial reason that there was nothing to record.
+#[test]
+fn a_read_records_no_presence_event_even_when_the_session_declares_one() {
+    let server = PresenceHarness::start();
+    server.declare("claude-opus-5", "high");
+    let after_declaration = server.head();
+    assert_eq!(
+        server.presence_events().len(),
+        1,
+        "precondition: the session has a declared model before the read"
+    );
+
+    // A GET, carrying a DIFFERENT declaration than the one on record — so a Runtime that read
+    // these headers on a read path would have news to write, and its silence here is a decision
+    // rather than a coincidence.
+    let response = raw_request_with_headers(
+        &format!("{}/v1/executions/{PRESENCE_EXECUTION}", server.base),
+        Some(&server.token),
+        &[
+            ("X-GraphHelm-Actor", "agent-planner"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+            ("X-GraphHelm-Actor-Model", "some-other-model"),
+            ("X-GraphHelm-Actor-Effort", "low"),
+        ],
+    )
+    .unwrap_or_else(|error| panic!("the read itself must succeed: {error}"));
+    assert_eq!(response.status, 200, "the read itself must succeed");
+
+    assert_eq!(
+        server.head(),
+        after_declaration,
+        "a read appends nothing at all"
+    );
+    let recorded = server.presence_events();
+    assert_eq!(recorded.len(), 1, "no second declaration was written");
+    assert_eq!(
+        recorded[0]["kind"]["data"]["model"], "claude-opus-5",
+        "and the one on record is still the one a MUTATION declared"
+    );
+}
+
+/// THE GRAIN IS PER ACTOR. Two agents working one execution each declare their own model, and the
+/// comparison that makes a repeat free must be made against THAT actor's newest declaration, not
+/// against the stream's.
+///
+/// Against the stream's, every arrival would erase its neighbour's: A declares, B declares, A
+/// repeats -- and A's repeat reads as news because the newest declaration in the stream is B's. The
+/// stream would then grow on every alternating request, which is exactly the failure the comparison
+/// exists to prevent, returning through the door the naive fix leaves open.
+#[test]
+fn one_actors_declaration_does_not_make_anothers_repeat_read_as_news() {
+    let server = PresenceHarness::start();
+    let declaration: &[(&str, &str)] = &[
+        ("X-GraphHelm-Actor-Model", "claude-opus-5"),
+        ("X-GraphHelm-Actor-Effort", "medium"),
+    ];
+
+    let (status, reply) = server.signal_as("agent-planner", declaration);
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply) = server.signal_as("agent-builder", declaration);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        server.presence_events().len(),
+        2,
+        "two different actors declaring the same model are two different facts"
+    );
+
+    // A's repeat, now that B's declaration is the newest in the stream.
+    let settled = server.head();
+    let (status, reply) = server.signal_as("agent-planner", declaration);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        server.head(),
+        settled + 1,
+        "A repeating itself appends only the signal, however recently B spoke"
+    );
+    let recorded = server.presence_events();
+    assert_eq!(recorded.len(), 2, "no third declaration: {recorded:?}");
+    assert_eq!(recorded[0]["kind"]["data"]["actorId"], "agent-planner");
+    assert_eq!(recorded[1]["kind"]["data"]["actorId"], "agent-builder");
+}
+
+/// THE FLIP-FLOP, which is the one sequence that separates the invariant this code implements from
+/// the one an earlier comment and #1054's own brief both claimed.
+///
+/// `medium -> high -> medium`. Under "at most one per distinct triple per stream" the third
+/// declaration is suppressed and the stream holds two events. Under "differs from the newest" it is
+/// recorded and the stream holds three. This code does the second, ON PURPOSE: a roster answers
+/// "what is this agent running NOW", and suppressing the return to `medium` would leave it
+/// answering `high` forever -- a fact that stopped being true, preserved by the mechanism meant to
+/// keep the journal honest.
+///
+/// Until this cell existed the two readings were indistinguishable by any test, which is how a
+/// false sentence sat in a doc comment describing correct code.
+#[test]
+fn a_flip_flop_appends_a_third_declaration_because_newest_is_what_a_roster_answers() {
+    let server = PresenceHarness::start();
+    server.declare("claude-opus-5", "medium");
+    server.declare("claude-opus-5", "high");
+    let before_return = server.head();
+
+    // Back to a triple the stream ALREADY HOLDS -- and it is still news, because it is not what
+    // this actor's newest declaration says.
+    let (status, reply) = server.declare("claude-opus-5", "medium");
+    assert_eq!(status, 200, "{reply}");
+    assert!(
+        server.head() > before_return + 1,
+        "returning to an earlier triple is news: the roster must stop answering \"high\""
+    );
+
+    let recorded = server.presence_events();
+    assert_eq!(
+        recorded.len(),
+        3,
+        "three declarations, not two -- the third is the one the false invariant would suppress: \
+         {recorded:?}"
+    );
+    assert_eq!(recorded[0]["kind"]["data"]["effort"], "medium");
+    assert_eq!(recorded[1]["kind"]["data"]["effort"], "high");
+    assert_eq!(recorded[2]["kind"]["data"]["effort"], "medium");
+}
+
+/// The model is caller-controlled and persisted, so it is BOUNDED at the door. One cell per cause,
+/// each asserting the message names its own cause: a single refusal covering three causes sends the
+/// next reader to the wrong one.
+#[test]
+fn a_model_header_outside_its_bounds_is_a_400_naming_which_bound_it_broke() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    // 129 bytes: one over the cap, so the cell measures the BOUNDARY and not merely "something
+    // long". A cell using 10_000 would pass against a cap of any size at all.
+    let too_long = "m".repeat(129);
+    let (status, reply) = server.signal_with_headers(&[("X-GraphHelm-Actor-Model", &too_long)]);
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorModel");
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 128"),
+        "the refusal names the LENGTH bound: {reply}"
+    );
+
+    // And the control that makes the number above mean something: exactly at the cap is ACCEPTED.
+    // Without it, a cap accidentally set to 1 would satisfy every assertion above.
+    let at_cap = "m".repeat(128);
+    let (status, reply) = server.signal_with_headers(&[("X-GraphHelm-Actor-Model", &at_cap)]);
+    assert_eq!(
+        status, 200,
+        "CONTROL: 128 is accepted, so 129 is a boundary: {reply}"
+    );
+    assert_eq!(server.presence_events().len(), 1);
+
+    assert_eq!(
+        server.head(),
+        before + 2,
+        "only the accepted request landed: its declaration and its signal"
+    );
+}
+
+/// A single space. Built by repetition rather than written as `"   "` because
+/// `operator_strings_carry_no_collapsed_indentation` refuses a literal run of whitespace in this
+/// crate's sources -- correctly, since it cannot tell an operator string that got collapsed by
+/// rustfmt from one whose blankness is the subject. One space is the minimal value `minLength: 1`
+/// accepts, which is exactly the case under test.
+const BLANK_MODEL: &str = " ";
+
+/// A whitespace-only model satisfies `minLength: 1` and would render as a blank badge: present,
+/// unreadable, and indistinguishable from a rendering bug. Absent is absent; blank is a defect, and
+/// a defect is refused rather than recorded.
+#[test]
+fn a_blank_model_header_is_a_400_and_is_not_recorded_as_a_declaration() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.signal_with_headers(&[("X-GraphHelm-Actor-Model", BLANK_MODEL)]);
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorModel");
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("blank"),
+        "the refusal names the BLANK cause, not the length one: {reply}"
+    );
+    assert_eq!(
+        server.head(),
+        before,
+        "a refused request appends nothing, not even the signal it carried"
+    );
+    assert!(server.presence_events().is_empty());
+}
+
 /// #1083 F1: a well-formed execution id that names no stream is a 404 with a structured
 /// refusal on every operator-facing read, and the CLI refuses the same id with the same code.
 ///
@@ -6515,4 +6996,221 @@ fn an_unknown_execution_id_is_a_404_on_every_read_and_the_cli_refuses_it_the_sam
         "the route matched: {body}"
     );
     assert_eq!(body["ok"], false, "{body}");
+}
+
+/// #1057 Codex P1: A REFUSED MUTATION LEAVES NO PRESENCE RECORD.
+///
+/// The declaration used to be appended BEFORE the command body ran, so a `start` whose graph does
+/// not validate answered 400 and still left `agent_presence_declared` in the journal -- and, worse,
+/// left a STREAM behind it that `execution list` reads as a run, with no `ExecutionStarted` in it.
+/// The event store is append-only, so nothing can take that back afterwards.
+///
+/// Two assertions, and the second is the one about the stream: no presence event, and no events AT
+/// ALL under this id. The CONTROL is the path of the refusal -- it must come from the command body
+/// (the graph), never from the declaration headers, or a server that rejected every model header
+/// would pass this cell while recording presence exactly as before.
+#[test]
+fn a_refused_start_records_no_presence_and_opens_no_stream() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-presence-refused-start";
+    let graph = directory.path().join("not-a-graph.yaml");
+    std::fs::write(
+        &graph,
+        "apiVersion: nonsense
+not: a graph
+",
+    )
+    .unwrap();
+    let fixtures = all_success_fixtures(directory.path());
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "presence-refused-start-1"),
+            ("X-GraphHelm-Actor", "agent-planner"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+            ("X-GraphHelm-Actor-Model", "claude-opus-5"),
+            ("X-GraphHelm-Actor-Effort", "high"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+        }),
+    );
+    assert_ne!(status, 200, "the invalid graph must be refused: {reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    // CONTROL: the refusal is the GRAPH's, not the declaration's. A server that refused every
+    // model header would satisfy both assertions below while changing nothing this cell is about.
+    let path = reply["diagnostics"][0]["path"].as_str().unwrap_or_default();
+    assert!(
+        path != "/model" && path != "/effort",
+        "CONTROL: the refusal must come from the command body, not the headers: {reply}"
+    );
+
+    assert!(
+        events_of_kind(&base, &token, execution, "agent_presence_declared").is_empty(),
+        "a refused mutation records no presence declaration"
+    );
+    let tail = get_json(
+        &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+        Some(&token),
+    );
+    assert_eq!(
+        tail["data"]["events"].as_array().map(Vec::len),
+        Some(0),
+        "a refused start opens no stream at all: {tail}"
+    );
+}
+
+/// #1057 Codex P1: PRESENCE IS SCOPED TO THE DECLARING SESSION.
+///
+/// An MCP session that reuses a stable actor id but declares no model used to inherit the previous
+/// session's declaration forever: `plan_presence_declaration` returned `Ok(None)` on an absent
+/// model, nothing was recorded, and the newest declaration for that actor stayed the OLD one --
+/// while the Studio kept refreshing `lastAt` from the new session's mutations. The board then
+/// presented a model that belonged to a session that had ended as the live session's own.
+///
+/// `X-GraphHelm-Actor-Session` closes it. A mutation that names a session records a declaration on
+/// that session's first write even when no model was declared, and such a record carries NO
+/// `model` -- which is how "this session declared nothing" is said out loud instead of by silence.
+///
+/// The CONTROL is the first half: session one really did record `claude-opus-5`, so the absence
+/// read at the end is a boundary and not a Runtime that stopped recording.
+#[test]
+fn a_second_session_without_a_model_does_not_inherit_the_first_session_declaration() {
+    let server = PresenceHarness::start();
+
+    let (status, reply) = server.signal_with_headers(&[
+        ("X-GraphHelm-Actor-Session", "mcp-session-one"),
+        ("X-GraphHelm-Actor-Model", "claude-opus-5"),
+        ("X-GraphHelm-Actor-Effort", "high"),
+    ]);
+    assert_eq!(status, 200, "{reply}");
+
+    // CONTROL: the declaring session is on the record before the undeclared one arrives.
+    let declared = server.presence_events();
+    assert_eq!(declared.len(), 1, "{declared:?}");
+    assert_eq!(declared[0]["kind"]["data"]["model"], "claude-opus-5");
+    assert_eq!(declared[0]["kind"]["data"]["session"], "mcp-session-one");
+
+    // A DIFFERENT session, same actor, no model at all.
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Session", "mcp-session-two")]);
+    assert_eq!(status, 200, "{reply}");
+
+    let recorded = server.presence_events();
+    assert_eq!(
+        recorded.len(),
+        2,
+        "the undeclared session records its own boundary: {recorded:?}"
+    );
+    let newest = &recorded[1]["kind"]["data"];
+    assert_eq!(newest["actorId"], "agent-planner");
+    assert_eq!(newest["session"], "mcp-session-two");
+    assert!(
+        newest.get("model").is_none(),
+        "a session that declared nothing records NO model, which is how absence is said: {newest}"
+    );
+
+    // And it is idempotent: the same session writing again is not news.
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Session", "mcp-session-two")]);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        server.presence_events().len(),
+        2,
+        "a session boundary is recorded once, not on every mutation"
+    );
+}
+
+/// The session header is caller-controlled and persisted, so it is bounded at the door exactly as
+/// the model is: present-and-blank, over-long and non-ASCII are each their own 400, never a silent
+/// absence. `header_value` maps an empty value to `None`, which is why the raw header is read.
+#[test]
+fn a_malformed_session_header_is_refused_at_the_door() {
+    let server = PresenceHarness::start();
+    let before = server.head();
+
+    let (status, reply) = server.signal_with_headers(&[("X-GraphHelm-Actor-Session", "")]);
+    assert_eq!(
+        status, 400,
+        "an empty session header is a client defect: {reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorSession");
+
+    let long = "s".repeat(129);
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Session", long.as_str())]);
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorSession");
+
+    // CONTROL: one character under the cap is accepted, so the refusal above is the BOUND and not
+    // a header the server refuses outright.
+    let at_cap = "s".repeat(128);
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Session", at_cap.as_str())]);
+    assert_eq!(status, 200, "{reply}");
+
+    assert_eq!(
+        server.head(),
+        before + 2,
+        "the two refusals appended nothing; only the accepted request's signal and boundary landed"
+    );
+}
+
+/// #1057 Codex P2: A PRESENT-BUT-EMPTY EFFORT IS A VALUE, NOT AN ABSENCE.
+///
+/// `header_value` maps an empty header value to `None`, and it maps an undecodable one to `None`
+/// too, so `X-GraphHelm-Actor-Effort:` with nothing after the colon -- and one carrying a Latin-1
+/// byte -- both reached the store as "this session declared no effort" and the request SUCCEEDED.
+/// Both are present values outside the advertised closed vocabulary, and both are a client defect
+/// that silent absence hides in the one place nobody looks.
+///
+/// The CONTROLS are at both ends: a truly ABSENT header still declares a model on its own (absence
+/// stays absence), and a good effort still rides through, so the refusals are about the VALUE and
+/// not about the header being refused outright.
+#[test]
+fn a_present_but_empty_or_undecodable_effort_header_is_refused() {
+    let server = PresenceHarness::start();
+
+    let (status, reply) = server.signal_with_headers(&[
+        ("X-GraphHelm-Actor-Model", "claude-opus-5"),
+        ("X-GraphHelm-Actor-Effort", ""),
+    ]);
+    assert_eq!(
+        status, 400,
+        "an empty effort is a value outside the vocabulary: {reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorEffort");
+
+    // U+00E9 is representable in a `HeaderValue` (bytes 0x20..=0xFF) and refused by `to_str`.
+    let (status, reply) = server.signal_with_headers(&[
+        ("X-GraphHelm-Actor-Model", "claude-opus-5"),
+        ("X-GraphHelm-Actor-Effort", "m\u{e9}dium"),
+    ]);
+    assert_eq!(
+        status, 400,
+        "a non-ASCII effort is refused, not silently dropped: {reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/actorEffort");
+
+    // CONTROL 1: a truly absent effort is still absent, and the model alone is still a declaration.
+    let (status, reply) =
+        server.signal_with_headers(&[("X-GraphHelm-Actor-Model", "claude-opus-5")]);
+    assert_eq!(status, 200, "{reply}");
+    let recorded = server.presence_events();
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["kind"]["data"]["model"], "claude-opus-5");
+    assert!(
+        recorded[0]["kind"]["data"].get("effort").is_none(),
+        "an absent effort records no effort at all: {recorded:?}"
+    );
+
+    // CONTROL 2: a good effort still rides through.
+    let (status, reply) = server.declare("claude-opus-5", "high");
+    assert_eq!(status, 200, "{reply}");
 }

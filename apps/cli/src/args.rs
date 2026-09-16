@@ -198,6 +198,16 @@ pub struct McpArgs {
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
     #[arg(long = "actor-type", default_value = "agent")]
     pub actor_type: String,
+    /// The model this session is running, verbatim and opaque (`claude-opus-5`, `gpt-6-astra`).
+    /// ABSENT IS ABSENT: no default, and the Runtime never infers one from the route -- a
+    /// `claude_subscription` route lets the CLI choose its own model, so a route-derived guess
+    /// would be a label the run cannot support (#1054).
+    #[arg(long)]
+    pub model: Option<String>,
+    /// `low`, `medium` or `high`. A CLOSED vocabulary, so a wrong value is refusable here
+    /// rather than rendered as a badge nobody can interpret.
+    #[arg(long)]
+    pub effort: Option<String>,
     /// File holding one per-contribution MCP capability token (#213), JSON, matching
     /// `graphhelm_tool_broker::mcp_capability::McpCapabilityToken`'s wire shape. Opt-in by
     /// PRESENCE, not by `--actor-type`: `--actor-type agent` is the default for ordinary chat

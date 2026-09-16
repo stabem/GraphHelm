@@ -18,6 +18,8 @@ import userEvent from "@testing-library/user-event";
 import { Board } from "./board";
 import { defaultPosition, emptyBoard, type BoardState } from "../graph/board";
 import type { GraphModel } from "../graph/model";
+import { newestPresenceByActor, type AgentPresence } from "../runtime/session";
+import type { RuntimeEvent } from "../runtime/types";
 
 const MODEL: GraphModel = {
   rosterDeclared: true,
@@ -408,6 +410,186 @@ describe("the lint strip", () => {
     );
     expect(screen.queryByLabelText("Disagreements the log attests")).not.toBeInTheDocument();
   });
+});
+
+/**
+ * The declared model and effort, worn beside an agent's name.
+ *
+ * `withPresence`, `withoutPresence` and `withPresenceHistory` build a CREW ROSTER (the shape
+ * `Board`'s own `crew` prop takes), each one's `presence` field carried through
+ * `newestPresenceByActor` - the same reduction the runtime module exposes - so these tests
+ * exercise the real newest-per-actor logic, not a fixture that already knows the answer.
+ */
+describe("the declared model and effort", () => {
+  const presenceEvent = (sequence: number, actorId: string, model: string, effort?: AgentPresence["effort"]): RuntimeEvent => ({
+    sequence,
+    kind: "agent_presence_declared",
+    payload: { actorId, actorType: "agent", model, effort },
+    occurredAt: null,
+    actorId,
+    actorType: "agent",
+    idempotencyKey: null,
+    eventId: null,
+    evidenceRefs: [],
+  });
+
+  const crewWith = (actorId: string, events: RuntimeEvent[]) => [
+    { id: actorId, charter: null, lastAt: null, presence: newestPresenceByActor(events)[actorId] ?? null },
+  ];
+
+  function withPresence(actorId: string, model: string, effort?: AgentPresence["effort"]) {
+    return crewWith(actorId, [presenceEvent(1, actorId, model, effort)]);
+  }
+
+  function withoutPresence(actorId: string) {
+    return crewWith(actorId, []);
+  }
+
+  function withPresenceHistory(actorId: string, declarations: Array<[string, AgentPresence["effort"]]>) {
+    return crewWith(
+      actorId,
+      declarations.map(([model, effort], index) => presenceEvent(index + 1, actorId, model, effort)),
+    );
+  }
+
+  it("shows the model and effort beside the name once declared", () => {
+    render(
+      <Board
+        model={MODEL}
+        board={emptyBoard()}
+        selectedNode={null}
+        onSelectNode={() => {}}
+        onChange={() => {}}
+        crew={withPresence("codex", "gpt-6-astra", "low")}
+        {...REST}
+      />,
+    );
+    expect(screen.getByText("gpt-6-astra · low")).toBeInTheDocument();
+  });
+
+  it("shows NOTHING beside a name that never declared", () => {
+    render(
+      <Board
+        model={MODEL}
+        board={emptyBoard()}
+        selectedNode={null}
+        onSelectNode={() => {}}
+        onChange={() => {}}
+        crew={withoutPresence("codex")}
+        {...REST}
+      />,
+    );
+    expect(screen.queryByText(/unknown|default|n\/a/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the model alone when effort was not declared", () => {
+    render(
+      <Board
+        model={MODEL}
+        board={emptyBoard()}
+        selectedNode={null}
+        onSelectNode={() => {}}
+        onChange={() => {}}
+        crew={withPresence("codex", "gpt-6-astra", undefined)}
+        {...REST}
+      />,
+    );
+    expect(screen.getByText("gpt-6-astra")).toBeInTheDocument();
+    expect(screen.queryByText("·")).not.toBeInTheDocument();
+  });
+
+  it("shows the NEWEST declaration when a session changed model mid-run", () => {
+    render(
+      <Board
+        model={MODEL}
+        board={emptyBoard()}
+        selectedNode={null}
+        onSelectNode={() => {}}
+        onChange={() => {}}
+        crew={withPresenceHistory("codex", [
+          ["a", "low"],
+          ["b", "high"],
+        ])}
+        {...REST}
+      />,
+    );
+    expect(screen.getByText("b · high")).toBeInTheDocument();
+    expect(screen.queryByText("a · low")).not.toBeInTheDocument();
+  });
+
+  /**
+   * #1057: a LATER SESSION that declares nothing does not wear the previous session's model.
+   *
+   * An actor id is stable across sessions, so the board used to show a model belonging to a
+   * session that had ended as the live session's own - and kept refreshing `lastAt` from the new
+   * session's mutations while it did. The Runtime now records a model-less
+   * `agent_presence_declared` on an undeclared session's first write, and this is what that has to
+   * mean on screen: no badge, not a stale one.
+   */
+  it("drops the badge when a later session declared nothing", () => {
+    const boundary = (sequence: number, actorId: string, session: string): RuntimeEvent => ({
+      ...presenceEvent(sequence, actorId, "unused"),
+      payload: { actorId, actorType: "agent", session },
+    });
+    const { container } = render(
+      <Board
+        model={MODEL}
+        board={emptyBoard()}
+        selectedNode={null}
+        onSelectNode={() => {}}
+        onChange={() => {}}
+        crew={crewWith("codex", [
+          presenceEvent(1, "codex", "gpt-6-astra", "low"),
+          boundary(2, "codex", "session-two"),
+        ])}
+        {...REST}
+      />,
+    );
+    expect(container.querySelector(".agent-badge")).toBeNull();
+    expect(screen.queryByText("gpt-6-astra · low")).not.toBeInTheDocument();
+    expect(screen.queryByText(/gpt-6-astra/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * #1057 Codex P2: `constructor` is a VALID actor id, and on a plain object literal
+   * `presence["constructor"]` answers the inherited function rather than `undefined` - the board
+   * then rendered a badge for an actor that had declared nothing at all. The CONTROL is the
+   * declaring half: the same id really does wear a badge once it declares, so the absence below is
+   * about the prototype and not about the id being rejected somewhere.
+   */
+  it.each(["constructor", "toString", "valueOf"])(
+    "shows nothing for the undeclared actor %s, whose id names a prototype member",
+    (actorId) => {
+      const { container, unmount } = render(
+        <Board
+          model={MODEL}
+          board={emptyBoard()}
+          selectedNode={null}
+          onSelectNode={() => {}}
+          onChange={() => {}}
+          crew={withoutPresence(actorId)}
+          {...REST}
+        />,
+      );
+      // The ELEMENT, not its text: a prototype member read as presence renders an EMPTY badge, so
+      // a text assertion would pass over exactly the defect this cell is about.
+      expect(container.querySelector(".agent-badge")).toBeNull();
+      unmount();
+
+      render(
+        <Board
+          model={MODEL}
+          board={emptyBoard()}
+          selectedNode={null}
+          onSelectNode={() => {}}
+          onChange={() => {}}
+          crew={withPresence(actorId, "gpt-6-astra", "low")}
+          {...REST}
+        />,
+      );
+      expect(screen.getByText("gpt-6-astra · low")).toBeInTheDocument();
+    },
+  );
 });
 
 describe("what the board refuses to imply", () => {

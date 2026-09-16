@@ -2012,6 +2012,31 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             false,
         ),
+        // #1054. Execution-scoped (`false`): the envelope's top-level pairing binds this kind to
+        // `scopeWithExecution`, so a project-scoped row would match zero branches.
+        (
+            "agent_presence_declared",
+            json!({
+                "actorId": "agent-planner",
+                "actorType": "agent",
+                "model": "claude-opus-5",
+                "effort": "high",
+                "session": "0123456789abcdef"
+            }),
+            false,
+        ),
+        // #1057: the SAME kind carrying a session and NO model -- how a session says it declares
+        // nothing. `model` left `required` would have refused this shape, which is why the minor
+        // drops it; the second row is here so the removal is exercised and not merely legal.
+        (
+            "agent_presence_declared",
+            json!({
+                "actorId": "agent-planner",
+                "actorType": "agent",
+                "session": "fedcba9876543210"
+            }),
+            false,
+        ),
     ]
 }
 

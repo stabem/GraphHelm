@@ -2988,6 +2988,96 @@ describe("the exchange", () => {
     expect(options.to).toBe("seguranca");
   });
 
+  /**
+   * THE WIRING ITSELF - not the reducer in isolation. `App`'s `crew` memo reads
+   * `agent_presence_declared` from the SAME event log it already scans and carries the newest
+   * declaration per actor onto that actor's own blob; a test that only calls
+   * `newestPresenceByActor` directly cannot tell whether this path is connected to anything.
+   *
+   * One client exercises all three properties the wiring must not lose: codex redeclares mid-run
+   * (newest wins, by the later `#17`, not `#16`), the newest of the two carries no effort (model
+   * alone, no dangling separator), and claude-code spoke but never declared (absence renders
+   * nothing on ITS OWN blob, not a placeholder borrowed from codex's).
+   */
+  it("carries an actor's newest declared model onto its own crew blob, live off the event log", async () => {
+    const client = talkingClient({
+      getEvents: vi.fn(async () => ({
+        head: 17,
+        events: [
+          {
+            sequence: 14,
+            kind: "signal_recorded",
+            payload: {
+              executionId: "demo-deploy",
+              signalId: "sig-1",
+              sourceKind: "user",
+              sourceId: "claude-code",
+              kind: "operator_note",
+              severity: "low",
+            },
+            occurredAt: "2026-08-27T12:02:00Z",
+            actorId: "claude-code",
+            actorType: "agent",
+            idempotencyKey: "k-14",
+            eventId: "event-14",
+            evidenceRefs: [],
+          },
+          {
+            sequence: 15,
+            kind: "signal_recorded",
+            payload: {
+              executionId: "demo-deploy",
+              signalId: "sig-2",
+              sourceKind: "user",
+              sourceId: "codex",
+              kind: "operator_note",
+              severity: "low",
+            },
+            occurredAt: "2026-08-27T12:03:00Z",
+            actorId: "codex",
+            actorType: "agent",
+            idempotencyKey: "k-15",
+            eventId: "event-15",
+            evidenceRefs: [],
+          },
+          {
+            sequence: 16,
+            kind: "agent_presence_declared",
+            payload: { actorId: "codex", actorType: "agent", model: "gpt-6-early", effort: "low" },
+            occurredAt: "2026-08-27T12:04:00Z",
+            actorId: "codex",
+            actorType: "agent",
+            idempotencyKey: "k-16",
+            eventId: "event-16",
+            evidenceRefs: [],
+          },
+          {
+            sequence: 17,
+            kind: "agent_presence_declared",
+            payload: { actorId: "codex", actorType: "agent", model: "gpt-6-astra" },
+            occurredAt: "2026-08-27T12:05:00Z",
+            actorId: "codex",
+            actorType: "agent",
+            idempotencyKey: "k-17",
+            eventId: "event-17",
+            evidenceRefs: [],
+          },
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const crew = await screen.findByLabelText("Agents in this room");
+
+    const codex = within(crew).getByRole("button", { name: /^codex$/i });
+    expect(within(codex).getByText("gpt-6-astra")).toBeInTheDocument();
+    expect(within(codex).queryByText(/gpt-6-early/)).not.toBeInTheDocument();
+    expect(within(codex).queryByText("·")).not.toBeInTheDocument();
+
+    const claude = within(crew).getByRole("button", { name: /^claude-code$/i });
+    expect(within(claude).queryByText(/gpt|unknown|n\/a/i)).not.toBeInTheDocument();
+  });
+
   /** A persona's birth is a thread event, said as one. `persona_created` is an unrecognized
    * signal kind on purpose (recorded, never steers); the thread names who was chartered rather
    * than dumping the envelope. */

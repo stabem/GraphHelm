@@ -880,6 +880,15 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             serde_json::json!({"type":"wake_lease","data":{"executionId":"execution-1","sessionId":"session-1","cursor":1,"rendezvousId":"rendezvous-1"}}),
             serde_json::json!({"type":"wake_lease_consumed","data":{"executionId":"execution-1","sessionId":"session-1","reason":"rung","capturedArming":1}}),
         ],
+        // #1054: `agent_presence_declared` needs NO prelude at all, and that absence is the
+        // fixture's content rather than an omission. The fold arm reads no projection state,
+        // checks no execution id and has no precondition -- a declaration is a fact about a
+        // session, so there is no world it can be inconsistent with. Every neighbour above needed
+        // a prelude because its arm demands one; this one would be answering a requirement that
+        // does not exist.
+        vec![
+            serde_json::json!({"type":"agent_presence_declared","data":{"actorId":"agent-planner","actorType":"agent","model":"claude-opus-5","effort":"high"}}),
+        ],
     ];
     let covered: std::collections::BTreeSet<&str> = variants
         .iter()

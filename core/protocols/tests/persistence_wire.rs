@@ -296,6 +296,20 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             json!({"type":"overdue_exception","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"stage":"claimed","deadline":"2026-08-09T00:00:00Z"}}),
             false,
         ),
+        // #1054. `false` is EXECUTION-scoped, and that is the row's second claim: the envelope's
+        // top-level pairing binds this kind to `scopeWithExecution`, so a project-scoped fixture
+        // would match zero branches and be refused.
+        (
+            json!({"type":"agent_presence_declared","data":{"actorId":"agent-planner","actorType":"agent","model":"claude-opus-5","effort":"high"}}),
+            false,
+        ),
+        // The same kind with NO effort. `effort` is optional and the absence must be an ABSENT KEY:
+        // `additionalProperties` is false and the enum has no null member, so a serializer that
+        // emitted `"effort": null` would be refused here rather than in production.
+        (
+            json!({"type":"agent_presence_declared","data":{"actorId":"owner-1","actorType":"owner","model":"claude-opus-5"}}),
+            false,
+        ),
         (
             json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
             false,
@@ -494,6 +508,57 @@ fn a_mutation_acceptance_without_a_mode_is_rejected() {
         "data": {"executionId":"execution-1","draftId":"draft-1","graphVersion":4}
     });
     assert!(serde_json::from_value::<EventKind>(wire).is_err());
+}
+
+/// #1054 fix round 1, Important 3: `model` is BOUNDED BY THE SCHEMA, not only by the HTTP door.
+///
+/// The Runtime refuses an over-long, blank or non-ASCII `X-GraphHelm-Actor-Model` header before
+/// anything touches the store, and `api_http.rs` pins that. But a header check binds exactly one
+/// producer -- the one that speaks HTTP to this Runtime. The schema is what binds every other one,
+/// including this repository's own future code, which is why the bound is written twice and why
+/// this cell asks the SCHEMA rather than the server.
+///
+/// Three refusals and two CONTROLS. Without the controls a `model` rule of "reject everything"
+/// would satisfy every refusal below, and a cell that only refuses cannot tell a working bound from
+/// a broken field.
+#[test]
+fn the_presence_models_bounds_are_enforced_by_the_schema_and_not_only_by_the_http_door() {
+    let presence = |model: Value| {
+        event_fixture(
+            json!({
+                "type": "agent_presence_declared",
+                "data": {
+                    "actorId": "agent-planner",
+                    "actorType": "agent",
+                    "model": model,
+                    "effort": "high"
+                }
+            }),
+            false,
+        )
+    };
+
+    // CONTROL 1: an ordinary model is accepted, so every refusal below is about the VALUE and not
+    // about the field, the kind, or the fixture's shape.
+    assert_schema_valid(EVENT_ID, &presence(json!("claude-opus-5")));
+    // CONTROL 2: exactly at the cap is accepted, which is what makes 129 below a BOUNDARY rather
+    // than merely "long". A cap accidentally set to 1 fails here.
+    assert_schema_valid(EVENT_ID, &presence(json!("m".repeat(128))));
+
+    // One over the cap.
+    assert_schema_invalid(EVENT_ID, &presence(json!("m".repeat(129))));
+    // Whitespace-only: satisfies `minLength: 1` and is refused by `pattern` alone. This is the one
+    // assertion that would fail if someone removed the pattern and kept the length cap.
+    //
+    // One space, and written as a constant rather than as a literal run, because
+    // `authored_strings_carry_no_collapsed_indentation` refuses a literal run of whitespace in
+    // this crate's sources -- correctly, since it cannot tell a message rustfmt collapsed from one
+    // whose blankness is the subject. One space is the minimal value `minLength: 1` accepts.
+    const BLANK: &str = " ";
+    assert_schema_invalid(EVENT_ID, &presence(json!(BLANK)));
+    // Empty: refused by `minLength`, kept here because the two rules are separate and a reader
+    // should see which cases each one owns.
+    assert_schema_invalid(EVENT_ID, &presence(json!("")));
 }
 
 fn assert_schema_valid(schema_id: &str, document: &Value) {

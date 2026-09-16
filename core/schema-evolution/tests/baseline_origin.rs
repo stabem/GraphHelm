@@ -422,11 +422,12 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
         divergent,
         vec![
             "context-provenance",
+            "event-envelope",
             "execution-accounting-receipt",
             "graph-signal"
         ],
-        "the deliberate divergences from 1.0.0 are exactly these three (#1065 added \
-         context-provenance whole)"
+        "the deliberate divergences from 1.0.0 are exactly these four (#1065 added \
+         context-provenance whole, #1054 added agent_presence_declared)"
     );
     for change in &report.changes {
         assert_ne!(
@@ -449,6 +450,35 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
         CompatibilityClass::Breaking,
         "compare_catalogs did not report a removed schema as breaking, so its verdict above says \
          nothing about the catalogs"
+    );
+}
+
+// #1054: the presence kind joins `$defs/eventKind` as a DISJOINT `oneOf` branch, which is the only
+// shape of union change `compare_catalogs` can class as compatible. An edited or added `allOf`
+// branch leaves the two sides incomparable (`composition ambiguous`) and reports Breaking; so does
+// an addition the prover cannot show is disjoint. The assertion below is therefore about the SHAPE
+// of the change, not about the presence payload.
+#[test]
+fn the_new_presence_kind_is_a_disjoint_addition_and_therefore_compatible() {
+    let baseline = checked_in_catalog(RELEASE_CATALOG);
+    let candidate = checked_in_catalog(LIVE_CATALOG);
+    let report = compare_catalogs(&baseline, &candidate);
+    let envelope: Vec<&CompatibilityChange> = report
+        .changes
+        .iter()
+        .filter(|change| change.schema == "event-envelope")
+        .collect();
+    // CONTROL: an empty filter satisfies `all` vacuously. Without this line a commit that changed
+    // nothing at all would read as a green proof that the change is compatible.
+    assert!(
+        !envelope.is_empty(),
+        "CONTROL: the change must be visible at all"
+    );
+    assert!(
+        envelope
+            .iter()
+            .all(|change| change.class == CompatibilityClass::Compatible),
+        "a disjoint oneOf addition must not be Breaking: {envelope:#?}"
     );
 }
 

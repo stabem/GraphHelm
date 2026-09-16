@@ -1,0 +1,84 @@
+{
+    "status":  "HARNESS-BROKE",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "a470fc2744b217a1d5da2d44c95890930dec5568",
+    "pullRequest":  1107,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-1106-typesafe-system-one-route on origin IS this commit, read from the server",
+    "upstreamSha":  "a470fc2744b217a1d5da2d44c95890930dec5568",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "skipped",
+                     "complete":  false
+                 },
+    "requiredFeaturesExcluded":  null,
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "D:\\codex-targets",
+    "queuedUtc":  "2026-09-16T15:35:53.2657172Z",
+    "runStartUtc":  "2026-09-16T15:35:53.4587900Z",
+    "slotWaitSecs":  0.193,
+    "runEndUtc":  "2026-09-16T15:35:58.4054016Z",
+    "canaryPassed":  false,
+    "psSuitesStartedEarly":  false,
+    "psSuitesOverlapped":  false,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  false,
+    "studioStartedEarly":  false,
+    "studioOverlapped":  false,
+    "pgMatricesStartedEarly":  false,
+    "pgMatricesOverlapped":  false,
+    "stages":  [
+
+               ],
+    "artifactBuildExit":  null,
+    "testArtifacts":  [
+
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "D:/graphhelm-slot\\SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-16T15:35:53Z | gate cwd=F:\\github\\GraphHelm\\.claude\\worktrees\\typesafe-early-access-82126a head=a470fc2744b217a1d5da2d44c95890930dec5568 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=50708 start=2026-09-16T15:35:52.6262084Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-16T15:35:53.5771992Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "present",
+                          "path":  "D:/graphhelm-slot\\SLOT.lock",
+                          "content":  "HELD by gate | 2026-09-16T15:35:53Z | gate cwd=F:\\github\\GraphHelm\\.claude\\worktrees\\typesafe-early-access-82126a head=a470fc2744b217a1d5da2d44c95890930dec5568 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=50708 start=2026-09-16T15:35:52.6262084Z\n",
+                          "holderVerdict":  "live",
+                          "observedAtUtc":  "2026-09-16T15:35:53.6050932Z"
+                      },
+    "slotLockStartEndIdentical":  true,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: no scope selection was given",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  true,
+    "targetBuildState":  {
+                             "contaminated":  true,
+                             "suspect":  true,
+                             "state":  "interrupted",
+                             "reason":  "the build owned by process 43884 never finished and that process is gone, so cargo\u0027s fingerprints may claim freshness for binaries whose source has moved"
+                         },
+    "overallPassed":  false
+}

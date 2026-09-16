@@ -1,5 +1,19 @@
 # Specification Changelog
 
+## TypeSafe System One route and skill, #1106 - 2026-09-16
+
+GraphHelm was accepted into TypeSafe AI early access. Documentation only; no Runtime code.
+
+- **A sixth route family.** `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6 records System One
+  judgment models (TypeSafe's Jev): typed `Choice` / `Noul` / `Score` answers with a probability,
+  for the decisions GraphHelm today pays a chat completion for. Classify-and-propose side only;
+  the Policy Engine keeps no dependency on it; never an automatic paid fallback.
+- **Verified reference.** `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` carries the docs
+  index, primitives, skill and install commands, and the published price at acceptance.
+- **The skill is loaded per project.** `.claude/settings.json` enables `typesafe@typesafe-ai`
+  for every Claude Code session on this repository; `docs/agents/AGENTS_SKILLS_PLUGINS.md` §10.5
+  names externally maintained skills as ordinary advisory skills.
+
 ## Scanner hardening and execution-worktree retrieval, #1086 - 2026-09-14
 
 The declared gaps of the context chain #1078 landed, closed one by one.

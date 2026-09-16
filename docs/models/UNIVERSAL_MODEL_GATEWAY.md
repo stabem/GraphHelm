@@ -46,6 +46,31 @@ vLLM, llama.cpp server, Ollama adapters, and other local/private endpoints.
 
 Model executed on the user's GPU/CPU, with a lifecycle adapter and resource scheduling.
 
+### 2.6 System One judgment models
+
+Examples: TypeSafe AI's Jev.
+
+Characteristics:
+
+- the model returns a typed judgment — one of a closed set (`Choice`), a yes/no probability
+  (`Noul`), or a probability-weighted position on ordered levels (`Score`) — never free text;
+- every answer carries a probability the caller can threshold;
+- independent questions over the same state run in one request, in parallel;
+- an order of magnitude cheaper and faster than a chat model on the same decision.
+
+This route family exists for the decisions GraphHelm today pays a full chat completion for:
+classifying an issue, selecting a lane or handler for a task, reading a review verdict,
+deciding whether a gate result is a pass, a flake or a hang, ranking retrieved evidence.
+It sits on the *classify and propose* side of the constitutional invariant: the judgment is a
+typed signal; deterministic code still enforces schemas, policies, permissions and state
+transitions, and the Policy Engine keeps no dependency on it. A judgment below the caller's
+confidence threshold escalates to a reasoning model or a person; it is never acted on silently.
+A System One route is selected explicitly by the Model Router like any other route and is never
+an automatic paid fallback (§12).
+
+Early-access status, the skill agents load, and the live documentation index are recorded in
+`docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`.
+
 ## 3. Architecture
 
 ```mermaid

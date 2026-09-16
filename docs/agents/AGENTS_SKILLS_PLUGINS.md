@@ -260,7 +260,16 @@ Skill score uses:
 - freshness;
 - reviewer agreement.
 
-### 10.5 Journey-Proven Development entry families
+### 10.5 Externally maintained skills
+
+A skill may be maintained outside this repository and loaded by the host. It is still a skill
+under this section: advisory, unable to change hard policy, scored like any other. The first such
+skill is TypeSafe's `typesafe-ai`, which teaches an agent to turn a prompt-and-parse step into a
+typed judgment with a probability (route, rank, extract, verify, escalate). Its install commands
+and the route it maps to are in `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`; the model
+family it targets is `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6.
+
+### 10.6 Journey-Proven Development entry families
 
 The built-in `graphhelm-jpd` extension exposes eight entry skills: journey contract, observation
 compilation, plan council, defect bounty, skill synthesis, skill evaluation, retry provenance, and

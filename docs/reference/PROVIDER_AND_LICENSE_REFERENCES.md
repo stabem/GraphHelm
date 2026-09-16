@@ -62,6 +62,50 @@ The official documentation describes Bearer API keys for the main endpoints and 
 - each model's capabilities need to be discovered/registered;
 - do not use web cookies for the API.
 
+## TypeSafe AI (System One models)
+
+GraphHelm was accepted into TypeSafe early access on 2026-09-16. TypeSafe's flagship model,
+Jev, returns typed judgments with calibrated probabilities rather than generated text.
+
+- Product page: https://typesafe.ai/
+- Live documentation index (source of truth, read per task): https://docs.typesafe.ai/llms.txt
+- Primitives: `Choice`, `Noul`, `Score` — https://docs.typesafe.ai/primitives.md
+- Confidence guidance: https://docs.typesafe.ai/confidence.md
+- HTTP API: https://docs.typesafe.ai/api.md
+- Skill (MIT): https://github.com/typesafe-ai/skills/blob/main/skills/typesafe-ai/SKILL.md
+
+Published pricing at acceptance: "$42 per billion input tokens" (verify on the product page
+before relying on it).
+
+### Installing the skill
+
+Claude Code (also enabled at project scope by `.claude/settings.json` in this repository):
+
+```bash
+claude plugin marketplace add typesafe-ai/skills
+claude plugin install typesafe@typesafe-ai
+```
+
+Any other agent host:
+
+```bash
+npx skills add typesafe-ai/skills --skill typesafe-ai
+```
+
+Use one installation method. The skill is an advisory skill under D-041: it calls nothing in
+the Runtime and grants no authority; it tells an agent how to shape a judgment question.
+
+### Implication for the project
+
+- TypeSafe is a direct API / BYOK-type route (§2.2) whose output contract is the System One
+  judgment family described in `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6;
+- the API key belongs to the user and lives in the Credential Broker; it never appears in Graph
+  DSL, capsules, artifacts, fixtures or logs;
+- a judgment is a typed signal on the classify/propose side; deterministic policy still decides;
+- the route is chosen explicitly, never as an automatic paid fallback;
+- no Runtime adapter exists yet; the first judgment site must be chosen and its thresholds
+  measured on GraphHelm's own data before one is written.
+
 ## MIT License
 
 GraphHelm is distributed under the MIT license: use, modification, redistribution and sale are

@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 1,
+  "routes": [
+    {
+      "id": "codex_astra_subscription",
+      "provider": "openai",
+      "transport": "native_runtime",
+      "runtime": "codex",
+      "authentication": "account_subscription",
+      "billingMode": "subscription_quota",
+      "command": {
+        "program": "codex",
+        "args": [
+          "exec",
+          "--json",
+          "--model",
+          "gpt-6-astra",
+          "--sandbox",
+          "read-only",
+          "--ignore-user-config",
+          "--ephemeral",
+          "-c",
+          "model_reasoning_effort=\"low\"",
+          "-"
+        ]
+      },
+      "profiles": ["balanced_reasoning"],
+      "enabled": false,
+      "timeoutSeconds": 300
+    }
+  ]
+}

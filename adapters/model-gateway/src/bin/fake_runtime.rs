@@ -26,6 +26,26 @@
 //!   stdin, so a test can prove the prompt really travelled over stdin rather than argv. The
 //!   argv this process actually received is printed to stderr (space-joined, one line), so a
 //!   test can separately prove the prompt never travelled there instead.
+//! - `current-codex-ok`: reads stdin, emits the current documented Codex JSONL shape including a
+//!   nonterminal advisory item, an `agent_message`, and terminal `turn.completed` usage, then
+//!   exits `0`.
+//! - `current-codex-retry-ok`: emits a provisional reconnect error before the successful reply.
+//! - `current-codex-retry-nonzero`: emits the same completed retry but exits `1`.
+//! - `current-codex-quota`: emits a current top-level `error` containing a capacity marker and
+//!   exits `1`.
+//! - `current-codex-auth`: emits a current `turn.failed` authentication error and exits `1`.
+//! - `current-codex-failed-zero`: emits a current `turn.failed` unknown error and exits `0`,
+//!   proving event state wins over a superficially clean process exit.
+//! - `legacy-codex-errors-quota-last` and `legacy-codex-errors-nonquota-last`: emit two
+//!   historical nested error events in opposite orders and exit `1`, proving the legacy
+//!   nonzero path classifies the last parsed error as it did before current-format support.
+//! - `legacy-codex-error-then-valid`: emits a historical nested error followed by a valid agent
+//!   message and exits `0`; the legacy success path still returns the valid message.
+//! - `legacy-codex-typed-noise`: surrounds the legacy reply with unrelated typed log records.
+//! - `oversized-output`: writes more bytes than the adapter's capture limit and exits `0`.
+//! - `current-codex-exact-cap`: emits a complete reply padded to exactly the capture limit.
+//! - `current-codex-hidden-failure`: appends a failure beyond that limit and exits `0`.
+//! - `current-codex-hidden-failure-nonzero`: emits the same overflow but exits `1`.
 //! - `quota`: prints a quota-shaped failure body (containing a marker word `runtime.rs`'s
 //!   heuristic scan recognizes) to stdout and exits `1`.
 //! - `usage-limit`: prints a nonzero-exit failure body whose parsed error text contains "usage
@@ -74,6 +94,46 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match mode.as_str() {
         "ok" => run_ok(&argv),
+        "legacy-codex-typed-noise" => {
+            println!("{}", serde_json::json!({"type":"log","message":"before"}));
+            run_ok(&argv);
+            println!("{}", serde_json::json!({"type":"log","message":"after"}));
+        }
+        "current-codex-ok" => run_current_codex_ok(&argv, false),
+        "current-codex-retry-ok" => run_current_codex_ok(&argv, true),
+        "current-codex-retry-nonzero" => {
+            run_current_codex_ok(&argv, true);
+            std::process::exit(1);
+        }
+        "current-codex-quota" => run_current_codex_quota(),
+        "current-codex-auth" => run_current_codex_auth(),
+        "current-codex-invalid-lifecycle" => {
+            println!(
+                "{}",
+                serde_json::json!({"type":"turn.failed","error":{"message":"usage limit reached"}})
+            );
+            println!("{}", serde_json::json!({"type":"item.updated","item":3}));
+            std::process::exit(1);
+        }
+        "current-codex-failed-zero" => run_current_codex_failed_zero(),
+        "current-codex-quota-then-corruption" => {
+            println!(
+                "{}",
+                serde_json::json!({"type":"turn.failed","error":{"message":"usage limit reached"}})
+            );
+            println!("{{");
+            std::process::exit(1);
+        }
+        "legacy-codex-errors-quota-last" => run_legacy_codex_errors(true),
+        "legacy-codex-errors-nonquota-last" => run_legacy_codex_errors(false),
+        "legacy-codex-error-then-valid" => run_legacy_codex_error_then_valid(),
+        "oversized-output" => run_oversized_output(),
+        "current-codex-exact-cap" => run_current_codex_at_capture_limit(false),
+        "current-codex-hidden-failure" => run_current_codex_at_capture_limit(true),
+        "current-codex-hidden-failure-nonzero" => {
+            run_current_codex_at_capture_limit(true);
+            std::process::exit(1);
+        }
         "quota" => run_quota(),
         "usage-limit" => run_usage_limit(),
         "error-report" => run_error_report(),
@@ -89,17 +149,20 @@ fn main() {
     }
 }
 
-/// `mode=ok`: proves the stdin round-trip (the reply embeds the first stdin line) and gives
-/// `the_prompt_travels_via_stdin_never_argv` something to check argv against (printed to stderr,
-/// never stdout, so it can never be confused with the reply itself).
-fn run_ok(argv: &[String]) {
+fn read_prompt_and_report_argv(argv: &[String]) -> String {
     let mut stdin_text = String::new();
     std::io::stdin()
         .read_to_string(&mut stdin_text)
         .expect("fake_runtime: failed to read stdin to EOF");
-    let first_line = stdin_text.lines().next().unwrap_or_default();
-
     eprintln!("{}", argv.join(" "));
+    stdin_text.lines().next().unwrap_or_default().to_owned()
+}
+
+/// `mode=ok`: proves the stdin round-trip (the reply embeds the first stdin line) and gives
+/// `the_prompt_travels_via_stdin_never_argv` something to check argv against (printed to stderr,
+/// never stdout, so it can never be confused with the reply itself).
+fn run_ok(argv: &[String]) {
+    let first_line = read_prompt_and_report_argv(argv);
 
     let shape = std::env::var("FAKE_RUNTIME_SHAPE").unwrap_or_default();
     let text = format!("hello from fake_runtime, prompt was: {first_line}");
@@ -139,6 +202,162 @@ fn run_ok(argv: &[String]) {
             );
         }
     }
+}
+
+fn run_current_codex_ok(argv: &[String], reconnect: bool) {
+    let first_line = read_prompt_and_report_argv(argv);
+    let text = format!("hello from current fake Codex, prompt was: {first_line}");
+    println!(
+        "{}",
+        serde_json::json!({"type": "thread.started", "thread_id": "fixture"})
+    );
+    println!("{}", serde_json::json!({"type": "turn.started"}));
+    println!(
+        "{}",
+        serde_json::json!({"type":"item.started","item":{"id":"answer","type":"agent_message","text":""}})
+    );
+    println!(
+        "{}",
+        serde_json::json!({"type":"item.updated","item":{"id":"answer","type":"agent_message","text":"partial"}})
+    );
+    if reconnect {
+        println!(
+            "{}",
+            serde_json::json!({"type": "error", "message": "Reconnecting... 2/5"})
+        );
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "warning",
+                "type": "error",
+                "message": "Skill descriptions were shortened"
+            }
+        })
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "item.completed",
+            "item": {"id": "answer", "type": "agent_message", "text": text}
+        })
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 12,
+                "cached_input_tokens": 2,
+                "output_tokens": 3,
+                "reasoning_tokens": 1
+            }
+        })
+    );
+}
+
+fn run_current_codex_quota() {
+    println!(
+        "{}",
+        serde_json::json!({"type": "thread.started", "thread_id": "fixture"})
+    );
+    println!(
+        "{}",
+        serde_json::json!({"type": "error", "message": "usage limit reached, try again later"})
+    );
+    std::process::exit(1);
+}
+
+fn run_current_codex_auth() {
+    println!(
+        "{}",
+        serde_json::json!({"type": "thread.started", "thread_id": "fixture"})
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "turn.failed",
+            "error": {"message": "authentication required"}
+        })
+    );
+    std::process::exit(1);
+}
+
+fn run_current_codex_failed_zero() {
+    println!(
+        "{}",
+        serde_json::json!({"type": "thread.started", "thread_id": "fixture"})
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "item.completed",
+            "item": {"id": "answer", "type": "agent_message", "text": "not final"}
+        })
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "turn.failed",
+            "error": {"message": "provider stopped unexpectedly"}
+        })
+    );
+}
+
+fn run_legacy_codex_errors(quota_last: bool) {
+    let quota = serde_json::json!({
+        "msg": {"type": "error", "message": "usage limit reached"}
+    });
+    let nonquota = serde_json::json!({
+        "msg": {"type": "error", "message": "provider stopped unexpectedly"}
+    });
+    let (first, second) = if quota_last {
+        (nonquota, quota)
+    } else {
+        (quota, nonquota)
+    };
+    println!("{first}");
+    println!("{second}");
+    std::process::exit(1);
+}
+
+fn run_legacy_codex_error_then_valid() {
+    println!(
+        "{}",
+        serde_json::json!({"msg": {"type": "error", "message": "quota exceeded"}})
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "msg": {"type": "agent_message", "message": "legacy recovered"}
+        })
+    );
+}
+
+fn run_current_codex_at_capture_limit(hidden_failure: bool) {
+    let prefix = concat!(
+        "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"bounded reply\"}}\n",
+        "{\"type\":\"turn.completed\"}\n"
+    );
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(prefix.as_bytes()).expect("write prefix");
+    stdout
+        .write_all(&vec![b' '; 16 * 1024 * 1024 - prefix.len()])
+        .expect("pad to exact capture limit");
+    if hidden_failure {
+        stdout
+            .write_all(b"\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"quota exceeded\"}}\n")
+            .expect("write failure beyond capture limit");
+    }
+}
+
+fn run_oversized_output() {
+    let bytes = vec![b'x'; 17 * 1024 * 1024];
+    std::io::stdout()
+        .write_all(&bytes)
+        .expect("fake_runtime: failed to write oversized output");
 }
 
 /// `mode=quota`: a nonzero exit whose output contains a marker word `runtime.rs`'s heuristic

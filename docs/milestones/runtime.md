@@ -348,17 +348,60 @@ ever ran at all. Stdout/stderr are drained on background threads concurrently wi
 than one pipe buffer of output cannot be mistaken for hung either; on deadline the child is killed
 and reaped, which unblocks a still-in-flight stdin write with a harmless `BrokenPipe` (joined
 alongside the output threads), and the call reports `GatewayError::Timeout` — now true
-unconditionally, for an oversized prompt exactly as for a slow-to-exit child. Exit `0` parses per
-`RuntimeKind`: `ClaudeCode` expects one JSON object with
-a `result` string and optional `usage`; `Codex` expects JSONL, scanning every line and keeping only
-the last `agent_message` (`usage` is always absent for this shape — nothing in it reports usage this
-milestone knows how to read). A nonzero exit is `QuotaExhausted` when `QUOTA_MARKERS`
-(`["quota", "rate limit"]`, a documented heuristic, case-insensitive substring match over the raw
-concatenation of captured stdout and stderr) matches, otherwise `RuntimeCrashed`; an exit-`0` reply
-that does not parse is `MalformedOutput`. Eight tests in
-`adapters/model-gateway/tests/runtime_adapters.rs` cover both happy shapes, quota/crash/hang/stdin
-routing, the stdin-write regression above (a 1 MiB prompt against a child that never reads stdin at
-all, which hung indefinitely pre-fix), and — the one requiring the most care —
+unconditionally, for an oversized prompt exactly as for a slow-to-exit child.
+
+Successful decoding then depends on `RuntimeKind`. `ClaudeCode` expects one JSON object with a
+`result` string and optional `usage`; `subtype`/`is_error` can instead mark that object as an error
+report, including on exit `0`. Codex decoding requires complete captured stdout: exceeding the
+16 MiB capture bound or failing to read the pipe through EOF refuses the transcript before parsing
+(`MalformedOutput` on exit `0`, `RuntimeCrashed` otherwise). Readers still drain overflow bytes
+without retaining them, and a complete stream of exactly 16 MiB is not an overflow. A captured
+prefix cannot establish success or quota exhaustion while omitted events remain unknown.
+`Codex` supports two deliberately separate JSONL formats:
+
+- The current format uses top-level typed events. `thread.started` requires a string `thread_id`;
+  `turn.started` has no required payload. A successful reply requires a nonblank
+  `item.completed` whose `item.type` is `agent_message`, followed by terminal `turn.completed`.
+  All three item lifecycle events (`item.started`, `item.updated`, `item.completed`) require an
+  object-valued `item` with a string `type` and optional string `text`. Missing or malformed
+  common item payloads invalidate the transcript even when that item is otherwise ignored;
+  additional item fields remain forward-compatible and are not executed by this decoder.
+  `turn.completed.usage.input_tokens` and `output_tokens` populate the corresponding optional
+  usage fields when reported; an absent usage object or field remains `None`. Present usage and
+  error payloads must be objects (or null for the existing optional absence case); array-shaped
+  objects are refused, and duplicate known fields retain the typed decoder rejection. An
+  `item.completed` whose `item.type` is `error` is advisory rather than terminal. A top-level
+  `error` may be a reconnect notification: retain its text provisionally and use the subsequent
+  terminal outcome. A valid `turn.completed` can succeed after such notices only on process exit
+  `0`; `turn.failed` remains a typed failure on either exit status. Every remaining envelope is
+  validated before classifying a terminal failure: malformed, unknown, or non-object records
+  invalidate the transcript rather than establishing quota exhaustion. Later valid events cannot
+  rescue or replace the retained terminal failure. At end of stream without a
+  terminal outcome, classify the last provisional error rather than returning a reply. An error
+  after terminal completion still fails the one-shot stream. Failed, incomplete,
+  malformed, mixed-format, and unknown-current-event streams cannot fall through to a successful
+  reply, and an earlier message or completed turn cannot rescue a later failed or incomplete turn.
+- The legacy compatibility format keeps the historical tolerant nested-`msg` scan. On exit `0`,
+  unrelated or malformed lines, missing-message records, and error records are skipped and the
+  last valid `agent_message` wins. On nonzero exit, the last parsed nested error message is used
+  for classification. This legacy format does not report usage known to the adapter, so its usage
+  fields remain `None`. Unrelated typed log records and unrelated top-level `type` metadata
+  do not select the current format or hide a valid nested message. A stream containing both
+  recognized current and legacy envelopes is refused; once current events select the strict
+  decoder, unknown events remain invalid.
+
+Failure classification scans only those parsed error fields: Claude's `result`/`error`, current
+Codex `error.message` or `turn.failed.error.message`, and legacy Codex nested error messages.
+`QUOTA_MARKERS` (`["quota", "rate limit", "usage limit"]`) is a documented case-insensitive
+substring heuristic over that parsed text. Captured raw stdout and stderr are never scanned for
+quota markers. A nonzero exit without a parsed error is `RuntimeCrashed`; an exit-`0` body with no
+valid reply is `MalformedOutput`.
+
+At the original Task 5 completion, eight tests in
+`adapters/model-gateway/tests/runtime_adapters.rs` covered both then-supported happy shapes,
+quota/crash/hang/stdin routing, the stdin-write regression above (a 1 MiB prompt against a child
+that never reads stdin at all, which hung indefinitely pre-fix), and — the one requiring the most
+care —
 `the_child_environment_is_an_allowlist_and_never_carries_broker_material`: since mutating this
 process's real environment from inside a test would race every sibling test reading it concurrently,
 this test re-execs the compiled test binary as a child with two sentinel variables set only on that
@@ -367,7 +410,9 @@ what it received — proving the sentinels are filtered rather than merely asser
 present. The guard is not hypothetical: Task 5's own sabotage (commit `86e518a`) removed
 `env_clear()` from the spawn path and reran this test, which failed by dumping the shell's entire
 ambient environment — including a real, live `SENTRY_AUTH_TOKEN` — into the fake child; restored,
-with the test green again.
+with the test green again. That count is a historical milestone record. The expanded current and
+legacy Codex decoder tests and live compatibility evidence are recorded in the
+[GPT-6 Astra migration acceptance record](../acceptance/gpt-6-astra-migration.md).
 
 ### The quota-free probe
 

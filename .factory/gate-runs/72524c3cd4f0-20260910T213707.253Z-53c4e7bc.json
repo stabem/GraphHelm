@@ -1,0 +1,2416 @@
+{
+    "status":  "GREEN",
+    "runClass":  "green",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "72524c3cd4f077ce96cce658da8ff13364ff66bf",
+    "pullRequest":  1035,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-1034-astra-support on origin IS this commit, read from the server",
+    "upstreamSha":  "72524c3cd4f077ce96cce658da8ff13364ff66bf",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "skipped",
+                     "complete":  false
+                 },
+    "requiredFeaturesExcluded":  [
+
+                                 ],
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "D:/graphhelm-astra-1034-gate-6",
+    "queuedUtc":  "2026-09-10T20:45:42.7810166Z",
+    "runStartUtc":  "2026-09-10T20:45:42.8120169Z",
+    "slotWaitSecs":  0.031,
+    "runEndUtc":  "2026-09-10T21:37:07.2183006Z",
+    "canaryPassed":  true,
+    "psSuitesStartedEarly":  true,
+    "psSuitesOverlapped":  true,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  true,
+    "studioStartedEarly":  true,
+    "studioOverlapped":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.078,
+                       "startedUtc":  "2026-09-10T20:45:43.4517989Z",
+                       "endedUtc":  "2026-09-10T20:45:48.5376728Z"
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.893,
+                       "startedUtc":  "2026-09-10T20:55:47.8766602Z",
+                       "endedUtc":  "2026-09-10T20:55:51.7696881Z"
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  96.252,
+                       "startedUtc":  "2026-09-10T20:55:51.7732060Z",
+                       "endedUtc":  "2026-09-10T20:57:28.0257177Z"
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  545.71,
+                       "startedUtc":  "2026-09-10T20:57:28.0422748Z",
+                       "endedUtc":  "2026-09-10T21:06:33.7525614Z"
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  138.803,
+                       "startedUtc":  "2026-09-10T21:06:33.7942174Z",
+                       "endedUtc":  "2026-09-10T21:08:52.5979860Z"
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  34.458,
+                       "startedUtc":  "2026-09-10T21:08:52.5994860Z",
+                       "endedUtc":  "2026-09-10T21:09:27.0578256Z"
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.354,
+                       "startedUtc":  "2026-09-10T21:09:27.0598311Z",
+                       "endedUtc":  "2026-09-10T21:09:29.4140712Z"
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.947,
+                       "startedUtc":  "2026-09-10T21:09:29.4160721Z",
+                       "endedUtc":  "2026-09-10T21:09:34.3632944Z"
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.949,
+                       "startedUtc":  "2026-09-10T21:09:34.3848165Z",
+                       "endedUtc":  "2026-09-10T21:09:36.3346766Z"
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.694,
+                       "startedUtc":  "2026-09-10T21:09:36.3361779Z",
+                       "endedUtc":  "2026-09-10T21:09:38.0298370Z"
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.635,
+                       "startedUtc":  "2026-09-10T21:09:38.0323507Z",
+                       "endedUtc":  "2026-09-10T21:09:41.6665054Z"
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.289,
+                       "startedUtc":  "2026-09-10T21:09:41.6690122Z",
+                       "endedUtc":  "2026-09-10T21:09:42.9583067Z"
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.567,
+                       "startedUtc":  "2026-09-10T21:09:42.9603071Z",
+                       "endedUtc":  "2026-09-10T21:09:44.5273508Z"
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.616,
+                       "startedUtc":  "2026-09-10T21:09:44.5299097Z",
+                       "endedUtc":  "2026-09-10T21:09:47.1459980Z"
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.927,
+                       "startedUtc":  "2026-09-10T21:09:47.1480079Z",
+                       "endedUtc":  "2026-09-10T21:09:49.0756145Z"
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.758,
+                       "startedUtc":  "2026-09-10T21:09:49.0766171Z",
+                       "endedUtc":  "2026-09-10T21:09:55.8356580Z"
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.321,
+                       "startedUtc":  "2026-09-10T21:09:55.8381789Z",
+                       "endedUtc":  "2026-09-10T21:10:00.1591280Z"
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.57,
+                       "startedUtc":  "2026-09-10T21:10:00.1606286Z",
+                       "endedUtc":  "2026-09-10T21:10:02.7307550Z"
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.999,
+                       "startedUtc":  "2026-09-10T21:10:02.7327663Z",
+                       "endedUtc":  "2026-09-10T21:10:13.7322976Z"
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.888,
+                       "startedUtc":  "2026-09-10T21:10:13.7343080Z",
+                       "endedUtc":  "2026-09-10T21:10:15.6222022Z"
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.149,
+                       "startedUtc":  "2026-09-10T21:10:15.6243735Z",
+                       "endedUtc":  "2026-09-10T21:10:17.7734418Z"
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.262,
+                       "startedUtc":  "2026-09-10T21:10:17.7759419Z",
+                       "endedUtc":  "2026-09-10T21:10:20.0378504Z"
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  23.6,
+                       "startedUtc":  "2026-09-10T21:10:20.0393589Z",
+                       "endedUtc":  "2026-09-10T21:10:43.6394145Z"
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  15.962,
+                       "startedUtc":  "2026-09-10T21:10:43.6414157Z",
+                       "endedUtc":  "2026-09-10T21:10:59.6037436Z"
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.842,
+                       "startedUtc":  "2026-09-10T21:10:59.6062524Z",
+                       "endedUtc":  "2026-09-10T21:11:05.4485714Z"
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.901,
+                       "startedUtc":  "2026-09-10T21:11:05.4500777Z",
+                       "endedUtc":  "2026-09-10T21:11:11.3512579Z"
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.021,
+                       "startedUtc":  "2026-09-10T21:11:11.3532606Z",
+                       "endedUtc":  "2026-09-10T21:11:13.3747242Z"
+                   },
+                   {
+                       "name":  "cli: http_helper_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.423,
+                       "startedUtc":  "2026-09-10T21:11:13.3777289Z",
+                       "endedUtc":  "2026-09-10T21:11:18.8008838Z"
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.836,
+                       "startedUtc":  "2026-09-10T21:11:18.8023849Z",
+                       "endedUtc":  "2026-09-10T21:11:20.6399360Z"
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.243,
+                       "startedUtc":  "2026-09-10T21:11:20.6414393Z",
+                       "endedUtc":  "2026-09-10T21:11:21.8850954Z"
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.263,
+                       "startedUtc":  "2026-09-10T21:11:21.8866045Z",
+                       "endedUtc":  "2026-09-10T21:11:24.1510213Z"
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.245,
+                       "startedUtc":  "2026-09-10T21:11:24.1525227Z",
+                       "endedUtc":  "2026-09-10T21:11:27.3980610Z"
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.205,
+                       "startedUtc":  "2026-09-10T21:11:27.3990599Z",
+                       "endedUtc":  "2026-09-10T21:11:29.6045341Z"
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.395,
+                       "startedUtc":  "2026-09-10T21:11:29.6065368Z",
+                       "endedUtc":  "2026-09-10T21:11:32.0016877Z"
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  9.76,
+                       "startedUtc":  "2026-09-10T21:11:32.0042002Z",
+                       "endedUtc":  "2026-09-10T21:11:41.7641671Z"
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.902,
+                       "startedUtc":  "2026-09-10T21:11:41.7666729Z",
+                       "endedUtc":  "2026-09-10T21:11:52.6686696Z"
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.974,
+                       "startedUtc":  "2026-09-10T21:11:52.6711793Z",
+                       "endedUtc":  "2026-09-10T21:11:55.6456173Z"
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  9.809,
+                       "startedUtc":  "2026-09-10T21:11:55.6531481Z",
+                       "endedUtc":  "2026-09-10T21:12:05.4617941Z"
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  10.21,
+                       "startedUtc":  "2026-09-10T21:12:05.4637957Z",
+                       "endedUtc":  "2026-09-10T21:12:15.6735885Z"
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.955,
+                       "startedUtc":  "2026-09-10T21:12:15.6760951Z",
+                       "endedUtc":  "2026-09-10T21:12:18.6301978Z"
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  39.442,
+                       "startedUtc":  "2026-09-10T21:12:18.6322051Z",
+                       "endedUtc":  "2026-09-10T21:12:58.0745815Z"
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  7.727,
+                       "startedUtc":  "2026-09-10T21:12:58.0770909Z",
+                       "endedUtc":  "2026-09-10T21:13:05.8033487Z"
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  8.553,
+                       "startedUtc":  "2026-09-10T21:13:05.8048684Z",
+                       "endedUtc":  "2026-09-10T21:13:14.3583042Z"
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.375,
+                       "startedUtc":  "2026-09-10T21:13:14.3603042Z",
+                       "endedUtc":  "2026-09-10T21:13:17.7349423Z"
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.469,
+                       "startedUtc":  "2026-09-10T21:13:17.7379528Z",
+                       "endedUtc":  "2026-09-10T21:13:19.2073541Z"
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.409,
+                       "startedUtc":  "2026-09-10T21:13:19.2093569Z",
+                       "endedUtc":  "2026-09-10T21:13:22.6190496Z"
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.043,
+                       "startedUtc":  "2026-09-10T21:13:22.6203764Z",
+                       "endedUtc":  "2026-09-10T21:13:25.6637054Z"
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.945,
+                       "startedUtc":  "2026-09-10T21:13:25.6662327Z",
+                       "endedUtc":  "2026-09-10T21:13:28.6103662Z"
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  132.523,
+                       "startedUtc":  "2026-09-10T21:13:28.6128783Z",
+                       "endedUtc":  "2026-09-10T21:15:41.1361409Z"
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1257.621,
+                       "startedUtc":  "2026-09-10T21:15:41.1381446Z",
+                       "endedUtc":  "2026-09-10T21:36:38.7622936Z"
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  14.212,
+                       "startedUtc":  "2026-09-10T21:36:38.7642932Z",
+                       "endedUtc":  "2026-09-10T21:36:52.9761331Z"
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.228,
+                       "startedUtc":  "2026-09-10T21:36:52.9781340Z",
+                       "endedUtc":  "2026-09-10T21:36:54.2060937Z"
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.147,
+                       "startedUtc":  "2026-09-10T21:36:54.2080939Z",
+                       "endedUtc":  "2026-09-10T21:36:54.3550942Z"
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.157,
+                       "startedUtc":  "2026-09-10T21:36:54.3575948Z",
+                       "endedUtc":  "2026-09-10T21:36:54.5154658Z"
+                   },
+                   {
+                       "name":  "frozen release guard",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.884,
+                       "startedUtc":  "2026-09-10T21:36:54.5204777Z",
+                       "endedUtc":  "2026-09-10T21:36:57.4046328Z"
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  677.933,
+                       "startedUtc":  "2026-09-10T20:45:48.5617935Z",
+                       "endedUtc":  "2026-09-10T20:57:06.4950857Z"
+                   },
+                   {
+                       "name":  "apps/studio (npm)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  94.804,
+                       "startedUtc":  "2026-09-10T20:45:48.6291454Z",
+                       "endedUtc":  "2026-09-10T20:47:23.4328184Z"
+                   },
+                   {
+                       "name":  "required-features coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.833,
+                       "startedUtc":  "2026-09-10T21:37:00.8054415Z",
+                       "endedUtc":  "2026-09-10T21:37:01.6391254Z"
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\decoder-73994c6ee76ada31.exe",
+                              "sha256":  "20C6838DB0A87063340687179127A08E76DC6F60DB96E91B99274B3D4D24D835",
+                              "mtimeUtc":  "2026-09-10T20:48:12.2725374Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\execution_cli-3b1c4a04b60c6ba8.exe",
+                              "sha256":  "59B2D88F8830B67FD018DCB52F9402915EC0508CDA7678BC6EDEA4B403D0E277",
+                              "mtimeUtc":  "2026-09-10T20:48:13.5496273Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "FB2A7EEDB8303BE3F6C2E031CF90DB66183E534AC6EBD1234A2D8FCB5BB0D84E",
+                              "mtimeUtc":  "2026-09-10T20:48:14.4405227Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\event_store_local_backup-9c90da3553c7a192.exe",
+                              "sha256":  "B17FD7C0BEF54ABD7E1BD98DB2E1B76273C9D94EAF8DEB93E4D1EBED61F4907A",
+                              "mtimeUtc":  "2026-09-10T20:48:14.4495492Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "A15DC6C3BACE9DC766057D441C036C8D8FDB2BE644AC84313E710446A8E7057C",
+                              "mtimeUtc":  "2026-09-10T20:48:17.8868701Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "BDAE7792FE48EDE925E96EC333F7CD7F281A0E57A02800A149D31B57D2765BED",
+                              "mtimeUtc":  "2026-09-10T20:48:18.2007804Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "EEEBEABB70F7986DF0140B742B9E9085BC18B14691E5280BB7D3CA8606B396B3",
+                              "mtimeUtc":  "2026-09-10T20:48:19.2636346Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "50EFA371AC6A557628A0F9429E4423E053219873AA9DEC509EDEC021A715D45C",
+                              "mtimeUtc":  "2026-09-10T20:48:20.0859780Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "80922E4397C1AE9D2AE73D902DF5AAFDE9EFC51E33ED5B55C5E1B7B231E5EEEF",
+                              "mtimeUtc":  "2026-09-10T20:48:21.2809418Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\attention_tag_domain-79fc723095252462.exe",
+                              "sha256":  "734D8C34567F74FA945B93EC1ED04D6FB3CD035C24E5128B27C9A5CEB954F2D1",
+                              "mtimeUtc":  "2026-09-10T20:48:22.7605543Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_capsule_authority-d896902fab488445.exe",
+                              "sha256":  "01AB662310444D2DEC742FA8C1D2D66A732789294B1F85ECB02A480530796247",
+                              "mtimeUtc":  "2026-09-10T20:48:22.9221333Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\monitor_http-cef5d90885c52356.exe",
+                              "sha256":  "FD9428208B88998C3374EAE5123B3AC16E758A2F12BE3371CE0DBC31A5C5A7E0",
+                              "mtimeUtc":  "2026-09-10T20:48:25.4882644Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mcp_capability-5e6aab289c4cc5b5.exe",
+                              "sha256":  "990CC5CBB557F02A5E77FC2A62E6C5A1097B5D10D4B2A5C2E650EEC11023CB84",
+                              "mtimeUtc":  "2026-09-10T20:48:26.3964798Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\extension_lifecycle-3681d9a3c7dfa2f7.exe",
+                              "sha256":  "BCA2991A83CD670F8A60FF1A0E0637AFAF4D64FB70E54FA7D2B7B7B3F85AF21B",
+                              "mtimeUtc":  "2026-09-10T20:48:29.1154713Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\surface_completeness-c4471ff647377b9e.exe",
+                              "sha256":  "F86DC64D689CB90010668B712433CD88DBD14016F747FB154B77DF13628EA286",
+                              "mtimeUtc":  "2026-09-10T20:48:29.8219505Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\amend_budget-c1471a912b86adcc.exe",
+                              "sha256":  "EAC773B14A55E74976AC0BD7E27C0C47FCD2F27D2D2B2E0B01474D4F5ED90F3A",
+                              "mtimeUtc":  "2026-09-10T20:48:34.7963111Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_journey-19afcf4c10a2a74d.exe",
+                              "sha256":  "46C6B36AAB581F1E16A203B5DBFC2D6BA0DBF6AD60333C19E1DB32BCAE3342D4",
+                              "mtimeUtc":  "2026-09-10T20:48:35.3557430Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_plugin-3c1afe9276b694ad.exe",
+                              "sha256":  "798237DE9798CC516044D710D74119DA7FDBD13E3749F07DA5EA64E97EC66404",
+                              "mtimeUtc":  "2026-09-10T20:48:52.6102367Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\concurrency-c85147712552c1af.exe",
+                              "sha256":  "6A65F5B0ABAFCAAEF7D9F813BE0429062BFBF06CBA5D23906B2B0886A8E5947A",
+                              "mtimeUtc":  "2026-09-10T20:48:53.3375904Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\gate_http-1384b8f3e29dd61c.exe",
+                              "sha256":  "08B34109917F2A664E4B1D7AADFC4BD3C012BB31BFCE86CE1110F84BDDF3CDBA",
+                              "mtimeUtc":  "2026-09-10T20:48:54.1415507Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_promotion_policy-7a818e5df18c2318.exe",
+                              "sha256":  "9E3F141FC2CC2069726409362845E84B90931CFAE4C80E25D7C2C91E65E6BACF",
+                              "mtimeUtc":  "2026-09-10T20:48:55.2003592Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\migration-2a7492210acdabcf.exe",
+                              "sha256":  "E489AB40565951933865A333CD050388308E0B26024C8A11B35F6C5B0975EB3C",
+                              "mtimeUtc":  "2026-09-10T20:48:55.8247503Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mcp_stdio-37397deaa14afa67.exe",
+                              "sha256":  "9E144A49B03527131704E6B3266FA6A30302F4FBF51DE9BF6EDF39415A3E281D",
+                              "mtimeUtc":  "2026-09-10T20:48:57.3342169Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\isolation-cdb592d70fbea044.exe",
+                              "sha256":  "01E24B6C23D1275C9F623A51E47C234BD665FCF4DC203839B847A713C8FC7AD8",
+                              "mtimeUtc":  "2026-09-10T20:48:57.7877161Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\shipped_package_coverage-360cc463b88cb0d4.exe",
+                              "sha256":  "641226D9E7FF02197334011813CB79AC135C4D16F42BA2ADF024152C0EF22CA3",
+                              "mtimeUtc":  "2026-09-10T20:48:58.7789128Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\api_http-05df56fb754c8f60.exe",
+                              "sha256":  "BB531863F2D3E79D46E0C01AB144939337FA8C3FA0C2302EC32BBE0DCB27A154",
+                              "mtimeUtc":  "2026-09-10T20:49:00.2927231Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\resume_project_default-24de34b224dc0993.exe",
+                              "sha256":  "523763C0A50303711A618E5B1BDB2022D298B3D3AD9EF117CAC6B2078F4BE8EB",
+                              "mtimeUtc":  "2026-09-10T20:49:07.0049871Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-006ff097572e307a.exe",
+                              "sha256":  "5CF09EFABC61F34DE96D55C6FA60901E070220DFC761BB94F2AAF29CC7DCA0D9",
+                              "mtimeUtc":  "2026-09-10T20:49:07.6486085Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_sabotage-120d83213d9f9791.exe",
+                              "sha256":  "5010586E4DDA39F4E0F213EBACDD402E5A6D07FAF5AAF813B2791339441E1B63",
+                              "mtimeUtc":  "2026-09-10T20:49:08.0050829Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_plugin-213f81c2c91b5702.exe",
+                              "sha256":  "575F5991AD5F0F9C91D48CCBB9ECD8F569BF64F6F3CDB585161EA9CCFE0961C5",
+                              "mtimeUtc":  "2026-09-10T20:49:09.0298514Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\event_store_cli-c016aeb55f12c899.exe",
+                              "sha256":  "0D514F641604D79EA7FCB46C9A23FDFF2B2AC345A7FFE20901DBEFF186AE067D",
+                              "mtimeUtc":  "2026-09-10T20:49:09.7443184Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_retry_semantics-a8abfe496a148e9f.exe",
+                              "sha256":  "88350D44054CFB2709AEE3E3142772CA5C19EDC02BD1D9D3B6B63DFB135690A7",
+                              "mtimeUtc":  "2026-09-10T20:49:10.5507123Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_redaction-73c82091c1015beb.exe",
+                              "sha256":  "3619FA4E0C9F2FEAE711A3253FC19108172BC631CEE97849BA981081639C9887",
+                              "mtimeUtc":  "2026-09-10T20:49:12.5206382Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mcp_url-cc4f770703a40f86.exe",
+                              "sha256":  "E8A1EE070CAA8FD696DD0477E30A62FDA6DC43C71B74C1027223FA1EC447CED5",
+                              "mtimeUtc":  "2026-09-10T20:49:13.5134385Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\projection-f31c71b2e7fc0eaa.exe",
+                              "sha256":  "62A4A8BB233017A62EEB58588C555CA8DB99CC0B8B1275EF7016DDB95204B267",
+                              "mtimeUtc":  "2026-09-10T20:49:19.9920335Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\context_citation_fixtures-8e98a101334888c1.exe",
+                              "sha256":  "9F20C33354D0A0504401D4D6D01FDF8219DDFDCEEB40BEA7ADBAD8FD612D8D33",
+                              "mtimeUtc":  "2026-09-10T20:49:26.3362451Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm-4b7ea5bf84762efa.exe",
+                              "sha256":  "EEC035DFF85C27891EEB8CE5941F82A3E72CE6E376A4D0937BE84D0FCFE0204E",
+                              "mtimeUtc":  "2026-09-10T20:49:42.6086730Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\backup_restore-d6f24369dc915821.exe",
+                              "sha256":  "21BCC300507656AC4BA39454BE2656736C11865CB1A6A7288618AE878A666A3D",
+                              "mtimeUtc":  "2026-09-10T20:49:43.5271538Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_observer_trust-92a5bb68cb2f3409.exe",
+                              "sha256":  "F021E2AA6C67D65355582C491F734793A7F98CE21DCAD84F04281BDE94F80EFF",
+                              "mtimeUtc":  "2026-09-10T20:49:44.2846394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\schema_cli-bbf201145a9f30bb.exe",
+                              "sha256":  "0B8F27EA80014F4BAF2688DF5E3A825CAA75C230535F910F32334408F0EA3265",
+                              "mtimeUtc":  "2026-09-10T20:49:45.6199139Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_package_inventory-23d128af5616503a.exe",
+                              "sha256":  "07F022D5884E6458A275E1592AD1D5C099BCF092F01E9D90EF9E3C864D296867",
+                              "mtimeUtc":  "2026-09-10T20:49:45.8951442Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\runtime_http-13ba53a86f14ba81.exe",
+                              "sha256":  "5F2B98FFA3B5C022FD03DCC04B0C42583288883050F7B762271217B553C1121E",
+                              "mtimeUtc":  "2026-09-10T20:49:47.7416387Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_context_budget-ce9dab4b56b9ed3b.exe",
+                              "sha256":  "A794C9418798DD5E4C35AE0C3ECD3EDE1AD37CE9AA01C18DECB5CA70CCCF31CB",
+                              "mtimeUtc":  "2026-09-10T20:49:48.0133540Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_contract_schemas-61744cc742acd52a.exe",
+                              "sha256":  "46C142E7BA4B5EF5A5A37CA06D4C6C0FFE935D8E397D8604194AF8D44E1BDF72",
+                              "mtimeUtc":  "2026-09-10T20:49:50.0258739Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_graph_contract-14c41a991090f02f.exe",
+                              "sha256":  "E60559E9BC543C78EEDA440EDA711007519A90CF62C12053C9C50C4BF39EF23E",
+                              "mtimeUtc":  "2026-09-10T20:49:51.2916502Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_cli-42c55c7045de074f.exe",
+                              "sha256":  "19A3D475E84A42A36B912E6B137445BFD782150D39AC86B390BACDF6C0CE75E7",
+                              "mtimeUtc":  "2026-09-10T20:49:51.8665423Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_benchmark-1671c0fc334cb0a7.exe",
+                              "sha256":  "04ADD6491D9C5CEF6E91270EBFF0B949E86BEEC036E3C4C1529A86AADC60FD6A",
+                              "mtimeUtc":  "2026-09-10T20:49:59.9191144Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\sweep_cli-90b5daba1c1af316.exe",
+                              "sha256":  "0A07D9A0246A5B96701DFE898D5FB3985F9FAAFD713D0C38261E072D902A0F9D",
+                              "mtimeUtc":  "2026-09-10T20:50:11.5283365Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\extension_cli-f4e8ef2a93959ba5.exe",
+                              "sha256":  "CFF6DF864A59E5698B665361383CA2AAE344B4C1A52943F1D0B54052DF086748",
+                              "mtimeUtc":  "2026-09-10T20:50:22.0725374Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\test_support_has_no_dead_helpers-52d23a93142698dd.exe",
+                              "sha256":  "886E94BEE0ACAE8C7549F6E9481A98DB08E3911C33063CF39CFCF8D1E86DB441",
+                              "mtimeUtc":  "2026-09-10T20:50:22.6348108Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\retention-1cbaa4229c9bf304.exe",
+                              "sha256":  "B1D306EB447282DFD93A6FD8EC390BE327919AF0E0AA67A1C4F4D49EECB760FE",
+                              "mtimeUtc":  "2026-09-10T20:50:22.5956017Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\repository_conformance-a200d4f89cbb9858.exe",
+                              "sha256":  "8F9CF655D4D97899E75675D3BE559FB87A70BA5867524F3666FFDE68DB033C78",
+                              "mtimeUtc":  "2026-09-10T20:50:22.5619515Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "http_helper_inventory",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\http_helper_inventory-2375f06e909f1d8a.exe",
+                              "sha256":  "6AD2BBE736AEA3B076D41693F494DCB59F32C940DE270DE7D005B104642BFC6F",
+                              "mtimeUtc":  "2026-09-10T20:50:26.0789314Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\gateway_cli-f658f5c1003ec060.exe",
+                              "sha256":  "A25559BE29FEBC3B3E3D264354311B6AACA328601B6B50DDEA3ED86027EBB57F",
+                              "mtimeUtc":  "2026-09-10T20:50:26.8223994Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\resume_atomicity-10dab9eb2aa34ef8.exe",
+                              "sha256":  "E943769E841EDB52FF74121739B939761D79ADE92F33D5980578882EAF7C0923",
+                              "mtimeUtc":  "2026-09-10T20:50:26.6463357Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_surface_parity-cfeede303f50dad3.exe",
+                              "sha256":  "3280FA78323585DA129C66562BDFE6D92D8956A6EF36C50271E52E1BEF8B0770",
+                              "mtimeUtc":  "2026-09-10T20:50:28.7487596Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-08838b3e9550c37b.exe",
+                              "sha256":  "5034544E98AF2174465BE9C1ABAB6D292BC55EC3A41EC58B092A447111F925ED",
+                              "mtimeUtc":  "2026-09-10T20:50:30.9965534Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\development_concurrency-672c75a918c8c917.exe",
+                              "sha256":  "7999F3DE7A16C7211462DBF268107FFA9ADBA19D97CA65B04059644CA018EF30",
+                              "mtimeUtc":  "2026-09-10T20:50:30.9488245Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\wake_http-ef84d05489a5e2da.exe",
+                              "sha256":  "C037E7A7467B3C2F969326066B9E230624A30FB4CF5BE25B83297142A601B98B",
+                              "mtimeUtc":  "2026-09-10T20:50:36.1524763Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\tool_cli-f430c8534c735b53.exe",
+                              "sha256":  "8A6AD64FBE7FB2FD67CC54FD0521BCAAC7462B08A555237F4735B7437558877C",
+                              "mtimeUtc":  "2026-09-10T20:50:37.3506027Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mcp_client_population-8bc58e2ce26d6928.exe",
+                              "sha256":  "69EB73A1AC6635506B91438F4CC0ED096084B8B3835B7C70510EEBB33B9A6756",
+                              "mtimeUtc":  "2026-09-10T20:50:37.6261874Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\fake_mcp_server-dae52e3fec616bc2.exe",
+                              "sha256":  "7381FF20A37F795000B39727DF3AB0256052379618132FC694115245C6F9B773",
+                              "mtimeUtc":  "2026-09-10T20:50:37.9643704Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\request_set_ceiling-1bf8f75f197df7e7.exe",
+                              "sha256":  "6F24A9FC92D0A1165EB1CCD1924E57016B13F450C24C795E8EE26D84B6B222E0",
+                              "mtimeUtc":  "2026-09-10T20:50:38.6810660Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\cli_smoke-a4fd29d998bf3a3d.exe",
+                              "sha256":  "28D42A97D615244E9529CE5C32C7937E879DE9BD388E964A3FA03849D5FFEA78",
+                              "mtimeUtc":  "2026-09-10T20:50:39.0463426Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "698AD82CEC0EF21C1904BC738D3B448FB68D14FE8E0B62927C0A868109E7329A",
+                              "mtimeUtc":  "2026-09-10T20:50:40.3014334Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "4181CE0E8999C3C7216D13D511577EB388EBFB2C2033AAAEB0A8DE0BFA92A1E7",
+                              "mtimeUtc":  "2026-09-10T20:50:40.3365744Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "88BF8C772B1623E6B470BF0C382ADDD6D1FF20159DBC8467BC6059D5AD9E7591",
+                              "mtimeUtc":  "2026-09-10T20:50:40.4228547Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\contained_provider-a520f67c7d5ad561.exe",
+                              "sha256":  "1ED64683FFD997E285D89A9B8BFC77D501065C1D25C3CDB997B73230D0FAF910",
+                              "mtimeUtc":  "2026-09-10T20:50:40.6607018Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "59931BF48D09404566E98944203777D8A4362821762CDDBED5FC68AA2CCDB34D",
+                              "mtimeUtc":  "2026-09-10T20:50:44.4642269Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "83160835CE2981241D5E153CCA4389D464D568423BC02696B08EC49B23EC95E9",
+                              "mtimeUtc":  "2026-09-10T20:50:44.4828309Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "7B0B9DC1DB2516588C3778A682EF3F1D000A2644C4938E12992163EC5667BC4D",
+                              "mtimeUtc":  "2026-09-10T20:50:44.7452130Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "9F59DE2884DDF21BA4E103F299014C8EFE55200E7FA7E97421A18460FE13D095",
+                              "mtimeUtc":  "2026-09-10T20:50:45.6365928Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "6CAB7F8001640389B4F4B3786AC19693B1EFCF9FC67F388DF2E0BD0229C3BC8A",
+                              "mtimeUtc":  "2026-09-10T20:50:47.5929196Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "EC17DBC328CFED6D0CB96A29AEEDA5C302F49236FD83A57A0D6D20BA902291BA",
+                              "mtimeUtc":  "2026-09-10T20:50:48.3529351Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "BB511C67DBE59189AF7A09E4B30A47549BCB19E1287C5519E4EE65B7ED99C942",
+                              "mtimeUtc":  "2026-09-10T20:50:48.6885079Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "4AF2777CCCBE031B5D7E22F934B879C8235B282192DA77D633C6B348EF637EDA",
+                              "mtimeUtc":  "2026-09-10T20:50:50.9484762Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "AA87C65B8AF5EF132DA8FC9F43C488DF5B265BC3DAE50D5A1485370BB7540700",
+                              "mtimeUtc":  "2026-09-10T20:50:52.4768426Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "67FE18586BD08437E02F15F85323347E220C643F3F320B8862BB7DE27E8E4D2D",
+                              "mtimeUtc":  "2026-09-10T20:50:54.6665604Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "24645202ACE2C580A8B7F8DB0E25378691225832A3BC0C695275CD00317CBD66",
+                              "mtimeUtc":  "2026-09-10T20:50:54.8028957Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "51977A6CEEA3FBC8F73491D105E280D804F876A508BD3C7191042D184BE54C6D",
+                              "mtimeUtc":  "2026-09-10T20:50:55.7577829Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "8029C34651173CC2D02EFFC942CA48EDEC53133459DCBC84CF75C7F0032EA878",
+                              "mtimeUtc":  "2026-09-10T20:50:57.3130737Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "2631C594E51B56AE76291F4858A9FE586B8DECB8AB50E54653799F6120299B20",
+                              "mtimeUtc":  "2026-09-10T20:50:57.4791685Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "38AD18B14412B6688115870A9BC5F23DC3E71B17DF750E6DF7DD3F17FC491429",
+                              "mtimeUtc":  "2026-09-10T20:50:57.5306774Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "1BA9ACD04581B8954B4D898255A5F84404F67B09CFCD116229FF7C8D811EE5AC",
+                              "mtimeUtc":  "2026-09-10T20:50:59.2349477Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "B305C4C3DB642B84FE4269E12167E50D63FBAF73B9095AA6922776964D2C717E",
+                              "mtimeUtc":  "2026-09-10T20:50:59.4773112Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "38EB3967D68890CD088594B44EC6C4F5E204FD3ABC0A8A8052FCDDD617792300",
+                              "mtimeUtc":  "2026-09-10T20:50:59.6886212Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "02AFDD54DC7E8E7F0A70DFDAAA4EE5E266B5D264E7212B50BB1EFA238FAEE514",
+                              "mtimeUtc":  "2026-09-10T20:51:00.8949384Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "1D5E6D19A8280037205E718C300D217A52E0B9292A9997B89C22759FB113E480",
+                              "mtimeUtc":  "2026-09-10T20:51:01.1443170Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "A81D53D5BFF8ED9E34F7B56087B4F7E5209B351450F1C6CC2F7BD3809A4C1588",
+                              "mtimeUtc":  "2026-09-10T20:51:02.1191893Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "5094D7F1A1C465B91140A55F99FED409D0FE11F94A2CE1E2278109271A70ADB3",
+                              "mtimeUtc":  "2026-09-10T20:51:02.8432237Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "A4273145E63519D63C18C00150064B44FB197411BD9E00131929A845AB2B1B00",
+                              "mtimeUtc":  "2026-09-10T20:51:09.0986341Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "6BEB2F34325AA9C3DD7A786BBE8F035EF6D25BF6850EACA6ACE84C5660047C7E",
+                              "mtimeUtc":  "2026-09-10T20:51:10.2758452Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "F941FD9FAF27F740D5382A70D69A8363451079D23A0759577A4300199849160E",
+                              "mtimeUtc":  "2026-09-10T20:51:10.6825777Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "EFE1917D3190199D4AEB1D6DD4DF730954C4AAD0AD300683884AB5821D064145",
+                              "mtimeUtc":  "2026-09-10T20:51:11.7868842Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "3E60C016AE03571E097DF5EBA5346F9F87CDE3C5BE6D47E16A054C8651E48904",
+                              "mtimeUtc":  "2026-09-10T20:51:12.2590092Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "84C98BEB20F348352381E16CEC4542A410CF9C01A02A4EF7D47F9C743339A25C",
+                              "mtimeUtc":  "2026-09-10T20:51:13.2075342Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "6ADE6C5B8BF7319B9B22B5A248997B467DECF7FE2F436509727EC348E57D6944",
+                              "mtimeUtc":  "2026-09-10T20:51:13.8169598Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "1DE5143E04643FCF7778E7B7F72589E2D7181E4DD3CEC1CAF7EC03517D9244CF",
+                              "mtimeUtc":  "2026-09-10T20:51:14.6201865Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "2BC28A69119032B057CB69B133B22FA3D84AE366C442F636A6E8504D668D8CD9",
+                              "mtimeUtc":  "2026-09-10T20:51:15.2327838Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "69F4B61B5BF8A99D838972E351CC68850F66919275BB9F0291FE19DB86E71471",
+                              "mtimeUtc":  "2026-09-10T20:51:16.0934184Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "6EFC89BCB30CBEBD3DCBE396942420A9E6ACA5FA6769F9DAC7F6483B2F766835",
+                              "mtimeUtc":  "2026-09-10T20:51:16.1355246Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "B38F01423D5A911D2005DA8BB2CB9578EDBCAE96DF7077E37C173750FFD0D60A",
+                              "mtimeUtc":  "2026-09-10T20:51:16.4903948Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "907F354C280A824AB8489DD5E0764836625B4E55647EE64C1A3F3A12A8CF491F",
+                              "mtimeUtc":  "2026-09-10T20:51:21.6796615Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "584ED5C9788578AF00472994AE2FFD8A5EC89301B63A7FCC3F04636D18534EF2",
+                              "mtimeUtc":  "2026-09-10T20:51:21.5311471Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "1CB72B9DDB412A0CC816439FD2F9E74BD5304A234654F30FF2C2181413F3A9A9",
+                              "mtimeUtc":  "2026-09-10T20:51:22.4359255Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "531318A6E937E06440B26F429FDF19E351AEE3EAD1593E6DDEEEFF364A6F50CC",
+                              "mtimeUtc":  "2026-09-10T20:51:22.5442179Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "7129AAB6CFA6B20813939F41E218E121B0911D579FD016FBFB79CB747965B292",
+                              "mtimeUtc":  "2026-09-10T20:51:24.2955847Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "73FB1F5190986F764CCED456D5A58236D83EECF90025BF30439B82AA133196C7",
+                              "mtimeUtc":  "2026-09-10T20:51:24.7737289Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "79DA04A837D8729705EF7C7FEE93C22E4DCADF780DC44D42503D0DC29AFD535B",
+                              "mtimeUtc":  "2026-09-10T20:51:25.6287990Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "0232E38ED2C97599E659FF6456FCEE5F2AC5B5264EEB08005073C610C2C4D890",
+                              "mtimeUtc":  "2026-09-10T20:51:33.7876457Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "3DBB99CE323E5F7E958DCD1970D546AFA3873E2FC14E8BA7B83F4FB43C351C69",
+                              "mtimeUtc":  "2026-09-10T20:51:35.4157302Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "73A14E5F70A7C58D5F7ABEFE2F8723FBF1BD69BF3EB50F1B9F71F1D719E75D50",
+                              "mtimeUtc":  "2026-09-10T20:51:38.2659389Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "38A7FF5EDEFFEC9FCC4D00B4AD44DD056B73D34E0696E307EDEE20B6DE6583F4",
+                              "mtimeUtc":  "2026-09-10T20:51:41.1452872Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "05F3DB649284369B95D696EFD03FD245B7725CFBEE3985D9710149B2EDEEE676",
+                              "mtimeUtc":  "2026-09-10T20:51:42.4866106Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "6D15AE8825D51D4C13C04BF5A9424434EE925748D5E01EB8EA552C5B2F08DA7F",
+                              "mtimeUtc":  "2026-09-10T20:51:43.3438193Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "F9D96B4AE5BB91D43A7C29BADF7C65B19BF6ADD5DF53A30558F99D945C8C2643",
+                              "mtimeUtc":  "2026-09-10T20:51:44.6087699Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "33D65A19C8CFD962D82B5342AD37DEDDBD2A7948C8CE994BB1B1765646154DE7",
+                              "mtimeUtc":  "2026-09-10T20:51:45.1441155Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "76AFC43230188A08D72D1263A2CBF9D585D0DD7C3BE0FE5ED22673E4D40FE1D9",
+                              "mtimeUtc":  "2026-09-10T20:51:45.1431148Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "CA11ED17ADA4B397EA6F4A557503806EFEA8E31E86F23391EC9AA906E4A977F2",
+                              "mtimeUtc":  "2026-09-10T20:51:47.8353594Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "1CDDDB3A3D10510F62B01A085B616587949279A136E41F77F2BAD49453890266",
+                              "mtimeUtc":  "2026-09-10T20:51:56.6734792Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "4159CD95AC7749440EDEE81905DC238161B61ADBB7BE91242F595067EEE69B95",
+                              "mtimeUtc":  "2026-09-10T20:51:58.4574955Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "9DD9D8A505488F02A6519D00A94C69DE91EC73E3B6F032EAE3191DC7775F5DF4",
+                              "mtimeUtc":  "2026-09-10T20:52:00.5376641Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "C1B1EDD77A7D4DCBC50CD6C219788C829C49DC12C0D2810A59ABB3E839943AAE",
+                              "mtimeUtc":  "2026-09-10T20:52:00.8895674Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "FA864DC6053BD0C27E144DAAA502FA15DE38F2D44EA3C153D22DC7B9E36FF497",
+                              "mtimeUtc":  "2026-09-10T20:52:05.9472481Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "8EA8FBB6909EA881CD746C80B229B44D86C704594C4CD4643123BF2384D309BD",
+                              "mtimeUtc":  "2026-09-10T20:52:13.5408659Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "BE6DA54CCB95EC00F9CC3C7D2366A8F2FB4326CCDA4FCC9B9EC3EE4DC7EC516B",
+                              "mtimeUtc":  "2026-09-10T20:52:16.1247623Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "E1D97DDBE7EE33C5933E0C0853131FB2F16F0EEE6097E0346D8B561761676810",
+                              "mtimeUtc":  "2026-09-10T20:52:17.4626204Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "A6BB1B4E8CAB6AE39DBFC4DD548CD1D84BDE63D90574EC114E466F61FEC50CC5",
+                              "mtimeUtc":  "2026-09-10T20:52:18.9157084Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "368798BEC8127AE30A338744AFD14A0737F495BD617BCBC4DB94F6E11213E0F2",
+                              "mtimeUtc":  "2026-09-10T20:52:23.9549764Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "B2F1F9FC3DDAC177F36C22C0B63872DCF010AD7F804A88FC0FD827B4BA3C2964",
+                              "mtimeUtc":  "2026-09-10T20:52:25.7107597Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "DADCE869E5CC2E96BF9D46E5FFDED1006668F61F86C035FD0C62E30B1D1FDE4A",
+                              "mtimeUtc":  "2026-09-10T20:52:26.1330835Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "persisted_node_bytes",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\persisted_node_bytes-adbd348bb95f7f4f.exe",
+                              "sha256":  "7DC9B30126B9967EFAF93C75E4A7F9611ABDBCEA8CB7515CBE56CC84F91884C0",
+                              "mtimeUtc":  "2026-09-10T20:52:27.8974775Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "552E93C74D578024657095A2317E5D18B450F4BF39DC4BFEEEC6E6919F0B44F7",
+                              "mtimeUtc":  "2026-09-10T20:52:30.9984337Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "6CB621B1501B3C7A4292F3FB39658257757304E3603B8409AA9DCF96EB2F82F7",
+                              "mtimeUtc":  "2026-09-10T20:52:31.9196170Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "A5CEC085149F42B67964BFCC15DF21BBB4D4F3F9FA1FF2D53D77024274F7A005",
+                              "mtimeUtc":  "2026-09-10T20:52:34.4130762Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "1FAD940B3E248C59CD1E91550C96EF2BF281F8F48EDA1ECA14E5296C040B831D",
+                              "mtimeUtc":  "2026-09-10T20:52:35.7772011Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "only_declared_crates_write_the_repository",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\only_declared_crates_write_the_repository-23344476ee16cb9c.exe",
+                              "sha256":  "64BD54E69272722EBD6331CAFE9A76AEA96B25CA909CF42CB1C0405C60080921",
+                              "mtimeUtc":  "2026-09-10T20:52:36.9563802Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "30CDECA3D2914B0688C855519B19EF2DB8E95A1D49524891F7F3EF99EE3DBB14",
+                              "mtimeUtc":  "2026-09-10T20:52:37.0101220Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "1ABA4209F441727B520A9436C6290C1AD39626DC2DA6428FF1876EAC9344B2E2",
+                              "mtimeUtc":  "2026-09-10T20:52:37.4433039Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "996E99894D7FCFCC75D26D3BA8C4D69D83CF1BE0C2E3F6897EA1E1B4D86BCBBB",
+                              "mtimeUtc":  "2026-09-10T20:52:39.6150136Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "33A8EF997780B680BFFF3AA4F4101917ADA5F5964F323BCBD9FFB2C3D8020907",
+                              "mtimeUtc":  "2026-09-10T20:52:39.7565171Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "98D6D6D0C72910CE627D29DC699CB97A29F8586F5A3B9E64265198F6FB00C1C5",
+                              "mtimeUtc":  "2026-09-10T20:52:41.1177026Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "FDA7CED3EF68CF19E13B3382E906B376B4606D1ED515A0547AE1770B848B59FE",
+                              "mtimeUtc":  "2026-09-10T20:52:41.1853556Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "1F1048FBDD6675B1F1BB501D26E82A787CB601305FB6ECC24DE1CBA77985D5EC",
+                              "mtimeUtc":  "2026-09-10T20:52:41.0465802Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "F841AC11E7CC990CF6B18D2230CD0A2CEBED4F8C4DA14DABC5DEBA786979FB13",
+                              "mtimeUtc":  "2026-09-10T20:52:42.2313712Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "DF91CBFBACE50145778685F50E690826DFDD629543D4B200ED239022251941FD",
+                              "mtimeUtc":  "2026-09-10T20:52:43.2324579Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "2966BAA9E0D86A190ABB24F91562DAABEFEA9021BB15A445EE3AC6D2E38FA2B2",
+                              "mtimeUtc":  "2026-09-10T20:52:44.7195750Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "330631CCADC5B241ED2A1C46E0E7B9E5B2DC5BF91CFA37EBB34EA9A17DA45485",
+                              "mtimeUtc":  "2026-09-10T20:52:45.6836389Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "E8ADDDF8556AB57F731C3C37B2A2BBAD6894DF72C0829CC7E6560BDE4D7C4CAB",
+                              "mtimeUtc":  "2026-09-10T20:52:46.8177539Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "8E52EE6AFAC2EED13DB98E464B35AF848045ABC79C9E9561AA72E6EEE14668CC",
+                              "mtimeUtc":  "2026-09-10T20:52:47.8619140Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "EF32DC211F0DD0BCBD15C9D5B89D515DD28A213E6A36C26D8B6B76F8ECCB372E",
+                              "mtimeUtc":  "2026-09-10T20:52:50.6920089Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "B8705D08BCEC261A17FD79163D1E14A68059ECC7EF99F7F55AB77D3F9378E771",
+                              "mtimeUtc":  "2026-09-10T20:52:50.4105262Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "D3635A0D054E8ED83C81209ABE95E21D309511813FEDD42F1349092BD028C44D",
+                              "mtimeUtc":  "2026-09-10T20:52:54.2527493Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "A075BA73216843F4D90AD9F0FD2AB4010667842CDBF0F31C658731CCD3503191",
+                              "mtimeUtc":  "2026-09-10T20:52:58.8280003Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "A3036E5D166B3BC70F41212703501C17F2DCB6BD5E6309005CB999BC7DC3329E",
+                              "mtimeUtc":  "2026-09-10T20:53:03.7951311Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "81C483939954DC9A9CF1396F217940DC62A0B5CE8FB99CE0AC6A198726233345",
+                              "mtimeUtc":  "2026-09-10T20:53:05.6574267Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_postgres_event_store-770e541e474cc054.exe",
+                              "sha256":  "4D4352F4CB78BEE8F7E283CF6956EC7E278824BDEF0A11B46B7DB456BE525455",
+                              "mtimeUtc":  "2026-09-10T20:53:06.4299224Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "1EE5965907F659BCF995349DF6C22108C14F91C366BC906D295350505500E63B",
+                              "mtimeUtc":  "2026-09-10T20:53:19.1782786Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "D30964F4053D0C20AE74A57EA533907D2C3D926E86BCD9AA09CF2A22D5EE0157",
+                              "mtimeUtc":  "2026-09-10T20:53:19.7912498Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "09DAC36C4F9969EB85A3C5D78150A816E85E3B939ACE7ADED51783951A0D4BDF",
+                              "mtimeUtc":  "2026-09-10T20:53:21.3461345Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "C776E47102EB49C8D2CC3341186C95C843C30EC19AB62CBD2A7758ACFA04E0D9",
+                              "mtimeUtc":  "2026-09-10T20:53:22.3461914Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "9D8922CE9CF94729FE6DD21B63CD0B117D0B580FAFA048284567F676F692D4F2",
+                              "mtimeUtc":  "2026-09-10T20:53:22.8921936Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "63EC4F2E1D1A298367E56B93304E455426D05998A3B8193B6F0A0EDA0B6E0228",
+                              "mtimeUtc":  "2026-09-10T20:53:22.7855842Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\arm_symmetry-17ed96fc8d878c46.exe",
+                              "sha256":  "BA0F1FBB0220A69E1A4DD77AD76F01C120EB83B7C46A6A04A495913B5907827A",
+                              "mtimeUtc":  "2026-09-10T20:53:23.6606820Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\paired_contexts-1b1d2b8d4f58a482.exe",
+                              "sha256":  "431C3ECBF2745189EA8C086E3194F7810AA76FFAE1D97F1D0C446AF2022D2456",
+                              "mtimeUtc":  "2026-09-10T20:53:24.3838485Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\oracle_isolation-1fb9c48325e8081b.exe",
+                              "sha256":  "048065F57DCADE6048CD9002940230CB9BEEE8C6A4AF5699B12CCB28B1C42880",
+                              "mtimeUtc":  "2026-09-10T20:53:24.6909027Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\live_provider-1d6018512697742e.exe",
+                              "sha256":  "55EC1178A43275F57074B36AAA32A78E72CFF15DECF85CF3B516C1DE997EBFD2",
+                              "mtimeUtc":  "2026-09-10T20:53:24.7535870Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\generate_retrieval-56681f8075163323.exe",
+                              "sha256":  "F1C4CC1F4D35775517A1ACDEA72CE5B139C8C452977AE8E03DAF0FE284BAA68F",
+                              "mtimeUtc":  "2026-09-10T20:53:26.2046212Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\run_directory-f59fe0d643cd830b.exe",
+                              "sha256":  "A5C60397414C7071F16566CFE099098992DC709D7EDC30D2C7C03AA434621FE8",
+                              "mtimeUtc":  "2026-09-10T20:53:26.2835370Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\runner_cli-e1ee72bf765acdbd.exe",
+                              "sha256":  "B864519481A59201F819A9078EA6ED8E548CF58E5E82BEAD5EBDCB9E7A3026EA",
+                              "mtimeUtc":  "2026-09-10T20:53:26.8215108Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\axis_completeness-958a5c4b3e6e6090.exe",
+                              "sha256":  "9F3E1ED758644F93378B3CCC822D80B5400034E3A8ED638F8E352353D0F376E3",
+                              "mtimeUtc":  "2026-09-10T20:53:27.3358943Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\fake_index_provider-632907ad49ab8e40.exe",
+                              "sha256":  "3374CC43571A905CAE31EB0403C54333C1ACAAA46688458165AAE7C5B53F9C8E",
+                              "mtimeUtc":  "2026-09-10T20:53:28.0075859Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\cost_provenance-cfab38d0fc807a2b.exe",
+                              "sha256":  "2E47B8830D8B05BA689089A99659A5BE2712552601ABDF327C01BC80090FC6AC",
+                              "mtimeUtc":  "2026-09-10T20:53:28.3986900Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\artifact_from_rows-c151f80148b7de47.exe",
+                              "sha256":  "03156D107159500E00B9203BD0DE232657B74E713CD06C4B32084BB88AEE97D4",
+                              "mtimeUtc":  "2026-09-10T20:53:28.5436779Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\frozen_files-d7e8f6f04394950b.exe",
+                              "sha256":  "14A8178C982455367D82335DD6EDA7517BF8405E061477EF7B1BAE524E2877CE",
+                              "mtimeUtc":  "2026-09-10T20:53:29.8532578Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_development_benchmark-d210324186000576.exe",
+                              "sha256":  "1F3BBC565B90EEB08F47C170CEA1A27649904B979DBD91FD0E4DED4A275710BC",
+                              "mtimeUtc":  "2026-09-10T20:53:30.0230895Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\evaluator_policy-bbc74c65eadd2bca.exe",
+                              "sha256":  "774F2369F2C2E3BD10B51156760D37EB239417E06932D8FEBBAB1A1017AD7BCC",
+                              "mtimeUtc":  "2026-09-10T20:53:30.1156265Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\paired_driver-165db5e4e84a5c44.exe",
+                              "sha256":  "F729A330DB0465480AB417CFEA6030E826C8E4C71D21C31FC0CC318F6A19700C",
+                              "mtimeUtc":  "2026-09-10T20:53:31.2443136Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\critical_miss-25619816af2fd454.exe",
+                              "sha256":  "BB53C27E0A888FF4D29094DD42F73BC29D8FD597D0E201CF75D3ECF04502A03C",
+                              "mtimeUtc":  "2026-09-10T20:53:32.1988814Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\manifest_freeze-da8473f16b600c44.exe",
+                              "sha256":  "B6AE2DA9C680598687A57F9F4F4F06B69E42DB8FBD4F021FCE15C2DD8C4C5150",
+                              "mtimeUtc":  "2026-09-10T20:53:32.6633683Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\zero_bar-f6fe8d737cbbdb97.exe",
+                              "sha256":  "178C15E4FBA0AEB86A7D274B41CE18E9732CC4141320E48280251DFE50B8DBA8",
+                              "mtimeUtc":  "2026-09-10T20:53:33.6520961Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\dry_run_pipeline-b3e806f73e6bccf5.exe",
+                              "sha256":  "863CD50226EB7F0DB8DBA90C4F8F98B926FD3117DC6A8E4EE8769F97844300A3",
+                              "mtimeUtc":  "2026-09-10T20:53:33.8654794Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\generator_arming_site-20b0c4829849ebfa.exe",
+                              "sha256":  "976C64AFD40F0EC966C90F094B388570659717111BD4D5E86F98C6D56D82C5C9",
+                              "mtimeUtc":  "2026-09-10T20:53:34.7408401Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "00772AA49EB9E8A0ADF3B60B4DE055E58AEC5C1C3B3D2F5DC8E4C9C8A1B29E18",
+                              "mtimeUtc":  "2026-09-10T20:53:39.8601802Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_development_benchmark-f69af754a7a421bc.exe",
+                              "sha256":  "1CC16B7F5415D7B638610D4D53A4F79F7923B648F2AC056BFFF9034A95E77EBD",
+                              "mtimeUtc":  "2026-09-10T20:53:41.2373084Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "868846B854498C521EF536120928D4E68E22F6161949FAF354495B774E5C3804",
+                              "mtimeUtc":  "2026-09-10T20:53:41.2383126Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "D04EC1D11FD757B34817C7DED36E5EECBE7D8E89280896DEF4ACBF5747C038F8",
+                              "mtimeUtc":  "2026-09-10T20:53:42.1197252Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "DA0785319FDCCE8EF1FE1733C9E26B5BB017C9A7AF02CB04E3780947AB5E332E",
+                              "mtimeUtc":  "2026-09-10T20:53:42.7181111Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "82E4A736E88DB9A982983FFAF4AE887D9469DD00BB1DBDE140DAE493FD5CE4B6",
+                              "mtimeUtc":  "2026-09-10T20:53:42.7598762Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "C6511ECB9942C7039E8A08EB9113541CA3D3257192C30BF228882D1272384C5C",
+                              "mtimeUtc":  "2026-09-10T20:53:44.2195193Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "310B6C0D06607515B6B32F2187D2E4B48911368C466B295F70E4823488A80249",
+                              "mtimeUtc":  "2026-09-10T20:53:44.2522150Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "7BA9C68481EA46D4B7658675B0B982D16428F40DF836DBE66C9F7C70EFCD0CC1",
+                              "mtimeUtc":  "2026-09-10T20:53:44.4126723Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "6F5252AF78294E623769F9AC04048EF7CF062A4030E87CE3A2BB4347C0D69AAF",
+                              "mtimeUtc":  "2026-09-10T20:53:45.4723354Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "79C4981FD124A970128F542F3D1C2FEC9990499C016D5B022E467F1F88ED78FB",
+                              "mtimeUtc":  "2026-09-10T20:53:45.4728357Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-814137ab5a1057c4.exe",
+                              "sha256":  "5345863593B852F0C375CC71A0508E4615085BE1691FF6FB3406FB8E3CE401AB",
+                              "mtimeUtc":  "2026-09-10T20:53:46.7196613Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "E2E056D3FE79C79FFE32AB0D6386E8903B29E6C76A5663E93CF7BCB3E62C252C",
+                              "mtimeUtc":  "2026-09-10T20:53:46.7566095Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\blind_judge-3c503af61e4ef0e4.exe",
+                              "sha256":  "F38407613944A61C12930B5B2C303C8CD88CCE9811078E21FC4591817206EDFB",
+                              "mtimeUtc":  "2026-09-10T20:53:48.3767933Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "B781CC474E9614AB3E981D1A82EF57776D154D3A7B420DBA83DEC46CAAEF8FEC",
+                              "mtimeUtc":  "2026-09-10T20:53:48.8533996Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\gate_nodes-e10fa6c0c71f52e3.exe",
+                              "sha256":  "00D7B3B9BD58CB293D5DF7F0E1A9F0775EFB003FCC6AEBABA28B22D1D93E9F97",
+                              "mtimeUtc":  "2026-09-10T20:53:49.4078657Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\authored_string_invariants-23e77cee14a7a152.exe",
+                              "sha256":  "0F93211C987688098F5EE08A619D33857D8A43BB6781C5920CB4407BCC142ED4",
+                              "mtimeUtc":  "2026-09-10T20:53:51.5069744Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\retrieval-0a7bd1ea7e274e07.exe",
+                              "sha256":  "84A23356794F16943A92A8F884E302F53F597C71CA008D9EC8CDCA91F0700F1D",
+                              "mtimeUtc":  "2026-09-10T20:53:51.9947803Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\declared_gap_delta_application-5ac11931613f219f.exe",
+                              "sha256":  "2421046B94BBBE2C318ED72C94F11C386A0FCB0B99FC6CE30E1BC0DCC0F4AB90",
+                              "mtimeUtc":  "2026-09-10T20:53:53.1800307Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\context_accounting-732e1c9f0c45970f.exe",
+                              "sha256":  "A45774F45C42AC4133CCDCD90E8A8E44E4F452C9271B8AE04912A328C409B7B3",
+                              "mtimeUtc":  "2026-09-10T20:53:53.8842825Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\prompt_assembly-8c1106951e447d67.exe",
+                              "sha256":  "2342D44000D76E5D70755D24CA36B476B461C5848131DA1429C52EA8CA44CDF7",
+                              "mtimeUtc":  "2026-09-10T20:54:00.6572538Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\owner_output-d13189f5cf460acb.exe",
+                              "sha256":  "42508B4DA66F9503A2EC836B2F81494CD82B519A96FBD2053DF85D68CAE1D0A8",
+                              "mtimeUtc":  "2026-09-10T20:54:02.7886397Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\context_compiler-d32f304273b14b27.exe",
+                              "sha256":  "2FEFB4585463E425939C71CE29A6A49A538BA4E0F4CBE3BC503BBE0BCF99E47E",
+                              "mtimeUtc":  "2026-09-10T20:54:03.2879612Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\driver_contract-9816306b08d1d116.exe",
+                              "sha256":  "6BD72E29A7E09F251C5C409D43AD13E618609A9EBC7A305C6A2121559734D6AB",
+                              "mtimeUtc":  "2026-09-10T20:54:03.3070133Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\workspace_containment-51c45dc87d3533b6.exe",
+                              "sha256":  "0FFAB02DBACE9C8BBBD038DC0B74227DB5808F09569CCE4E240DFD2E6C620D30",
+                              "mtimeUtc":  "2026-09-10T20:54:05.0205840Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\failure_causes-8334a46c9bc4f1a4.exe",
+                              "sha256":  "118A6C4E2F3879B5C26BFE979D4E33682064BEA9B80FD4BB754E8FC7C8E0BD13",
+                              "mtimeUtc":  "2026-09-10T20:54:05.0022465Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\workspace_source_channel-d7df63e736233a22.exe",
+                              "sha256":  "084C08A51BB0DD4D5EDA0BE1B20B6D068827B78EE394F86A190BDCA00788183B",
+                              "mtimeUtc":  "2026-09-10T20:54:05.1124750Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\fake_tool-15d2f75bb1caa99f.exe",
+                              "sha256":  "06A0370DFD3C3B82606AB096310C26D27BB59078C925930FA14B1DD7D4D88AEA",
+                              "mtimeUtc":  "2026-09-10T20:54:05.7892587Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_runtime-3b03c6bd06987145.exe",
+                              "sha256":  "FE98FDF152FEEF091D4AEE6E735331A6F03EC4D3D4C26C53B97C5F7A8EE033F1",
+                              "mtimeUtc":  "2026-09-10T20:54:06.3747245Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\verified_executable-e1cbd61bd5f0c17b.exe",
+                              "sha256":  "DFCBD6CAEEEB582D0E7B8E441464BE5C212CEE5A9CC6AAB4623DF4F2F2128256",
+                              "mtimeUtc":  "2026-09-10T20:54:10.8129220Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\broker_end_to_end-bb725af4815855d2.exe",
+                              "sha256":  "3A60B835B47A833E611758283AE3B3F4CC98C07871D4740603A35C8FCDD0A8D0",
+                              "mtimeUtc":  "2026-09-10T20:54:10.5710611Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "E3F90FACF88F7354C4BA4D470C43A326B584D5C6F0233761FB24DC4200357D53",
+                              "mtimeUtc":  "2026-09-10T20:54:10.9184823Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "F994C4444900F822C17A93F1488E430EB427CD4CA1CE57801B4BF3087ADC1AC6",
+                              "mtimeUtc":  "2026-09-10T20:54:11.3991960Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\workspace_cancellation-501b668fb22ba7b4.exe",
+                              "sha256":  "36448D6A3D2C888B32AEB108BBECD0F1D563F49F1608813716CC6BD2BD770537",
+                              "mtimeUtc":  "2026-09-10T20:54:15.1652912Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_codebase_memory_mcp-0a3221b4d4470f6d.exe",
+                              "sha256":  "34490086EBE648AA15E1D921C2906D38E28969E74EFD8CBAC72B8CE34569A87F",
+                              "mtimeUtc":  "2026-09-10T20:54:15.2283482Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\workspace_source_reader-0926e94bdbcffb91.exe",
+                              "sha256":  "2153F0764C052534FFF66BEA1737FCB9A220E738C946C7CA2A26E57A67D7B1D6",
+                              "mtimeUtc":  "2026-09-10T20:54:15.1673013Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\contained_session-96dfcea77ab493de.exe",
+                              "sha256":  "7E0C71B4E9D5D4016F0D9EE3E7BBA2E9B42C79669507F1E22E432B3E4C91012A",
+                              "mtimeUtc":  "2026-09-10T20:54:15.1753091Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\pinned_snapshot-a82ea53321e88f5e.exe",
+                              "sha256":  "8F7DE53E357983F9D7272DE65729E69952F22EFB4D46F4940503E7920CE2014D",
+                              "mtimeUtc":  "2026-09-10T20:54:18.0683869Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\process_isolation-4f6ce051933e47a8.exe",
+                              "sha256":  "21A6973C4E50A97CF0030D52FEB840F8E3EBD7A64C4C5990AD2A39319120934B",
+                              "mtimeUtc":  "2026-09-10T20:54:18.1164558Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\ceiling_reproduction-dd3336a37a135bbc.exe",
+                              "sha256":  "6E1A188D7F1871C3112308E68D7F68DC83C19E497F2B7E8BCE8B52654B8EFAC1",
+                              "mtimeUtc":  "2026-09-10T20:54:18.0733918Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "suspended_window",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\suspended_window-697d0ee3e72240d1.exe",
+                              "sha256":  "B6AA161FD78A3E19D5A8748042EE2C287D8501C295C9A3A20056C853EC275B25",
+                              "mtimeUtc":  "2026-09-10T20:54:19.5007913Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_tool_host-2877cb05147aec28.exe",
+                              "sha256":  "ABB407A485335A86B6A6292721881D65803A7B4D738DAAFFC0CB5D4F4B885199",
+                              "mtimeUtc":  "2026-09-10T20:54:20.5345930Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "822CE0CA4859CF96AD484E74E59BEBF59BC30123257E559B012AE9A08E68B58E",
+                              "mtimeUtc":  "2026-09-10T20:54:21.5255754Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "D8F637F81EF5111B2191CE5DEB15BAAA08B8BAD08CFD659E9CC041CFF700A95A",
+                              "mtimeUtc":  "2026-09-10T20:54:21.5657168Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "5D694409818C4821CB285E7B25B3B0217EBE6652ECCB538ED84932CBB10579F9",
+                              "mtimeUtc":  "2026-09-10T20:54:22.7674679Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "98F445F9D066DC3082167A0624985C5E1396E462FAE56B46A8BCA312F766FF61",
+                              "mtimeUtc":  "2026-09-10T20:54:24.6603770Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "37EB220E5C0C15038252BA4B6097C98C6010981D44242C4524133C0B543BDA04",
+                              "mtimeUtc":  "2026-09-10T20:54:24.8409974Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "2ED3D279217AE773055407C5C76EFF4EA0F0CE3293D2F371E973D53A37A9AE0E",
+                              "mtimeUtc":  "2026-09-10T20:54:26.4075800Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "39602E1581E16C8C5CF67A6D4D004121C59A3D6D30B38956EA41E4AECA85DB5D",
+                              "mtimeUtc":  "2026-09-10T20:54:27.2339693Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "C486E141E8014882FF4141E816B094B714FC213697EE3EFFA1F3E30AA94DF6A8",
+                              "mtimeUtc":  "2026-09-10T20:54:29.5895487Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.worktrees/issue-1034-astra-support/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "D:/graphhelm-astra-1034-gate-6\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "F9826D23603B67C4F2F7E0233D348111403E8D0646CE0B4DA6BBE21213F3E8D9",
+                              "mtimeUtc":  "2026-09-10T20:54:33.4424166Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "D:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-10T20:45:42Z | gate cwd=F:\\github\\GraphHelm\\.worktrees\\issue-1034-astra-support head=72524c3cd4f077ce96cce658da8ff13364ff66bf | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=93244 start=2026-09-10T20:45:42.0133958Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-10T20:45:42.9007001Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "absent",
+                          "path":  "D:/graphhelm-slot/SLOT.lock",
+                          "observedAtUtc":  "2026-09-10T21:37:01.7291696Z"
+                      },
+    "slotLockStartEndIdentical":  false,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: the selector escalated (unmapped-path)",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  false,
+    "targetBuildState":  {
+                             "contaminated":  false,
+                             "suspect":  false,
+                             "state":  "fresh",
+                             "reason":  "no target directory yet, so nothing is being reused"
+                         },
+    "overallPassed":  true
+}

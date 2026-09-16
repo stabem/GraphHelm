@@ -132,6 +132,10 @@ fn ok_env(shape: &str) -> Vec<(String, String)> {
     ]
 }
 
+fn mode_env(mode: &str) -> Vec<(String, String)> {
+    vec![("FAKE_RUNTIME_MODE".to_owned(), mode.to_owned())]
+}
+
 /// A validated single-route `direct_api` manifest — used only by
 /// [`a_direct_api_route_is_rejected_not_panicked_on`], which needs a structurally valid route of
 /// the *wrong* transport kind to hand to [`RuntimeAdapter`] (MEDIUM 12 — the mirror image of
@@ -198,6 +202,194 @@ fn a_codex_jsonl_reply_takes_the_last_agent_message() {
     // Codex's shape never reports usage this milestone knows how to read (§11.2: never invent).
     assert_eq!(reply.usage.input_tokens, None);
     assert_eq!(reply.usage.output_tokens, None);
+}
+
+#[test]
+fn a_legacy_codex_reply_ignores_unrelated_typed_noise() {
+    let manifest = native_manifest("codex", None);
+    let mut env = ok_env("codex");
+    env[0].1 = "legacy-codex-typed-noise".to_owned();
+    let adapter = RuntimeAdapter::new(&manifest.routes()[0], env);
+    let reply = adapter
+        .call(&call("typed-noise-prompt"))
+        .expect("legacy reply");
+    assert!(reply.text.contains("typed-noise-prompt"));
+    assert!(!reply.text.contains("SUPERSEDED_EARLIER_AGENT_MESSAGE"));
+    assert_eq!(reply.usage.input_tokens, None);
+    assert_eq!(reply.usage.output_tokens, None);
+}
+
+#[test]
+fn a_current_codex_jsonl_reply_requires_terminal_completion_and_reports_usage() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-ok"));
+
+    let reply = adapter
+        .call(&call("distinctive-current-codex-prompt"))
+        .unwrap_or_else(|error| panic!("expected success: {error}"));
+
+    assert!(
+        reply.text.contains("distinctive-current-codex-prompt"),
+        "reply must use the completed current-format agent message: {}",
+        reply.text
+    );
+    assert_eq!(reply.usage.input_tokens, Some(12));
+    assert_eq!(reply.usage.output_tokens, Some(3));
+}
+
+#[test]
+fn a_current_codex_retry_recovers_only_with_terminal_completion_and_zero_exit() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-retry-ok"));
+    let reply = adapter
+        .call(&call("retry recovery prompt"))
+        .expect("the completed retry must supply the reply");
+    assert!(reply.text.contains("retry recovery prompt"));
+    assert_eq!(reply.usage.input_tokens, Some(12));
+    assert_eq!(reply.usage.output_tokens, Some(3));
+
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-retry-nonzero"));
+    assert_eq!(
+        adapter.call(&call("retry recovery prompt")).unwrap_err(),
+        GatewayError::RuntimeCrashed
+    );
+}
+
+#[test]
+fn a_current_codex_top_level_quota_error_is_classified_on_nonzero_exit() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-quota"));
+
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::QuotaExhausted);
+    assert_eq!(outcome_for_error(error), NodeOutcome::NeedsCapacity);
+}
+
+#[test]
+fn a_current_codex_auth_failure_is_runtime_crashed() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-auth"));
+
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::RuntimeCrashed);
+}
+
+#[test]
+fn corrupt_output_after_a_failed_turn_does_not_pause_subscription_capacity() {
+    let manifest = native_manifest("codex", None);
+    let adapter = RuntimeAdapter::new(
+        &manifest.routes()[0],
+        mode_env("current-codex-quota-then-corruption"),
+    );
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_ne!(outcome_for_error(error), NodeOutcome::NeedsCapacity);
+}
+
+#[test]
+fn invalid_item_lifecycle_payload_does_not_pause_subscription_capacity() {
+    let manifest = native_manifest("codex", None);
+    let adapter = RuntimeAdapter::new(
+        &manifest.routes()[0],
+        mode_env("current-codex-invalid-lifecycle"),
+    );
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::RuntimeCrashed);
+    assert_ne!(outcome_for_error(error), NodeOutcome::NeedsCapacity);
+}
+
+#[test]
+fn a_current_codex_failed_turn_is_failure_even_on_zero_exit() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("current-codex-failed-zero"));
+
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::RuntimeCrashed);
+}
+
+#[test]
+fn legacy_codex_nonzero_exit_classifies_the_last_error_when_it_is_quota() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("legacy-codex-errors-quota-last"));
+
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::QuotaExhausted);
+}
+
+#[test]
+fn legacy_codex_nonzero_exit_classifies_the_last_error_when_it_is_not_quota() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("legacy-codex-errors-nonquota-last"));
+
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::RuntimeCrashed);
+}
+
+#[test]
+fn legacy_codex_zero_exit_ignores_an_error_before_a_valid_message() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("legacy-codex-error-then-valid"));
+
+    let reply = adapter
+        .call(&call("hi"))
+        .unwrap_or_else(|error| panic!("expected legacy success: {error}"));
+    assert_eq!(reply.text, "legacy recovered");
+}
+
+#[test]
+fn a_truncated_codex_stream_cannot_hide_a_failure_after_completion() {
+    let manifest = native_manifest("codex", None);
+    let adapter = RuntimeAdapter::new(
+        &manifest.routes()[0],
+        mode_env("current-codex-hidden-failure"),
+    );
+    assert_eq!(
+        adapter.call(&call("hi")).unwrap_err(),
+        GatewayError::MalformedOutput
+    );
+    let adapter = RuntimeAdapter::new(
+        &manifest.routes()[0],
+        mode_env("current-codex-hidden-failure-nonzero"),
+    );
+    assert_eq!(
+        adapter.call(&call("hi")).unwrap_err(),
+        GatewayError::RuntimeCrashed
+    );
+}
+
+#[test]
+fn a_complete_codex_stream_at_the_capture_limit_is_accepted() {
+    let manifest = native_manifest("codex", None);
+    let adapter = RuntimeAdapter::new(&manifest.routes()[0], mode_env("current-codex-exact-cap"));
+    assert_eq!(
+        adapter
+            .call(&call("hi"))
+            .expect("complete bounded stream")
+            .text,
+        "bounded reply"
+    );
+}
+
+#[test]
+fn runtime_output_capture_is_bounded_while_the_child_is_fully_drained() {
+    let manifest = native_manifest("codex", None);
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(route, mode_env("oversized-output"));
+
+    let invocation = adapter
+        .invoke("hi")
+        .unwrap_or_else(|error| panic!("expected raw invocation: {error}"));
+    assert!(invocation.status.success());
+    assert_eq!(invocation.stdout.len(), 16 * 1024 * 1024);
+    assert!(!invocation.stdout_complete);
 }
 
 #[test]
@@ -303,6 +495,10 @@ fn the_prompt_travels_via_stdin_never_argv() {
         "reply must round-trip the prompt via stdin: {stdout_text}"
     );
     let stderr_text = String::from_utf8_lossy(&invocation.stderr);
+    assert!(
+        stderr_text.contains("--fixture-arg"),
+        "the configured argv must reach the runtime: {stderr_text}"
+    );
     assert!(
         !stderr_text.contains(distinctive_prompt),
         "argv (echoed on stderr by the fixture) must never carry the prompt: {stderr_text}"

@@ -110,6 +110,12 @@ normal state of a broadcast. Read this list and check yourself against it.
   **Files do not travel backwards in time**, so nothing measured there is citable.
   **A verdict you cannot cite is worth less than the rebuild you saved.** Each owner deletes their
   own when the lane closes.
+  **Amended 2026-09-13 (#1067):** the per-lane dir is `D:/_agent-scratch/graphhelm/<lane>/target`,
+  never a new directory at the root of `D:/` (ED-5's `D:/gh-check/<letter>/<issue>` moves under the
+  same root, `D:/_agent-scratch/graphhelm/<letter>/check-<issue>`, conditions unchanged). "Each owner
+  deletes their own" was not done — 177 `*target*` directories sat at the root of `D:/` at 14:00 on
+  2026-09-13, all but two idle > 48 h — so `F:/github/Dale/dale-ci/disk-sweep.ps1` now removes any
+  target dir idle > 48 h. Rule text: `AGENTS.md`, "Disk hygiene".
 
 - **ED-11** — **`export` does NOT persist between Bash tool invocations.** Every command is a fresh
   shell. `export CARGO_TARGET_DIR=...` in one command and `cargo` in the next builds with the

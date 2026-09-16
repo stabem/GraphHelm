@@ -75,7 +75,7 @@ C locale cannot reveal collation-dependent ordering defects. `-SkipPostgres` exi
 cannot touch persistence; a run using it is not a full gate and must be reported as such. The slot
 lock (`SLOT.lock`) exists for a **shared** `CARGO_TARGET_DIR`; with an isolated target directory
 per lane there is nothing to contaminate — but `D:` is one platter and five concurrent gates stalled the
-machine (measured 2026-09-05), so the ceiling is **one gate on the HDD plus one on the SSD** (`E:/<lane>-targets`
+machine (measured 2026-09-05), so the ceiling is **one gate on the HDD plus one on the SSD** (`E:\_agent-scratch\graphhelm\<lane>\target`
 while `E:` keeps >30 GB free — `Get-PSDrive E` first); `C:` (the system SSD) may hold ONE build or review
 target per lane, at most TWO on the board, only while ≥ 100 GB stay free, removed by its creator, never a gate
 target — a full `C:` takes the machine down, so the floor is the rule; and never `F:` (the repository disk,
@@ -160,6 +160,83 @@ Explicitly out of scope: Studio/Tauri/React, SSH bootstrap, Docker/Podman orches
 - Use structured errors; normal CLI JSON must not expose backtraces, credentials, user-home paths, or unrelated filesystem details.
 - Local event writes use an exclusive cross-platform file lock, ordered sequences, idempotency keys, flush, and durable sync. Replay rejects corrupt committed records rather than guessing.
 - Draft application constructs and validates an isolated candidate. Publish the version and events only after every schema, lint, policy, and concurrency check passes. Any failure leaves the active version unchanged.
+
+## Disk hygiene (owner order, 2026-09-13)
+
+Measured 2026-09-13 ~14:00 local, on the owner's machine, with `Get-ChildItem D:\ -Force` and
+`cmd /c dir /s /-c` per directory: `D:\` had 416 directories and 893 loose files at its root
+(177 directories with `target` in the name, none written to for 48 h except two; the rest lane
+worktrees, `*-runs`, `pr-*`, `gh-*` scratch and log files) and 18 GB free. `F:\github\GraphHelm`
+weighed 70 GB: 47 GB in `.worktrees\`, 23 GB in `.claude\worktrees\`, and 22 of those worktree
+directories carried a `target\` dir untouched for 49 h to 18 days. `F:` had 11 GB free. No rule
+said where a lane's scratch goes; ED-10 said "each owner deletes their own when the lane closes"
+and it was not done; `lane-loop.md` ("no wide deletes, no `worktree prune`") and
+`.factory/MERGE-CHECKLIST.md` item on targets ("`Remove-Item` by name, never a sweep") forbid the
+only other way it could have happened. The rule now:
+
+- **One scratch root per lane:** `D:\_agent-scratch\graphhelm\<lane>\` (a lane letter or an issue
+  number - one directory per lane, sub-directories per branch if the lane has two). Never a new
+  directory at the root of `D:\`, never inside a worktree, never on `F:` (`F:` holds code only).
+  The cargo target dir is `CARGO_TARGET_DIR=D:\_agent-scratch\graphhelm\<lane>\target`, written
+  **on the same line as the `cargo` call** (ED-11). Run logs, gate logs and probes go in the same
+  lane directory. ED-5's `D:\gh-check\<letter>\<issue>` and MERGE-CHECKLIST's `E:\<lane>-targets`
+  and `C:\<lane>-targets` allowances keep their conditions but move under the same shape:
+  `<drive>\_agent-scratch\graphhelm\<lane>\...`. The queued runner's managed roots are the one
+  exemption (Codex on #1068): `ci/gate-runner.ps1` takes `-BenchRoot`/`-TargetRoot` (defaults
+  `D:\runner-ssd|hdd`, `E:\runner-targets\ssd`, `D:\runner-targets\hdd`; the board runs it with
+  `D:\orch-runner-benches-ssd` and `E:\orch-runner-targets`), creates `<TargetRoot>\pr<N>` per pull
+  request and removes the previous run's target of the same PR before a re-run; whoever presses the
+  merge removes `<TargetRoot>\pr<N>` afterwards (measured 2026-09-15: four gates filled `E:` to
+  11 GB and the fifth went RED with `os error 112`). A hand-run gate bench (`.factory/lane-loop.md`
+  section 1, `E:/<lane>-<n>`) is a short-lived bench on the SSD for the same reason and is removed
+  by the lane that made it when the manifest is published.
+- **Worktrees live under `<repo>\.worktrees\<branch>`.** `.claude\worktrees\` (Claude Code's own
+  root) and `D:\codex\worktrees\` (Codex's own root) are accepted because the tool chooses them, not
+  the session; a throwaway detached worktree created and removed in the same command (the
+  merge-proof recipe below) is not a lane worktree. No new lane worktree at the root of `D:\`.
+- **Whoever opens a lane closes it.** When its PR merges or the lane is abandoned, the same session
+  runs `git worktree remove <path>`, `git branch -D <branch>` (a squash never makes the branch an
+  ancestor of `main`, so `-d` refuses every merged lane branch; before `-D`, confirm the merge with
+  `gh pr view <N> --json state,mergeCommit,headRefOid` AND that the local tip is that `headRefOid` or an
+  ancestor of it — the same predicate the sweeper applies, because a reused branch name with new local
+  commits still reads MERGED on GitHub), and removes its own
+  `D:\_agent-scratch\graphhelm\<lane>`. Evidence lives in the PR or the issue; a gate log that exists
+  only on `D:\` is not evidence of anything.
+- **The only sweeper is `F:\github\Dale\dale-ci\disk-sweep.ps1`** (not part of this repository;
+  dry-run by default, `-Apply` to act). It removes, in this order: (1) cargo target dirs idle
+  > 48 h - a directory counts as a target only if it (or every direct child) carries a cargo
+  marker (`CACHEDIR.TAG`, `.rustc_info.json`, `debug`, `release`), and the main checkout's own
+  `target` is never touched; (2) worktrees that are clean AND idle > 7 days AND merged - "merged" =
+  the branch is an ancestor of `origin/main` OR GitHub lists a merged PR whose head is the local tip
+  or a descendant of it, because a squash never makes the branch an ancestor and a reused branch
+  name with new local commits is not merged - or, failing that, fully contained in `origin/<branch>`
+  and idle > 14 days; "clean" ignores `tools/ci-canary/src/nonce.rs`, which `ci/gate.ps1` rewrites
+  on every run (#152) and which is restored before removal;
+  it runs `git worktree prune` for registered worktrees whose directory is gone; (3) `D:\` root
+  directories whose NAME matches the agent-scratch patterns fixed in the script (`gh-*`, `pr-*`,
+  `<letter>-<2-4 digits>*`, `*-runs`, ...) idle > 14 days - an unclassified name is left alone.
+  Declared residual: `<letter>-<2-4 digits>` IS the lane shape, so a human directory named like
+  `f-16` or `b-52` at the root of `D:\`, idle > 14 days, would be swept; measured 2026-09-13 against
+  every root name and 55 human-shaped probes, only that shape collides. Do not name a personal
+  directory that way at the root of `D:\`, or add it to the script's keep list; (4) loose
+  `*.log|txt|json|...` files at the root of `D:\` idle > 14 days; (5) Dale desktop installers beyond
+  the newest three and a `win-unpacked` idle > 7 days; (6) `.tmp-*`, `.codex-work`, `.review-*`, `.probe` at a repo root idle > 7 days;
+  (7) `D:\codex\scratch\*` idle > 7 days; (8) `D:\_agent-scratch\<repo>\<lane>` idle > 14 days.
+  In (3) and (8) a directory that holds a registered worktree, or any `.git` within three levels,
+  is skipped whatever its name (measured: six worktrees live under `D:\*-runs\`, e.g.
+  `D:\m-runs\w827`) - only (2) may act on a worktree. It never touches the main checkout, a worktree on `main`, a dirty or locked worktree, one whose
+  `git status` failed, or a branch with commits absent from both `origin/main` and
+  `origin/<branch>`; it unlinks junctions inside a worktree before removal and verifies the link
+  target survived; it calls `git worktree remove` without `--force` and keeps the worktree if git
+  refuses; and it keeps a named list (`Steam`, `codex`, `graphhelm-slot`, ...). Log in
+  `D:\_sweep-logs\`. The owner runs it by hand until the scheduled task `dale-disk-sweep` is
+  registered on the machine (the command is in `F:\github\Dale\dale-ci\DISK-HYGIENE.md`); this
+  section does not claim the task exists.
+- **Still forbidden by hand:** `git worktree prune`, deleting another lane's worktree, target or
+  scratch (`lane-loop.md`, MERGE-CHECKLIST). A session removes only what it created, by name. The
+  sweeper is the single exception those two rules now name, and it is the only thing that may act on
+  another lane's leftovers - by the criteria above, never by judgement.
+- Before writing "disk full" anywhere: run the sweeper's dry-run and read its log.
 
 ## Git, review, and completion
 

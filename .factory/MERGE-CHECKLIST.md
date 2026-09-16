@@ -294,11 +294,13 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    `D:` is one platter (measured 2026-09-05: 121 `*target*` directories on it; an `ls` took tens of
    seconds under five gates; with five running the box was measured STALLED — 26 cargo + 100 rustc,
    17.8 s of CPU in 36 min, D: at 2685 % disk time, SSDs at 0–3 %). So the ceiling is **one gate on the
-   HDD (`D:`) plus one on the SSD (`E:/<lane>-targets`, while `E:` has >30 GB free — `Get-PSDrive E`
+   HDD (`D:`) plus one on the SSD (`E:\_agent-scratch\graphhelm\<lane>\target`, while `E:` has >30 GB free — `Get-PSDrive E`
    first — the floor is a PRECONDITION, not a budget: `E:` went 79 → 38 GB free in three hours of
    accumulated review and gate targets at ~10.7 GB each, so **a target on `E:` is removed by its creator
-   when the gate or review ends** — `Remove-Item` by name, never a sweep; `E:` is a lane, not a
-   warehouse)**; `C:` (the system SSD, 127 GB free measured 2026-09-05) may hold ONE build or review target per lane, `C:/<lane>-targets/<n>`, only while ≥ 100 GB stay free, removed by its creator when the build ends, and **never a gate target** — the reason stands: a full `C:` takes the machine down (the disk-fill incident), so the floor is the rule, not the exception — and a CEILING on the board: at most TWO `C:`
+   when the gate or review ends** — `Remove-Item` by name, never a sweep by hand (the only sweep is
+   `disk-sweep.ps1`, `AGENTS.md` "Disk hygiene" — and it walks `D:` only: a target on `E:` or `C:` has
+   NO backstop, its creator is the only thing that removes it);
+   `E:` is a lane, not a warehouse)**; `C:` (the system SSD, 127 GB free measured 2026-09-05) may hold ONE build or review target per lane, `C:\_agent-scratch\graphhelm\<lane>\target-<n>`, only while ≥ 100 GB stay free, removed by its creator when the build ends, and **never a gate target** — the reason stands: a full `C:` takes the machine down (the disk-fill incident), so the floor is the rule, not the exception — and a CEILING on the board: at most TWO `C:`
    targets at once, whoever owns them, because a per-lane floor does not bound the sum (13 lanes × 10.7 GB
    against 27 GB of headroom; `E:` sat at 33.5 GB today under a 30 GB floor — K); and never `F:` (the
    repository disk, 15 GB free). Before launching, **count LAUNCHES, not cargos** — one gate is

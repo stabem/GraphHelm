@@ -766,12 +766,7 @@ static REPOSITORY_SCHEMAS: OnceLock<Result<RepositorySchemaSet, Vec<Diagnostic>>
 /// Returns the process-wide repository registry, compiled once from checked-in resources.
 pub fn repository_schema_set() -> Result<&'static RepositorySchemaSet, &'static [Diagnostic]> {
     REPOSITORY_SCHEMAS
-        .get_or_init(|| {
-            #[cfg(test)]
-            EMBEDDED_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            OfflineSchemaSet::compile(embedded_resources())
-                .map(|schemas| RepositorySchemaSet { schemas })
-        })
+        .get_or_init(compile_embedded_registry)
         .as_ref()
         .map_err(Vec::as_slice)
 }
@@ -1136,15 +1131,14 @@ fn embedded_registry_error(source: &str) -> Vec<Diagnostic> {
 }
 
 fn validate_embedded(schema_id: &str, value: &serde_json::Value, source: &str) -> Vec<Diagnostic> {
-    match OfflineSchemaSet::compile(embedded_resources()) {
-        Ok(set) => set.validate(schema_id, value, source),
-        Err(_) => vec![Diagnostic::error(
-            "GHS002_SCHEMA",
-            "embedded schema registry is invalid",
-            "/",
-            source,
-        )],
+    match repository_schema_set() {
+        Ok(set) => set.schemas.validate(schema_id, value, source),
+        Err(_) => embedded_registry_error(source),
     }
+}
+
+fn compile_embedded_registry() -> Result<RepositorySchemaSet, Vec<Diagnostic>> {
+    OfflineSchemaSet::compile(embedded_resources()).map(|schemas| RepositorySchemaSet { schemas })
 }
 
 #[cfg(test)]
@@ -1152,11 +1146,19 @@ static EMBEDDED_COMPILE_COUNT: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
+static EMBEDDED_OBSERVER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 fn embedded_compile_count() -> usize {
     EMBEDDED_COMPILE_COUNT.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 fn embedded_resources() -> BTreeMap<String, serde_json::Value> {
+    // This is the single resource-construction site used by both the historical per-call
+    // compiler and the process-wide initializer. Keeping the observer here means a regression
+    // that reintroduces the old direct compile cannot hide behind the cached initializer count.
+    #[cfg(test)]
+    EMBEDDED_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     BTreeMap::from([
         (GRAPH_ID.into(), parse_schema(GRAPH_SCHEMA)),
         (NODE_ID.into(), parse_schema(NODE_SCHEMA)),
@@ -1327,7 +1329,93 @@ fn parse_schema(source: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    fn observer_lock() -> MutexGuard<'static, ()> {
+        EMBEDDED_OBSERVER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn valid_graph() -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "p50.dev/graph/v1",
+            "kind": "ExecutionGraph",
+            "metadata": {
+                "id": "graph-cache",
+                "name": "Cache test graph",
+                "executionId": "execution-cache",
+                "version": 1
+            },
+            "spec": {
+                "entrypoints": ["start"],
+                "nodes": {
+                    "start": {
+                        "type": "tool",
+                        "name": "Start",
+                        "objective": "start the test graph",
+                        "optionality": "required"
+                    }
+                },
+                "edges": [],
+                "budgets": {},
+                "completion": {"status": "complete"}
+            }
+        })
+    }
+
+    fn valid_extension() -> serde_json::Value {
+        serde_json::json!({
+            "apiVersion": "p50.dev/v1",
+            "kind": "Extension",
+            "metadata": {
+                "id": "extension-cache",
+                "version": "1.0.0",
+                "publisher": "graphhelm-tests"
+            },
+            "spec": {
+                "type": "tool",
+                "capabilities": [],
+                "permissions": {},
+                "contracts": {},
+                "runtime": {"kind": "data", "isolationMinimum": "tier_0"},
+                "compatibility": {}
+            }
+        })
+    }
+
+    fn valid_agent() -> serde_json::Value {
+        serde_json::json!({
+            "purpose": "validate cache behavior",
+            "capabilities": ["read"],
+            "inputSchema": "input",
+            "outputSchema": "output",
+            "completionContract": "done",
+            "instructions": "Validate the supplied document."
+        })
+    }
+
+    fn valid_waiver() -> serde_json::Value {
+        serde_json::json!({
+            "id": "waiver-cache",
+            "requirement": "review",
+            "executionId": "execution-cache",
+            "graphVersion": 1,
+            "actor": "owner-local",
+            "reason": "accepted test risk",
+            "acknowledgedRisks": ["test risk"],
+            "scope": "execution",
+            "createdAt": "2026-08-08T12:00:00Z",
+            "expiresAt": null
+        })
+    }
+
+    fn over_complex_instance() -> serde_json::Value {
+        serde_json::Value::Array(
+            std::iter::repeat_n(serde_json::Value::Null, MAX_VALIDATION_INSTANCE_VALUES + 1)
+                .collect(),
+        )
+    }
 
     #[derive(Clone)]
     struct RecordingRejecter {
@@ -1736,7 +1824,158 @@ mod tests {
     }
 
     #[test]
+    fn embedded_public_validation_uses_shared_registry() {
+        let _observer_lock = observer_lock();
+        repository_schema_set().expect("checked-in embedded schemas compile");
+        let before = embedded_compile_count();
+        let diagnostics = validate_graph_value(&serde_json::json!({}), "embedded-cache");
+        assert!(diagnostics.iter().any(|item| item.code == "GHS002_SCHEMA"));
+        let after_public_validation = embedded_compile_count();
+
+        assert_eq!(
+            after_public_validation, before,
+            "public validation compiled an embedded registry outside the shared cache"
+        );
+    }
+
+    #[test]
+    fn embedded_public_validators_match_explicit_set_for_valid_invalid_and_complex_values() {
+        let _observer_lock = observer_lock();
+        let compiled = OfflineSchemaSet::compile(embedded_resources())
+            .expect("checked-in embedded schemas compile");
+        let mut invalid_graph = valid_graph();
+        invalid_graph["kind"] = serde_json::json!("NotAnExecutionGraph");
+        let mut invalid_extension = valid_extension();
+        invalid_extension["apiVersion"] = serde_json::json!("wrong/v1");
+        let mut invalid_agent = valid_agent();
+        invalid_agent["capabilities"] = serde_json::json!([]);
+        let mut invalid_waiver = valid_waiver();
+        invalid_waiver["acknowledgedRisks"] = serde_json::json!([]);
+
+        let cases = [
+            (
+                GRAPH_ID,
+                validate_graph_value as fn(&serde_json::Value, &str) -> Vec<Diagnostic>,
+                valid_graph(),
+                invalid_graph,
+            ),
+            (
+                EXTENSION_ID,
+                validate_extension_value,
+                valid_extension(),
+                invalid_extension,
+            ),
+            (AGENT_ID, validate_agent_value, valid_agent(), invalid_agent),
+            (WAIVER_ID, validate_waiver, valid_waiver(), invalid_waiver),
+        ];
+
+        for (schema_id, validate, valid, invalid) in cases {
+            for (case_name, value) in [("valid", valid), ("invalid", invalid)] {
+                let source = format!("embedded-cache-{case_name}-{schema_id}");
+                let expected = compiled.validate(schema_id, &value, &source);
+                let actual = validate(&value, &source);
+                assert_eq!(
+                    actual, expected,
+                    "diagnostics changed for {schema_id} {case_name}"
+                );
+            }
+        }
+
+        let complex = over_complex_instance();
+        for (schema_id, validate) in [
+            (
+                GRAPH_ID,
+                validate_graph_value as fn(&serde_json::Value, &str) -> Vec<Diagnostic>,
+            ),
+            (EXTENSION_ID, validate_extension_value),
+            (AGENT_ID, validate_agent_value),
+            (WAIVER_ID, validate_waiver),
+        ] {
+            let source = format!("embedded-cache-complex-{schema_id}");
+            let expected = compiled.validate(schema_id, &complex, &source);
+            let actual = validate(&complex, &source);
+            assert_eq!(
+                actual, expected,
+                "complex diagnostics changed for {schema_id}"
+            );
+            assert_eq!(actual.len(), 1);
+            assert_eq!(actual[0].code, "GHS002_SCHEMA");
+            assert_eq!(actual[0].path, "/");
+            assert_eq!(actual[0].source, source);
+            assert_eq!(
+                actual[0].message,
+                "document exceeds deterministic validation complexity limits"
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_public_validators_are_concurrent_and_do_not_recompile() {
+        let _observer_lock = observer_lock();
+        repository_schema_set().expect("checked-in embedded schemas compile");
+        let before = embedded_compile_count();
+        let workers = (0..8)
+            .map(|worker| {
+                std::thread::spawn(move || {
+                    let graph = validate_graph_value(&valid_graph(), &format!("graph-{worker}"));
+                    assert!(graph.is_empty(), "graph diagnostics: {graph:?}");
+                    let extension = validate_extension_value(
+                        &valid_extension(),
+                        &format!("extension-{worker}"),
+                    );
+                    assert!(extension.is_empty(), "extension diagnostics: {extension:?}");
+                    let agent = validate_agent_value(&valid_agent(), &format!("agent-{worker}"));
+                    assert!(agent.is_empty(), "agent diagnostics: {agent:?}");
+                    let mut waiver = valid_waiver();
+                    waiver["acknowledgedRisks"] = serde_json::json!([]);
+                    let waiver_diagnostics = validate_waiver(&waiver, &format!("waiver-{worker}"));
+                    assert!(
+                        waiver_diagnostics
+                            .iter()
+                            .any(|diagnostic| diagnostic.path == "/acknowledgedRisks")
+                    );
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker
+                .join()
+                .expect("concurrent validation worker panicked");
+        }
+        let after = embedded_compile_count();
+        assert_eq!(
+            after, before,
+            "concurrent validation recompiled embedded schemas"
+        );
+    }
+
+    #[test]
+    fn arbitrary_schema_compilation_does_not_use_embedded_registry_cache() {
+        let _observer_lock = observer_lock();
+        repository_schema_set().expect("checked-in embedded schemas compile");
+        let before = embedded_compile_count();
+        let resources = BTreeMap::from([(
+            "arbitrary-root".to_owned(),
+            serde_json::json!({
+                "$id": "https://p50.dev/schemas/arbitrary-root.json",
+                "type": "object"
+            }),
+        )]);
+        let set = OfflineSchemaSet::compile(resources).expect("arbitrary schema compiles");
+        assert!(
+            set.validate(
+                "https://p50.dev/schemas/arbitrary-root.json",
+                &serde_json::json!({}),
+                "arbitrary"
+            )
+            .is_empty()
+        );
+        assert_eq!(embedded_compile_count(), before);
+    }
+
+    #[test]
     fn embedded_event_registry_compiles_at_most_once_across_thousands_of_validations() {
+        let _observer_lock = observer_lock();
         let before = embedded_compile_count();
         for _ in 0..2_048 {
             let _ = validate_event_envelope(&serde_json::json!({}));
@@ -1748,6 +1987,5 @@ mod tests {
             "compiled {} times",
             after - before
         );
-        assert!(after <= 1, "embedded registry compiled {after} times");
     }
 }

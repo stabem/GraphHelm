@@ -131,7 +131,7 @@ impl DraftModel for RecordedDraftModel {
     }
 }
 
-fn is_sha256_hex(key: &str) -> bool {
+pub(crate) fn is_sha256_hex(key: &str) -> bool {
     key.len() == 64
         && key
             .bytes()

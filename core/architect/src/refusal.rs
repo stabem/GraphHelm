@@ -31,6 +31,13 @@ pub enum ArchitectRefusal {
     /// named event instead of a silent one (D6).
     #[error("no recorded reply for prompt sha256 {prompt_sha256}")]
     FixtureMissing { prompt_sha256: String },
+    /// The judge door is unreachable, or a recorded judge file cannot be read. Static prose only.
+    #[error("judge unavailable: {message}")]
+    JudgeUnavailable { message: String },
+    /// The recorded judge has no reply for this request; names the digest so
+    /// `ARCHITECT_RECORD=1` can record it.
+    #[error("no recorded judge reply for request sha256 {request_sha256}")]
+    JudgeMissing { request_sha256: String },
     /// The last round's reply was not a JSON object at all.
     #[error("round {round}: the reply is not JSON: {message}")]
     NotJson { round: u8, message: String },

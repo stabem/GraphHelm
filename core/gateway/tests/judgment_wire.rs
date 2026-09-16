@@ -7,6 +7,10 @@ use graphhelm_gateway::call::Usage;
 use graphhelm_gateway::judgment::{
     Answer, JEV_LATEST, JudgeReply, JudgeRequest, NoulCriteria, Question, request_sha256,
 };
+use sha2::Digest;
+
+const PINNED_DOCUMENTED_REQUEST_SHA256: &str =
+    "4aa024add9093e9cdecfe767baa0bf5eeacc8375417725abd097a5caed1788ee";
 
 fn documented_request() -> JudgeRequest {
     let mut questions = BTreeMap::new();
@@ -180,4 +184,92 @@ fn the_request_digest_is_a_pure_function_of_canonical_bytes() {
     let mut other = documented_request();
     other.state = serde_json::json!("a different state");
     assert_ne!(a, request_sha256(&other));
+}
+
+/// The digest's canonicality is a property of `serde_json`'s `Map` (a `BTreeMap`, keys sorted),
+/// which the module documents and which this cell now guards: the same request built with its
+/// questions inserted in two different orders must hash to one digest. A later `IndexMap`, or the
+/// `preserve_order` feature enabled anywhere in the workspace, turns this cell red here instead of
+/// surfacing as a recorded-fixture miss under spec D5 (#1114 review finding).
+#[test]
+fn the_request_digest_does_not_depend_on_insertion_order() {
+    let question = |text: &str| Question::Noul {
+        instructions: text.to_owned(),
+        criteria: None,
+    };
+    let mut forward = BTreeMap::new();
+    forward.insert("a_first".to_owned(), question("Is it urgent?"));
+    forward.insert("b_second".to_owned(), question("Is it billing?"));
+    let mut reverse = BTreeMap::new();
+    reverse.insert("b_second".to_owned(), question("Is it billing?"));
+    reverse.insert("a_first".to_owned(), question("Is it urgent?"));
+    let build = |questions: BTreeMap<String, Question>| JudgeRequest {
+        state: serde_json::json!({ "z": 1, "a": 2 }),
+        model: JEV_LATEST.to_owned(),
+        questions,
+    };
+    assert_eq!(
+        request_sha256(&build(forward)),
+        request_sha256(&build(reverse))
+    );
+    let state_reordered = JudgeRequest {
+        state: serde_json::json!({ "a": 2, "z": 1 }),
+        ..build(BTreeMap::new())
+    };
+    let state_forward = JudgeRequest {
+        state: serde_json::json!({ "z": 1, "a": 2 }),
+        ..build(BTreeMap::new())
+    };
+    assert_eq!(
+        request_sha256(&state_reordered),
+        request_sha256(&state_forward)
+    );
+}
+
+/// The digest is the recorded-fixture lookup key (spec D5), so its VALUE is pinned, not only its
+/// properties: a field reorder in `JudgeRequest`, a renamed field, or `preserve_order` enabled
+/// anywhere in the workspace changes this literal and reddens here, instead of every recorded
+/// judge fixture silently missing (#1114 review finding). Re-derive the literal on purpose only.
+#[test]
+fn the_documented_request_has_a_pinned_digest() {
+    let digest = request_sha256(&documented_request());
+    let bytes = serde_json::to_vec(&documented_request()).unwrap();
+    let expected = hex::encode(sha2::Sha256::digest(&bytes));
+    assert_eq!(
+        digest, expected,
+        "the digest is the sha256 of the canonical bytes"
+    );
+    assert_eq!(
+        digest, PINNED_DOCUMENTED_REQUEST_SHA256,
+        "the canonical bytes of the documented request changed; re-pin deliberately"
+    );
+}
+
+/// A `Choice` option with no rubric serializes as JSON `null` (the API's `string | null`), and a
+/// reply's usage round-trips through `usage_wire::serialize` in snake_case.
+#[test]
+fn a_null_rubric_and_the_usage_serializer_are_pinned() {
+    let question = Question::Choice {
+        instructions: "Which?".to_owned(),
+        criteria: BTreeMap::from([
+            ("a".to_owned(), None),
+            ("b".to_owned(), Some("bee".to_owned())),
+        ]),
+    };
+    assert_eq!(
+        serde_json::to_value(question).unwrap(),
+        serde_json::json!({ "type": "choice", "instructions": "Which?", "criteria": { "a": null, "b": "bee" } })
+    );
+    let reply = JudgeReply {
+        model: JEV_LATEST.to_owned(),
+        answers: BTreeMap::from([("x".to_owned(), Answer::Noul { noul: 0.5 })]),
+        usage: Usage {
+            input_tokens: Some(7),
+            output_tokens: None,
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(&reply).unwrap()["usage"],
+        serde_json::json!({ "input_tokens": 7, "output_tokens": null })
+    );
 }

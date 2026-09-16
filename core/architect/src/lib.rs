@@ -21,6 +21,7 @@
 //! credentials.
 
 pub mod catalog;
+pub mod judge;
 pub mod model;
 pub mod profile;
 pub mod refusal;
@@ -28,6 +29,7 @@ pub mod synthesize;
 pub mod template;
 
 pub use catalog::{CapabilityCatalog, TOOL_FAMILIES};
+pub use judge::{JudgeModel, RecordedJudgeModel};
 pub use model::{DraftModel, DraftReply, MAX_FIXTURE_BYTES, RecordedDraftModel};
 pub use profile::{
     DEFAULT_CLEARANCE_WITHIN_SECONDS, DEFAULT_MAX_NODES, DEFAULT_WAIT_WITHIN_SECONDS,

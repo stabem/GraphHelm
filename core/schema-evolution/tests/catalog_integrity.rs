@@ -165,8 +165,9 @@ fn repository_has_one_safe_initial_release() {
     assert_eq!(catalog.schemas.len(), 17);
     assert!(!root.join("schemas/releases/1.1.0").exists());
     assert!(!root.join("schemas/releases/1.2.0").exists());
-    assert_eq!(manifest["cases"].as_array().unwrap().len(), 57);
-    assert_eq!(declared_resources.len(), 59);
+    // 58 cases / 60 resources: #1086 added the context-provenance `root` refusal.
+    assert_eq!(manifest["cases"].as_array().unwrap().len(), 58);
+    assert_eq!(declared_resources.len(), 60);
 }
 
 #[test]
@@ -827,9 +828,10 @@ fn current_and_1_0_0_release_enforce_identical_shared_public_schema_contracts() 
         .filter(|case| case["kind"] == "schema")
         .collect::<Vec<_>>();
 
-    // 37 = main's 32, plus the two graph-signal-reply cases the 1.1.0 evolution shipped, plus
-    // the three context-provenance cases (#1065: valid, measured-estimate, traversal-source).
-    assert_eq!(schema_cases.len(), 37);
+    // 38 = main's 32, plus the two graph-signal-reply cases the 1.1.0 evolution shipped, plus
+    // the three context-provenance cases (#1065: valid, measured-estimate, traversal-source),
+    // plus the `root` refusal (#1086).
+    assert_eq!(schema_cases.len(), 38);
     let current_catalog = load_repo_catalog(RepositoryPackage::Current).catalog;
     let release_catalog = load_repo_catalog(RepositoryPackage::Release1_0_0).catalog;
     for case in schema_cases {

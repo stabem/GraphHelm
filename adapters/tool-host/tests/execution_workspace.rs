@@ -72,6 +72,51 @@ fn host(project: &Path, staging: &Path, keep_workspace: bool) -> ToolHost {
     })
 }
 
+/// #1086 (Codex P1 on #1092): a ref probe that does not answer is `Unavailable`, never `Absent`.
+/// The host's `path_prepend` puts a `git` shim first that is `fake_tool` under another name: it
+/// exits 64 for the unknown mode `-C`, which is neither 0 (present) nor 1 (verified absent), so
+/// the probe fails deterministically on every host -- a 1 ms budget, the first shape of this
+/// cell, let a fast `rev-parse` answer 1 before the clock was checked (gate `ffbea56e`). The
+/// compile must report that it could not see the tree instead of reading the project checkout.
+#[test]
+fn a_failed_ref_probe_is_unavailable_not_absent() {
+    use graphhelm_runtime::ports::{ExecutionTreeAccess, ExecutionTreePort};
+    use graphhelm_tool_host::source_reader::ExecutionContextTree;
+
+    let (dir, project) = scratch_repo();
+    let staging = dir.path().join("staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    let fake_tool = Path::new(env!("CARGO_BIN_EXE_fake_tool"));
+    let shim = dir.path().join("shim");
+    std::fs::create_dir_all(&shim).unwrap();
+    let git_shim = shim.join(if cfg!(windows) { "git.exe" } else { "git" });
+    std::fs::copy(fake_tool, &git_shim).unwrap();
+    let host = std::sync::Arc::new(ToolHost::new(HostConfig {
+        workspace: WorkspaceConfig::validated(&project, &staging, &[]).unwrap(),
+        limits: ProcessLimits {
+            timeout: Duration::from_secs(30),
+            max_output_bytes: 1024 * 1024,
+        },
+        tests_runner: "fake_tool".to_owned(),
+        tests_runner_env: BTreeMap::new(),
+        path_prepend: vec![shim, fake_tool.parent().unwrap().to_path_buf()],
+        keep_workspace: false,
+    }));
+    let tree = ExecutionContextTree::new(host, "exec-probe");
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let mut compiled = false;
+    let access = tree.with_tree(&cancel, &mut |_search, _reader| compiled = true);
+    assert_eq!(access, ExecutionTreeAccess::Unavailable);
+    assert!(
+        !compiled,
+        "nothing was compiled over a tree the probe could not see"
+    );
+    assert!(
+        workspaces_in(&staging).is_empty(),
+        "a failed probe never provisions a tree from HEAD"
+    );
+}
+
 fn writer_lease() -> ToolLease {
     ToolLease {
         actor: "agent-writer".to_owned(),
@@ -117,6 +162,230 @@ fn workspaces_in(staging: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// #1086 item 5: the context compile reads the execution's own tree, under the lock tool calls
+/// hold. No tree and no landed ref: `Absent`, and nothing is provisioned (a read never provisions
+/// from `HEAD`). After a patch: the tree, patched, while the checkout is not. After a commit, a
+/// release and a NEW host: the read provisions the tree from the landed ref.
+#[test]
+fn the_context_compile_reads_the_execution_tree_and_never_provisions_one_from_head() {
+    use graphhelm_runtime::context::SEARCH_BOUNDS;
+    use graphhelm_runtime::ports::{ExecutionTreeAccess, ExecutionTreePort};
+    use graphhelm_tool_host::source_reader::ExecutionContextTree;
+
+    let (dir, project) = scratch_repo();
+    let staging = dir.path().join("staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    let first = std::sync::Arc::new(host(&project, &staging, false));
+    let read_fixed = |tree: &ExecutionContextTree| {
+        let mut seen = None;
+        let cancel = graphhelm_runtime::ports::ScanCancel::new();
+        let access = tree.with_tree(&cancel, &mut |search, reader| {
+            let hits = search
+                .search(&["fixed".to_owned()], &SEARCH_BOUNDS)
+                .unwrap();
+            let bytes = reader.read_prefix("src/lib.rs", 1024).unwrap().bytes;
+            seen = Some((hits, String::from_utf8(bytes).unwrap()));
+        });
+        (access, seen)
+    };
+
+    let tree = ExecutionContextTree::new(first.clone(), "exec-context");
+    let (access, seen) = read_fixed(&tree);
+    assert_eq!(access, ExecutionTreeAccess::Absent);
+    assert!(seen.is_none());
+    assert!(
+        workspaces_in(&staging).is_empty(),
+        "a read never provisions a tree from HEAD"
+    );
+
+    let (record, _) =
+        first.invoke_for_execution("exec-context", &apply(), &writer_lease(), "agent-writer");
+    assert!(completed(&record.disposition), "{record:?}");
+    let (access, seen) = read_fixed(&tree);
+    assert_eq!(access, ExecutionTreeAccess::Read);
+    let (hits, lib) = seen.unwrap();
+    assert!(hits.contains(&"src/lib.rs".to_owned()), "{hits:?}");
+    assert!(lib.contains("FIXED"), "the compile sees the patch: {lib}");
+    assert!(
+        !std::fs::read_to_string(project.join("src/lib.rs"))
+            .unwrap()
+            .contains("FIXED"),
+        "the checkout never saw it"
+    );
+
+    let (record, _) = first.invoke_for_execution(
+        "exec-context",
+        &commit("fix: land for the context read"),
+        &writer_lease(),
+        "agent-writer",
+    );
+    assert!(completed(&record.disposition), "{record:?}");
+    first.release("exec-context").unwrap();
+    assert!(workspaces_in(&staging).is_empty());
+
+    let second = std::sync::Arc::new(host(&project, &staging, false));
+    let tree = ExecutionContextTree::new(second.clone(), "exec-context");
+    let (access, seen) = read_fixed(&tree);
+    assert_eq!(access, ExecutionTreeAccess::Read);
+    assert!(
+        seen.unwrap().1.contains("FIXED"),
+        "provisioned from the ref"
+    );
+    second.release("exec-context").unwrap();
+    assert!(workspaces_in(&staging).is_empty());
+}
+
+/// A scratch repository with a provisioned execution tree for `execution` (one patch applied).
+fn provisioned(execution: &str) -> (tempfile::TempDir, PathBuf, std::sync::Arc<ToolHost>) {
+    let (dir, project) = scratch_repo();
+    let staging = dir.path().join("staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    let host = std::sync::Arc::new(host(&project, &staging, false));
+    let (record, _) =
+        host.invoke_for_execution(execution, &apply(), &writer_lease(), "agent-writer");
+    assert!(completed(&record.disposition), "{record:?}");
+    (dir, staging, host)
+}
+
+/// A context scan parked inside the execution tree until `unblock` fires: the stand-in for a
+/// `read_dir`, open or read that blocks in the kernel, which no token can interrupt.
+fn blocked_scan(
+    host: &std::sync::Arc<ToolHost>,
+    execution: &str,
+    cancel: &graphhelm_runtime::ports::ScanCancel,
+) -> (
+    std::thread::JoinHandle<Result<Option<()>, graphhelm_tool_host::process::HostError>>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (unblock_tx, unblock_rx) = std::sync::mpsc::channel::<()>();
+    let scan = {
+        let host = host.clone();
+        let execution = execution.to_owned();
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            host.with_execution_tree(&execution, &cancel, |_root| {
+                entered_tx.send(()).unwrap();
+                let _ = unblock_rx.recv();
+            })
+        })
+    };
+    entered_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the scan entered the tree");
+    (scan, unblock_tx)
+}
+
+/// Codex P1 on #1092: a drive cancelled while a context scan is blocked inside the execution
+/// tree must not wait for that scan. The release returns within its bounded wait while the scan
+/// is still blocked, and the tree goes when the scan lets go.
+#[test]
+fn a_release_never_waits_on_an_abandoned_scan_and_the_tree_goes_when_the_scan_ends() {
+    let (_dir, staging, host) = provisioned("exec-cancel");
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let (scan, unblock) = blocked_scan(&host, "exec-cancel", &cancel);
+    cancel.cancel();
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let host = host.clone();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let released = host.release("exec-cancel");
+            done_tx.send((started.elapsed(), released)).unwrap();
+        });
+    }
+    let (elapsed, released) = done_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the release returned while the scan was still blocked");
+    released.unwrap();
+    assert!(elapsed < Duration::from_secs(20), "{elapsed:?}");
+    assert_eq!(
+        workspaces_in(&staging).len(),
+        1,
+        "the tree is still held by the scan, so its removal was deferred, not raced"
+    );
+
+    unblock.send(()).unwrap();
+    assert_eq!(scan.join().unwrap().unwrap(), Some(()));
+    assert!(
+        workspaces_in(&staging).is_empty(),
+        "the scan removed the released tree as it let go"
+    );
+    assert!(host.live_executions().is_empty());
+}
+
+/// A scan whose drive gave it up while it WAITS for the tree never takes the tree: it answers
+/// `Cancelled` while the holder still holds it.
+#[test]
+fn a_scan_cancelled_while_waiting_for_the_tree_gives_up_without_taking_it() {
+    let (_dir, _staging, host) = provisioned("exec-wait");
+    let holder_cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let (holder, unblock) = blocked_scan(&host, "exec-wait", &holder_cancel);
+
+    let waiting_cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let host = host.clone();
+        let waiting_cancel = waiting_cancel.clone();
+        std::thread::spawn(move || {
+            let outcome = host.with_execution_tree("exec-wait", &waiting_cancel, |_| {
+                panic!("a cancelled scan must never run over the tree")
+            });
+            done_tx.send(outcome.is_err()).unwrap();
+        });
+    }
+    assert!(
+        done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "the second scan waits while the tree is held"
+    );
+    waiting_cancel.cancel();
+    assert!(
+        done_rx
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the cancelled waiter returned while the holder still held the tree"),
+        "the cancelled waiter answered Cancelled"
+    );
+    unblock.send(()).unwrap();
+    assert_eq!(holder.join().unwrap().unwrap(), Some(()));
+    host.release("exec-wait").unwrap();
+}
+
+/// The guarantee item 5 of #1086 rests on still holds: a tool call of the execution waits for a
+/// context scan that is reading the tree, and runs once the scan lets go.
+#[test]
+fn a_tool_call_waits_for_a_context_scan_reading_the_tree() {
+    let (_dir, staging, host) = provisioned("exec-read");
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let (scan, unblock) = blocked_scan(&host, "exec-read", &cancel);
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let host = host.clone();
+        std::thread::spawn(move || {
+            let (record, _) = host.invoke_for_execution(
+                "exec-read",
+                &commit("fix: after the read"),
+                &writer_lease(),
+                "agent-writer",
+            );
+            done_tx.send(record).unwrap();
+        });
+    }
+    assert!(
+        done_rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "no tool call writes while the scan reads"
+    );
+    unblock.send(()).unwrap();
+    assert_eq!(scan.join().unwrap().unwrap(), Some(()));
+    let record = done_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the tool call ran once the scan let go");
+    assert!(completed(&record.disposition), "{record:?}");
+    host.release("exec-read").unwrap();
+    assert!(workspaces_in(&staging).is_empty());
 }
 
 /// THE journey at the host layer: apply, then commit, in ONE execution — the patch node A applied

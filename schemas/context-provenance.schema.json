@@ -40,6 +40,13 @@
     "estimator": {
       "const": "bytes-div-4/v1"
     },
+    "root": {
+      "description": "Which tree the search and the reads ran over (#1086): the project checkout the drive resolved, or the execution's own Tier 1 tree (its tool workspace, provisioned from refs/graphhelm/executions/<id> when a prior drive landed it). A name, never a path. Optional because records sealed before #1086 carry none, and those read the project.",
+      "enum": [
+        "project",
+        "execution"
+      ]
+    },
     "terms": {
       "type": "array",
       "maxItems": 12,

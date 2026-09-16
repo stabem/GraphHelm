@@ -2260,10 +2260,15 @@ async fn prepare_drive(
                 None => None,
             };
             // #1065: context ports only beside a real model — see `PreparedPorts::context`.
+            // #1086: with a tool half, the execution's own Tier 1 tree is offered to the compile,
+            // so a cognitive node after a tool node reads the tool's work, not the checkout.
             let context = match model {
                 Some(_) => Some(
-                    super::ports::build_context_ports(&project)
-                        .map_err(|message| MutationError::from(setup_failure(&message)))?,
+                    super::ports::build_context_ports(
+                        &project,
+                        tools.as_ref().map(|(port, _)| port.context_tree()),
+                    )
+                    .map_err(|message| MutationError::from(setup_failure(&message)))?,
                 ),
                 None => None,
             };
@@ -2992,10 +2997,15 @@ pub(super) async fn evidence(
 
 /// Evidence this route will render. The model reply — the reason the route exists — seals as
 /// `application/json` (`core/runtime/src/evidence.rs`), and a tool node's streams seal as
-/// `text/plain`. Anything else is refused rather than guessed at: a surface that base64s unknown
-/// bytes into a JSON string is not showing an operator their content, it is moving it.
+/// `text/plain`. A structured-syntax `+json` type is JSON too (RFC 6839): the sealed
+/// `context-provenance@1` record (`application/vnd.graphhelm.context-provenance+json`) and the
+/// accounting receipt are documents an operator must be able to open, not only count (#1086).
+/// Anything else is refused rather than guessed at: a surface that base64s unknown bytes into a
+/// JSON string is not showing an operator their content, it is moving it.
 fn renders_as_text(media_type: &str) -> bool {
-    media_type == "application/json" || media_type.starts_with("text/")
+    media_type == "application/json"
+        || (media_type.starts_with("application/") && media_type.ends_with("+json"))
+        || media_type.starts_with("text/")
 }
 
 /// One refusal shape for every way this read can decline, all of them 409: the request was

@@ -219,6 +219,71 @@ pub trait BoundedSourceSearch: Send + Sync {
     ) -> Result<Vec<String>, SourceSearchError>;
 }
 
+/// What [`ExecutionTreePort::with_tree`] did with the compile it was handed (#1086).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionTreeAccess {
+    /// The execution has no tree of its own (no Tier 1 call yet, no landed ref): the compile
+    /// was not run, and the caller reads the project.
+    Absent,
+    /// The compile ran over the execution's tree, while nothing wrote to it.
+    Read,
+    /// The execution has a tree and it could not be opened; the compile was not run. The caller
+    /// must NOT fall back to the project, whose bytes are the pre-tool bytes.
+    Unavailable,
+}
+
+/// A cancellation flag for one context scan (#1086, Codex P1 on #1092).
+///
+/// The driver races a node's compile against immediate cancellation and, when cancellation wins,
+/// drops the compile's join future; the blocking scan itself cannot be aborted from outside. This
+/// token is how the abandoned scan learns it was abandoned: the driver sets it when the compile
+/// future is dropped, and the scan checks it between directory entries, before every open and
+/// before every read, and gives up — releasing whatever it holds, the execution tree's lock
+/// included — at the next check. A single blocked syscall still runs to its own end; that is why
+/// the host's release does not wait on the scan (see `ToolHost::release`).
+#[derive(Clone, Debug, Default)]
+pub struct ScanCancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl ScanCancel {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask every holder of this token to stop at its next check. Idempotent.
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The execution's own Tier 1 tree, offered to the context compile (#1086 item 5).
+///
+/// **Why a callback and not two more ports.** The search and the reads of one compile must see
+/// ONE tree, and nothing may write to it between them: a tool node of the same execution
+/// patching the tree between the search and the read would cite a path under bytes that moved.
+/// The implementor holds whatever keeps the tree still (the host's per-execution lock, which a
+/// tool call also holds for its whole duration) for exactly as long as `compile` runs, and hands
+/// it a search and a reader over that tree. The compile is bounded by the channel's declared
+/// ceilings, so the writer it holds back waits a bounded time.
+///
+/// **Cancellation.** `cancel` is set when the drive abandons the compile. The implementor must
+/// not start waiting for the tree after it is set, must hand `compile` a search and a reader that
+/// stop at their next check once it is set, and must let go of the tree as soon as `compile`
+/// returns — so an abandoned scan never holds the tree longer than one in-flight syscall.
+pub trait ExecutionTreePort: Send + Sync {
+    /// Run `compile` over the execution's tree, or report why it was not run.
+    fn with_tree(
+        &self,
+        cancel: &ScanCancel,
+        compile: &mut dyn FnMut(&dyn BoundedSourceSearch, &dyn BoundedSourceReader),
+    ) -> ExecutionTreeAccess;
+}
+
 /// A bounded PREFIX read of one repository file, for the context capsule (#1065).
 ///
 /// The second half of the chain the search port begins: [`BoundedSourceSearch`] decides WHICH

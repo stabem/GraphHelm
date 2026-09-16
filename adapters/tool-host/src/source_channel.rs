@@ -59,6 +59,23 @@ const CREDENTIAL_DIRS: &[&str] = &[".graphhelm", "keyring"];
 /// `context::sensitive_path` refuses the same names on the way to a read (`INTERNAL_DIRS`).
 const PROCESS_DIRS: &[&str] = &[".factory", ".superpowers", ".git"];
 
+/// Directory NAMES never entered at any depth, because they are an AGENT's or a TOOL's own state
+/// rather than repository evidence (#1086 item 9): agent sessions, settings and — the case that
+/// was measured — whole agent worktrees (`.claude/worktrees/<lane>/`), each a full copy of the
+/// tree. A checkout carrying a dozen of them crossed the 50,000-entry ceiling with no code change,
+/// refusing the whole search, and a worktree's stale copy of a file competed with the file itself.
+/// A property of the machine the tree sits on, never of the repository, so it is skipped by name.
+const AGENT_STATE_DIRS: &[&str] = &[
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".windsurf",
+    ".aider",
+    ".worktrees",
+    ".idea",
+    ".vscode",
+];
+
 /// Directory NAMES never entered at any depth, because they are generated: dependency trees,
 /// build output, virtual environments, caches. They hold no repository evidence, they are the
 /// bulk of a checked-out tree by entry count — one `node_modules/` is tens of thousands of
@@ -88,6 +105,7 @@ fn skipped_directory_name(path: &Path) -> bool {
             let folded = name.to_lowercase();
             CREDENTIAL_DIRS.contains(&folded.as_str())
                 || PROCESS_DIRS.contains(&folded.as_str())
+                || AGENT_STATE_DIRS.contains(&folded.as_str())
                 || GENERATED_DIRS.contains(&folded.as_str())
         })
 }
@@ -116,6 +134,9 @@ const TEXT_SUFFIXES: &[&str] = &[
 #[derive(Debug)]
 pub struct WorkspaceSourceChannel {
     root: PathBuf,
+    /// Checked between directory entries and before every open (#1086): a scan whose drive gave
+    /// it up refuses `Unavailable` at the next check instead of finishing the walk.
+    cancel: Option<graphhelm_runtime::ports::ScanCancel>,
 }
 
 impl WorkspaceSourceChannel {
@@ -147,7 +168,23 @@ impl WorkspaceSourceChannel {
         if !real.is_dir() {
             return Err(SourceSearchError::Unavailable);
         }
-        Ok(Self { root: real })
+        Ok(Self {
+            root: real,
+            cancel: None,
+        })
+    }
+
+    /// The same channel, stopping at its next check once `cancel` is set (#1086).
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: graphhelm_runtime::ports::ScanCancel) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(graphhelm_runtime::ports::ScanCancel::is_cancelled)
     }
 
     /// Repository-relative, forward-slashed. The plan's escape checks compare TEXT, so a
@@ -316,9 +353,17 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
 
         let mut stack = vec![self.root.clone()];
         while let Some(directory) = stack.pop() {
+            // A cancelled scan stops here, between entries and before every open, and refuses:
+            // an abandoned walk is an incomplete search, never a finished one (#1086).
+            if self.cancelled() {
+                return Err(SourceSearchError::Unavailable);
+            }
             let entries =
                 std::fs::read_dir(&directory).map_err(|_| SourceSearchError::Unavailable)?;
             for entry in entries {
+                if self.cancelled() {
+                    return Err(SourceSearchError::Unavailable);
+                }
                 let entry = entry.map_err(|_| SourceSearchError::Unavailable)?;
                 let path = entry.path();
                 // Counted BEFORE any filter: the traversal bound exists for the tree that opens
@@ -427,6 +472,9 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
                 // writer, a block no declared ceiling can interrupt. Neither flag changes how
                 // a regular file reads. Windows has no such open; its residual is declared at
                 // the re-check below.
+                if self.cancelled() {
+                    return Err(SourceSearchError::Unavailable);
+                }
                 let Ok(file) = open_candidate(&path) else {
                     return Err(SourceSearchError::Unavailable);
                 };

@@ -984,8 +984,9 @@ pub(in crate::commands) fn render_with_context(
     })
 }
 
-/// The content-free per-node view: sources in rank order, the capsule's size, the two §9.2
-/// numbers, the retrieval counters and the capsule digest. Or the reason nothing can be said.
+/// The content-free per-node view: which tree was read (`root`, #1086), sources in rank order, the
+/// capsule's size, the two §9.2 numbers, the retrieval counters and the capsule digest. Or the
+/// reason nothing can be said.
 fn context_view(
     context: Option<&BTreeMap<String, graphhelm_runtime::context::NodeContextSummary>>,
 ) -> serde_json::Value {
@@ -997,6 +998,7 @@ fn context_view(
                     (
                         node.clone(),
                         serde_json::json!({
+                            "root": summary.root,
                             "sources": summary.sources,
                             "capsuleBytes": summary.capsule_bytes,
                             "eligibleCandidateTokens": summary.eligible_candidate_tokens,

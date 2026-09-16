@@ -68,6 +68,56 @@ fn workspace() -> tempfile::TempDir {
     dir
 }
 
+/// #1086 item 9: agent and tool state directories are skipped by NAME at any depth. A checkout
+/// with many agent worktrees under `.claude/` otherwise crossed the 50,000-entry ceiling with no
+/// code change, and a worktree's copy of a file outranked the file itself.
+#[test]
+fn agent_and_tool_state_directories_are_never_entered_at_any_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |rel: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "zanzibar_quokka\n").unwrap();
+    };
+    for rel in [
+        ".claude/worktrees/lane/src/real.rs",
+        "nested/.claude/notes.md",
+        ".codex/sessions/a.md",
+        ".cursor/rules.md",
+        ".worktrees/deploy-main/src/real.rs",
+        "src/real.rs",
+    ] {
+        write(rel);
+    }
+    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let hits = channel
+        .search(&["zanzibar_quokka".to_owned()], &generous())
+        .unwrap();
+    assert_eq!(hits, ["src/real.rs"]);
+}
+
+/// #1086 (Codex P1 on #1092): a scan whose drive gave it up stops at its next check and
+/// refuses, rather than walking on; the same channel without a set token still answers.
+#[test]
+fn a_cancelled_scan_refuses_at_its_next_check() {
+    let dir = workspace();
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_cancel(cancel.clone());
+    assert!(
+        !channel
+            .search(&["verdict".to_owned()], &generous())
+            .unwrap()
+            .is_empty()
+    );
+    cancel.cancel();
+    assert_eq!(
+        channel.search(&["verdict".to_owned()], &generous()),
+        Err(SourceSearchError::Unavailable)
+    );
+}
+
 /// THE PURPOSE: non-code evidence the structural index cannot reach IS reachable here.
 #[test]
 fn the_channel_reaches_non_code_evidence_the_index_filters_away() {

@@ -1,5 +1,71 @@
 # Specification Changelog
 
+## Scanner hardening and execution-worktree retrieval, #1086 - 2026-09-14
+
+The declared gaps of the context chain #1078 landed, closed one by one.
+
+- **The excerpt read cannot be redirected by an ancestor.** The containment walk runs over
+  paths, so a parent directory renamed to a link between the walk and the open used to send the
+  open outside the root while both identity checks passed. The open no longer trusts the walk.
+  Unix: `openat` one component at a time from the root's own handle, `O_DIRECTORY | O_NOFOLLOW`
+  on every ancestor. Windows: every ancestor opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`),
+  refused if it is a reparse point, and held with a share mode that denies delete, so nothing
+  checked can be renamed while the file is read; the final handle must resolve
+  (`GetFinalPathNameByHandleW`) inside the canonical root. Declared residuals: on Unix a directory
+  already held open and then moved OUT of the root is caught by the post-read path identity check,
+  not before the read (`openat2(RESOLVE_BENEATH)` is Linux-only); on Windows another process
+  renaming a directory on the path gets a sharing violation for the length of one bounded read,
+  and a regular file carrying a non-link reparse tag (a cloud placeholder) is refused.
+- **No digest exemption at the cut.** A hex run of 32+ that touches the end of a clipped excerpt
+  is refused even behind `sha256:`: a whole digest ending exactly at the 16 KiB boundary may be
+  the head of a longer run nobody read.
+- **Credential keys are identifiers, not a word list.** The assignment scanner finds every `=`
+  and `:` and reads the key back from it: `AWS_SECRET_ACCESS_KEY=`, `DB_PASSWORD=`,
+  `SLACK_BOT_TOKEN=`, `stripe_api_key =`, `service.access_key =`, `gcp-private-key =` (any
+  segment beginning `secret`; a last segment `token`, `password`, `passwd` or `authorization`;
+  `api_key`, `access_key`, `private_key` anywhere). A JSON- or dict-quoted key (`{"password":"x"}`)
+  counts, `authorization:` headers and `Bearer <credential>` (16+ characters with a digit) are
+  refused, and `tokenizer`, `token_count`, `password_policy`, `mytoken` are not credential keys.
+- **Configuration files are judged as configuration.** Behind `:` a short bare value is a type
+  in source (`token: String` ships) and a value in `.yml .yaml .toml .ini .env .properties .json
+  .conf .cfg` files (`client_secret: xyz` is refused there, `null`/`true`/`false`/`~` and a nested
+  `{`/`[` are not). A YAML block scalar (`password: |` / `>-` followed by an indented block) is
+  refused, and so is its head when the block lies past the cut.
+- **The node path refits framing in rank order.** `retrieve_and_compile` now fits the rendered
+  capsule the way `compile_items` does: an item that overflows by framing is dropped and counted
+  and the walk continues, so a small later item still ships; popping from the tail used to drop
+  it first and then the large item, and ship nothing.
+- **A source path must be the schema's shape before it is recorded.** Not only its length: an
+  empty segment, `.`, `..` or a backslash is refused and counted as dropped before the read.
+- **Context is read from the execution's own tree when it has one.** On a drive with a model and
+  a tool half, a cognitive node compiled while the execution's Tier 1 tree exists (a tool node ran
+  in this drive, or `refs/graphhelm/executions/<id>` was landed by an earlier one) reads THAT tree,
+  so it sees the tool's work instead of pre-tool excerpts. The compile holds the execution's slot
+  lock, which every tool call of the execution holds for its whole duration, so no tool writes
+  while the compile reads. A tree that exists and cannot be opened is a counted
+  `search_unavailable`, never a silent fallback to the checkout. `context.nodes.<node>.root` and
+  the sealed record say which tree was read: `project` or `execution`. A cancelled drive never
+  waits on an abandoned scan (Codex P1 on #1092): the driver sets the scan's `ScanCancel` token
+  when it drops the compile, the channel and the reader check it between entries and before every
+  open and read, the host polls for the tree with `try_lock` (never blocking on it), and
+  `ToolHost::release` waits at most 2 s for the tree before deferring its removal to whoever holds
+  it, who removes it under the lock as it lets go.
+- **`GHG016_CONTEXT_BUDGET_INVALID` is asked only of nodes that receive context** — plain cognitive
+  nodes on a drive that has context ports. A graph with an unreadable `context.budgetBytes` that ran
+  on a fixture drive or a tools-only server before #1065 runs again; on a drive with a model half
+  it is refused before any effect, as #1078 shipped.
+- **The sealed record is opened, not counted.** `GET /v1/executions/{id}/evidence/{evidenceId}`
+  renders structured `application/*+json` evidence (the `context-provenance@1` record and the
+  accounting receipt); the journey opens the record and compares `sources`, `digest` and
+  `capsuleBytes` with the drive reply.
+- **Tests that measure the machine no longer gate.** The workspace channel skips agent and tool
+  state directories by name at any depth (`.claude`, `.codex`, `.cursor`, `.windsurf`, `.aider`,
+  `.worktrees`, `.idea`, `.vscode`), and the live-tree quality run prints fallbacks and source
+  counts instead of asserting them. The frozen-corpus floor (hit rate@3 = 0.90) is unchanged and
+  still asserted.
+- Real sealed records — a capsule, a `digest: null` fallback, a secret-shaped fallback, an
+  `execution` root — are validated with the repository's offline validator against
+  `schemas/context-provenance.schema.json`.
 ## Getting started on a clean machine, Studio included, #1094 - 2026-09-14
 
 - **A clean-machine run of `docs/install/GETTING_STARTED.md` is recorded, PARTIAL (`OBSERVER_MISSING` for the reordered page as published and for an authenticated clone)**

@@ -541,6 +541,12 @@ pub enum HostError {
     /// that the tool printed nothing, rather than the absence it actually is.
     #[error("the capture could not be read: {rule}")]
     CaptureLost { rule: &'static str },
+    /// The probe for `refs/graphhelm/executions/<id>` did not answer (#1086, Codex P1 on #1092):
+    /// the scratch directory could not be made, `git rev-parse` timed out or exited with something
+    /// other than 0 (present) or 1 (verified absent). Distinct from "absent" so a consumer never
+    /// falls back to the project checkout when the answer is unknown. `rule` is a fixed name.
+    #[error("the execution ref could not be probed: {rule}")]
+    RefProbe { rule: &'static str },
 }
 
 /// Refuse a capture whose readers were abandoned; pass every other capture through unchanged.

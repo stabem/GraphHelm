@@ -25,13 +25,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use graphhelm_runtime::ports::{BoundedSourceReader, SourceExcerpt, SourceReadError};
+use graphhelm_runtime::ports::{
+    BoundedSourceReader, BoundedSourceSearch, ExecutionTreeAccess, ExecutionTreePort, ScanCancel,
+    SourceExcerpt, SourceReadError,
+};
 use graphhelm_tool_broker::path::RelativePath;
 use graphhelm_tool_broker::record::digest_hex;
 
 use crate::process::HostError;
 use crate::snapshot::tree_generation;
-use crate::source_channel::{open_candidate, still_names_opened_file};
+use crate::source_channel::{WorkspaceSourceChannel, still_names_opened_file};
 use crate::workspace::resolve_within;
 
 /// Declared admission bounds for [`WorkspaceSourceReader::open`].
@@ -138,19 +141,24 @@ fn measure_tree(root: &Path, files: &mut usize, bytes: &mut u64) -> Result<(), H
 /// Reading one file's prefix costs `O(max_bytes)` whatever the tree holds, so this reader admits
 /// the root the same way the search channel does (a real, canonical directory) and pays per read.
 ///
-/// **Containment, twice.** The path is parsed as a [`RelativePath`] (no `..`, no absolute or
-/// drive form, no backslash) and then resolved through `workspace::resolve_within` — the
+/// **Containment, three times.** The path is parsed as a [`RelativePath`] (no `..`, no absolute
+/// or drive form, no backslash) and then resolved through `workspace::resolve_within` — the
 /// per-component no-follow walk plus the canonical-ancestor check the tool workspace has used
 /// since #538 — so a link, a junction or a reparse point anywhere in the chain is
-/// [`SourceReadError::Escape`]. The open itself uses the channel's `open_candidate` (`O_NOFOLLOW`
-/// and `O_NONBLOCK` on Unix) and re-checks that the handle is a regular file that the path still
-/// names, so a swap between the walk and the read refuses rather than serving foreign bytes.
+/// [`SourceReadError::Escape`]. That walk is over PATHS, so the open does not trust it (#1086):
+/// `open_beneath` traverses again from the root's own handle, refusing a link at EVERY component
+/// (Unix: `openat` with `O_NOFOLLOW`; Windows: each ancestor opened as itself and held against
+/// rename), and the handle is re-checked after the read to be a regular file the path still
+/// names, so a swap of the file or of any ancestor refuses rather than serving foreign bytes.
 ///
 /// **The bound is a `take`, never a `read_to_end`:** one byte past `max_bytes` is never pulled,
 /// whatever the file has grown to since its length was quoted.
 #[derive(Debug)]
 pub struct WorkspaceExcerptReader {
     root: PathBuf,
+    /// Checked before the open and before the read (#1086): a read whose drive gave it up
+    /// refuses `Unreadable` instead of touching the file.
+    cancel: Option<graphhelm_runtime::ports::ScanCancel>,
 }
 
 impl WorkspaceExcerptReader {
@@ -174,7 +182,23 @@ impl WorkspaceExcerptReader {
                 ),
             });
         }
-        Ok(Self { root: real })
+        Ok(Self {
+            root: real,
+            cancel: None,
+        })
+    }
+
+    /// The same reader, refusing every read once `cancel` is set (#1086).
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: graphhelm_runtime::ports::ScanCancel) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(graphhelm_runtime::ports::ScanCancel::is_cancelled)
     }
 }
 
@@ -183,6 +207,21 @@ impl BoundedSourceReader for WorkspaceExcerptReader {
         &self,
         relative_path: &str,
         max_bytes: u64,
+    ) -> Result<SourceExcerpt, SourceReadError> {
+        self.read_prefix_racing(relative_path, max_bytes, &mut || {})
+    }
+}
+
+impl WorkspaceExcerptReader {
+    /// [`BoundedSourceReader::read_prefix`] with a seam between the containment walk and the
+    /// open: `between_walk_and_open` runs exactly where a concurrent writer could rename an
+    /// ancestor. Production passes a no-op; the unit test below swaps a parent directory for a
+    /// link there, which is the race #1086 names.
+    fn read_prefix_racing(
+        &self,
+        relative_path: &str,
+        max_bytes: u64,
+        between_walk_and_open: &mut dyn FnMut(),
     ) -> Result<SourceExcerpt, SourceReadError> {
         let relative = RelativePath::parse(relative_path).map_err(|_| SourceReadError::Escape)?;
         let path = resolve_within(&self.root, &relative).map_err(|error| match error {
@@ -198,11 +237,233 @@ impl BoundedSourceReader for WorkspaceExcerptReader {
         if !metadata.is_file() {
             return Err(SourceReadError::Unreadable);
         }
-        let file = open_candidate(&path).map_err(|_| SourceReadError::Unreadable)?;
+        between_walk_and_open();
+        if self.cancelled() {
+            return Err(SourceReadError::Unreadable);
+        }
+        // The walk above ran over PATHS; a parent renamed to a link after it would redirect a
+        // path-based open (#1086 item 1). The open below does not trust the walk: it traverses
+        // from the root handle, refusing a link at every component.
+        #[cfg(unix)]
+        let file = open_beneath(&self.root, &relative)?;
+        // `_pinned` keeps every ancestor open, denying rename and delete, until the post-read
+        // identity check below has run.
+        #[cfg(windows)]
+        let (file, _pinned) = open_beneath(&self.root, &relative)?;
+        #[cfg(not(any(unix, windows)))]
+        let file = crate::source_channel::open_candidate(&path)
+            .map_err(|_| SourceReadError::Unreadable)?;
         if !still_names_opened_file(&file, &path) {
             return Err(SourceReadError::Escape);
         }
+        if self.cancelled() {
+            return Err(SourceReadError::Unreadable);
+        }
         excerpt_still_named(&file, &path, max_bytes)
+    }
+}
+
+/// Open `relative` beneath `root` with no link followed anywhere in the chain (#1086 item 1),
+/// Unix half: `openat` one component at a time from the root's own handle, every ancestor with
+/// `O_DIRECTORY | O_NOFOLLOW` and the final component with `O_NOFOLLOW | O_NONBLOCK`. Each step
+/// resolves a NAME inside a directory already held open, so renaming an ancestor to a symlink
+/// after the path walk is refused at that component (`ELOOP`) instead of being followed.
+///
+/// **Residual, declared:** a directory held open and then MOVED OUT of the root by rename keeps
+/// resolving names under its new location. The post-read `still_names_opened_file` check (the
+/// path inside the root must still name the inode that was read) refuses that case after the
+/// read; closing it before the read needs `openat2(RESOLVE_BENEATH)`, which is Linux-only and
+/// not in the pinned `libc` surface this crate uses on every Unix.
+#[cfg(unix)]
+fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, SourceReadError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let refusal = |error: std::io::Error| match error.raw_os_error() {
+        Some(code) if code == libc::ELOOP || code == libc::EMLINK => SourceReadError::Escape,
+        _ => SourceReadError::Unreadable,
+    };
+    let root_name =
+        CString::new(root.as_os_str().as_bytes()).map_err(|_| SourceReadError::Unreadable)?;
+    // SAFETY: `root_name` is NUL-terminated and outlives the call; the result is checked before
+    // it is used.
+    let fd = unsafe {
+        libc::open(
+            root_name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(refusal(std::io::Error::last_os_error()));
+    }
+    // SAFETY: `fd` was just returned by a successful `open` and nothing else owns it.
+    let mut current = unsafe { OwnedFd::from_raw_fd(fd) };
+    let components: Vec<&str> = relative.as_str().split('/').collect();
+    let last = components.len() - 1;
+    for (index, component) in components.iter().enumerate() {
+        let name = CString::new(*component).map_err(|_| SourceReadError::Escape)?;
+        let flags = if index == last {
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC
+        } else {
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        };
+        // SAFETY: `current` is an open directory descriptor for the whole call and `name` is
+        // NUL-terminated; the result is checked before it is used.
+        let fd = unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(refusal(std::io::Error::last_os_error()));
+        }
+        // SAFETY: `fd` was just returned by a successful `openat` and nothing else owns it.
+        current = unsafe { OwnedFd::from_raw_fd(fd) };
+    }
+    Ok(std::fs::File::from(current))
+}
+
+/// Open `relative` beneath `root` with no reparse point followed anywhere in the chain (#1086
+/// item 1), Windows half. Windows has no `openat` in std, so every ancestor is opened BY PATH
+/// with `FILE_FLAG_OPEN_REPARSE_POINT` (a junction or symlink is opened as itself, never
+/// traversed) and refused if it carries `FILE_ATTRIBUTE_REPARSE_POINT`, and every handle is held
+/// with a share mode that DENIES delete — which is what a rename needs — so no ancestor already
+/// checked can be renamed or replaced while the next one is opened and the file is read. The final
+/// handle is then identity-checked: `GetFinalPathNameByHandleW` must place the file inside the
+/// canonical root.
+///
+/// **Cost, declared:** for the length of one bounded read, another process renaming or deleting a
+/// directory on the path gets a sharing violation. **Residual, declared:** a regular file whose
+/// reparse tag is not a link (a cloud-storage placeholder, a deduplicated file) is refused as a
+/// reparse point; that costs one candidate and a count.
+#[cfg(windows)]
+fn open_beneath(
+    root: &Path,
+    relative: &RelativePath,
+) -> Result<(std::fs::File, Vec<std::fs::File>), SourceReadError> {
+    use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    let open = |path: &Path, directory: bool| -> Result<std::fs::File, SourceReadError> {
+        let mut options = std::fs::OpenOptions::new();
+        if directory {
+            options
+                .access_mode(FILE_READ_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        } else {
+            options
+                .read(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let file = options
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+            .map_err(|_| SourceReadError::Unreadable)?;
+        let metadata = file.metadata().map_err(|_| SourceReadError::Unreadable)?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(SourceReadError::Escape);
+        }
+        if metadata.is_dir() != directory {
+            return Err(SourceReadError::Unreadable);
+        }
+        Ok(file)
+    };
+
+    let mut pinned = vec![open(root, true)?];
+    let components: Vec<&str> = relative.as_str().split('/').collect();
+    let (last, ancestors) = components.split_last().ok_or(SourceReadError::Escape)?;
+    let mut current = root.to_path_buf();
+    for component in ancestors {
+        current.push(component);
+        pinned.push(open(&current, true)?);
+    }
+    current.push(last);
+    let file = open(&current, false)?;
+    if !final_path_within(&file, root) {
+        return Err(SourceReadError::Escape);
+    }
+    Ok((file, pinned))
+}
+
+/// Whether the file behind `file`'s handle lives inside `root`, by the path the handle itself
+/// resolves to (`GetFinalPathNameByHandleW`, the same call `std::fs::canonicalize` makes, so the
+/// two spellings compare component for component).
+#[cfg(windows)]
+fn final_path_within(file: &std::fs::File, root: &Path) -> bool {
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
+    };
+
+    let mut buffer = vec![0u16; 32_768];
+    let capacity = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+    // SAFETY: the handle is open for the whole call and `capacity` is the buffer's real length.
+    let written = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle(),
+            buffer.as_mut_ptr(),
+            capacity,
+            FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+        )
+    };
+    let Ok(written) = usize::try_from(written) else {
+        return false;
+    };
+    if written == 0 || written >= buffer.len() {
+        return false;
+    }
+    PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written])).starts_with(root)
+}
+
+/// The context port over an execution's own Tier 1 tree (#1086 item 5): the search channel and
+/// the excerpt reader, opened over the tree `ToolHost` keeps for the execution, for exactly as
+/// long as the host holds that tree still.
+///
+/// The tree is read LIVE, not from a snapshot, and that is safe for one reason stated here:
+/// `ToolHost::with_execution_tree` holds the execution's slot lock for the whole compile, and
+/// every tool call of the execution holds the same lock for its whole duration, so no tool of the
+/// execution writes while the compile reads. Nothing outside the host writes into a Tier 1 tree.
+pub struct ExecutionContextTree {
+    host: std::sync::Arc<crate::host::ToolHost>,
+    execution_id: String,
+}
+
+impl ExecutionContextTree {
+    #[must_use]
+    pub fn new(host: std::sync::Arc<crate::host::ToolHost>, execution_id: &str) -> Self {
+        Self {
+            host,
+            execution_id: execution_id.to_owned(),
+        }
+    }
+}
+
+impl ExecutionTreePort for ExecutionContextTree {
+    fn with_tree(
+        &self,
+        cancel: &ScanCancel,
+        compile: &mut dyn FnMut(&dyn BoundedSourceSearch, &dyn BoundedSourceReader),
+    ) -> ExecutionTreeAccess {
+        let ran = self
+            .host
+            .with_execution_tree(&self.execution_id, cancel, |root| {
+                let Ok(search) = WorkspaceSourceChannel::open(root) else {
+                    return false;
+                };
+                let Ok(reader) = WorkspaceExcerptReader::open(root) else {
+                    return false;
+                };
+                let search = search.with_cancel(cancel.clone());
+                let reader = reader.with_cancel(cancel.clone());
+                compile(&search, &reader);
+                true
+            });
+        match ran {
+            Ok(None) => ExecutionTreeAccess::Absent,
+            Ok(Some(true)) => ExecutionTreeAccess::Read,
+            Ok(Some(false)) | Err(_) => ExecutionTreeAccess::Unavailable,
+        }
     }
 }
 
@@ -255,8 +516,54 @@ fn excerpt_from_handle(
 
 #[cfg(test)]
 mod tests {
-    use super::{excerpt_from_handle, excerpt_still_named};
+    use super::{WorkspaceExcerptReader, excerpt_from_handle, excerpt_still_named};
     use graphhelm_runtime::ports::SourceReadError;
+
+    /// Replace the directory `at` with a link (a symlink on Unix, a junction on Windows) to
+    /// `target`, moving the real directory aside first.
+    fn swap_directory_for_link(at: &std::path::Path, target: &std::path::Path) {
+        std::fs::rename(at, at.with_file_name("moved-aside")).unwrap();
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(at)
+            .arg(target)
+            .output()
+            .is_ok_and(|output| output.status.success());
+        #[cfg(not(windows))]
+        let made = std::os::unix::fs::symlink(target, at).is_ok();
+        assert!(made, "arrangement: the ancestor link could not be staged");
+    }
+
+    /// #1086 item 1: an ANCESTOR renamed to a link between the containment walk and the open.
+    /// The walk saw a real directory; the open then went through the link. The final component
+    /// is a regular file with the same name on both sides, so a check that pins only the final
+    /// component (`O_NOFOLLOW`, the path's own `lstat`) passes, and the bytes outside the root
+    /// were served under a path inside it.
+    #[test]
+    fn an_ancestor_swapped_for_a_link_between_the_walk_and_the_open_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/alpha.rs"), b"fn alpha() {}\n").unwrap();
+        let outside = directory.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("alpha.rs"), b"OUTSIDE-MARKER-1086\n").unwrap();
+
+        let reader = WorkspaceExcerptReader::open(&root).unwrap();
+        let src = reader.root.join("src");
+        let mut swapped = false;
+        let result = reader.read_prefix_racing("src/alpha.rs", 1024, &mut || {
+            swap_directory_for_link(&src, &outside);
+            swapped = true;
+        });
+        assert!(swapped, "the race window was reached");
+        assert!(
+            !matches!(&result, Ok(excerpt) if excerpt.bytes.starts_with(b"OUTSIDE-MARKER")),
+            "bytes outside the root were served under a path inside it: {result:?}"
+        );
+        assert_eq!(result, Err(SourceReadError::Escape));
+    }
 
     /// The identity check runs AFTER the read too: a path that stops naming the opened file
     /// between the open and the post-read check is refused, never cited.

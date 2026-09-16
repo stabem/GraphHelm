@@ -86,7 +86,21 @@ struct ExecutionSlot {
     /// successful landing. Guarded by the same lock as the tree, which is what makes the two
     /// consistent.
     landed_at: Mutex<Option<String>>,
+    /// Set by [`ToolHost::release`] when it could not take the tree within its bounded wait
+    /// because a call or a context scan still holds it (#1086, Codex P1 on #1092). Whoever holds
+    /// the lock next — the holder as it lets go, or the next caller as it acquires — removes the
+    /// tree under the lock instead, so the removal never races a reader or a writer and the
+    /// release never waits on a scan that was abandoned.
+    release_requested: std::sync::atomic::AtomicBool,
 }
+
+/// How long [`ToolHost::release`] polls for an execution's tree before deferring its removal to
+/// whoever holds the tree. A REAL bound: the loop body is a non-blocking `try_lock` and a short
+/// sleep, so the longest thing between two checks is one sleep.
+const RELEASE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The pause between two non-blocking lock attempts (release, and a scan waiting for the tree).
+const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// What a routed execution produced: the capture, plus — for a `commit` that completed — the
 /// object id it made and the ref it moved. The three travel together so the record is written
@@ -228,6 +242,7 @@ fn host_error_code(error: &HostError) -> String {
         HostError::Cancelled => "GHTOOL011_CANCELLED".to_owned(),
         HostError::ProcessGroup { .. } => "GHTOOL012_PROCESS_GROUP".to_owned(),
         HostError::CaptureLost { .. } => CAPTURE_LOST_CODE.to_owned(),
+        HostError::RefProbe { .. } => "GHTOOL014_REF_PROBE".to_owned(),
     }
 }
 
@@ -273,33 +288,105 @@ impl ToolHost {
     /// provisions its next tree from that ref, so committed work survives the removal and only
     /// uncommitted edits do not.
     ///
-    /// Waits for a call of this execution that is still running (the slot's own lock), so the
-    /// removal never races the tool that is writing into the tree. Under `keep_workspace` the
-    /// tree is left in place exactly as a per-call tree would be: kept is the operator's to
-    /// delete.
+    /// The removal is done UNDER the slot's own lock, so it never races a tool writing into the
+    /// tree or a context scan reading it. It never waits on that lock without bound (#1086, Codex
+    /// P1 on #1092): a context scan abandoned by a cancelled drive may still hold the lock inside
+    /// one blocked syscall, and a cancelled drive must not wait on it. So the lock is polled with a
+    /// non-blocking `try_lock` for at most [`RELEASE_LOCK_WAIT`]; when it is still held, the release
+    /// is recorded on the slot and returns `Ok(())`, and whoever holds the lock removes the tree as
+    /// it lets go (or the next caller, as it acquires). Under `keep_workspace` the tree is left in
+    /// place exactly as a per-call tree would be: kept is the operator's to delete.
     ///
     /// # Errors
-    /// [`HostError::Config`] when the tree could not be removed — a leaked workspace is a
+    /// [`HostError::Config`] when the tree could not be removed here — a leaked workspace is a
     /// leaked write capability and is reported, never swallowed. An execution that never
-    /// provisioned a workspace releases as `Ok(())`.
+    /// provisioned a workspace releases as `Ok(())`. **Declared residual:** a removal DEFERRED to
+    /// the holder has no caller left to report a failure to; the tree then stays on disk at its
+    /// deterministic root, and the next provisioning of the execution reclaims it
+    /// (`recovered_workspace`, #1073).
     pub fn release(&self, execution_id: &str) -> Result<(), HostError> {
         let slot = self
             .executions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(execution_id);
+            .get(execution_id)
+            .cloned();
         let Some(slot) = slot else {
             return Ok(());
         };
-        let workspace = slot
-            .workspace
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        match workspace {
+        slot.release_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + RELEASE_LOCK_WAIT;
+        loop {
+            match slot.workspace.try_lock() {
+                Ok(mut guard) => {
+                    return self.reclaim_under_lock(execution_id, &slot, &mut guard, true);
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    let mut guard = poisoned.into_inner();
+                    return self.reclaim_under_lock(execution_id, &slot, &mut guard, true);
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if std::time::Instant::now() >= deadline {
+                        // Deferred: the holder removes the tree as it lets go.
+                        return Ok(());
+                    }
+                    std::thread::sleep(LOCK_POLL);
+                }
+            }
+        }
+    }
+
+    /// With the slot's lock held: when a release is pending, take the tree and remove it, and —
+    /// unless the caller is about to provision into the slot (`forget_slot: false`) — forget the
+    /// slot. A no-op when no release is pending (someone else already did it).
+    fn reclaim_under_lock(
+        &self,
+        execution_id: &str,
+        slot: &Arc<ExecutionSlot>,
+        guard: &mut Option<Tier1Workspace>,
+        forget_slot: bool,
+    ) -> Result<(), HostError> {
+        if !slot
+            .release_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        if forget_slot {
+            let mut executions = self
+                .executions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if executions
+                .get(execution_id)
+                .is_some_and(|current| Arc::ptr_eq(current, slot))
+            {
+                executions.remove(execution_id);
+            }
+        }
+        match guard.take() {
             Some(workspace) if !self.config.keep_workspace => workspace.remove(),
             _ => Ok(()),
         }
+    }
+
+    /// Called by a lock holder right after it lets go: performs a release that was deferred to
+    /// it. Non-blocking; a failure has no caller to report to (see [`ToolHost::release`]).
+    fn reclaim_if_released(&self, execution_id: &str, slot: &Arc<ExecutionSlot>) {
+        if !slot
+            .release_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let guard = match slot.workspace.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        };
+        let mut guard = guard;
+        let _ = self.reclaim_under_lock(execution_id, slot, &mut guard, true);
     }
 
     /// The execution ids that currently hold a provisioned workspace — what
@@ -313,6 +400,135 @@ impl ToolHost {
             .keys()
             .cloned()
             .collect()
+    }
+
+    /// Run `read` over `execution_id`'s own Tier 1 tree, holding the tree still (#1086 item 5).
+    ///
+    /// The slot's lock — the one every tool call of the execution holds for its whole duration —
+    /// is held for as long as `read` runs, so no tool of this execution writes while it reads and
+    /// a tool call that arrives meanwhile waits for it. `Ok(None)` when the execution has no tree:
+    /// none provisioned in this host AND no `refs/graphhelm/executions/<id>` landed in the
+    /// project. When the ref exists and no tree does (a resumed execution before its first tool
+    /// call), the tree is provisioned from the ref exactly as that first call would provision it,
+    /// so a read sees the execution's committed work; a read never provisions from `HEAD`, whose
+    /// committed bytes the project checkout already serves. [`ToolHost::release`] removes a tree
+    /// provisioned here like any other.
+    ///
+    /// **Cancellation (#1086, Codex P1 on #1092).** `cancel` is checked before the tree is waited
+    /// for, while it is waited for (the lock is polled with `try_lock`, never blocked on), before
+    /// provisioning and before `read` runs; `read` is expected to check it too (the channel and
+    /// the reader do). A cancelled call answers [`HostError::Cancelled`] and holds nothing. When
+    /// `read` returns, the lock is dropped at once and a release that was deferred meanwhile is
+    /// performed.
+    ///
+    /// # Errors
+    /// [`HostError::Cancelled`] when `cancel` was set; [`HostError`] when the tree had to be
+    /// provisioned and could not be.
+    pub fn with_execution_tree<R>(
+        &self,
+        execution_id: &str,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+        read: impl FnOnce(&std::path::Path) -> R,
+    ) -> Result<Option<R>, HostError> {
+        if cancel.is_cancelled() {
+            return Err(HostError::Cancelled);
+        }
+        let existing = self
+            .executions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(execution_id)
+            .cloned();
+        let reference = execution_ref(execution_id);
+        let (slot, ref_landed) = match existing {
+            Some(slot) => (slot, None),
+            None => {
+                if !self.probe_ref(&reference)? {
+                    return Ok(None);
+                }
+                (self.execution_slot(execution_id), Some(true))
+            }
+        };
+        let outcome = {
+            let mut guard = loop {
+                if cancel.is_cancelled() {
+                    return Err(HostError::Cancelled);
+                }
+                match slot.workspace.try_lock() {
+                    Ok(guard) => break guard,
+                    Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                        break poisoned.into_inner();
+                    }
+                    Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(LOCK_POLL),
+                }
+            };
+            // A release that was deferred to whoever holds the lock next: the execution is over,
+            // so its tree goes, and nothing is read from it.
+            if slot
+                .release_requested
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                self.reclaim_under_lock(execution_id, &slot, &mut guard, true)?;
+                return Ok(None);
+            }
+            if cancel.is_cancelled() {
+                return Err(HostError::Cancelled);
+            }
+            if guard.is_none() {
+                let landed = match ref_landed {
+                    Some(landed) => landed,
+                    None => self.probe_ref(&reference)?,
+                };
+                if !landed {
+                    return Ok(None);
+                }
+                if cancel.is_cancelled() {
+                    return Err(HostError::Cancelled);
+                }
+                self.provision_execution_tree(execution_id, &slot, &mut guard, &reference)?;
+                // A read spawns nothing, so the fresh tree's cancellation span is parked at once,
+                // as a tool call parks it when it returns.
+                if let Some(workspace) = guard.as_mut() {
+                    workspace.park();
+                }
+            }
+            guard.as_ref().map(|workspace| read(workspace.root()))
+        };
+        // The lock is already dropped (the block above ended): perform a release deferred to us.
+        self.reclaim_if_released(execution_id, &slot);
+        Ok(outcome)
+    }
+
+    /// Provision `id`'s tree into its slot from `start_point`, and remember what the ref held,
+    /// for the landing's compare-and-swap. Shared by the first Tier 1 call and by
+    /// [`ToolHost::with_execution_tree`], so the two provision one way.
+    fn provision_execution_tree(
+        &self,
+        id: &str,
+        slot: &ExecutionSlot,
+        guard: &mut Option<Tier1Workspace>,
+        start_point: &str,
+    ) -> Result<(), HostError> {
+        let workspace = Tier1Workspace::provision_from(
+            &self.config.workspace,
+            &Self::execution_tree_id(id),
+            Some(&self.cancel),
+            start_point,
+        )?;
+        // Read from the TREE (`rev-parse HEAD` there is the ref's commit when provisioned from
+        // it), not from the ref again, so a ref that moves between the two reads is caught, not
+        // absorbed.
+        let landed_at = if start_point == "HEAD" {
+            None
+        } else {
+            self.head_object_id(workspace.root())
+        };
+        *slot
+            .landed_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = landed_at;
+        *guard = Some(workspace);
+        Ok(())
     }
 
     /// Kill and reap every child this host has in flight (#180).
@@ -593,6 +809,7 @@ impl ToolHost {
                 Arc::new(ExecutionSlot {
                     workspace: Mutex::new(None),
                     landed_at: Mutex::new(None),
+                    release_requested: std::sync::atomic::AtomicBool::new(false),
                 })
             })
             .clone()
@@ -607,9 +824,19 @@ impl ToolHost {
     /// exit status: a failed spawn, a timeout or a cancellation answers `false`, and the caller
     /// then provisions from `HEAD` exactly as before this probe existed.
     fn ref_exists(&self, reference: &str) -> bool {
-        let Ok(scratch) = self.scratch_dir() else {
-            return false;
-        };
+        self.probe_ref(reference).unwrap_or(false)
+    }
+
+    /// The same probe with its failures kept apart from a verified absence (#1086, Codex P1 on
+    /// #1092): `Ok(true)` when `rev-parse --verify` exited 0, `Ok(false)` when it exited 1 (the ref
+    /// is not there), `Err` for everything else -- no scratch directory, a failed spawn, a timeout,
+    /// a cancellation, an exit that says "not a repository". [`ToolHost::with_execution_tree`]
+    /// answers `Err` for the last group so the compile reports `Unavailable`, never `Absent`, and
+    /// the caller does not read the project checkout in place of a tree it could not see.
+    fn probe_ref(&self, reference: &str) -> Result<bool, HostError> {
+        let scratch = self
+            .scratch_dir()
+            .map_err(|_| HostError::RefProbe { rule: "scratch" })?;
         let project = crate::workspace::git_safe(self.config.workspace.project());
         let captured = crate::process::run_in_workspace(
             &scratch,
@@ -630,7 +857,18 @@ impl ToolHost {
             Some(&self.cancel),
         );
         let _ = std::fs::remove_dir_all(&scratch);
-        matches!(captured, Ok(captured) if captured.exit_code == Some(0) && !captured.timed_out && !captured.cancelled)
+        let captured = captured?;
+        if captured.cancelled {
+            return Err(HostError::Cancelled);
+        }
+        if captured.timed_out {
+            return Err(HostError::RefProbe { rule: "timeout" });
+        }
+        match captured.exit_code {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(HostError::RefProbe { rule: "exit" }),
+        }
     }
 
     /// The full object id of the workspace's `HEAD` after a commit: `git rev-parse HEAD` under
@@ -773,6 +1011,11 @@ impl ToolHost {
                             .workspace
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // A release deferred to the next lock holder (#1086): the released tree
+                        // goes first, and this call provisions a fresh one below, exactly as it
+                        // would after a release that had not been deferred.
+                        // The slot is kept (`forget_slot: false`): this call provisions into it.
+                        self.reclaim_under_lock(id, slot, &mut guard, false)?;
                         if guard.is_none() {
                             // Continue from the execution's own last landing when there is one:
                             // a resumed execution picks up the tree it committed, not the
@@ -783,26 +1026,7 @@ impl ToolHost {
                             } else {
                                 "HEAD".to_owned()
                             };
-                            let workspace = Tier1Workspace::provision_from(
-                                &self.config.workspace,
-                                &Self::execution_tree_id(id),
-                                Some(&self.cancel),
-                                &start_point,
-                            )?;
-                            // Remember what the ref held at provisioning, for the landing's
-                            // compare-and-swap. Read from the TREE (`rev-parse HEAD` there is the
-                            // ref's commit when provisioned from it), not from the ref again, so
-                            // a ref that moves between the two reads is caught, not absorbed.
-                            let landed_at = if start_point == "HEAD" {
-                                None
-                            } else {
-                                self.head_object_id(workspace.root())
-                            };
-                            *slot
-                                .landed_at
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner) = landed_at;
-                            *guard = Some(workspace);
+                            self.provision_execution_tree(id, slot, &mut guard, &start_point)?;
                         }
                         // Retake the cancellation span for THIS call (a no-op on a tree fresh
                         // from `provision`); it is parked again below when the call returns,
@@ -887,9 +1111,14 @@ impl ToolHost {
                 match home {
                     // An execution's tree outlives the call; `release` is its only exit. The
                     // cancellation span does NOT outlive the call (#1073).
-                    Tier1Home::Execution { mut guard, .. } => {
+                    Tier1Home::Execution { id, mut guard, .. } => {
                         if let Some(workspace) = guard.as_mut() {
                             workspace.park();
+                        }
+                        drop(guard);
+                        // A release that timed out waiting for this call is performed now.
+                        if let Some(owned) = slot.as_ref() {
+                            self.reclaim_if_released(id, owned);
                         }
                         result
                     }

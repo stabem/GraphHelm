@@ -122,14 +122,33 @@ fn frozen_corpus() -> PathBuf {
     fixture_root().join("tree").canonicalize().unwrap()
 }
 
+/// Whether a measurement asserts the capsule shape (frozen corpus) or only prints it (live tree).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Capsules {
+    Asserted,
+    Printed,
+}
+
 /// One measured run of the ten cases over `root`. Returns (hits, eligible, shipped, saved).
-fn measure(root: &Path, label: &str, excluded: fn(&str) -> bool) -> (usize, u64, u64, u64) {
+///
+/// `Capsules::Asserted` also asserts that every case ran with a capsule and shipped a source.
+/// That is a property of the FROZEN corpus. On the live tree it is a property of the machine
+/// (#1086 item 9): which agent worktrees and generated trees sit in the checkout decides whether
+/// a search crosses its ceiling, so the live run prints the fallback and the source count and
+/// asserts neither.
+fn measure(
+    root: &Path,
+    label: &str,
+    excluded: fn(&str) -> bool,
+    capsules: Capsules,
+) -> (usize, u64, u64, u64) {
     let channel = WorkspaceSourceChannel::open(root).unwrap();
     let reader = WorkspaceExcerptReader::open(root).unwrap();
     let ports = ContextPorts {
         search: Arc::new(channel),
         reader: Arc::new(reader),
         ledger: ContextLedger::new(),
+        execution_tree: None,
     };
 
     let mut hits = 0usize;
@@ -144,7 +163,16 @@ fn measure(root: &Path, label: &str, excluded: fn(&str) -> bool) -> (usize, u64,
     );
     for (objective, expected) in CASES {
         let terms = objective_terms(objective);
-        let ranked = ports.search.search(&terms, &SEARCH_BOUNDS).unwrap();
+        let ranked = match (ports.search.search(&terms, &SEARCH_BOUNDS), capsules) {
+            (Ok(ranked), _) => ranked,
+            (Err(error), Capsules::Asserted) => {
+                panic!("{objective}: the search refused: {error:?}")
+            }
+            (Err(error), Capsules::Printed) => {
+                println!("  [refused] {objective}: {error:?}");
+                Vec::new()
+            }
+        };
         let top3: Vec<&str> = ranked
             .iter()
             .map(String::as_str)
@@ -170,21 +198,24 @@ fn measure(root: &Path, label: &str, excluded: fn(&str) -> bool) -> (usize, u64,
         println!("{indent}top3 {top3:?}");
         println!("{indent}terms {terms:?}");
         println!(
-            "{indent}eligible {} shipped {} saved {} (tokens, {}) sources {}",
+            "{indent}eligible {} shipped {} saved {} (tokens, {}) sources {} fallback {:?}",
             summary.eligible_candidate_tokens,
             summary.compiled_input_tokens,
             summary.tokens_saved,
             summary.estimator,
             summary.sources.len(),
+            summary.fallback,
         );
-        assert_eq!(
-            summary.retrieval_fallbacks, 0,
-            "{objective}: the chain ran with a capsule"
-        );
-        assert!(
-            !summary.sources.is_empty(),
-            "{objective}: every case ships at least one source"
-        );
+        if capsules == Capsules::Asserted {
+            assert_eq!(
+                summary.retrieval_fallbacks, 0,
+                "{objective}: the chain ran with a capsule"
+            );
+            assert!(
+                !summary.sources.is_empty(),
+                "{objective}: every case ships at least one source"
+            );
+        }
     }
     let hit_rate = hits as f64 / CASES.len() as f64;
     println!(
@@ -196,7 +227,12 @@ fn measure(root: &Path, label: &str, excluded: fn(&str) -> bool) -> (usize, u64,
 
 #[test]
 fn hit_rate_at_3_over_the_frozen_corpus_holds_the_measured_floor() {
-    let (hits, _, _, saved_total) = measure(&frozen_corpus(), "frozen corpus", |_| false);
+    let (hits, _, _, saved_total) = measure(
+        &frozen_corpus(),
+        "frozen corpus",
+        |_| false,
+        Capsules::Asserted,
+    );
     let hit_rate = hits as f64 / CASES.len() as f64;
     assert!(
         hit_rate >= HIT_RATE_AT_3_FLOOR,
@@ -212,7 +248,12 @@ fn hit_rate_at_3_over_the_frozen_corpus_holds_the_measured_floor() {
 /// printed so a reader of the gate log can watch the number, never asserted against a floor.
 #[test]
 fn hit_rate_at_3_over_this_repository_is_printed_not_asserted() {
-    let (hits, _, _, _) = measure(&repository_root(), "live repository", is_instrument);
+    let (hits, _, _, _) = measure(
+        &repository_root(),
+        "live repository",
+        is_instrument,
+        Capsules::Printed,
+    );
     assert!(hits <= CASES.len(), "hits are bounded by the case count");
 }
 

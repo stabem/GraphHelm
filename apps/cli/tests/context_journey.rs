@@ -508,6 +508,8 @@ fn the_capsule_cites_the_one_file_the_objective_names_and_the_drive_reply_says_s
     assert_eq!(node["retrievalFallbacks"], 0);
     assert_eq!(node["fallback"], Value::Null);
     assert_eq!(node["estimator"], "bytes-div-4/v1");
+    // #1086: no tool node ran, so the execution has no tree and the checkout was read.
+    assert_eq!(node["root"], "project", "{reply}");
     assert!(node["capsuleBytes"].as_u64().unwrap() > 0);
     assert_eq!(
         node["eligibleCandidateTokens"].as_u64().unwrap(),
@@ -560,11 +562,154 @@ fn the_capsule_cites_the_one_file_the_objective_names_and_the_drive_reply_says_s
             entry["kind"]["type"] == "node_outcome_recorded"
                 && entry["kind"]["data"]["outcome"] == "succeeded"
         })
-        .map(|entry| entry["evidenceRefs"].as_array().unwrap().len())
+        .map(|entry| entry["evidenceRefs"].as_array().unwrap().clone())
         .unwrap();
     assert_eq!(
-        refs, 3,
+        refs.len(),
+        3,
         "reply + context-provenance + accounting receipt: {events}"
+    );
+
+    // #1086 item 12: the sealed record is OPENED, not counted, and says what the reply said.
+    let provenance_id = refs
+        .iter()
+        .filter_map(|reference| reference["evidenceId"].as_str())
+        .find(|id| id.ends_with("context-provenance"))
+        .unwrap_or_else(|| panic!("the outcome references its context provenance: {refs:?}"));
+    let opened = get_json(
+        &format!(
+            "{}/v1/executions/{execution}/evidence/{provenance_id}",
+            runtime.base
+        ),
+        Some(&runtime.token),
+    );
+    assert_eq!(opened["ok"], true, "{opened}");
+    assert_eq!(
+        opened["data"]["mediaType"], "application/vnd.graphhelm.context-provenance+json",
+        "{opened}"
+    );
+    let record: Value = serde_json::from_str(opened["data"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(record["sources"], node["sources"], "{record}");
+    assert_eq!(record["digest"], node["digest"], "{record}");
+    assert_eq!(record["capsuleBytes"], node["capsuleBytes"], "{record}");
+    assert!(
+        !record.to_string().contains("count_ballots"),
+        "the sealed record is content-free: {record}"
+    );
+}
+
+/// A new file, created by the tool node inside the execution's tree and never in the checkout.
+const ZEPHYR_PATCH: &str = "--- /dev/null\n+++ b/src/zephyr.rs\n@@ -0,0 +1,2 @@\n+//! The zephyr marmalade routine.\n+fn zephyr_marmalade() {}\n";
+
+/// A tool node that applies `ZEPHYR_PATCH`, then the agent node, in that order.
+fn tool_then_agent_graph(directory: &Path, execution_id: &str) -> PathBuf {
+    let patch_block = ZEPHYR_PATCH
+        .lines()
+        .map(|line| format!("{}{line}", " ".repeat(12)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let yaml = format!(
+        r#"apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_context_tree_v1
+  name: Context from the execution tree
+  executionId: {execution_id}
+  version: 1
+spec:
+  entrypoints:
+    - add_routine
+  nodes:
+    add_routine:
+      type: tool
+      name: Add the routine
+      objective: Apply the diff that adds the routine.
+      optionality: required
+      tool:
+        call:
+          tool: repository
+          action: apply_patch
+          patch: |
+{patch_block}
+    implement:
+      type: agent
+      name: Implement
+      objective: "Describe the zephyr marmalade routine."
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: p
+          capabilities:
+            - change.plan
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://TaskResult@1
+          instructions: i
+          completionContract:
+            requires:
+              - result
+      completion:
+        requires:
+          - outputSchemaValid: true
+  edges:
+    - id: routine_to_implement
+      from: add_routine
+      to: implement
+      type: control
+  budgets:
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - implement
+"#
+    );
+    let path = directory.join(format!("{execution_id}.yaml"));
+    std::fs::write(&path, yaml).unwrap();
+    path
+}
+
+/// #1086 item 5: a cognitive node that runs AFTER a tool node is compiled from the execution's
+/// own tree — the file the tool created is cited — and the reply names the root it read, while
+/// the operator's checkout never holds the file.
+#[test]
+fn a_cognitive_node_after_a_tool_node_reads_the_execution_tree_not_the_checkout() {
+    let directory = tempfile::tempdir().unwrap();
+    let runtime = runtime(directory.path());
+    let project = scratch_project(directory.path(), "project", &[("src/alpha.rs", ALPHA)]);
+    let execution = "exec-context-tree";
+    let graph = tool_then_agent_graph(directory.path(), execution);
+    let (status, reply) = post_json(
+        &format!("{}/v1/executions/{execution}/start", runtime.base),
+        &runtime.token,
+        &[
+            ("Idempotency-Key", &format!("{execution}-start")),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "autopilot",
+            "project": project.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["data"]["status"], "completed", "{reply}");
+    assert_eq!(reply["data"]["nodeStateCounts"]["succeeded"], 2, "{reply}");
+
+    let node = &reply["data"]["context"]["nodes"]["implement"];
+    assert_eq!(node["root"], "execution", "{reply}");
+    assert_eq!(
+        node["sources"],
+        serde_json::json!(["src/zephyr.rs"]),
+        "{reply}"
+    );
+    let prompt = last_prompt(&runtime);
+    assert!(
+        prompt.contains("source://src/zephyr.rs") && prompt.contains("zephyr_marmalade"),
+        "the capsule carries the tool's file: {prompt}"
+    );
+    assert!(
+        !project.join("src/zephyr.rs").exists(),
+        "the checkout never held the file the capsule cited"
     );
 }
 

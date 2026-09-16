@@ -287,6 +287,18 @@ impl ServeToolPort {
         })
     }
 
+    /// The context port over this execution's own Tier 1 tree (#1086): the same host and the
+    /// same execution key the tool calls use, so the compile and the tools share one tree and
+    /// one lock.
+    pub(super) fn context_tree(&self) -> Arc<dyn graphhelm_runtime::ports::ExecutionTreePort> {
+        Arc::new(
+            graphhelm_tool_host::source_reader::ExecutionContextTree::new(
+                self.host.clone(),
+                &self.execution_id,
+            ),
+        )
+    }
+
     /// The release handle for this port's execution — taken by `drive` BEFORE the port moves
     /// into the executor, used AFTER the drive returns.
     pub(super) fn releaser(&self) -> WorkspaceRelease {
@@ -387,8 +399,12 @@ pub(super) fn build_sealer(
 /// Built beside `ServeToolPort::build` rather than inside it because they answer to a different
 /// port and a different reader contract; a root the channel cannot admit (not a directory, a
 /// link) refuses the drive with the same setup failure a bad tool workspace would.
+///
+/// `execution_tree` is the execution's own Tier 1 tree when the drive has a tool half (#1086):
+/// a node compiled while that tree exists reads it instead of `project`.
 pub(super) fn build_context_ports(
     project: &std::path::Path,
+    execution_tree: Option<Arc<dyn graphhelm_runtime::ports::ExecutionTreePort>>,
 ) -> Result<graphhelm_runtime::context::ContextPorts, String> {
     let search = graphhelm_tool_host::source_channel::WorkspaceSourceChannel::open(project)
         .map_err(|error| match error {
@@ -405,6 +421,7 @@ pub(super) fn build_context_ports(
         search: Arc::new(search),
         reader: Arc::new(reader),
         ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree,
     })
 }
 

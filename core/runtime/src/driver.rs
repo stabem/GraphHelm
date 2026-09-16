@@ -593,18 +593,35 @@ async fn compile_context_async(
     let execution_id = execution_id.to_string();
     let node_id = node.to_owned();
     let graph_node = graph_node.clone();
+    // #1086 (Codex P1 on #1092): the caller races this future against immediate cancellation and
+    // DROPS it when cancellation wins, which abandons the join handle but not the blocking scan.
+    // The guard sets the scan's token when this future is dropped (and, harmlessly, when it
+    // completes), so the abandoned scan stops at its next check and lets go of the execution
+    // tree instead of holding it while the cancelled drive releases the workspace.
+    let cancel = crate::ports::ScanCancel::new();
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
     let compiled = tokio::task::spawn_blocking(move || {
-        crate::context::compile_for_node(
+        crate::context::compile_for_node_cancellable(
             &owned_ports,
             &execution_id,
             &node_id,
             attempt,
             &graph_node,
+            &cancel,
         )
     })
     .await
     .expect("the context compile task is never cancelled")?;
     Ok(compiled)
+}
+
+/// Sets a scan's cancellation token when the future holding it is dropped.
+struct CancelOnDrop(crate::ports::ScanCancel);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 const TOOL_EXITED_NON_ZERO_CAUSE: &str = "tool_exited_non_zero";
@@ -687,19 +704,35 @@ fn retry_policy_conflict_diagnostics(
     Ok(diagnostics)
 }
 
-/// #1065: every node that DECLARES `context.budgetBytes` is asked whether the declaration can be
-/// read, before any node effect. A declared ceiling that cannot be read is a typo, not permission
-/// to apply the default — and not permission to skip the node either: skipped in the loop, the
-/// node stayed `Ready`, nothing was journaled, and the execution sat `running` with no diagnostic
-/// to say why. Refused here, the execution fails closed with the node named.
-fn context_budget_diagnostics(spec: &GraphSpec) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+/// #1065: every node that RECEIVES context and DECLARES `context.budgetBytes` is asked whether
+/// the declaration can be read, before any node effect. A declared ceiling that cannot be read is
+/// a typo, not permission to apply the default — and not permission to skip the node either:
+/// skipped in the loop, the node stayed `Ready`, nothing was journaled, and the execution sat
+/// `running` with no diagnostic to say why. Refused here, the execution fails closed with the
+/// node named.
+///
+/// **Only nodes that receive context (#1086 item 13).** The declaration is read by the compile,
+/// and the compile runs for plain cognitive nodes (`wants_context`) on a drive that HAS context
+/// ports. A fixture drive, a tools-only server or a tool node never reads it, and before #1065
+/// such a graph ran; refusing it now for a field nothing reads would break a graph that has not
+/// changed. The same graph on a drive with ports is refused, before any effect, as before.
+fn context_budget_diagnostics(
+    spec: &GraphSpec,
+    ports_present: bool,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
     let mut diagnostics = Vec::new();
+    if !ports_present {
+        return Ok(diagnostics);
+    }
     for (node_id, node) in &spec.nodes {
         let declared = node
             .properties
             .get("context")
             .and_then(|context| context.get("budgetBytes"));
-        if declared.is_none() || crate::context::declared_budget(node).is_ok() {
+        if declared.is_none()
+            || !wants_context(node)
+            || crate::context::declared_budget(node).is_ok()
+        {
             continue;
         }
         let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
@@ -822,7 +855,7 @@ pub async fn drive_to_quiescence_async(
     // EXECUTION with a journaled diagnostic and a terminal settlement — never a node that is
     // silently skipped while the execution stays `running`.
     let mut preflight_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
-    preflight_diagnostics.extend(context_budget_diagnostics(&spec)?);
+    preflight_diagnostics.extend(context_budget_diagnostics(&spec, context.is_some())?);
     if !preflight_diagnostics.is_empty() {
         let projection = reread_async(&store_open, &scope, &stream).await?;
         let already_terminal = matches!(

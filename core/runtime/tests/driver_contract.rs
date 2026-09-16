@@ -2519,6 +2519,101 @@ impl graphhelm_runtime::ports::BoundedSourceSearch for BlockingSearch {
     }
 }
 
+/// An execution-tree port whose scan blocks until released and records the token it was handed.
+struct BlockingTree {
+    entered: std::sync::atomic::AtomicBool,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    token: std::sync::Mutex<Option<graphhelm_runtime::ports::ScanCancel>>,
+}
+
+impl graphhelm_runtime::ports::ExecutionTreePort for BlockingTree {
+    fn with_tree(
+        &self,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+        _compile: &mut dyn FnMut(
+            &dyn graphhelm_runtime::ports::BoundedSourceSearch,
+            &dyn graphhelm_runtime::ports::BoundedSourceReader,
+        ),
+    ) -> graphhelm_runtime::ports::ExecutionTreeAccess {
+        *self.token.lock().unwrap() = Some(cancel.clone());
+        self.entered.store(true, Ordering::SeqCst);
+        let _ = self.release.lock().unwrap().recv();
+        graphhelm_runtime::ports::ExecutionTreeAccess::Unavailable
+    }
+}
+
+/// Codex P1 on #1092: when immediate cancellation wins over a compile that is scanning the
+/// execution tree, the abandoned scan is TOLD — its token is set by the time the drive returns,
+/// while the scan is still blocked — so it can let go of the tree the drive's release needs.
+#[test]
+fn an_abandoned_execution_tree_scan_is_told_it_was_cancelled() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![("first", agent_graph_node("search the tree"))],
+        vec![],
+        2,
+    );
+    let model = Arc::new(HangingModelPort::new());
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let tree = Arc::new(BlockingTree {
+        entered: std::sync::atomic::AtomicBool::new(false),
+        release: std::sync::Mutex::new(release_rx),
+        token: std::sync::Mutex::new(None),
+    });
+    let ports = graphhelm_runtime::context::ContextPorts {
+        search: Arc::new(StaticSearch(vec!["src/tree.rs".to_owned()])),
+        reader: Arc::new(NeverReader),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: Some(tree.clone()),
+    };
+    let runtime = multi_thread_runtime();
+    runtime.block_on(async {
+        let driver = tokio::spawn(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id.clone(),
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            Some(ports),
+        ));
+        while !tree.entered.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        let token = tree.token.lock().unwrap().clone().unwrap();
+        assert!(!token.is_cancelled(), "a running compile is not cancelled");
+        cancel_tx
+            .send(Some(ImmediateCancelRequest {
+                actor: driver_actor(),
+                idempotency_key: OpaqueId::parse("driver-contract-cancel-tree-scan").unwrap(),
+            }))
+            .unwrap();
+        driver.await.unwrap().unwrap();
+        assert!(
+            token.is_cancelled(),
+            "the drive returned, the scan is still blocked, and it has been told to stop"
+        );
+        release_tx.send(()).unwrap();
+    });
+    assert_eq!(model.called.load(Ordering::SeqCst), 0);
+}
+
 struct NeverReader;
 
 impl graphhelm_runtime::ports::BoundedSourceReader for NeverReader {
@@ -2564,6 +2659,7 @@ fn immediate_stop_during_context_compilation_dispatches_nothing() {
         search: search.clone(),
         reader: Arc::new(NeverReader),
         ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
     };
 
     let runtime = multi_thread_runtime();
@@ -2679,6 +2775,14 @@ fn an_unreadable_declared_context_budget_refuses_the_execution_before_any_node_e
         }),
     ));
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    // #1086: the budget is read only by a drive that compiles context, so the refusal is asked
+    // of a drive WITH ports (`a_portless_drive_runs_…` below is the other side).
+    let ports = graphhelm_runtime::context::ContextPorts {
+        search: Arc::new(StaticSearch(vec!["src/tree.rs".to_owned()])),
+        reader: Arc::new(StaticReader(b"fn search() {}\n")),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
     let projection = multi_thread_runtime()
         .block_on(drive_to_quiescence_async(
             opener(directory.path().to_path_buf()),
@@ -2694,7 +2798,7 @@ fn an_unreadable_declared_context_budget_refuses_the_execution_before_any_node_e
             driver_actor(),
             cancel_rx,
             None,
-            None,
+            Some(ports),
         ))
         .unwrap();
 
@@ -2746,6 +2850,58 @@ fn an_unreadable_declared_context_budget_refuses_the_execution_before_any_node_e
             ..
         }))
     ));
+}
+
+/// #1086 item 13: `GHG016` is asked only of nodes that RECEIVE context — plain cognitive nodes
+/// on a drive that has context ports. A graph that ran on a portless drive before #1065 (a
+/// fixture drive, a tools-only server) never read its `context.budgetBytes` and keeps running.
+#[test]
+fn a_portless_drive_runs_a_graph_whose_context_budget_it_never_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let model = Arc::new(FakeModelPort {
+        result: Ok(reply("done")),
+        calls: AtomicUsize::new(0),
+    });
+    let spec = spec_with(
+        vec![(
+            "typo",
+            agent_graph_node_with_budget("search", serde_json::json!(0)),
+        )],
+        vec![],
+        2,
+    );
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(model.calls.load(Ordering::SeqCst), 1, "the node ran");
+    assert_eq!(
+        projection.node_states.get("typo"),
+        Some(&NodeState::Succeeded)
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2820,6 +2976,7 @@ fn the_context_ledger_records_only_nodes_that_were_dispatched() {
         search: Arc::new(StaticSearch(vec!["src/tree.rs".to_owned()])),
         reader: Arc::new(StaticReader(b"fn search_the_tree() {}\n")),
         ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
     };
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()

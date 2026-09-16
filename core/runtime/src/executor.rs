@@ -33,8 +33,9 @@ pub struct NodeWork {
     pub judge: Option<crate::judge::JudgeWork>,
     /// The content-free summary of the context capsule this work was assembled with (#1065):
     /// present for plain cognitive work compiled through `ContextPorts`, `None` for tool and
-    /// gate work, for the blind judge, and for a drive with no ports. The executor copies its
-    /// numbers onto the outcome's `WorkSummary` and seals the whole record beside the reply.
+    /// gate work, for the blind judge, and for a drive with no ports. The executor seals it as
+    /// the `context-provenance@1` record beside the reply; `WorkSummary` carries none of its
+    /// numbers (they live only in that sealed record and in the drive reply's `context.nodes`).
     pub context: Option<crate::context::NodeContextSummary>,
 }
 

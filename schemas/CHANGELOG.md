@@ -1,5 +1,17 @@
 # Schema Changelog
 
+## context-provenance 1.0.0 - optional `root` (#1086)
+
+One OPTIONAL property, `root`: `"project"` or `"execution"`, the tree the node's search and reads
+ran over (the project checkout, or the execution's own Tier 1 tree). Every record the runtime seals
+from #1086 on carries it; a record sealed before carries none, and read the project. Optional, not
+required, for the reason the entry below states for the receipt: this document is not in the frozen
+1.0.0 release, so the frozen-baseline check holds it at `1.0.0`, and a new REQUIRED property is a
+breaking change against what landed on `main` that could only be declared at `2.0.0`. An added
+optional property is comparator-compatible, so the document stays `1.0.0` with a re-derived catalog
+digest. A new fixture, `invalid.root`, pins the refusal of any other value at `/root`; the `valid`
+fixture carries `"root":"project"`.
+
 ## context-provenance 1.0.0 - added whole (#1065)
 
 The content-free record the runtime seals beside a model reply when a context capsule was

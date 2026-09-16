@@ -305,7 +305,7 @@ fn a_secret_shaped_file_name_is_refused_before_it_is_read_or_cited() {
 #[test]
 fn a_secret_shaped_excerpt_never_reaches_the_capsule_bytes() {
     use graphhelm_runtime::context::{SECRET_SHAPES, secret_shaped};
-    let planted: [(&str, String); 8] = [
+    let planted: [(&str, String); 10] = [
         ("hex64", format!("let key = \"{}\";", "a1".repeat(32))),
         (
             "sk",
@@ -326,6 +326,11 @@ fn a_secret_shaped_excerpt_never_reaches_the_capsule_bytes() {
         ("password", "password=hunter2".to_owned()),
         ("token", "TOKEN=abc".to_owned()),
         ("secret", "client_secret=xyz".to_owned()),
+        (
+            "bearer",
+            "Authorization: Bearer abcdef0123456789abcdef".to_owned(),
+        ),
+        ("yaml-block", "password: |\n  hunter2".to_owned()),
     ];
     assert_eq!(SECRET_SHAPES.len(), planted.len());
     for (name, text) in &planted {
@@ -691,8 +696,9 @@ fn no_terms_means_no_query_at_all() {
 
 #[test]
 fn an_escaping_candidate_is_refused_by_the_reader_and_never_shipped() {
-    // A channel that misbehaves (or a poisoned index) hands back a path outside the root. The
-    // reader refuses it; the chain counts it; nothing outside is read.
+    // A channel that misbehaves (or a poisoned index) hands back a path outside the root. Since
+    // #1086 the producer refuses the SHAPE first (`recordable_source_path`: no `..`, no leading
+    // `/`), before the reader is asked, and counts it as dropped; nothing outside is read.
     let search = FakeSearch::returning(&["../outside/secret.txt", "/etc/passwd", "src/ok.rs"]);
     let reader = FakeReader::with(&[
         ("../outside/secret.txt", b"SECRET-MARKER"),
@@ -701,8 +707,18 @@ fn an_escaping_candidate_is_refused_by_the_reader_and_never_shipped() {
     let compiled = compile(&search, &reader, &["marker"]);
     assert!(!compiled.text.contains("SECRET-MARKER"));
     assert_eq!(compiled.summary.sources, ["src/ok.rs"]);
-    assert_eq!(compiled.summary.candidates_unreadable, 2);
+    assert_eq!(compiled.summary.candidates_dropped, 2);
+    assert_eq!(compiled.summary.candidates_unreadable, 0);
     assert_eq!(compiled.summary.candidates_returned, 3);
+    assert!(
+        reader
+            .reads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(path, _)| path == "src/ok.rs"),
+        "an escaping path never reaches the reader"
+    );
 }
 
 #[test]
@@ -1322,14 +1338,19 @@ fn the_provenance_record_follows_its_registered_schema_line_for_line() {
         .keys()
         .map(String::as_str)
         .collect();
-    let mut sorted_required = required.clone();
-    sorted_required.sort_unstable();
+    // #1086: `root` is emitted on every record and OPTIONAL in the schema, because records sealed
+    // before it carry none; every other key is required.
+    let mut sorted_expected = required.clone();
+    sorted_expected.push("root");
+    sorted_expected.sort_unstable();
     let mut sorted_keys = keys.clone();
     sorted_keys.sort_unstable();
     assert_eq!(
-        sorted_keys, sorted_required,
-        "the record's keys are exactly the schema's required set"
+        sorted_keys, sorted_expected,
+        "the record's keys are exactly the schema's required set plus the optional `root`"
     );
+    assert!(!required.contains(&"root"));
+    assert!(schema["properties"]["root"].is_object());
     let names: Vec<&str> = json["accounting"]
         .as_array()
         .unwrap()
@@ -1438,11 +1459,13 @@ fn a_key_cut_by_the_excerpt_boundary_is_refused_by_its_trailing_fragment() {
         "key = {}",
         "b".repeat(TRAILING_HEX_FRAGMENT_CHARS - 1)
     )));
-    assert!(!trailing_secret_fragment(&format!(
+    // #1086 item 2: a `sha256:` run that TOUCHES the cut is not exempt — nothing says the run
+    // stops there, so a digest-shaped head is refused like any other trailing run of 32+.
+    assert!(trailing_secret_fragment(&format!(
         "evidence sha256:{}",
         "b".repeat(40)
     )));
-    assert!(!trailing_secret_fragment(&format!(
+    assert!(trailing_secret_fragment(&format!(
         "evidence sha256:{}",
         "b".repeat(64)
     )));
@@ -1522,4 +1545,433 @@ fn a_declared_length_the_record_cannot_carry_is_refused_before_the_record_is_bui
         MAX_RECORDED_INTEGER
     );
     assert_eq!(compiled.summary.sources, ["src/a.rs"]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1086: scanner hardening. Each cell names the item it closes.
+// ---------------------------------------------------------------------------------------------
+
+/// Whether one file whose whole body is `body` ships from `path` (true) or is refused as
+/// secret-shaped (false), through the real producer.
+fn ships(path: &str, body: &str) -> bool {
+    let search = FakeSearch::returning(&[path]);
+    let reader = FakeReader::with(&[(path, body.as_bytes())]);
+    let compiled = compile(&search, &reader, &["planted"]);
+    match compiled.summary.candidates_secret_shaped {
+        0 => {
+            assert_eq!(compiled.summary.sources, [path], "{path}: {body:?}");
+            true
+        }
+        _ => {
+            assert!(compiled.text.is_empty(), "{path}: refused bytes never ship");
+            false
+        }
+    }
+}
+
+/// Item 2: a whole `sha256:` digest that ends exactly at the 16 KiB cut of a longer file is a
+/// run whose end nobody read. It is refused; the same digest inside a whole file ships.
+#[test]
+fn a_digest_shaped_run_ending_at_the_excerpt_cut_is_refused() {
+    let prefix = usize::try_from(MAX_BYTES_PER_CANDIDATE).unwrap();
+    let digest = format!("sha256:{}", "ab".repeat(32));
+    let cut = format!(
+        "{}{digest}{}\nmore planted notes\n",
+        prose_of(prefix - digest.len()),
+        "cd".repeat(16)
+    );
+    let search = FakeSearch::returning(&["docs/notes.md"]);
+    let reader = FakeReader::with(&[("docs/notes.md", cut.as_bytes())]);
+    let compiled = compile(&search, &reader, &["planted"]);
+    assert_eq!(compiled.summary.candidates_secret_shaped, 1);
+    assert!(!compiled.text.contains(&digest));
+
+    assert!(ships(
+        "docs/whole.md",
+        &format!("planted evidence {digest}\n")
+    ));
+}
+
+/// Item 3: compound credential key names and authorization headers.
+#[test]
+fn compound_credential_keys_and_authorization_headers_are_refused() {
+    use graphhelm_runtime::context::secret_shaped;
+    for text in [
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG",
+        "aws_secret_access_key = abc",
+        "export DB_PASSWORD=hunter2",
+        "SLACK_BOT_TOKEN=xoxb-1-2",
+        "stripe_api_key = abc",
+        "service.access_key = abc",
+        "gcp-private-key = abc",
+        "client_secrets = abc",
+        "authorization: Bearer abcdef0123456789abcdef",
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        "curl -H 'Authorization: Bearer abcdef0123456789abcdef' https://x",
+        "headers = { \"Authorization\": \"Bearer abcdef0123456789abcdef\" }",
+        "send it with Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig0123",
+    ] {
+        assert!(secret_shaped(text), "{text:?} must be refused");
+    }
+    for text in [
+        "max_tokens = 4096",
+        "tokenizer = objective-terms/v1",
+        "let token_count = 3;",
+        "password_policy = strong",
+        "mytoken = abc",
+        "the Authorization header carries a Bearer token",
+        "Authorization: Bearer {token}",
+        "fn authorization(&self) -> &str",
+    ] {
+        assert!(!secret_shaped(text), "{text:?} must not be refused");
+    }
+}
+
+/// Item 4: behind `:` a short bare value is a TYPE in source code and a VALUE in a
+/// configuration file. The suffix decides; literals and nested structures still ship.
+#[test]
+fn a_short_bare_colon_value_is_refused_in_configuration_files_only() {
+    for path in [
+        "deploy/app.yml",
+        "deploy/app.yaml",
+        "Cargo.toml",
+        "setup.ini",
+        "prod.env",
+        "app.properties",
+        "config.json",
+        "nginx.conf",
+        "tool.cfg",
+    ] {
+        assert!(
+            !ships(path, "# planted\nclient_secret: xyz\n"),
+            "{path}: a bare credential value in configuration"
+        );
+        assert!(
+            ships(
+                path,
+                "# planted\nenabled: true\nretries: 3\npassword: null\ntoken:\n  rotate: yes\n"
+            ),
+            "{path}: literals and a nested mapping are not credentials"
+        );
+    }
+    assert!(ships("src/lib.rs", "// planted\nclient_secret: xyz\n"));
+    assert!(ships("src/lib.rs", "// planted\npub token: String,\n"));
+    assert!(!ships("deploy/app.yaml", "# planted\ntoken: String\n"));
+}
+
+/// Item 6: a JSON- or dict-quoted key (`{"password":"hunter2"}`).
+#[test]
+fn a_quoted_credential_key_is_refused() {
+    use graphhelm_runtime::context::secret_shaped;
+    for text in [
+        "{\"password\":\"hunter2\"}",
+        "{\"api_key\": \"abc\"}",
+        "{'token': 'x'}",
+        "{\"AWS_SECRET_ACCESS_KEY\" : \"abc\"}",
+    ] {
+        assert!(secret_shaped(text), "{text:?} must be refused");
+    }
+    for text in [
+        "{\"password\": \"\"}",
+        "{\"tokenizer\":\"objective-terms/v1\"}",
+        "{\"candidatesSecretShaped\":0}",
+        "{\"token\": {\"type\": \"string\"}}",
+    ] {
+        assert!(!secret_shaped(text), "{text:?} must not be refused");
+    }
+}
+
+/// Item 7: a YAML block scalar (`password: |` / `>`) carries its value on the indented lines
+/// below the key.
+#[test]
+fn a_yaml_block_scalar_credential_is_refused() {
+    use graphhelm_runtime::context::{secret_shaped, trailing_secret_fragment};
+    for text in [
+        "password: |\n  hunter2\n",
+        "db:\n password: >-\n  hunter2\n",
+        "private_key: |2\n  -----\n",
+        "token: |+ # comment\n  abc\n",
+    ] {
+        assert!(secret_shaped(text), "{text:?} must be refused");
+    }
+    for text in [
+        "description: |\n  a paragraph of prose\n",
+        "password: |\nnext: 1\n",
+        "password: |\n\n",
+    ] {
+        assert!(!secret_shaped(text), "{text:?} must not be refused");
+    }
+    // The block past the cut: the head is all the excerpt shows.
+    assert!(trailing_secret_fragment("config:\n  password: |\n"));
+    assert!(trailing_secret_fragment("config:\n  password: >"));
+    assert!(!trailing_secret_fragment("description: |\n"));
+}
+
+/// Item 8: the node path refits a framing overflow in RANK ORDER, as `compile_items` does. A
+/// large first item that fits by sum but not rendered is dropped, and the small item after it
+/// still ships; popping from the tail dropped the small item first and then the large one, and
+/// shipped nothing.
+#[test]
+fn a_framing_overflow_is_refitted_in_rank_order_on_the_node_path() {
+    use graphhelm_runtime::context_compiler::compile_capsule;
+    let capsule_id = "exec-1/implement/a1";
+    let large_body = format!("{}\n", "planted ".repeat(40));
+    let small_body = "p\n";
+    let large_item = format!(
+        "source://src/large.rs [{} bytes]\n{large_body}",
+        large_body.len()
+    );
+    let small_item = format!("source://s.rs [{} bytes]\n{small_body}", small_body.len());
+    let rendered = |items: &[&String]| {
+        compile_capsule(
+            capsule_id,
+            1,
+            &[(
+                "evidence".to_owned(),
+                items.iter().map(|item| (*item).clone()).collect(),
+            )],
+        )
+        .len()
+    };
+    let budget = large_item.len() + small_item.len();
+    // Arrangement: both fit by sum, the large one alone overflows rendered, the small one fits.
+    assert!(rendered(&[&large_item]) > budget);
+    assert!(rendered(&[&small_item]) <= budget);
+
+    let search = FakeSearch::returning(&["src/large.rs", "s.rs"]);
+    let reader = FakeReader::with(&[
+        ("src/large.rs", large_body.as_bytes()),
+        ("s.rs", small_body.as_bytes()),
+    ]);
+    let compiled = retrieve_and_compile(&search, &reader, &terms(&["planted"]), capsule_id, budget);
+    assert_eq!(compiled.summary.sources, ["s.rs"]);
+    assert_eq!(compiled.summary.dropped_optional, 1);
+    assert!(compiled.summary.capsule_bytes as usize <= budget);
+    assert_eq!(compiled.summary.fallback, None);
+}
+
+/// A reader that serves any path it is asked for — so a path the channel should never have
+/// returned reaches the producer's own check, not the reader's.
+struct AnyPathReader;
+
+impl BoundedSourceReader for AnyPathReader {
+    fn read_prefix(&self, _: &str, _: u64) -> Result<SourceExcerpt, SourceReadError> {
+        Ok(SourceExcerpt {
+            bytes: b"fn planted() {}\n".to_vec(),
+            file_len: 16,
+        })
+    }
+}
+
+/// Item 11: the schema's `repositoryRelativePath` pattern is enforced before a path is read,
+/// cited or recorded — not only its length.
+#[test]
+fn a_source_path_the_schema_pattern_refuses_is_dropped_before_it_is_read_or_recorded() {
+    let refused = [
+        "src/../escape.rs",
+        "/absolute.rs",
+        "a//b.rs",
+        "dir\\x.rs",
+        "./dot.rs",
+        "trailing/",
+        "",
+    ];
+    let admitted = ["ok/.hidden.rs", "ok/...rs", "ok/..x.rs"];
+    let paths: Vec<&str> = refused.iter().chain(admitted.iter()).copied().collect();
+    // The candidate cap is eight; the cell asks for ten, so the channel is given two at a time.
+    for chunk in paths.chunks(MAX_CANDIDATES) {
+        let search = FakeSearch::returning(chunk);
+        let compiled = retrieve_and_compile(
+            &search,
+            &AnyPathReader,
+            &terms(&["planted"]),
+            "e/n/a1",
+            32 * 1024,
+        );
+        let expected: Vec<&str> = chunk
+            .iter()
+            .copied()
+            .filter(|path| admitted.contains(path))
+            .collect();
+        assert_eq!(compiled.summary.sources, expected, "{chunk:?}");
+        assert_eq!(
+            compiled.summary.candidates_dropped as usize,
+            chunk.len() - expected.len(),
+            "{chunk:?}"
+        );
+        assert_record_validates(&compiled.summary);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1086 item 10: real sealed records against the registered schema, with the repository's own
+// offline validator — not a comparison of key lists.
+// ---------------------------------------------------------------------------------------------
+
+const PROVENANCE_SCHEMA_ID: &str = "https://p50.dev/schemas/context-provenance.schema.json";
+
+fn provenance_validator() -> graphhelm_schema::OfflineSchemaSet {
+    graphhelm_schema::OfflineSchemaSet::compile(
+        [("context-provenance".to_owned(), provenance_schema())]
+            .into_iter()
+            .collect(),
+    )
+    .expect("the registered schema compiles offline")
+}
+
+fn record_diagnostics(record: &serde_json::Value) -> Vec<graphhelm_protocols::Diagnostic> {
+    provenance_validator().validate(PROVENANCE_SCHEMA_ID, record, "sealed-context-provenance")
+}
+
+fn assert_record_validates(summary: &graphhelm_runtime::context::NodeContextSummary) {
+    let record: serde_json::Value =
+        serde_json::from_slice(&summary.provenance_record().stable_bytes()).unwrap();
+    let diagnostics = record_diagnostics(&record);
+    assert!(diagnostics.is_empty(), "{diagnostics:?} for {record}");
+}
+
+#[test]
+fn real_sealed_provenance_records_validate_against_the_registered_schema() {
+    use graphhelm_runtime::context::ContextRoot;
+    let capsule = compiled_summary();
+    assert!(capsule.digest.is_some());
+
+    let empty = compile(
+        &FakeSearch::returning(&[]),
+        &FakeReader::with(&[]),
+        &["planted"],
+    )
+    .summary;
+    assert_eq!(
+        empty.digest, None,
+        "a fallback record carries `digest: null`"
+    );
+    assert_eq!(empty.fallback, Some(ContextFallback::NoCandidates));
+
+    let refused = compile(
+        &FakeSearch::returning(&["deploy/app.yaml"]),
+        &FakeReader::with(&[("deploy/app.yaml", b"client_secret: xyz\n")]),
+        &["planted"],
+    )
+    .summary;
+    assert_eq!(
+        refused.fallback,
+        Some(ContextFallback::SecretShapedCandidate)
+    );
+
+    let mut execution = capsule.clone();
+    execution.root = ContextRoot::Execution;
+
+    for summary in [&capsule, &empty, &refused, &execution] {
+        assert_record_validates(summary);
+    }
+
+    // The instrument, controlled: the same validator refuses a record the schema forbids, so the
+    // empty diagnostics above are the records' and not a validator that accepts anything.
+    let mut forged: serde_json::Value =
+        serde_json::from_slice(&capsule.provenance_record().stable_bytes()).unwrap();
+    forged["digest"] = serde_json::json!("sha256:not-a-digest");
+    forged["root"] = serde_json::json!("worktree");
+    let paths: Vec<String> = record_diagnostics(&forged)
+        .into_iter()
+        .map(|diagnostic| diagnostic.path)
+        .collect();
+    assert!(paths.iter().any(|path| path == "/digest"), "{paths:?}");
+    assert!(paths.iter().any(|path| path == "/root"), "{paths:?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// #1086 item 5: which tree a node's context is read from.
+// ---------------------------------------------------------------------------------------------
+
+struct FakeTree {
+    access: graphhelm_runtime::ports::ExecutionTreeAccess,
+    search: FakeSearch,
+    reader: FakeReader,
+}
+
+impl graphhelm_runtime::ports::ExecutionTreePort for FakeTree {
+    fn with_tree(
+        &self,
+        _cancel: &graphhelm_runtime::ports::ScanCancel,
+        compile: &mut dyn FnMut(&dyn BoundedSourceSearch, &dyn BoundedSourceReader),
+    ) -> graphhelm_runtime::ports::ExecutionTreeAccess {
+        if self.access == graphhelm_runtime::ports::ExecutionTreeAccess::Read {
+            compile(&self.search, &self.reader);
+        }
+        self.access
+    }
+}
+
+fn ports_with_tree(
+    access: Option<graphhelm_runtime::ports::ExecutionTreeAccess>,
+) -> graphhelm_runtime::context::ContextPorts {
+    graphhelm_runtime::context::ContextPorts {
+        search: std::sync::Arc::new(FakeSearch::returning(&["src/checkout.rs"])),
+        reader: std::sync::Arc::new(FakeReader::with(&[(
+            "src/checkout.rs",
+            b"fn ballots_before_the_tool() {}\n",
+        )])),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: access.map(|access| {
+            std::sync::Arc::new(FakeTree {
+                access,
+                search: FakeSearch::returning(&["src/patched.rs"]),
+                reader: FakeReader::with(&[(
+                    "src/patched.rs",
+                    b"fn ballots_after_the_tool() {}\n",
+                )]),
+            }) as std::sync::Arc<dyn graphhelm_runtime::ports::ExecutionTreePort>
+        }),
+    }
+}
+
+#[test]
+fn the_execution_tree_is_read_when_it_exists_and_the_summary_says_so() {
+    use graphhelm_runtime::context::{ContextRoot, compile_for_node};
+    use graphhelm_runtime::ports::ExecutionTreeAccess;
+    let node = agent_node("Count the ballots.");
+    let run = |access| {
+        compile_for_node(&ports_with_tree(access), "exec-1", "implement", 1, &node).unwrap()
+    };
+
+    let no_port = run(None);
+    assert_eq!(no_port.summary.root, ContextRoot::Project);
+    assert_eq!(no_port.summary.sources, ["src/checkout.rs"]);
+
+    let absent = run(Some(ExecutionTreeAccess::Absent));
+    assert_eq!(absent.summary.root, ContextRoot::Project);
+    assert_eq!(absent.summary.sources, ["src/checkout.rs"]);
+
+    let read = run(Some(ExecutionTreeAccess::Read));
+    assert_eq!(read.summary.root, ContextRoot::Execution);
+    assert_eq!(read.summary.sources, ["src/patched.rs"]);
+    assert!(read.text.contains("ballots_after_the_tool"));
+    assert!(!read.text.contains("ballots_before_the_tool"));
+    let published = serde_json::to_value(&read.summary).unwrap();
+    assert_eq!(published["root"], "execution");
+
+    // A tree that exists and cannot be read is NOT answered from the checkout.
+    let unavailable = run(Some(ExecutionTreeAccess::Unavailable));
+    assert_eq!(unavailable.summary.root, ContextRoot::Execution);
+    assert_eq!(
+        unavailable.summary.fallback,
+        Some(ContextFallback::SearchUnavailable)
+    );
+    assert!(unavailable.summary.sources.is_empty());
+    assert!(unavailable.text.is_empty());
+
+    for summary in [&no_port.summary, &read.summary, &unavailable.summary] {
+        assert_record_validates(summary);
+    }
+}
+
+/// A record sealed before #1086 carries no `root`; it still reads back, as the project.
+#[test]
+fn a_summary_without_a_root_reads_back_as_the_project() {
+    use graphhelm_runtime::context::{ContextRoot, NodeContextSummary};
+    let mut published = serde_json::to_value(compiled_summary()).unwrap();
+    published.as_object_mut().unwrap().remove("root");
+    let summary: NodeContextSummary = serde_json::from_value(published).unwrap();
+    assert_eq!(summary.root, ContextRoot::Project);
 }

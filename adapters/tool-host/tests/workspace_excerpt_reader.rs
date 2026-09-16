@@ -125,6 +125,22 @@ fn a_junction_inside_the_root_pointing_outside_is_refused() {
     );
 }
 
+/// #1086 (Codex P1 on #1092): a read whose drive gave it up refuses before it opens the file.
+#[test]
+fn a_cancelled_read_refuses_before_it_opens_the_file() {
+    let directory = project();
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let reader = WorkspaceExcerptReader::open(&directory.path().join("project"))
+        .unwrap()
+        .with_cancel(cancel.clone());
+    assert!(reader.read_prefix("src/alpha.rs", 1024).is_ok());
+    cancel.cancel();
+    assert_eq!(
+        reader.read_prefix("src/alpha.rs", 1024),
+        Err(SourceReadError::Unreadable)
+    );
+}
+
 #[test]
 fn a_root_that_is_not_a_directory_is_not_admitted() {
     let directory = project();

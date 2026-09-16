@@ -11,13 +11,43 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 159
+$ExpectedAssertionCount = 179
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
 $ErrorActionPreference = 'Continue'
 $script:total = 0
 $script:failures = 0
+$script:fixtureConfigRepairCount = 0
+$script:fixtureSetupLaunchesRemoved = 0
+$script:templatePreparationCount = 0
+$script:templatePreparationSeconds = 0.0
+$script:workingRepoCopyCount = 0
+$script:workingRepoCopySeconds = 0.0
+$script:bareOriginCopyCount = 0
+$script:bareOriginCopySeconds = 0.0
+$script:copiedConfigRepairSeconds = 0.0
+$script:manifestWriteCount = 0
+$script:manifestWriteSeconds = 0.0
+$script:manifestAddAttemptCount = 0
+$script:manifestAddSuccessCount = 0
+$script:manifestAddSeconds = 0.0
+$script:manifestCommitAttemptCount = 0
+$script:manifestCommitSuccessCount = 0
+$script:manifestCommitSeconds = 0.0
+$script:storeAddAttemptCount = 0
+$script:storeAddSuccessCount = 0
+$script:storeAddSeconds = 0.0
+$script:storeCommitAttemptCount = 0
+$script:storeCommitSuccessCount = 0
+$script:storeCommitNoChangeCount = 0
+$script:storeCommitSeconds = 0.0
+$script:invokeProofCount = 0
+$script:invokeProofSeconds = 0.0
+$script:nativeGitAttemptCount = 0
+$script:nativeGitSuccessCount = 0
+$script:nativeGitExpectedNoChangeCount = 0
+$script:nativeGitFailureCount = 0
 
 function Assert-True {
     param([Parameter(Mandatory)] [bool] $Condition, [Parameter(Mandatory)] [string] $Message)
@@ -30,6 +60,212 @@ function Assert-True {
     }
 }
 
+function Get-BoundedNativeOutput {
+    param([object[]] $Output, [int] $MaximumCharacters = 4096)
+
+    $lines = @($Output | ForEach-Object { [string]$_ })
+    $text = [string]::Join("`n", $lines)
+    if ([string]::IsNullOrEmpty($text)) { return '<no native output>' }
+    if ($text.Length -le $MaximumCharacters) { return $text }
+    return $text.Substring(0, $MaximumCharacters) + "`n...[native output truncated]"
+}
+
+function Invoke-CheckedGit {
+    param(
+        [Parameter(Mandatory)] [string] $Operation,
+        [Parameter(Mandatory)] [string[]] $Arguments,
+        [switch] $AllowNoChanges
+    )
+
+    $script:nativeGitAttemptCount++
+    $workingDirectory = (Get-Location).Path
+    $displayArguments = @($Arguments | ForEach-Object {
+            $argument = [string]$_
+            if ($argument -match '\s') { return "'$argument'" }
+            return $argument
+    }) -join ' '
+    $nativeOutput = @(& git @Arguments 2>&1)
+    $nativeExitCode = [int]$LASTEXITCODE
+    $expectedNoChange = $false
+    if ($nativeExitCode -ne 0) {
+        if ($AllowNoChanges -and $nativeExitCode -eq 1) {
+            # The commit operates on the whole index. A clean manifest subtree does not prove
+            # that the index is empty: a staged file outside .factory/gate-runs, or a private
+            # hook that failed after staging it, must remain a setup failure. Check the complete
+            # index first, then retain the narrower subtree check for dirty/untracked files.
+            $script:nativeGitAttemptCount++
+            $indexDiffOutput = @(& git diff --cached --quiet HEAD -- 2>&1)
+            $indexDiffExitCode = [int]$LASTEXITCODE
+            if ($indexDiffExitCode -ne 0) {
+                $script:nativeGitFailureCount++
+                $detail = Get-BoundedNativeOutput -Output $nativeOutput
+                $indexDetail = Get-BoundedNativeOutput -Output $indexDiffOutput
+                throw "Native git command failed: $Operation (exit $nativeExitCode; cwd '$workingDirectory'; command: git $displayArguments)`n$detail`nstaged-index check (exit $indexDiffExitCode; command: git diff --cached --quiet HEAD --): $indexDetail"
+            }
+            $script:nativeGitSuccessCount++
+
+            $script:nativeGitAttemptCount++
+            $statusOutput = @(& git status --porcelain -- '.factory/gate-runs' 2>&1)
+            $statusExitCode = [int]$LASTEXITCODE
+            $statusText = Get-BoundedNativeOutput -Output $statusOutput
+            $statusTextForCheck = ($statusOutput | ForEach-Object { [string]$_ }) -join ''
+            $expectedNoChange = $statusExitCode -eq 0 -and [string]::IsNullOrEmpty($statusTextForCheck)
+            if ($expectedNoChange) {
+                $script:nativeGitSuccessCount++
+                $script:nativeGitExpectedNoChangeCount++
+            } else {
+                $script:nativeGitFailureCount++
+                $detail = Get-BoundedNativeOutput -Output $nativeOutput
+                throw "Native git command failed: $Operation (exit $nativeExitCode; cwd '$workingDirectory'; command: git $displayArguments)`n$detail`nstatus check (exit $statusExitCode): $statusText"
+            }
+        } else {
+            $script:nativeGitFailureCount++
+            $detail = Get-BoundedNativeOutput -Output $nativeOutput
+            throw "Native git command failed: $Operation (exit $nativeExitCode; cwd '$workingDirectory'; command: git $displayArguments)`n$detail"
+        }
+    }
+    if (-not $expectedNoChange) {
+        $script:nativeGitSuccessCount++
+    }
+    return [pscustomobject]@{
+        exitCode = $nativeExitCode
+        output = $nativeOutput
+        expectedNoChange = $expectedNoChange
+    }
+}
+
+function Test-CopiedRepoConfig {
+    $guardRoot = Join-Path $fixtureRoot 'config-guard'
+    [System.IO.Directory]::CreateDirectory($guardRoot) | Out-Null
+    $configPath = Join-Path $guardRoot 'config'
+    $templateOrigin = 'C:\fixture\template origin\origin.git'
+    $repoOrigin = 'C:\fixture\copied origin\origin.git'
+    $templateHooks = 'C:\fixture\template origin\.no-hooks'
+    $repoHooks = 'C:\fixture\copied origin\.no-hooks'
+    $escapedTemplateOrigin = $templateOrigin.Replace('\', '\\')
+    $escapedRepoOrigin = $repoOrigin.Replace('\', '\\')
+    $escapedTemplateHooks = $templateHooks.Replace('\', '\\')
+    $escapedRepoHooks = $repoHooks.Replace('\', '\\')
+    $quotedLine = "`tcomment = keep " + [char]34 + 'quoted' + [char]34 + ' bytes'
+    $before = '[core]' + "`r`n" + $quotedLine + "`r`n`thooksPath = $escapedTemplateHooks`r`n" +
+        '[remote "origin"]' + "`r`n`turl = $escapedTemplateOrigin`r`n`tfetch = +refs/heads/*:refs/remotes/origin/*`r`n"
+    [System.IO.File]::WriteAllText($configPath, $before, $utf8NoBom)
+
+    $rewritten = $null
+    try {
+        $rewritten = Set-CopiedRepoConfig -ConfigPath $configPath `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks
+    } catch { }
+    Assert-True -Condition ($null -ne $rewritten) `
+        -Message 'config repair accepts the observed escaped Git config representation'
+
+    $after = [System.IO.File]::ReadAllText($configPath)
+    Assert-True -Condition ($after -cmatch [regex]::Escape("`thooksPath = $escapedRepoHooks") -and
+            $after -cmatch [regex]::Escape("`turl = $escapedRepoOrigin")) `
+        -Message 'config repair writes the copied origin and hooks path with the same escaping'
+    Assert-True -Condition ($after -cmatch [regex]::Escape($quotedLine) -and
+            $after -cmatch '\r\n') `
+        -Message 'config repair preserves unrelated bytes and the original CRLF line endings'
+
+    $slashPathResult = $null
+    try {
+        $slashPathResult = Convert-PathToGitConfigValue -Path 'C:/fixture/copied origin/origin.git' `
+            -TemplatePath 'C:/fixture/template origin/origin.git' `
+            -TemplateSerialized 'C:/fixture/template origin/origin.git'
+    } catch { }
+    Assert-True -Condition ($slashPathResult -ceq 'C:/fixture/copied origin/origin.git') `
+        -Message 'config path style aliases with identical values resolve once for slash-only paths'
+
+    $quote = [string][char]34
+    $quotedConfig = Join-Path $guardRoot 'quoted-values'
+    $quotedBefore = '[core]' + "`n`thooksPath = " + $quote + $escapedTemplateHooks + $quote + "`n" +
+        '[remote "origin"]' + "`n`turl = " + $quote + $escapedTemplateOrigin + $quote + "`n"
+    [System.IO.File]::WriteAllText($quotedConfig, $quotedBefore, $utf8NoBom)
+    $quotedResult = $null
+    try {
+        $quotedResult = Set-CopiedRepoConfig -ConfigPath $quotedConfig `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks
+    } catch { }
+    $quotedAfter = [System.IO.File]::ReadAllText($quotedConfig)
+    Assert-True -Condition ($null -ne $quotedResult -and
+            $quotedAfter -cmatch [regex]::Escape("`thooksPath = $quote$escapedRepoHooks$quote") -and
+            $quotedAfter -cmatch [regex]::Escape("`turl = $quote$escapedRepoOrigin$quote")) `
+        -Message 'config repair preserves Git quoted path values while changing only their destinations'
+
+    $bomConfig = Join-Path $guardRoot 'bom-config'
+    $bomEncoding = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($bomConfig, $before, $bomEncoding)
+    $bomResult = $null
+    try {
+        $bomResult = Set-CopiedRepoConfig -ConfigPath $bomConfig `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks
+    } catch { }
+    $bomBytes = [System.IO.File]::ReadAllBytes($bomConfig)
+    Assert-True -Condition ($null -ne $bomResult -and $bomBytes.Length -ge 3 -and
+            $bomBytes[0] -eq 0xEF -and $bomBytes[1] -eq 0xBB -and $bomBytes[2] -eq 0xBF) `
+        -Message 'config repair preserves a valid UTF-8 BOM when the copied config has one'
+
+    $missingOrigin = Join-Path $guardRoot 'missing-origin'
+    [System.IO.File]::WriteAllText($missingOrigin,
+        ("[core]`n`thooksPath = $escapedTemplateHooks`n" + '[remote "origin"]' + "`n"), $utf8NoBom)
+    $missingRejected = $false
+    try {
+        Set-CopiedRepoConfig -ConfigPath $missingOrigin `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks | Out-Null
+    } catch { $missingRejected = $true }
+    Assert-True -Condition $missingRejected -Message 'config repair refuses a missing origin value'
+
+    $duplicateHooks = Join-Path $guardRoot 'duplicate-hooks'
+    [System.IO.File]::WriteAllText($duplicateHooks,
+        ("[core]`n`thooksPath = $escapedTemplateHooks`n`thooksPath = $escapedTemplateHooks`n" +
+            '[remote "origin"]' + "`n`turl = $escapedTemplateOrigin`n"), $utf8NoBom)
+    $duplicateRejected = $false
+    try {
+        Set-CopiedRepoConfig -ConfigPath $duplicateHooks `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks | Out-Null
+    } catch { $duplicateRejected = $true }
+    Assert-True -Condition $duplicateRejected -Message 'config repair refuses duplicate hooks paths'
+
+    $duplicateOrigin = Join-Path $guardRoot 'duplicate-origin'
+    [System.IO.File]::WriteAllText($duplicateOrigin,
+        ("[core]`n`thooksPath = $escapedTemplateHooks`n" + '[remote "origin"]' +
+            "`n`turl = $escapedTemplateOrigin`n`turl = $escapedTemplateOrigin`n"), $utf8NoBom)
+    $duplicateOriginRejected = $false
+    try {
+        Set-CopiedRepoConfig -ConfigPath $duplicateOrigin `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks | Out-Null
+    } catch { $duplicateOriginRejected = $true }
+    Assert-True -Condition $duplicateOriginRejected -Message 'config repair refuses duplicate origin URLs'
+
+    $wrongSection = Join-Path $guardRoot 'wrong-section'
+    [System.IO.File]::WriteAllText($wrongSection,
+        ("[core]`n`thooksPath = $escapedTemplateHooks`n" + '[remote "other"]' +
+            "`n`turl = $escapedTemplateOrigin`n"), $utf8NoBom)
+    $wrongSectionRejected = $false
+    try {
+        Set-CopiedRepoConfig -ConfigPath $wrongSection `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks | Out-Null
+    } catch { $wrongSectionRejected = $true }
+    Assert-True -Condition $wrongSectionRejected -Message 'config repair refuses an origin value in another remote section'
+
+    $invalidUtf8 = Join-Path $guardRoot 'invalid-utf8'
+    [System.IO.File]::WriteAllBytes($invalidUtf8, [byte[]](0x5B, 0x63, 0x6F, 0x72, 0x65, 0x5D, 0x0A, 0xFF))
+    $invalidRejected = $false
+    try {
+        Set-CopiedRepoConfig -ConfigPath $invalidUtf8 `
+            -TemplateOrigin $templateOrigin -RepoOrigin $repoOrigin `
+            -TemplateHooksPath $templateHooks -RepoHooksPath $repoHooks | Out-Null
+    } catch { $invalidRejected = $true }
+    Assert-True -Condition $invalidRejected -Message 'config repair refuses invalid UTF-8 instead of rewriting bytes'
+}
+
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
 
 $subjectPath = Join-Path $PSScriptRoot 'merge-proof.ps1'
@@ -40,7 +276,297 @@ if (-not (Test-Path -LiteralPath $subjectPath)) {
 
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-mergeproof-$([guid]::NewGuid().ToString('N'))"
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
+$script:privateLedger = Join-Path $fixtureRoot 'private-ledger'
+[System.IO.Directory]::CreateDirectory($script:privateLedger) | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+function Convert-PathToGitConfigValue {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $TemplatePath,
+        [Parameter(Mandatory)] [string] $TemplateSerialized
+    )
+
+    $quote = [string][char]34
+    $escapedTemplate = $TemplatePath.Replace('\', '\\').Replace($quote, '\' + $quote)
+    $escapedPath = $Path.Replace('\', '\\').Replace($quote, '\' + $quote)
+    $slashTemplate = $TemplatePath.Replace('\', '/')
+    $slashPath = $Path.Replace('\', '/')
+    $styles = @(
+        [pscustomobject]@{ name = 'raw'; template = $TemplatePath; destination = $Path },
+        [pscustomobject]@{ name = 'escaped'; template = $escapedTemplate; destination = $escapedPath },
+        [pscustomobject]@{ name = 'slash'; template = $slashTemplate; destination = $slashPath },
+        [pscustomobject]@{ name = 'quoted-raw'; template = $quote + $TemplatePath + $quote; destination = $quote + $Path + $quote },
+        [pscustomobject]@{ name = 'quoted-escaped'; template = $quote + $escapedTemplate + $quote; destination = $quote + $escapedPath + $quote },
+        [pscustomobject]@{ name = 'quoted-slash'; template = $quote + $slashTemplate + $quote; destination = $quote + $slashPath + $quote }
+    )
+    $matches = @($styles | Where-Object {
+            [string]::Equals([string]$_.template, $TemplateSerialized, [StringComparison]::Ordinal)
+        })
+    $destinations = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($match in $matches) { [void]$destinations.Add([string]$match.destination) }
+    if ($destinations.Count -ne 1) {
+        throw "Git config path representation for '$TemplatePath' did not map to one unique destination"
+    }
+    return [string](@($destinations)[0])
+}
+
+function Set-CopiedRepoConfig {
+    param(
+        [Parameter(Mandatory)] [string] $ConfigPath,
+        [Parameter(Mandatory)] [string] $TemplateOrigin,
+        [Parameter(Mandatory)] [string] $RepoOrigin,
+        [Parameter(Mandatory)] [string] $TemplateHooksPath,
+        [Parameter(Mandatory)] [string] $RepoHooksPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        throw "Copied Git config is missing at $ConfigPath"
+    }
+    $originalBytes = [System.IO.File]::ReadAllBytes($ConfigPath)
+    $hasBom = $originalBytes.Length -ge 3 -and
+        $originalBytes[0] -eq 0xEF -and $originalBytes[1] -eq 0xBB -and $originalBytes[2] -eq 0xBF
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    try {
+        $offset = if ($hasBom) { 3 } else { 0 }
+        $text = $strictUtf8.GetString($originalBytes, $offset, $originalBytes.Length - $offset)
+    } catch {
+        throw "Copied Git config is not valid UTF-8: $ConfigPath"
+    }
+
+    # Split while retaining each original line ending. Rejoining these parts keeps every byte
+    # outside the two values unchanged, including CRLF versus LF and a possible UTF-8 BOM.
+    $parts = [regex]::Split($text, '(\r\n|\n|\r)')
+    $section = $null
+    $originEntries = New-Object 'System.Collections.Generic.List[object]'
+    $hooksEntries = New-Object 'System.Collections.Generic.List[object]'
+    for ($partIndex = 0; $partIndex -lt $parts.Count; $partIndex += 2) {
+        $content = [string]$parts[$partIndex]
+        $trimmed = $content.Trim()
+        $header = [regex]::Match($trimmed, '^\[(?<name>[^\]]+)\]$')
+        if ($header.Success) {
+            $section = $header.Groups['name'].Value.Trim()
+            continue
+        }
+        $key = [regex]::Match($content, '^\s*(?<name>url|hooksPath)\s*=')
+        if (-not $key.Success) { continue }
+        $keyName = $key.Groups['name'].Value
+        $inCore = [string]::Equals($section, 'core', [StringComparison]::OrdinalIgnoreCase)
+        $inOrigin = [string]::Equals($section, 'remote "origin"', [StringComparison]::OrdinalIgnoreCase)
+        if (-not (($inCore -and [string]::Equals($keyName, 'hooksPath', [StringComparison]::OrdinalIgnoreCase)) -or
+                ($inOrigin -and [string]::Equals($keyName, 'url', [StringComparison]::OrdinalIgnoreCase)))) {
+            continue
+        }
+        $afterEquals = $content.Substring($key.Length)
+        $leading = $afterEquals.Length - $afterEquals.TrimStart().Length
+        $withoutLeading = $afterEquals.Substring($leading)
+        $value = $withoutLeading.TrimEnd()
+        $trailing = $withoutLeading.Substring($value.Length)
+        $entry = [pscustomobject]@{
+            partIndex = $partIndex
+            prefix = $content.Substring(0, $key.Length + $leading)
+            value = $value
+            suffix = $trailing
+        }
+        if ($inCore) { [void]$hooksEntries.Add($entry) }
+        else { [void]$originEntries.Add($entry) }
+    }
+
+    if ($originEntries.Count -ne 1) {
+        throw "Copied Git config must contain exactly one origin URL in remote origin (found $($originEntries.Count))"
+    }
+    if ($hooksEntries.Count -ne 1) {
+        throw "Copied Git config must contain exactly one hooksPath in core (found $($hooksEntries.Count))"
+    }
+    $origin = $originEntries[0]
+    $hooks = $hooksEntries[0]
+    $newOrigin = Convert-PathToGitConfigValue -Path $RepoOrigin `
+        -TemplatePath $TemplateOrigin -TemplateSerialized ([string]$origin.value)
+    $newHooks = Convert-PathToGitConfigValue -Path $RepoHooksPath `
+        -TemplatePath $TemplateHooksPath -TemplateSerialized ([string]$hooks.value)
+    $parts[$origin.partIndex] = $origin.prefix + $newOrigin + $origin.suffix
+    $parts[$hooks.partIndex] = $hooks.prefix + $newHooks + $hooks.suffix
+    $updatedText = $parts -join ''
+    $writeEncoding = New-Object System.Text.UTF8Encoding($hasBom, $true)
+    [System.IO.File]::WriteAllText($ConfigPath, $updatedText, $writeEncoding)
+    $updatedBytes = [System.IO.File]::ReadAllBytes($ConfigPath)
+    return [pscustomobject]@{
+        configPath = $ConfigPath
+        changedValues = 2
+        originalByteCount = $originalBytes.Length
+        updatedByteCount = $updatedBytes.Length
+    }
+}
+
+function Copy-DirectoryBytes {
+    param(
+        [Parameter(Mandatory)] [string] $Source,
+        [Parameter(Mandatory)] [string] $Destination
+    )
+
+    $sourceFull = [System.IO.Path]::GetFullPath($Source)
+    $destinationFull = [System.IO.Path]::GetFullPath($Destination)
+    if ($sourceFull.Length -gt 3) { $sourceFull = $sourceFull.TrimEnd([char[]]@('\', '/')) }
+    if ($destinationFull.Length -gt 3) { $destinationFull = $destinationFull.TrimEnd([char[]]@('\', '/')) }
+    if (-not [System.IO.Directory]::Exists($sourceFull)) {
+        throw "Copy source is not a directory: $sourceFull"
+    }
+    if ([System.IO.Directory]::Exists($destinationFull) -or [System.IO.File]::Exists($destinationFull)) {
+        throw "Copy destination already exists: $destinationFull"
+    }
+
+    $sourcePrefix = if ($sourceFull.EndsWith('\') -or $sourceFull.EndsWith('/')) { $sourceFull } else { $sourceFull + '\' }
+    $destinationPrefix = if ($destinationFull.EndsWith('\') -or $destinationFull.EndsWith('/')) { $destinationFull } else { $destinationFull + '\' }
+    if ([string]::Equals($sourceFull, $destinationFull, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $destinationFull.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $sourceFull.StartsWith($destinationPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Copy source and destination overlap: '$sourceFull' and '$destinationFull'"
+    }
+
+    # Check every existing path component before touching the destination. This rejects junctions
+    # and symlinks without allowing directory enumeration to walk outside the fixture tree.
+    $sourceCursor = $sourceFull
+    while ($null -ne $sourceCursor -and $sourceCursor.Length -gt 0) {
+        if ([System.IO.Directory]::Exists($sourceCursor) -or [System.IO.File]::Exists($sourceCursor)) {
+            $sourceAttributes = [System.IO.File]::GetAttributes($sourceCursor)
+            if (($sourceAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Copy source path contains a reparse point: $sourceCursor"
+            }
+            $sourceParent = ([System.IO.DirectoryInfo]::new($sourceCursor)).Parent
+            if ($null -eq $sourceParent -or [string]::Equals($sourceParent.FullName, $sourceCursor, [System.StringComparison]::OrdinalIgnoreCase)) {
+                break
+            }
+            $sourceCursor = $sourceParent.FullName
+        } else {
+            $sourceCursor = [System.IO.Path]::GetDirectoryName($sourceCursor)
+        }
+    }
+
+    $destinationCursor = [System.IO.Path]::GetDirectoryName($destinationFull)
+    while ($null -ne $destinationCursor -and $destinationCursor.Length -gt 0) {
+        if ([System.IO.File]::Exists($destinationCursor)) {
+            throw "Copy destination parent is a file: $destinationCursor"
+        }
+        if ([System.IO.Directory]::Exists($destinationCursor)) {
+            $destinationAttributes = [System.IO.File]::GetAttributes($destinationCursor)
+            if (($destinationAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Copy destination path contains a reparse point: $destinationCursor"
+            }
+            $destinationParent = ([System.IO.DirectoryInfo]::new($destinationCursor)).Parent
+            if ($null -eq $destinationParent -or [string]::Equals($destinationParent.FullName, $destinationCursor, [System.StringComparison]::OrdinalIgnoreCase)) {
+                break
+            }
+            $destinationCursor = $destinationParent.FullName
+        } else {
+            $destinationCursor = [System.IO.Path]::GetDirectoryName($destinationCursor)
+        }
+    }
+
+    $sourceDirectories = New-Object 'System.Collections.Generic.List[string]'
+    $sourceFiles = New-Object 'System.Collections.Generic.List[string]'
+    $pendingDirectories = New-Object 'System.Collections.Generic.List[string]'
+    [void]$pendingDirectories.Add($sourceFull)
+    while ($pendingDirectories.Count -gt 0) {
+        $current = $pendingDirectories[$pendingDirectories.Count - 1]
+        $pendingDirectories.RemoveAt($pendingDirectories.Count - 1)
+        foreach ($directory in [System.IO.Directory]::EnumerateDirectories(
+                    $current, '*', [System.IO.SearchOption]::TopDirectoryOnly)) {
+            $attributes = [System.IO.File]::GetAttributes($directory)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Copy source contains a reparse point: $directory"
+            }
+            [void]$sourceDirectories.Add($directory)
+            [void]$pendingDirectories.Add($directory)
+        }
+        foreach ($file in [System.IO.Directory]::EnumerateFiles(
+                    $current, '*', [System.IO.SearchOption]::TopDirectoryOnly)) {
+            $attributes = [System.IO.File]::GetAttributes($file)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Copy source contains a reparse point: $file"
+            }
+            [void]$sourceFiles.Add($file)
+        }
+    }
+
+    [void][System.IO.Directory]::CreateDirectory($destinationFull)
+    foreach ($directory in $sourceDirectories) {
+        $relative = $directory.Substring($sourceFull.Length).TrimStart([char[]]@('\', '/'))
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::Combine($destinationFull, $relative))
+    }
+    foreach ($file in $sourceFiles) {
+        $relative = $file.Substring($sourceFull.Length).TrimStart([char[]]@('\', '/'))
+        $destinationFile = [System.IO.Path]::Combine($destinationFull, $relative)
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($destinationFile))
+        [System.IO.File]::Copy($file, $destinationFile, $false)
+    }
+}
+
+function Test-CopyDirectoryBytes {
+    $guardRoot = Join-Path $fixtureRoot 'copy-helper-guard'
+    $source = Join-Path $guardRoot 'source'
+    $destination = Join-Path $guardRoot 'destination'
+    $sourceNested = Join-Path $source 'nested'
+    $sourceFile = Join-Path $sourceNested 'bytes.bin'
+    $destinationFile = Join-Path $destination 'nested/bytes.bin'
+    [void][System.IO.Directory]::CreateDirectory($sourceNested)
+    $sourceBytes = [byte[]](0x00, 0x01, 0x7F, 0x80, 0xFE, 0xFF)
+    [System.IO.File]::WriteAllBytes($sourceFile, $sourceBytes)
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $source 'empty'))
+
+    $copyRejected = $false
+    try { Copy-DirectoryBytes -Source $source -Destination $destination } catch { $copyRejected = $true }
+    $copiedBytes = if (Test-Path -LiteralPath $destinationFile -PathType Leaf) {
+        [System.IO.File]::ReadAllBytes($destinationFile)
+    } else { [byte[]]@() }
+    $bytesMatch = [Convert]::ToBase64String($sourceBytes) -ceq [Convert]::ToBase64String($copiedBytes)
+    [System.IO.File]::WriteAllBytes($destinationFile, [byte[]](0x55, 0x01, 0x7F, 0x80, 0xFE, 0xFF))
+    $sourceUnchanged = [Convert]::ToBase64String($sourceBytes) -ceq
+        [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($sourceFile))
+    Assert-True -Condition (-not $copyRejected -and $bytesMatch -and $sourceUnchanged -and
+            [System.IO.Directory]::Exists((Join-Path $destination 'empty')) -and
+            ([System.IO.Path]::GetFullPath($sourceFile) -cne [System.IO.Path]::GetFullPath($destinationFile))) `
+        -Message 'the byte copy preserves files and empty directories while keeping files independent'
+
+    $insideRejected = $false
+    try { Copy-DirectoryBytes -Source $source -Destination (Join-Path $source 'inside') } catch { $insideRejected = $true }
+    Assert-True -Condition $insideRejected -Message 'the byte copy refuses a destination inside its source'
+
+    $existingRejected = $false
+    try { Copy-DirectoryBytes -Source $source -Destination $destination } catch { $existingRejected = $true }
+    Assert-True -Condition $existingRejected -Message 'the byte copy refuses an existing destination instead of overwriting it'
+
+    $reparseSource = Join-Path $guardRoot 'reparse-source'
+    $reparseTarget = Join-Path $guardRoot 'reparse-target'
+    $reparseLink = Join-Path $reparseSource 'linked'
+    $reparseDestinationRoot = Join-Path $guardRoot 'reparse-destination-root'
+    $reparseDestinationTarget = Join-Path $guardRoot 'reparse-destination-target'
+    $reparseDestinationLink = Join-Path $reparseDestinationRoot 'linked'
+    $reparseDestination = Join-Path $reparseDestinationLink 'copy'
+    [void][System.IO.Directory]::CreateDirectory($reparseSource)
+    [void][System.IO.Directory]::CreateDirectory($reparseTarget)
+    [void][System.IO.Directory]::CreateDirectory($reparseDestinationRoot)
+    [void][System.IO.Directory]::CreateDirectory($reparseDestinationTarget)
+    $sourceReparseRejected = $false
+    $destinationJunctionCreated = $false
+    $destinationReparseRejected = $false
+    try {
+        New-Item -ItemType Junction -Path $reparseLink -Target $reparseTarget -ErrorAction Stop | Out-Null
+        try { Copy-DirectoryBytes -Source $reparseSource -Destination $reparseDestination } catch { $sourceReparseRejected = $true }
+    } catch { }
+    try {
+        New-Item -ItemType Junction -Path $reparseDestinationLink -Target $reparseDestinationTarget -ErrorAction Stop | Out-Null
+        $destinationJunctionCreated = $true
+        try { Copy-DirectoryBytes -Source $source -Destination $reparseDestination } catch { $destinationReparseRejected = $true }
+    } catch { }
+    Assert-True -Condition ($sourceReparseRejected -and $destinationJunctionCreated -and $destinationReparseRejected) `
+        -Message 'the byte copy refuses source and destination reparse points before copying'
+    if (Test-Path -LiteralPath $reparseLink) {
+        Remove-Item -LiteralPath $reparseLink -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $reparseDestinationLink) {
+        Remove-Item -LiteralPath $reparseDestinationLink -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $script:templates = @{}
 
@@ -66,22 +592,52 @@ function New-Repo {
     # Two templates, because the MODE is decided by the gate's own bytes.
     $key = if ($ProvenanceInGate) { 'provenance' } else { 'plain' }
     if (-not $script:templates.ContainsKey($key)) {
-        $script:templates[$key] = New-RepoFromScratch -Name ".template-$key" -ProvenanceInGate:$ProvenanceInGate
+        $templateTimer = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $script:templates[$key] = New-RepoFromScratch -Name ".template-$key" -ProvenanceInGate:$ProvenanceInGate
+        } finally {
+            $templateTimer.Stop()
+            $script:templatePreparationCount++
+            $script:templatePreparationSeconds += $templateTimer.Elapsed.TotalSeconds
+        }
     }
     $template = $script:templates[$key]
 
     $repo = Join-Path $fixtureRoot $Name
-    Copy-Item -LiteralPath $template -Destination $repo -Recurse -Force
-    Copy-Item -LiteralPath "$template.origin.git" -Destination "$repo.origin.git" -Recurse -Force
-    Push-Location $repo
+    $workingRepoCopyTimer = [Diagnostics.Stopwatch]::StartNew()
     try {
-        # THE COPIED CONFIG STILL NAMES THE TEMPLATE'S BARE. Left alone, every cell that pushes
-        # would write into one shared origin -- the exact sharing this copy exists to avoid, and it
-        # would not fail loudly: it would fail as one cell seeing another cell's refs.
-        & git remote set-url origin "$repo.origin.git" 2>&1 | Out-Null
-        # Same reason, for the same kind of absolute path baked into the copied config.
-        & git config core.hooksPath ([System.IO.Path]::Combine($repo, '.no-hooks')) 2>&1 | Out-Null
-    } finally { Pop-Location }
+        Copy-DirectoryBytes -Source $template -Destination $repo
+    } finally {
+        $workingRepoCopyTimer.Stop()
+        $script:workingRepoCopyCount++
+        $script:workingRepoCopySeconds += $workingRepoCopyTimer.Elapsed.TotalSeconds
+    }
+    $bareOriginCopyTimer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        Copy-DirectoryBytes -Source "$template.origin.git" -Destination "$repo.origin.git"
+    } finally {
+        $bareOriginCopyTimer.Stop()
+        $script:bareOriginCopyCount++
+        $script:bareOriginCopySeconds += $bareOriginCopyTimer.Elapsed.TotalSeconds
+    }
+    # THE COPIED CONFIG STILL NAMES THE TEMPLATE'S BARE. Left alone, every cell that pushes
+    # would write into one shared origin -- the exact sharing this copy exists to avoid, and it
+    # would not fail loudly: it would fail as one cell seeing another cell's refs. Repair only the
+    # two path values in the copied config; the helper refuses an ambiguous or differently-shaped
+    # config instead of silently selecting a different section.
+    $configPath = Join-Path (Join-Path $repo '.git') 'config'
+    $configRepairTimer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        Set-CopiedRepoConfig -ConfigPath $configPath `
+            -TemplateOrigin "$template.origin.git" -RepoOrigin "$repo.origin.git" `
+            -TemplateHooksPath ([System.IO.Path]::Combine($template, '.no-hooks')) `
+            -RepoHooksPath ([System.IO.Path]::Combine($repo, '.no-hooks')) | Out-Null
+    } finally {
+        $configRepairTimer.Stop()
+        $script:copiedConfigRepairSeconds += $configRepairTimer.Elapsed.TotalSeconds
+    }
+    $script:fixtureConfigRepairCount++
+    $script:fixtureSetupLaunchesRemoved += 2
     return $repo
 }
 
@@ -93,28 +649,31 @@ function New-RepoFromScratch {
     [System.IO.Directory]::CreateDirectory((Join-Path $repo '.factory/gate-runs')) | Out-Null
     Push-Location $repo
     try {
-        & git init --quiet 2>&1 | Out-Null
-        & git config user.email 'fixture@example.invalid' 2>&1 | Out-Null
-        & git config user.name 'fixture' 2>&1 | Out-Null
+        [void](Invoke-CheckedGit -Operation 'initialize working repository' -Arguments @('init', '--quiet'))
+        [void](Invoke-CheckedGit -Operation 'set fixture user email' -Arguments @('config', 'user.email', 'fixture@example.invalid'))
+        [void](Invoke-CheckedGit -Operation 'set fixture user name' -Arguments @('config', 'user.name', 'fixture'))
+        # This is local to the private template. Every working copy carries its own .git/config,
+        # so copies inherit the setting without changing the user's global Git maintenance policy.
+        [void](Invoke-CheckedGit -Operation 'disable automatic maintenance for private fixture' -Arguments @('config', 'maintenance.auto', 'false'))
         # Declared, never inherited: a developer with commit.gpgSign and no key, or a global
         # pre-commit hook that fails, would otherwise leave an EMPTY repository here and every cell
         # below would fail on a subject that was never created.
-        & git config commit.gpgSign false 2>&1 | Out-Null
-        & git config core.hooksPath ([System.IO.Path]::Combine($repo, '.no-hooks')) 2>&1 | Out-Null
+        [void](Invoke-CheckedGit -Operation 'disable fixture commit signing' -Arguments @('config', 'commit.gpgSign', 'false'))
+        [void](Invoke-CheckedGit -Operation 'set fixture hooks path' -Arguments @('config', 'core.hooksPath', ([System.IO.Path]::Combine($repo, '.no-hooks'))))
         $gate = if ($ProvenanceInGate) { "function Get-HeadProvenance { }`n" } else { "# no provenance here`n" }
         [System.IO.File]::WriteAllText((Join-Path $repo 'ci/gate.ps1'), $gate, $utf8NoBom)
         [System.IO.File]::WriteAllText((Join-Path $repo 'work.txt'), "one`n", $utf8NoBom)
-        & git add -A 2>&1 | Out-Null
-        & git commit -m 'fixture' --quiet 2>&1 | Out-Null
+        [void](Invoke-CheckedGit -Operation 'stage initial fixture files' -Arguments @('add', '-A'))
+        [void](Invoke-CheckedGit -Operation 'commit initial fixture' -Arguments @('commit', '-m', 'fixture', '--quiet'))
         # AN ORIGIN WITH A MAIN, because the subject asks main whether (a) has landed -- not the
         # working tree. A fixture without one made every cell HARNESS-BROKE, which is the correct
         # behaviour for a tool that cannot read the fact it needs, and it is why this setup is part
         # of the subject's contract rather than scaffolding.
         $bare = "$repo.origin.git"
-        & git init --bare --quiet $bare 2>&1 | Out-Null
-        & git remote add origin $bare 2>&1 | Out-Null
-        & git push --quiet origin HEAD:refs/heads/main 2>&1 | Out-Null
-        & git fetch --quiet origin 2>&1 | Out-Null
+        [void](Invoke-CheckedGit -Operation 'initialize fixture bare origin' -Arguments @('init', '--bare', '--quiet', $bare))
+        [void](Invoke-CheckedGit -Operation 'add fixture origin remote' -Arguments @('remote', 'add', 'origin', $bare))
+        [void](Invoke-CheckedGit -Operation 'push fixture main branch' -Arguments @('push', '--quiet', 'origin', 'HEAD:refs/heads/main'))
+        [void](Invoke-CheckedGit -Operation 'fetch fixture origin' -Arguments @('fetch', '--quiet', 'origin'))
     } finally { Pop-Location }
     return $repo
 }
@@ -143,13 +702,39 @@ function Add-Manifest {
     if (-not $Body.ContainsKey('dirtyDiffHash')) { $Body['dirtyDiffHash'] = $null }
     $path = Join-Path (Join-Path $Repo '.factory/gate-runs') $Name
     $text = if ($PSBoundParameters.ContainsKey('RawJson')) { $RawJson } else { $Body | ConvertTo-Json -Depth 6 }
-    [System.IO.File]::WriteAllText($path, $text, $utf8NoBom)
+    $manifestWriteTimer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        [System.IO.File]::WriteAllText($path, $text, $utf8NoBom)
+    } finally {
+        $manifestWriteTimer.Stop()
+        $script:manifestWriteCount++
+        $script:manifestWriteSeconds += $manifestWriteTimer.Elapsed.TotalSeconds
+    }
     if (-not $Uncommitted) {
         Push-Location $Repo
         try {
-            & git add -- ".factory/gate-runs/$Name" 2>&1 | Out-Null
-            & git commit --quiet -m "gate: run manifest" 2>&1 | Out-Null
-        } finally { Pop-Location }
+            $manifestAddTimer = [Diagnostics.Stopwatch]::StartNew()
+            $script:manifestAddAttemptCount++
+            try {
+                [void](Invoke-CheckedGit -Operation "stage manifest '$Name'" -Arguments @('add', '--', ".factory/gate-runs/$Name"))
+                $script:manifestAddSuccessCount++
+            } finally {
+                $manifestAddTimer.Stop()
+                $script:manifestAddSeconds += $manifestAddTimer.Elapsed.TotalSeconds
+            }
+
+            $manifestCommitTimer = [Diagnostics.Stopwatch]::StartNew()
+            $script:manifestCommitAttemptCount++
+            try {
+                [void](Invoke-CheckedGit -Operation "commit manifest '$Name'" -Arguments @('commit', '--quiet', '-m', 'gate: run manifest'))
+                $script:manifestCommitSuccessCount++
+            } finally {
+                $manifestCommitTimer.Stop()
+                $script:manifestCommitSeconds += $manifestCommitTimer.Elapsed.TotalSeconds
+            }
+        } finally {
+            Pop-Location
+        }
     }
     return $path
 }
@@ -159,10 +744,36 @@ function Commit-Store {
     param([Parameter(Mandatory)] [string] $Repo, [string] $Message = 'gate: run manifest')
     Push-Location $Repo
     try {
-        & git add -- '.factory/gate-runs' 2>&1 | Out-Null
-        & git commit --quiet -m $Message 2>&1 | Out-Null
-        return (& git rev-parse HEAD).Trim()
-    } finally { Pop-Location }
+        $storeAddTimer = [Diagnostics.Stopwatch]::StartNew()
+        $script:storeAddAttemptCount++
+        try {
+            [void](Invoke-CheckedGit -Operation 'stage gate manifest store' -Arguments @('add', '--', '.factory/gate-runs'))
+            $script:storeAddSuccessCount++
+        } finally {
+            $storeAddTimer.Stop()
+            $script:storeAddSeconds += $storeAddTimer.Elapsed.TotalSeconds
+        }
+
+        $storeCommitTimer = [Diagnostics.Stopwatch]::StartNew()
+        $script:storeCommitAttemptCount++
+        try {
+            $storeCommitResult = Invoke-CheckedGit -Operation "commit gate manifest store '$Message'" `
+                -Arguments @('commit', '--quiet', '-m', $Message) -AllowNoChanges
+            if ($storeCommitResult.expectedNoChange) {
+                $script:storeCommitNoChangeCount++
+            } else {
+                $script:storeCommitSuccessCount++
+            }
+        } finally {
+            $storeCommitTimer.Stop()
+            $script:storeCommitSeconds += $storeCommitTimer.Elapsed.TotalSeconds
+        }
+
+        $headResult = Invoke-CheckedGit -Operation 'read committed store head' -Arguments @('rev-parse', 'HEAD')
+        return (@($headResult.output) -join "`n").Trim()
+    } finally {
+        Pop-Location
+    }
 }
 
 function Invoke-Proof {
@@ -172,17 +783,37 @@ function Invoke-Proof {
     # produced 647 bytes of JSON -- so the splat, not the subject, was the difference. A harness
     # that invokes the subject differently from the way an operator does is measuring a different
     # program, and that is worth two lines to avoid.
-    $out = if ($Json) {
-        @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
-                -PullRequest $PullRequest -Head $Head -RepositoryRoot $Repo -Json 2>&1 | ForEach-Object { [string]$_ })
-    } else {
-        @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
-                -PullRequest $PullRequest -Head $Head -RepositoryRoot $Repo 2>&1 | ForEach-Object { [string]$_ })
+    $invokeProofTimer = [Diagnostics.Stopwatch]::StartNew()
+    $out = @()
+    $exitCode = 1
+    try {
+        $out = if ($Json) {
+            @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+                    -PullRequest $PullRequest -Head $Head -RepositoryRoot $Repo -LedgerDirectory $script:privateLedger -Json 2>&1 |
+                    ForEach-Object { [string]$_ })
+        } else {
+            @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+                    -PullRequest $PullRequest -Head $Head -RepositoryRoot $Repo -LedgerDirectory $script:privateLedger 2>&1 |
+                    ForEach-Object { [string]$_ })
+        }
+        $exitCode = [int]$LASTEXITCODE
+    } finally {
+        $invokeProofTimer.Stop()
+        $script:invokeProofCount++
+        $script:invokeProofSeconds += $invokeProofTimer.Elapsed.TotalSeconds
     }
-    return [ordered]@{ exitCode = $LASTEXITCODE; text = $out -join "`n" }
+    return [ordered]@{
+        exitCode = $exitCode
+        text = $out -join "`n"
+        elapsedSeconds = [Math]::Round($invokeProofTimer.Elapsed.TotalSeconds, 3)
+    }
 }
 
+$suiteTimer = [Diagnostics.Stopwatch]::StartNew()
 try {
+    Test-CopiedRepoConfig
+    Test-CopyDirectoryBytes
+
     # ---- The head itself is named: the simple case, and the control for every other cell.
     Write-Host ''
     Write-Host '-- a manifest naming the head PARENT, with a pure tip --' -ForegroundColor Cyan
@@ -200,6 +831,11 @@ try {
     # vouch for this head". What changes is that no cell claims to exercise it, and this note says
     # why none can.
     $repo = New-Repo -Name 'parentpure' -ProvenanceInGate
+    $maintenanceOutput = @(& git -C $repo config --local --get maintenance.auto 2>&1)
+    $maintenanceExitCode = [int]$LASTEXITCODE
+    $maintenanceValue = (@($maintenanceOutput | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    Assert-True -Condition ($maintenanceExitCode -eq 0 -and $maintenanceValue -ceq 'false') `
+        -Message 'a copied fixture inherits maintenance.auto=false from its private template'
     $head = (& git -C $repo rev-parse HEAD).Trim()
     Add-Manifest -Repo $repo -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $head } | Out-Null
     $tip = (& git -C $repo rev-parse HEAD).Trim()
@@ -1512,6 +2148,14 @@ try {
     $originB = (& git -C $b remote get-url origin).Trim()
     Assert-True -Condition ($originA -cne $originB -and $originA -ceq "$a.origin.git") `
         -Message "each copy pushes to its OWN bare origin, not the template's ($originA)"
+    $hooksA = (& git -C $a config --get core.hooksPath).Trim()
+    $hooksB = (& git -C $b config --get core.hooksPath).Trim()
+    $hooksTemplate = (& git -C $script:templates['provenance'] config --get core.hooksPath).Trim()
+    Assert-True -Condition ($hooksA -ceq ([System.IO.Path]::Combine($a, '.no-hooks')) -and
+            $hooksB -ceq ([System.IO.Path]::Combine($b, '.no-hooks')) -and
+            $hooksTemplate -ceq ([System.IO.Path]::Combine($script:templates['provenance'], '.no-hooks')) -and
+            $hooksA -cne $hooksB -and $hooksA -cne $hooksTemplate -and $hooksB -cne $hooksTemplate) `
+        -Message 'Git reads each copied hooksPath independently, leaving the other copy and template unchanged'
 
     Add-Manifest -Repo $a -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = 'x' } | Out-Null
     & git -C $a push --quiet origin HEAD:refs/heads/main 2>&1 | Out-Null
@@ -1528,6 +2172,54 @@ try {
     $mainB = (& git -C $b rev-parse origin/main).Trim()
     Assert-True -Condition ($mainB -cne $tipA) `
         -Message "a push in one copy does not move another copy's origin/main"
+
+    # ---- The helper's private ledger must not make ordinary proofs depend on machine stores.
+    Write-Host ''
+    Write-Host '-- ordinary proofs use a private ledger while direct defaults still read the environment store --' -ForegroundColor Cyan
+    $repo = New-Repo -Name 'private-ledger-env-control' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    $twinName = $gated.Substring(0, 12) + '-2026-09-14T07-00-00.json'
+    Add-Manifest -Repo $repo -Name $twinName `
+        -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $negativeSlotRoot = Join-Path $fixtureRoot 'private-slot-negative'
+    $negativeSlotStore = Join-Path $negativeSlotRoot 'gate-runs'
+    [System.IO.Directory]::CreateDirectory($negativeSlotStore) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $negativeSlotStore $twinName),
+        (@{ status = 'RED'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json),
+        $utf8NoBom)
+
+    $previousSlotDirForNegative = $env:GRAPHHELM_SLOT_DIR
+    try {
+        $env:GRAPHHELM_SLOT_DIR = $negativeSlotRoot
+        $helperResult = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+        $nativeOut = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+                -PullRequest 42 -Head $tip -RepositoryRoot $repo 2>&1 | ForEach-Object { [string]$_ })
+        $nativeCode = [int]$LASTEXITCODE
+        $nativeText = $nativeOut -join "`n"
+        Assert-True -Condition (
+            $helperResult.exitCode -eq 0 -and
+            $helperResult.text -cmatch 'SATISFIED' -and
+            $helperResult.text -cnotmatch 'disagree on status'
+        ) -Message 'Invoke-Proof uses its empty private ledger instead of GRAPHHELM_SLOT_DIR'
+        Assert-True -Condition (
+            $nativeCode -eq 0 -and
+            $nativeText -cmatch 'disagree on status'
+        ) -Message 'a direct default-ledger proof still reads the contradictory GRAPHHELM_SLOT_DIR entry'
+    } finally {
+        if ($null -eq $previousSlotDirForNegative) {
+            Remove-Item Env:\GRAPHHELM_SLOT_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:GRAPHHELM_SLOT_DIR = $previousSlotDirForNegative
+        }
+    }
+    $negativeEnvironmentRestored = if ($null -eq $previousSlotDirForNegative) {
+        -not (Test-Path Env:\GRAPHHELM_SLOT_DIR)
+    } else {
+        [string]::Equals([string]$env:GRAPHHELM_SLOT_DIR, [string]$previousSlotDirForNegative, [StringComparison]::Ordinal)
+    }
+    Assert-True -Condition $negativeEnvironmentRestored `
+        -Message 'GRAPHHELM_SLOT_DIR is restored after the private-ledger control'
 
     # ---- #911: EVERY SLOT HAS A STORE, and scanning one of them is absence at the wrong path.
     Write-Host ''
@@ -1619,8 +2311,55 @@ try {
         -Message 'and de-duplicates, so a variable pointing at a default is not scanned twice'
 
 } finally {
-    Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+    $cleanupTimer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+    } finally {
+        $cleanupTimer.Stop()
+    }
+    $cleanupSeconds = $cleanupTimer.Elapsed.TotalSeconds
+    $suiteTimer.Stop()
 }
+
+Write-Host "Fixture setup runtime: $script:fixtureConfigRepairCount copied repositories; $script:fixtureSetupLaunchesRemoved native path-repair launches replaced"
+$setupSeconds = $script:templatePreparationSeconds + $script:workingRepoCopySeconds +
+    $script:bareOriginCopySeconds + $script:copiedConfigRepairSeconds + $script:manifestWriteSeconds +
+    $script:manifestAddSeconds + $script:manifestCommitSeconds +
+    $script:storeAddSeconds + $script:storeCommitSeconds
+$instrumentedBodyAndCleanupSeconds = $suiteTimer.Elapsed.TotalSeconds
+$measuredSeconds = $setupSeconds + $script:invokeProofSeconds + $cleanupSeconds
+$residualSeconds = $instrumentedBodyAndCleanupSeconds - $measuredSeconds
+Write-Host ((
+        "Timing runtime (actual): template preparation={0} call(s)/{1:N3}s; working-repo copy={2} call(s)/{3:N3}s; " +
+        "bare-origin copy={4} call(s)/{5:N3}s; copied-config repair={6} call(s)/{7:N3}s"
+    ) -f
+    $script:templatePreparationCount, $script:templatePreparationSeconds,
+    $script:workingRepoCopyCount, $script:workingRepoCopySeconds,
+    $script:bareOriginCopyCount, $script:bareOriginCopySeconds,
+    $script:fixtureConfigRepairCount, $script:copiedConfigRepairSeconds)
+Write-Host ((
+        "Timing runtime (actual): manifest write={0} call(s)/{1:N3}s; Add-Manifest git add={2} successful/{3} attempted/{4:N3}s; " +
+        "Add-Manifest git commit={5} successful/{6} attempted/{7:N3}s; Commit-Store git add={8} successful/{9} attempted/{10:N3}s; " +
+        "Commit-Store git commit={11} successful/{12} attempted/{13} no-change/{14:N3}s; Invoke-Proof native={15} call(s)/{16:N3}s"
+    ) -f
+    $script:manifestWriteCount, $script:manifestWriteSeconds,
+    $script:manifestAddSuccessCount, $script:manifestAddAttemptCount, $script:manifestAddSeconds,
+    $script:manifestCommitSuccessCount, $script:manifestCommitAttemptCount, $script:manifestCommitSeconds,
+    $script:storeAddSuccessCount, $script:storeAddAttemptCount, $script:storeAddSeconds,
+    $script:storeCommitSuccessCount, $script:storeCommitAttemptCount, $script:storeCommitNoChangeCount, $script:storeCommitSeconds,
+    $script:invokeProofCount, $script:invokeProofSeconds)
+Write-Host ((
+        "Checked setup git commands: {0} attempted; {1} successful; {2} expected no-change; {3} failed"
+    ) -f
+    $script:nativeGitAttemptCount, $script:nativeGitSuccessCount,
+    $script:nativeGitExpectedNoChangeCount, $script:nativeGitFailureCount)
+Write-Host ((
+        "Timing runtime (actual): instrumented body+cleanup={0:N3}s; cleanup={1:N3}s; measured phases={2:N3}s; " +
+        "residual={3:N3}s"
+    ) -f
+    $instrumentedBodyAndCleanupSeconds, $cleanupSeconds, $measuredSeconds, $residualSeconds)
+Write-Host 'Timing scope: instrumented body+cleanup starts after script loading and fixture root setup; direct native verifier controls remain in residual time; Invoke-Proof timing covers only private-ledger helper calls.'
+Write-Host "Assertions executed (actual): $script:total"
 
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {

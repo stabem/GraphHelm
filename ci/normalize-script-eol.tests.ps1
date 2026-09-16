@@ -16,7 +16,7 @@
 # #676 records `git checkout --force` behaving differently on 2.43.0, so a cell that asserts what
 # the RECIPE does is a claim about a git version and says so.
 
-$ExpectedAssertionCount = 120
+$ExpectedAssertionCount = 125
 # 'Continue', not 'Stop'. This suite RUNS the failing recipe on purpose, and under Windows
 # PowerShell 5.1 a native command's redirected stderr becomes a NativeCommandError that 'Stop'
 # promotes to a terminating error -- so `git checkout` printing "did not match any file" would kill
@@ -111,6 +111,48 @@ if (-not (Test-Path -LiteralPath $programPath)) {
 $Latin1 = [System.Text.Encoding]::GetEncoding(28591)
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-eol-$([guid]::NewGuid().ToString('N'))"
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$script:fixtureCount = 0
+$script:removedLocalConfigCalls = 0
+$script:configProofBeforeBytes = $null
+
+function ConvertTo-FixtureGitConfigPath {
+    param([Parameter(Mandatory)] [string] $Path)
+    $normalized = [System.IO.Path]::GetFullPath($Path).Replace('\', '/')
+    return [string][char]34 + $normalized.Replace([string][char]34, '\"') + [string][char]34
+}
+
+function Write-FixtureLocalConfig {
+    param([Parameter(Mandatory)] [string] $Repo)
+    $configPath = Join-Path $Repo '.git\config'
+    $existing = [System.IO.File]::ReadAllText($configPath)
+    $newline = if ($existing.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $separator = if ($existing.Length -gt 0 -and -not $existing.EndsWith("`r`n") -and -not $existing.EndsWith("`n")) { $newline } else { '' }
+    $hooksPath = ConvertTo-FixtureGitConfigPath (Join-Path $Repo '.no-hooks')
+    $settings = @(
+        '[user]'
+        '    email = fixture@example.invalid'
+        '    name = fixture'
+        '[core]'
+        '    autocrlf = false'
+        "    hooksPath = $hooksPath"
+        '[commit]'
+        '    gpgSign = false'
+        '[tag]'
+        '    gpgSign = false'
+    ) -join $newline
+    [System.IO.File]::AppendAllText($configPath, $separator + $settings + $newline, $Utf8NoBom)
+}
+
+function Invoke-FixtureGit {
+    param([Parameter(Mandatory)] [string[]] $Arguments)
+    $output = @(& git @Arguments 2>&1)
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        $detail = (@($output | ForEach-Object { [string] $_ }) -join ' | ')
+        throw "HARNESS-BROKE: fixture git failed (exit $code): git $($Arguments -join ' ') -- $detail"
+    }
+}
 
 function New-Fixture {
     <#
@@ -122,29 +164,27 @@ function New-Fixture {
 
     $repo = Join-Path $fixtureRoot $Name
     [System.IO.Directory]::CreateDirectory($repo) | Out-Null
+    $script:fixtureCount++
+    $script:removedLocalConfigCalls += 6
     Push-Location $repo
     try {
-        & git init --quiet 2>&1 | Out-Null
-        & git config user.email 'fixture@example.invalid' 2>&1 | Out-Null
-        & git config user.name 'fixture' 2>&1 | Out-Null
-        & git config core.autocrlf false 2>&1 | Out-Null
-        # A developer with `commit.gpgSign=true` and no usable key cannot commit here, and the
-        # fixture's failure is swallowed by Out-Null -- so the repository would be EMPTY and every
-        # cell below would fail on a subject that was never created. The fixture declares its own
-        # configuration rather than inheriting whatever the machine has.
-        & git config commit.gpgSign false 2>&1 | Out-Null
+        Invoke-FixtureGit -Arguments @('init', '--quiet')
+        $configPath = Join-Path $repo '.git\config'
+        if ($Name -like '__config-proof*') {
+            $script:configProofBeforeBytes = [System.IO.File]::ReadAllBytes($configPath)
+        }
+        Write-FixtureLocalConfig -Repo $repo
+        # A developer with `commit.gpgSign=true` and no usable key cannot commit here. The fixture
+        # declares its own signing configuration rather than inheriting whatever the machine has.
         # And no inherited hooks: a global core.hooksPath whose pre-commit fails would make the
-        # fixture commit fail, Out-Null would swallow it, and every cell below would run against an
-        # EMPTY repository. Same reason as the signing setting -- a fixture that depends on the
-        # developer's configuration is a gate that fails for reasons unrelated to the change.
-        & git config core.hooksPath ([System.IO.Path]::Combine($repo, '.no-hooks')) 2>&1 | Out-Null
-        & git config tag.gpgSign false 2>&1 | Out-Null
+        # fixture commit fail. The fixture-owned hooks path keeps that machine setting out of the
+        # repository for the same reason as the signing setting.
         [System.IO.File]::WriteAllText((Join-Path $repo '.gitattributes'), "*.sh text eol=lf`n*.ps1 text eol=lf`n*.py text eol=lf`n", $Latin1)
         foreach ($name in $Files) {
             [System.IO.File]::WriteAllText((Join-Path $repo $name), "echo one`necho two`n", $Latin1)
         }
-        & git add -A 2>&1 | Out-Null
-        & git commit -m 'fixture' --quiet 2>&1 | Out-Null
+        Invoke-FixtureGit -Arguments @('add', '-A')
+        Invoke-FixtureGit -Arguments @('commit', '-m', 'fixture', '--quiet')
         # Now put CRLF back in the WORKING TREE only. The index keeps LF, and because the attribute
         # normalises on comparison, git reports the tree as clean.
         foreach ($name in $Files) {
@@ -155,6 +195,41 @@ function New-Fixture {
     }
     return $repo
 }
+
+$configProof = New-Fixture -Name ('__config-proof space ' + [string][char]0x00E9)
+$configAfterPath = Join-Path $configProof '.git\config'
+$configAfter = [System.IO.File]::ReadAllText($configAfterPath)
+$configAfterBytes = [System.IO.File]::ReadAllBytes($configAfterPath)
+$prefixPreserved = $configAfterBytes.Length -ge $script:configProofBeforeBytes.Length
+if ($prefixPreserved) {
+    for ($byteIndex = 0; $byteIndex -lt $script:configProofBeforeBytes.Length; $byteIndex++) {
+        if ($configAfterBytes[$byteIndex] -ne $script:configProofBeforeBytes[$byteIndex]) { $prefixPreserved = $false; break }
+    }
+}
+$configValues = @(& git -C $configProof config --local --list)
+$configReadExit = $LASTEXITCODE
+$hooksValue = ([System.IO.Path]::GetFullPath((Join-Path $configProof '.no-hooks'))).Replace('\', '/')
+$expectedConfigValues = @(
+    'user.email=fixture@example.invalid'
+    'user.name=fixture'
+    'core.autocrlf=false'
+    "core.hookspath=$hooksValue"
+    'commit.gpgsign=false'
+    'tag.gpgsign=false'
+)
+Assert-True -Condition ($configReadExit -eq 0 -and ($expectedConfigValues | Where-Object { $configValues -cnotcontains $_ }).Count -eq 0) `
+    -Message 'fixture local config exposes all six deterministic values through git'
+Assert-True -Condition ($null -ne $script:configProofBeforeBytes -and $prefixPreserved) `
+    -Message 'fixture config append preserves the bytes generated by git init'
+Assert-True -Condition ($configAfter -cmatch '(?im)^\s*(repositoryformatversion|filemode|bare|ignorecase)\s*=') `
+    -Message 'fixture config retains unrelated init-generated core settings'
+$quotedPath = ConvertTo-FixtureGitConfigPath ('C:\fixture space\' + [string][char]0x00E9 + '\deep\dir\.no-hooks')
+Assert-True -Condition ($quotedPath -ceq ('"C:/fixture space/' + [string][char]0x00E9 + '/deep/dir/.no-hooks"')) `
+    -Message 'fixture config path serialization uses a quoted value with spaces, non-ASCII, and normalized backslashes'
+$configHead = ((& git -C $configProof rev-parse HEAD) -join '').Trim()
+$configHeadExit = $LASTEXITCODE
+Assert-True -Condition ($configHeadExit -eq 0 -and $configHead -match '^[0-9a-f]{40}$') `
+    -Message 'fixture native init, add, and commit produced a real HEAD'
 
 function Get-WorktreeEol {
     param([Parameter(Mandatory)] [string] $Repo, [Parameter(Mandatory)] [string] $File)
@@ -1179,6 +1254,7 @@ if ($script:total -ne $ExpectedAssertionCount) {
 
 $passed = $script:total - $script:failures
 $color = if ($script:failures -eq 0) { 'Green' } else { 'Red' }
+Write-Host "fixture setup count: $script:fixtureCount (35 pre-existing + 1 config proof); local config setup launches avoided: 210 for the pre-existing fixtures, $script:removedLocalConfigCalls equivalent for this run"
 Write-Host "$passed/$script:total passed" -ForegroundColor $color
 if ($script:failures -gt 0) { exit 1 }
 exit 0

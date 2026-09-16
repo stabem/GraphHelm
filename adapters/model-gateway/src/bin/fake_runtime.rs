@@ -42,13 +42,15 @@
 //!   showing up in a build failure) and exits `1` — unparseable, so this must classify as
 //!   `RuntimeCrashed`, never `QuotaExhausted` (PR review IMPORTANT 4: quota markers are scanned
 //!   only against successfully *parsed* error text, never a raw, unparsed stream).
-//! - `hang`: sleeps for an hour. A well-behaved caller must kill this before it returns — this
-//!   mode never exits on its own within any test's patience.
+//! - `hang`: sleeps for up to 120 seconds. When `FAKE_RUNTIME_ORPHAN_RELEASE_DIR` names an
+//!   existing private directory, it exits when that directory is removed; a missing or malformed
+//!   release setup still takes the bounded fallback, so it cannot make a regression pass early.
 //! - `orphan`: spawns a second `fake_runtime` in `hang` mode, letting it inherit this process's
 //!   own stdout/stderr (the adapter's pipe write ends), then exits immediately itself — imitating
 //!   a native-runtime CLI that forks a background helper without redirecting its own inherited
 //!   stdio before exiting (PR review IMPORTANT 6). The direct child (this process) reports a
-//!   clean, fast exit; the grandchild keeps the pipes open indefinitely.
+//!   clean, fast exit; the grandchild keeps the pipes open until the test-owned release directory
+//!   is removed or the bounded fallback expires.
 //! - `env-dump`: prints every environment variable this process actually has, one `NAME=VALUE`
 //!   line per variable, to stdout, and exits `0`. This is how `tests/runtime_adapters.rs` inspects
 //!   exactly what environment the adapter constructed for its child, including proving what it
@@ -58,6 +60,14 @@
 //! behavior needs to classify: it prints a short diagnostic to stderr and exits `2`.
 
 use std::io::{Read, Write};
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+const ORPHAN_RELEASE_DIR_ENV: &str = "FAKE_RUNTIME_ORPHAN_RELEASE_DIR";
+// Bounds normal polling between filesystem checks. `symlink_metadata` has no hard timeout, so an
+// individual OS call that blocks longer is outside this fixture's wall-clock guarantee.
+const HANG_FALLBACK: Duration = Duration::from_secs(120);
+const HANG_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
     let mode = std::env::var("FAKE_RUNTIME_MODE").unwrap_or_default();
@@ -200,21 +210,54 @@ fn run_quota_marker_crash() {
     std::process::exit(1);
 }
 
-/// `mode=hang`: never exits on its own. The adapter's deadline is what is under test, not this
-/// process — an hour comfortably exceeds any deadline a test configures.
+/// `mode=hang`: waits for a valid orphan release directory to disappear, or for the bounded
+/// fallback lifetime when no valid release directory was supplied. The latter preserves the
+/// original malformed/missing-setup behavior instead of letting a fixture misuse exit early.
 fn run_hang() {
-    // 120 s, not an hour: long enough that every deadline test (2 s) and the orphan
-    // grandchild scenario stay valid, short enough that a leftover process cannot
-    // lock this executable against rebuilds for the rest of the hour — a full-gate
-    // run went red on exactly that (Access is denied removing fake_runtime.exe).
-    std::thread::sleep(std::time::Duration::from_secs(120));
+    let release_dir = std::env::var_os(ORPHAN_RELEASE_DIR_ENV)
+        .map(std::path::PathBuf::from)
+        .filter(|path| is_release_directory(path));
+
+    let Some(release_dir) = release_dir else {
+        std::thread::sleep(HANG_FALLBACK);
+        return;
+    };
+
+    let fallback_deadline = Instant::now() + HANG_FALLBACK;
+    let mut metadata_error_reported = false;
+    while !release_requested(&release_dir, &mut metadata_error_reported)
+        && Instant::now() < fallback_deadline
+    {
+        std::thread::sleep(HANG_POLL_INTERVAL);
+    }
+}
+
+fn is_release_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+}
+
+fn release_requested(path: &Path, metadata_error_reported: &mut bool) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            if !*metadata_error_reported {
+                eprintln!("fake_runtime: orphan release check failed: {error}");
+                *metadata_error_reported = true;
+            }
+            false
+        }
+    }
 }
 
 /// `mode=orphan`: spawns a second `fake_runtime` (`FAKE_RUNTIME_MODE=hang`) that inherits this
 /// process's own stdout/stderr — which, once the real adapter is the one spawning THIS process,
 /// are the adapter's own pipe write ends — then exits immediately without waiting for or
 /// detaching from that grandchild. `runtime.rs`'s IMPORTANT 6 fix is what lets a caller survive
-/// this: the grandchild keeps the pipes open long after this (the direct child) process is gone.
+/// this: the grandchild keeps the pipes open after this (the direct child) process is gone until
+/// the test removes its private release directory.
 fn run_orphan() {
     let exe = std::env::current_exe().expect("fake_runtime: could not resolve its own exe path");
     let _ = std::process::Command::new(exe)

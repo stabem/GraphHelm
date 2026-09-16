@@ -6,6 +6,9 @@
 //! `env!("CARGO_BIN_EXE_fake_runtime")` (`docs/superpowers/plans/2026-08-14-gateway-slice.md`
 //! Task 5).
 
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -14,6 +17,67 @@ use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_gateway::taxonomy::{GatewayError, outcome_for_error};
 use graphhelm_model_gateway::runtime::RuntimeAdapter;
 use graphhelm_protocols::NodeOutcome;
+
+const ORPHAN_RELEASE_DIR_ENV: &str = "FAKE_RUNTIME_ORPHAN_RELEASE_DIR";
+
+struct OrphanFixtureGuard {
+    release_dir: Option<tempfile::TempDir>,
+}
+
+impl OrphanFixtureGuard {
+    fn new() -> Self {
+        Self {
+            release_dir: Some(tempfile::tempdir().expect("create orphan release directory")),
+        }
+    }
+
+    fn env(&self) -> (String, String) {
+        let path = self
+            .release_dir
+            .as_ref()
+            .expect("orphan release directory is still owned")
+            .path()
+            .to_str()
+            .expect("orphan release directory path must be valid UTF-8")
+            .to_owned();
+        (ORPHAN_RELEASE_DIR_ENV.to_owned(), path)
+    }
+
+    fn release(&mut self) {
+        let path = self
+            .release_dir
+            .as_ref()
+            .expect("orphan release directory is still owned")
+            .path()
+            .to_owned();
+        match fs::remove_dir(&path) {
+            Ok(()) => {
+                self.release_dir = None;
+            }
+            Err(error) => panic!(
+                "failed to release orphan fixture directory {}: {error}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl Drop for OrphanFixtureGuard {
+    fn drop(&mut self) {
+        let Some(tempdir) = self.release_dir.take() else {
+            return;
+        };
+        let path: PathBuf = tempdir.path().to_owned();
+        if let Err(error) = fs::remove_dir(&path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to release orphan fixture directory during drop {}: {error}",
+                path.display()
+            );
+        }
+    }
+}
 
 /// Path to the compiled `fake_runtime` fixture — set by Cargo at compile time for any
 /// integration test in this package (`graphhelm-model-gateway` has both a `[lib]` and this
@@ -165,7 +229,7 @@ fn a_crashed_runtime_is_runtime_crashed_not_malformed() {
 
 #[test]
 fn a_hung_runtime_is_killed_within_the_deadline() {
-    // A short, test-local deadline — the fixture itself sleeps for an hour, so only the
+    // A short, test-local deadline — the fixture's bounded fallback is 120s, so only the
     // adapter's own kill-at-deadline logic can make this test finish quickly.
     let manifest = native_manifest("claude_code", Some(2));
     let route = &manifest.routes()[0];
@@ -179,7 +243,7 @@ fn a_hung_runtime_is_killed_within_the_deadline() {
     let elapsed = started.elapsed();
 
     assert_eq!(error, GatewayError::Timeout);
-    // Well under the fixture's 3600s sleep, and comfortably under the suite's own patience — if
+    // Well under the fixture's 120s fallback, and comfortably under the suite's own patience — if
     // `kill()` had not actually terminated the child, `Child::wait()` inside `invoke` would have
     // blocked until the fixture exited on its own, which is the real proof "the child is
     // actually dead": this call could not have returned quickly otherwise.
@@ -196,7 +260,7 @@ fn a_hung_runtime_is_killed_within_the_deadline() {
 /// would otherwise kill the child never gets a chance to run. 1 MiB is comfortably over any OS
 /// pipe buffer (typically 64 KiB or less on both Windows and Unix). Observed directly against
 /// the pre-fix code: this test hung indefinitely (confirmed with a wrapped harness timeout,
-/// since the fixture's own 3600s sleep and the absence of any deadline-loop entry means nothing
+/// since the fixture's own 120s fallback and the absence of any deadline-loop entry means nothing
 /// in-process would ever kill it) — see the fix's commit message for the exact command used.
 #[test]
 fn a_prompt_larger_than_the_pipe_buffer_still_hits_the_deadline_against_a_hung_child() {
@@ -355,10 +419,10 @@ fn unparseable_output_mentioning_quota_is_runtime_crashed_not_quota_exhausted() 
 
 /// The direct child (`fake_runtime`, `orphan` mode) exits almost immediately with status `0` and
 /// empty output, but its grandchild (`FAKE_RUNTIME_MODE=hang`) inherits the adapter's own
-/// stdout/stderr pipe write ends and never exits. Pre-fix, `invoke`'s `Exited` branch
-/// unconditionally `.join()`ed the reader threads once `try_wait` reported the direct child gone
-/// — with no deadline of its own on that join — so this call would have wedged indefinitely
-/// waiting for an EOF the still-running grandchild never produces.
+/// stdout/stderr pipe write ends and stays alive until the test-owned release directory is
+/// removed. Pre-fix, `invoke`'s `Exited` branch unconditionally `.join()`ed the reader threads
+/// once `try_wait` reported the direct child gone — with no deadline of its own on that join — so
+/// this call would have wedged until the fixture's bounded fallback released the pipes.
 ///
 /// Post-fix, the poll loop only reaches its `Exited` branch once BOTH the child has exited AND
 /// both readers have observed EOF/an error; since the readers never see EOF here (the grandchild
@@ -368,11 +432,15 @@ fn unparseable_output_mentioning_quota_is_runtime_crashed_not_quota_exhausted() 
 /// past the deadline).
 #[test]
 fn an_orphaned_grandchild_holding_the_pipe_does_not_wedge_past_the_deadline() {
+    let mut fixture = OrphanFixtureGuard::new();
     let manifest = native_manifest("claude_code", Some(2));
     let route = &manifest.routes()[0];
     let adapter = RuntimeAdapter::new(
         route,
-        vec![("FAKE_RUNTIME_MODE".to_owned(), "orphan".to_owned())],
+        vec![
+            ("FAKE_RUNTIME_MODE".to_owned(), "orphan".to_owned()),
+            fixture.env(),
+        ],
     );
 
     let started = Instant::now();
@@ -390,6 +458,11 @@ fn an_orphaned_grandchild_holding_the_pipe_does_not_wedge_past_the_deadline() {
         "expected the adapter to return once its own 2s deadline elapsed, not wait on the \
          orphaned grandchild; took {elapsed:?}"
     );
+
+    // Keep the grandchild and its inherited pipes alive until both original assertions above
+    // have run. Drop also attempts this release during a panic; a normal-path failure panics so
+    // cleanup cannot silently certify the fixture.
+    fixture.release();
 }
 
 // -------------------------------------------------------------------------------------------

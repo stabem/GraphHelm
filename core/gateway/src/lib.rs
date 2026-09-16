@@ -9,5 +9,6 @@
 
 pub mod call;
 pub mod eligibility;
+pub mod judgment;
 pub mod manifest;
 pub mod taxonomy;

@@ -169,13 +169,15 @@ fn the_gateway_crate_has_no_impure_dependency() {
 /// (`core/gateway/src/manifest.rs`): `graphhelm-protocols`, `serde` and `serde_json`, and nothing
 /// else. Task 1 added no error-derive crate — `ManifestError` has a hand-written `Display` impl,
 /// not a `thiserror` derive — so unlike `core/execution` (which also depends on `graphhelm-events`)
-/// this crate's table is exactly these three. Adding a dependency is a deliberate edit to this
-/// test, not a silent manifest change.
+/// this crate's table was exactly those three. #1113 (`core/gateway/src/judgment.rs`) added `sha2`
+/// and `hex`, both pure, so `request_sha256` can key a recorded judge fixture by the canonical
+/// request bytes. Adding a dependency is a deliberate edit to this test, not a silent manifest
+/// change.
 #[test]
 fn the_gateway_crate_depends_on_exactly_the_declared_crates() {
     assert_eq!(
         declared_crate_names(MANIFEST),
-        ["graphhelm-protocols", "serde", "serde_json"]
+        ["graphhelm-protocols", "hex", "serde", "serde_json", "sha2"]
     );
 }
 

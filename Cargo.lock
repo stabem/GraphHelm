@@ -1037,8 +1037,10 @@ name = "graphhelm-gateway"
 version = "0.1.0"
 dependencies = [
  "graphhelm-protocols",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

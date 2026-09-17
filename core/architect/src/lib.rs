@@ -22,6 +22,7 @@
 
 pub mod catalog;
 pub mod judge;
+pub mod judgment;
 pub mod model;
 pub mod profile;
 pub mod refusal;
@@ -30,6 +31,8 @@ pub mod template;
 
 pub use catalog::{CapabilityCatalog, TOOL_FAMILIES};
 pub use judge::{JudgeModel, RecordedJudgeModel};
+pub use judgment::nodes::{NODE_KIND_MISMATCH_CODE, NODE_OFF_GOAL_CODE};
+pub use judgment::{Extras, JudgmentReport, NodeJudgment};
 pub use model::{DraftModel, DraftReply, MAX_FIXTURE_BYTES, RecordedDraftModel};
 pub use profile::{
     DEFAULT_CLEARANCE_WITHIN_SECONDS, DEFAULT_MAX_NODES, DEFAULT_WAIT_WITHIN_SECONDS,
@@ -40,7 +43,7 @@ pub use synthesize::{
     API_VERSION, BUDGET_EXCEEDS_PROFILE_CODE, DRAFT_SOURCE, KIND, MAX_NAME_CHARS,
     MAX_REPAIR_ROUNDS, MAX_REPLY_BYTES, NODE_TYPE_NOT_EXECUTABLE_CODE, NOT_JSON_CODE,
     NodeRationale, ORIGIN_LABEL, SynthesizedGraph, TOOL_CALL_MISSING_CODE, stamp_customs,
-    synthesize,
+    synthesize, synthesize_with,
 };
 pub use template::{
     REPAIR_HEAD, RepairContext, TEMPLATE, assemble_prompt, prompt_sha256, template_sha256,

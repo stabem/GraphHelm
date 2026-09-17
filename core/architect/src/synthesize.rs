@@ -12,13 +12,15 @@
 //! is bytes for `execution start --file`, on the road every authored graph takes.
 
 use graphhelm_gateway::call::Usage;
-use graphhelm_protocols::{Diagnostic, GraphNode, NodeType};
+use graphhelm_protocols::{Diagnostic, ExecutionGraph, GraphNode, NodeType};
 use graphhelm_runtime::classify::{NodeWorkKind, work_kind};
 use graphhelm_tool_broker::call::{RepositoryAction, ToolCall};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::catalog::CapabilityCatalog;
+use crate::judge::JudgeModel;
+use crate::judgment::{self, Extras, JudgmentReport};
 use crate::model::DraftModel;
 use crate::profile::TaskProfile;
 use crate::refusal::ArchitectRefusal;
@@ -65,8 +67,9 @@ pub struct NodeRationale {
     pub reason: String,
 }
 
-/// The one reply every door returns (spec D8).
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+/// The one reply every door returns (spec D8). `PartialEq` only: the judgment report carries
+/// probabilities (`f64`), which have no total equality.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SynthesizedGraph {
     /// The complete graph document, ready for `execution start --file`.
@@ -89,24 +92,61 @@ pub struct SynthesizedGraph {
     /// The usage the door reported for the accepted round, when it reported any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// Present only when a judge was named (spec D4): the accepted draft's per-node judgments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub judgments: Option<JudgmentReport>,
 }
 
-/// Compiles `profile.goal` into a graph document through `model`, or refuses.
+/// Compiles `profile.goal` into a graph document through `model`, or refuses. Today's road:
+/// no judge, one draft; byte-identical to [`synthesize_with`] under [`Extras::default`].
 ///
 /// # Errors
-/// Every arm of [`ArchitectRefusal`]: the profile out of bounds (before any prompt), the door
-/// unreachable or the fixture missing (propagated as-is), the last draft not JSON or still
-/// invalid after every repair (with that draft's diagnostics), a program outside the catalog,
-/// more nodes than the ceiling, or a node that can park after stamping.
+/// As [`synthesize_with`].
 pub fn synthesize(
     profile: &TaskProfile,
     catalog: &CapabilityCatalog,
     model: &dyn DraftModel,
 ) -> Result<SynthesizedGraph, ArchitectRefusal> {
+    synthesize_with(profile, catalog, model, &Extras::default())
+}
+
+/// Compiles `profile.goal` into a graph document through `model`, with what `extras` adds: a
+/// judge whose per-node verdicts become repairable diagnostics after every deterministic check
+/// has passed (spec D3), reported under `judgments`.
+///
+/// # Errors
+/// Every arm of [`ArchitectRefusal`]: the profile out of bounds or `extras.drafts` outside
+/// `1..=3` (before any prompt), the door unreachable or the fixture missing (propagated as-is),
+/// the judge unreachable or its recording missing, the last draft not JSON or still invalid
+/// after every repair (with that draft's diagnostics, judged ones included), a program outside
+/// the catalog, more nodes than the ceiling, or a node that can park after stamping.
+pub fn synthesize_with(
+    profile: &TaskProfile,
+    catalog: &CapabilityCatalog,
+    model: &dyn DraftModel,
+    extras: &Extras<'_>,
+) -> Result<SynthesizedGraph, ArchitectRefusal> {
     profile.validate()?;
+    if !(1..=3).contains(&extras.drafts) {
+        return Err(ArchitectRefusal::InvalidProfile {
+            pointer: "/drafts".to_owned(),
+            message: "drafts must be 1, 2 or 3".to_owned(),
+        });
+    }
+    single_draft(profile, catalog, model, extras.judge)
+}
+
+/// The single-draft loop: draft, compile, judge, repair; at most [`MAX_REPAIR_ROUNDS`] repairs.
+fn single_draft(
+    profile: &TaskProfile,
+    catalog: &CapabilityCatalog,
+    model: &dyn DraftModel,
+    judge: Option<&dyn JudgeModel>,
+) -> Result<SynthesizedGraph, ArchitectRefusal> {
     let mut prompt_sha256s = Vec::new();
     let mut previous: Option<(String, Vec<Diagnostic>)> = None;
     let mut round: u8 = 1;
+    let mut judge_usage = Usage::default();
     loop {
         let repair = previous
             .as_ref()
@@ -116,6 +156,33 @@ pub fn synthesize(
         let reply = model.draft(&prompt)?;
         match compile_round(profile, catalog, &reply.text) {
             Ok(compiled) => {
+                // The judge is asked ONLY here: about a draft every deterministic check passed.
+                // Its diagnostics take the same road a lint error takes (spec D3 door (a)).
+                let mut judgments = None;
+                if let Some(judge) = judge {
+                    let request = judgment::nodes::request(profile, catalog, &compiled.graph);
+                    let judged = judge.judge(&request)?;
+                    judge_usage = add_usage(judge_usage, judged.usage);
+                    let (mut diagnostics, nodes, unresolved) =
+                        judgment::nodes::read(&judged, &compiled.graph);
+                    if !diagnostics.is_empty() {
+                        sort_diagnostics(&mut diagnostics);
+                        if round > MAX_REPAIR_ROUNDS {
+                            return Err(ArchitectRefusal::Invalid {
+                                rounds: round,
+                                diagnostics,
+                            });
+                        }
+                        previous = Some((reply.text, diagnostics));
+                        round += 1;
+                        continue;
+                    }
+                    judgments = Some(JudgmentReport {
+                        nodes,
+                        unresolved,
+                        usage: judge_usage,
+                    });
+                }
                 return Ok(SynthesizedGraph {
                     document: compiled.document,
                     rationale: compiled.rationale,
@@ -124,6 +191,7 @@ pub fn synthesize(
                     rounds: round,
                     prompt_sha256s,
                     usage: reply.usage,
+                    judgments,
                 });
             }
             Err(RoundFailure::Refused(refusal)) => return Err(refusal),
@@ -148,10 +216,28 @@ pub fn synthesize(
     }
 }
 
+/// Sums two usages field by field; a figure neither side reported stays `None` (never a zero
+/// invented, per the gateway's rule).
+fn add_usage(left: Usage, right: Usage) -> Usage {
+    fn add(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(a.saturating_add(b)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
+        }
+    }
+    Usage {
+        input_tokens: add(left.input_tokens, right.input_tokens),
+        output_tokens: add(left.output_tokens, right.output_tokens),
+    }
+}
+
 struct Compiled {
     document: Value,
     rationale: Vec<NodeRationale>,
     stamped: Vec<String>,
+    /// The loaded graph the document validated as, for the judgment hook.
+    graph: ExecutionGraph,
 }
 
 enum RoundFailure {
@@ -279,6 +365,7 @@ fn compile_round(
         document,
         rationale,
         stamped,
+        graph: loaded.graph,
     })
 }
 
@@ -492,7 +579,7 @@ fn shell_program(node: &GraphNode) -> Option<&str> {
 }
 
 /// JSON Pointer escaping for one segment, as the lint does.
-fn escape(segment: &str) -> String {
+pub(crate) fn escape(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
 }
 

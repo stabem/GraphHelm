@@ -50,3 +50,26 @@ two commands above.
   schema break, the three tool-call shapes the broker's parser refuses, a budget above the
   profile). Each is refused under its OWN diagnostic, and a refusal that lands in a neighbouring
   arm is a test failure.
+- `judge/*.json`: the judge door (`RecordedJudgeModel`, spec D5) for `tests/judgment_nodes.rs`.
+  A judge fixture has the same two halves as a draft fixture, keyed by the request digest:
+
+  ```json
+  {
+    "rounds": [{"model": "jev-latest", "answers": {"<question id>": {"type": "noul", "noul": 0.1}}, "usage": {"input_tokens": 1, "output_tokens": 1}}],
+    "answers": {"<sha256 of the canonical JudgeRequest JSON>": {"<the same judge reply>": "..."}}
+  }
+  ```
+
+  `rounds` is the AUTHORED half (one judge reply per judge call, in order; the compiler never
+  reads it); `answers` is the DERIVED half and the only key the door reads. The recorder in
+  `tests/judgment_nodes.rs` files both a draft fixture's `rounds` and a judge fixture's `rounds`
+  in one loop, reading the digest each `FixtureMissing` / `JudgeMissing` refusal names, under
+  the same `ARCHITECT_RECORD=1` (run it with `--test judgment_nodes`). The draft fixture a judge
+  case pairs with lives beside it when it differs from the golden; the golden
+  `first-compile/replies.json` is rewritten only by `golden.rs`.
+  - `nodes-off-goal.json` + `nodes-off-goal-replies.json`: round 1 judges `summarize` off goal
+    (`noul` 0.10, a `GHA005_NODE_OFF_GOAL` fed back for repair); round 2 is the golden draft with
+    that node's objective rewritten, judged on goal by every answer.
+  - `nodes-below-threshold.json` (paired with the golden draft): `kind:summarize` answers `tool`
+    at confidence 0.60, under the acting threshold; the document is the golden and the node is
+    reported `unresolved`.

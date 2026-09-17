@@ -1,0 +1,64 @@
+{
+  "rounds": [
+    {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:summarize": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.6
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:summarize": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    }
+  ],
+  "answers": {
+    "007364f78a42ab576a0230da4422f6c56d5084cfc868efdd2d5bb92326d291a6": {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:summarize": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.6
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:summarize": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    }
+  }
+}

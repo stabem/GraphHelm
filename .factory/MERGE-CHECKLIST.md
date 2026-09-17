@@ -217,7 +217,11 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    produced by the gate, and nothing else, RECORDS a run — it does not vouch for a merge. It may merge with
    `merge-proof` NOT or ABSENT under a NAMED exception: the merge comment cites the run's sha, status and
    failed stages; the two passes read the JSON (sha, `pushed`, `dirtyDiffHash`, `staleArtifactCount`,
-   failed stages) instead of a diff; one other path touched and the exception is void (#885 is the first:
+   `artifactsUnprovenReuse`, `buildMode`, failed stages) instead of a diff — since #904 the artefacts
+   a run cannot vouch for are counted by CONTENT in `artifactsUnprovenReuse`, while
+   `staleArtifactCount` records only what a cold-only gate would have refused, so a warm run
+   (`buildMode: warm`) with a non-zero `staleArtifactCount` and `artifactsUnprovenReuse: 0` is a
+   PROVEN reuse and not an artefact red; one other path touched and the exception is void (#885 is the first:
    `45f43a3e` RED on one cell, ticket #886).
    **Known fleet reds — a CLOSED list (owner's delegation, 2026-09-05 11:5xZ: 26 PRs open, 6 with two passes
    waiting on a gate, nearly every red of the day a flake or an artefact).** A manifest with `pushed: True`

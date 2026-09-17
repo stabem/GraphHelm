@@ -16,8 +16,11 @@
     erasing the half that decides whether the red is citable.
 
     So "was the instrument broken?" is now the manifest's own DERIVED field, `instrumentSuspect`,
-    computed by `gate.ps1` from `staleArtifactCount` and `canaryPassed` at the moment those numbers
-    are produced. This script only READS it. It does not compute it, deliberately: a value
+    computed by `gate.ps1` from `artifactsUnprovenReuse` -- the artefacts this run could not vouch
+    for by CONTENT, which since #904 is the population that decides, not the mtime-derived
+    `staleArtifactCount` that only records what a cold-only gate would have refused -- together with
+    `canaryPassed`, `targetBuildState` and the artefact build pass's own exit, at the moment those
+    numbers are produced. This script only READS it. It does not compute it, deliberately: a value
     calculated at classification time would attach itself to runs nobody measured.
 
     ABSENT IS NOT FALSE. A pre-taxonomy manifest has no `instrumentSuspect`, and that means NOT
@@ -503,7 +506,12 @@ try {
 # the measurement, which is a different fact from "the instrument was fine".
 if (Test-NameIsPresent -Object $run -Name 'instrumentSuspect') {
     if ($run.instrumentSuspect) {
-        Write-Host "  NOTE: instrumentSuspect = TRUE (staleArtifactCount=$($run.staleArtifactCount), canaryPassed=$($run.canaryPassed))." -ForegroundColor Yellow
+        # #904: NAME THE POPULATION THAT ACTUALLY DRIVES THE FLAG. `staleArtifactCount` no longer
+        # decides it -- it is the record of what a cold-only gate would have refused -- and a note
+        # explaining a flag with a number that cannot set it sends the reader to the wrong subsystem.
+        # ABSENT IS NOT ZERO: a manifest written before #904 has no such field, and says so.
+        $unproven = if (Test-NameIsPresent -Object $run -Name 'artifactsUnprovenReuse') { $run.artifactsUnprovenReuse } else { 'NOT MEASURED' }
+        Write-Host "  NOTE: instrumentSuspect = TRUE (artifactsUnprovenReuse=$unproven, staleArtifactCount=$($run.staleArtifactCount), canaryPassed=$($run.canaryPassed))." -ForegroundColor Yellow
         Write-Host "  A '$Class' verdict can be true AT THE SAME TIME as a broken instrument -- that is why this is a field and not a class." -ForegroundColor Yellow
         Write-Host "  Say in -Because whether the code failure stands on its own." -ForegroundColor Yellow
     } else {

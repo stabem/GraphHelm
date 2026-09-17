@@ -1300,6 +1300,11 @@ function Write-SlotEvent {
 . (Join-Path $PSScriptRoot 'slot-lock.ps1')
 . (Join-Path $PSScriptRoot 'manifest-name.ps1')
 . (Join-Path $PSScriptRoot 'run-class.ps1')
+# #904: the hash primitives a content-addressed reuse proof is built from --
+# Get-Sha256Hex, Sort-Ordinal, Join-Elements, New-HashPreimage, Get-CrateInputHash,
+# Get-ToolchainId. Dot-sourced rather than copied: the preimage format is the part that must not
+# drift, and two copies of a cache-key format is two keys.
+. (Join-Path $PSScriptRoot 'crate-input-hash.ps1')
 
 # #152: one `--no-run --message-format=json` pass over the whole workspace enumerates every test
 # binary (unit-test binaries per crate, integration-test binaries per crate including each
@@ -1408,6 +1413,972 @@ function Get-WorkspaceFmtTargets {
     return $packages
 }
 
+# #904: WHY A WARM TARGET IS RED TODAY, AND WHAT REPLACES THE RULE THAT MAKES IT SO.
+#
+# `$freshBuild = ($mtimeUtc -ge $runStartUtc)` (in Get-TestArtifactManifest, below) is the only
+# question the gate asks about a reused binary, and on ANY reused target every binary predates the
+# run start. `$staleArtifacts.Count -eq 0` is a term of `$passedEverything`, so a warm target is
+# unconditionally RED and every run pays a cold compile -- measured at 323.8 s of a 1042 s gate,
+# against 1.0 s warm. That is the largest single item in the gate, and it is paid for nothing.
+#
+# THE HAZARD THIS MUST NOT REINTRODUCE, and the reason "just trust cargo" is REFUTED rather than
+# merely unattractive: cargo's fingerprint is MTIME-based, and a source file with a BACKDATED mtime
+# reads as fresh. Reproduced: change a source to V2, backdate its mtime, rebuild -- cargo compiles
+# nothing, the V1 binary runs, every ordinary test passes, rc=0, and the target's own marker says
+# `complete`. `git checkout`, `mv` and `copy` all produce backdated mtimes, and this repository's
+# own sabotage rituals do exactly that. So the reuse verdict may not rest on cargo's fingerprint,
+# and it may not rest on mtime either.
+#
+# IT RESTS ON CONTENT. Per test executable:
+#
+#     rebuiltThisRun = (mtimeUtc >= runStartUtc)     <- unchanged, and now a RECORD, not a verdict
+#     crateInputHash = H(crate directory tree || Cargo.lock || toolchain id || effective features
+#                        || every dependency crate's own inputs)
+#
+#     reuseProof = 'rebuilt'         when rebuiltThisRun
+#                  'proven-reuse'    when the ledger's sha256 AND crateInputHash both still match
+#                  'unproven-reuse'  when the ledger has no entry for this executable
+#                  'contaminated'    otherwise
+#
+# The ledger is written ONLY by a run in which every artefact was `rebuilt` or `proven-reuse`, and
+# its first entry can therefore only come from a cold run -- where the mtime rule above still has
+# full authority. The chain of custody is content-addressed end to end.
+#
+# THIS CAN ONLY TURN REDS GREEN, never greens red, and that is worth stating because the hash is
+# deliberately over-inclusive (a whole directory, untracked files included): today EVERY artefact
+# that was not rebuilt is RED, so an over-inclusive hash costs at worst the red the run already had.
+
+function ConvertTo-ComparablePath {
+    <#
+      .SYNOPSIS
+        One spelling for a path, so two producers of the same directory agree on the key.
+
+      .DESCRIPTION
+        `cargo metadata` reports `manifest_path` with backslashes on Windows and a
+        compiler-artifact message reports `executable` the same way, but a caller that joined a
+        path itself may not. Case is folded because the platform folds it, and a key that
+        distinguished `D:\X` from `D:\x` would miss its own entry on exactly the machines this
+        gate runs on.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Path)
+
+    return ($Path -replace '\\', '/').TrimEnd([char]'/').ToLowerInvariant()
+}
+
+function Get-CrateDirectoryDigest {
+    <#
+      .SYNOPSIS
+        SHA-256 over every byte of a crate directory as it sits in the WORKING TREE.
+
+      .DESCRIPTION
+        THE WORKING TREE, not the object database -- and that is the whole difference between this
+        and `Get-CrateTreeObject` in ci/crate-input-hash.ps1, which answers the same question at a
+        REVISION and is the right instrument for keying a proof shard that has to travel.
+        It is the WRONG instrument here: the hazard is a source file edited to V2 in the working
+        tree with a backdated mtime, and a revision-keyed hash cannot see an uncommitted byte at
+        all. An instrument blind to the defect it is deployed against is worse than none, because
+        it reads as coverage.
+
+        THE WHOLE DIRECTORY, not `src/**/*.rs` plus `Cargo.toml`. A file list misses the file
+        nobody thought of -- a `build.rs` include, a `.proto`, a fixture read at compile time, a
+        `.cargo/config.toml` dropped in beside it. Walking the directory makes "an unhashed input"
+        not a category that exists. Two exclusions, both OUTPUT rather than input:
+          - a `target` directory at the crate's own top level (cargo's output, and on a developer
+            box it can be larger than the repository);
+          - any `.git` directory (git's own store).
+        Neither is a build input, and neither is somewhere a source edit can hide.
+
+        REPARSE POINTS ARE SKIPPED, not followed: a junction pointing at its own ancestor turns
+        this walk into a non-terminating loop, and a hang has no colour.
+
+        NOTHING IS CAUGHT. An unreadable file throws, and the caller records the failure as an
+        ABSENT hash, which can never come back as `proven-reuse`. A digest that silently omitted a
+        file it could not read would be the unsafe direction: it says "these inputs" about fewer
+        inputs than there are.
+
+        THE ENTRY FORM IS `<64 hex><space><relative path>`, hash FIRST. A path could in principle
+        contain the separator; a SHA-256 hex digest is exactly 64 characters of [0-9a-f] and
+        cannot, so the boundary is fixed-width rather than a character the content is trusted not
+        to spell. `Join-Elements` then length-prefixes each entry, which is what makes the SET
+        unambiguous -- see its own note for why that is the level where the ambiguity was real.
+    #>
+    param([Parameter(Mandatory)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "cannot digest the crate directory '$Path': there is no such directory"
+    }
+    $root = (Resolve-Path -LiteralPath $Path).ProviderPath.TrimEnd([char]'\', [char]'/')
+    $prefixLength = $root.Length + 1
+    $entries = New-Object 'System.Collections.Generic.List[string]'
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($root)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        while ($pending.Count -gt 0) {
+            $current = $pending.Pop()
+            $directory = New-Object System.IO.DirectoryInfo $current
+            foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+                if ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+                $relative = ($entry.FullName.Substring($prefixLength)) -replace '\\', '/'
+                if ($entry.Attributes -band [System.IO.FileAttributes]::Directory) {
+                    # ORDINAL, never `-ceq`: that operator is case-strict AND culture-aware, so a
+                    # directory named `.git` plus a weightless code point would be skipped as if it
+                    # were git's own store. ci/gate-manifest-provenance.tests.ps1 holds this line
+                    # for the whole file.
+                    if ([string]::Equals($entry.Name, '.git', [System.StringComparison]::Ordinal)) { continue }
+                    if ([string]::Equals($relative, 'target', [System.StringComparison]::Ordinal)) { continue }
+                    $pending.Push($entry.FullName)
+                    continue
+                }
+                $stream = [System.IO.File]::Open($entry.FullName, [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                try {
+                    $bytes = $sha.ComputeHash($stream)
+                } finally {
+                    $stream.Dispose()
+                }
+                $hex = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+                $entries.Add("$hex $relative")
+            }
+        }
+    } finally {
+        $sha.Dispose()
+    }
+    $sorted = Sort-Ordinal -Values $entries.ToArray()
+    return (Get-Sha256Hex -Text (Join-Elements -Values $sorted))
+}
+
+function Get-EmbeddedInputReferences {
+    <#
+      .SYNOPSIS
+        Every compile-time file a Rust source pulls in from OUTSIDE itself, read out of its text.
+
+      .DESCRIPTION
+        THE HOLE THIS CLOSES, and it is a hole the directory digest above cannot see by
+        construction. `Get-CrateDirectoryDigest` walks ONE crate directory, and this workspace
+        embeds files from outside EVERY member directory at COMPILE time -- nine sites found in
+        review of #1038 at `bcde3cf3`: `core/schema-evolution/tests/catalog_integrity.rs` and
+        `core/protocols/tests/persistence_wire.rs` (`../../../schemas/*.json`),
+        `core/protocols/tests/wire_roundtrip.rs` (`examples/graphs/…`),
+        `core/schema-evolution/tests/compatibility.rs` and `conformance.rs` (`conformance/**`),
+        `apps/cli/tests/attention_tag_domain.rs` (`README.md`, `QUICKSTART.md`),
+        `apps/cli/src/commands/development.rs` and `apps/cli/tests/gate_http.rs`
+        (`extensions/builtin/**`), `apps/cli/src/commands/events/backup.rs`
+        (`docs/acceptance/**`), and every `tests/source_invariants.rs`, which `include!`s
+        `tools/source-invariants/detect.rs` -- a directory that is not a workspace member at all.
+        Edit any one of those with a BACKDATED mtime and cargo rebuilds nothing, every crate
+        directory digest is byte-identical, and the whole workspace would come back
+        `proven-reuse`: the exact adversary this mechanism was written against, walking in through
+        the one door the digest does not cover.
+
+        A PARSER, NOT A LINE MATCH. The argument is found by balancing parentheses from the
+        macro's own `(`, skipping string literals as it goes, so a macro whose path sits on the
+        NEXT line -- which is how `rustfmt` writes every long one in this tree, and how six of
+        those nine sites are written -- is read the same as an inline one.
+
+        TWO SHAPES ARE RESOLVED, and they are the two this tree spells:
+          - a bare string literal, `include_str!("…")` / `include_bytes!("…")` / `include!("…")`,
+            resolved relative to the DIRECTORY OF THE FILE THAT SPELLS IT, which is rustc's rule;
+          - `concat!(env!("CARGO_MANIFEST_DIR"), "…"[, "…"])`, resolved relative to the CRATE
+            directory, which is rustc's rule for that shape and the shape all 18 `include!` sites
+            in this tree use.
+        `include_dir!` is resolved against the crate directory too, for the day one appears.
+
+        EVERYTHING ELSE IS A `reason`, NEVER A SILENT SKIP. A macro whose argument is a `const`, a
+        `format!`, an env var this function does not model, or a literal it cannot unescape comes
+        back with the reason spelled out, and the caller turns that into `unproven-reuse` for the
+        whole crate. That is the only safe direction: a shape the scanner cannot resolve is a
+        compile-time input it cannot hash, and an unhashed input is precisely how a stale binary
+        is certified. Failing closed costs a cold compile; failing open costs the gate's meaning.
+
+        PURE: it takes TEXT and returns records. The filesystem is the caller's business, so the
+        parser can be driven from a cell with a string and no crate on disk at all.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Text,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $SourceLabel
+    )
+
+    $results = New-Object 'System.Collections.Generic.List[object]'
+    if ([string]::IsNullOrEmpty($Text)) { return , $results.ToArray() }
+    $pattern = New-Object System.Text.RegularExpressions.Regex '\binclude(?<kind>_str|_bytes|_dir)?!\s*\('
+    foreach ($match in $pattern.Matches($Text)) {
+        $kind = $match.Groups['kind'].Value
+        $open = $match.Index + $match.Length - 1
+        $depth = 0
+        $end = -1
+        $index = $open
+        while ($index -lt $Text.Length) {
+            $ch = $Text[$index]
+            if ($ch -eq '"') {
+                $index++
+                while ($index -lt $Text.Length) {
+                    if ($Text[$index] -eq '\') { $index += 2; continue }
+                    if ($Text[$index] -eq '"') { break }
+                    $index++
+                }
+                $index++
+                continue
+            }
+            if ($ch -eq '(') { $depth++; $index++; continue }
+            if ($ch -eq ')') {
+                $depth--
+                if ($depth -le 0) { $end = $index; break }
+                $index++
+                continue
+            }
+            $index++
+        }
+        if ($end -lt 0) {
+            $results.Add([ordered]@{
+                    source   = $SourceLabel
+                    macro    = "include$kind!"
+                    baseKind = ''
+                    relative = ''
+                    reason   = "include$kind! at offset $($match.Index) has no closing parenthesis, so its argument cannot be read"
+                })
+            continue
+        }
+        $argument = $Text.Substring($open + 1, $end - $open - 1).Trim()
+        $baseKind = if ([string]::Equals($kind, '_dir', [System.StringComparison]::Ordinal)) { 'manifest' } else { 'file' }
+        $relative = ''
+        $reason = ''
+        $literal = [regex]::Match($argument, '^"((?:[^"\\]|\\.)*)"$', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($literal.Success) {
+            $relative = $literal.Groups[1].Value
+        } else {
+            $concat = [regex]::Match($argument,
+                '^concat!\s*\(\s*env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,(?<rest>.*)\)\s*$',
+                [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($concat.Success) {
+                $rest = $concat.Groups['rest'].Value
+                # WHAT IS LEFT OVER AFTER THE LITERALS ARE REMOVED decides this, rather than a
+                # pattern that tries to spell every legal arrangement of commas: a `concat!` whose
+                # tail carries anything but string literals, commas and whitespace is a shape this
+                # function is not modelling, and it must say so rather than hash a prefix of it.
+                $residue = [regex]::Replace($rest, '"(?:[^"\\]|\\.)*"', '')
+                if ($residue -match '[^\s,]') {
+                    $reason = "include$kind! uses a concat! this scanner cannot resolve: $($argument -replace '\s+', ' ')"
+                } else {
+                    $parts = New-Object 'System.Collections.Generic.List[string]'
+                    foreach ($piece in [regex]::Matches($rest, '"(?:[^"\\]|\\.)*"')) {
+                        $parts.Add($piece.Value.Substring(1, $piece.Value.Length - 2))
+                    }
+                    # THE BASE IS THE CRATE DIRECTORY, whatever the macro was. `include!` alone
+                    # resolves relative to the FILE, but `env!("CARGO_MANIFEST_DIR")` names the
+                    # crate root explicitly, and it is the leading term of the concatenation --
+                    # so the shape, not the macro name, decides. Getting this wrong resolved all
+                    # 18 sites one directory short (`apps/tools/...` for `apps/cli/tests/...`)
+                    # and reported every one of them as a missing input.
+                    $baseKind = 'manifest'
+                    $relative = ($parts.ToArray() -join '')
+                }
+            } else {
+                $reason = "include$kind! takes an argument this scanner cannot resolve to a path: $($argument -replace '\s+', ' ')"
+            }
+        }
+        if ([string]::IsNullOrEmpty($reason)) {
+            # `$CARGO_MANIFEST_DIR/…` is `include_dir!`'s own spelling of the crate root, and it is
+            # resolved rather than refused so the day that crate arrives it does not redden a gate
+            # for a shape that is perfectly determinate.
+            if ($relative.StartsWith('$CARGO_MANIFEST_DIR/')) {
+                $baseKind = 'manifest'
+                $relative = $relative.Substring('$CARGO_MANIFEST_DIR/'.Length)
+            }
+            if ($relative -match '\\[^\\"]') {
+                $reason = "include$kind! carries an escape this scanner does not unescape: $relative"
+            } else {
+                $relative = ($relative -replace '\\\\', '\') -replace '\\"', '"'
+            }
+        }
+        if ([string]::IsNullOrEmpty($reason) -and [string]::IsNullOrWhiteSpace($relative)) {
+            $reason = "include$kind! resolves to an empty path"
+        }
+        $results.Add([ordered]@{
+                source   = $SourceLabel
+                macro    = "include$kind!"
+                baseKind = $baseKind
+                relative = $relative
+                reason   = $reason
+            })
+    }
+    return , $results.ToArray()
+}
+
+function Get-CrateEmbeddedInputDigests {
+    <#
+      .SYNOPSIS
+        The digest of every compile-time input one crate embeds from OUTSIDE its own directory.
+
+      .DESCRIPTION
+        Scans every `*.rs` under the crate directory -- `src/`, `tests/`, `benches/`, `examples/`
+        and a `build.rs` alike, because the directory walk is what makes "a source nobody thought
+        of" not a category -- and resolves what `Get-EmbeddedInputReferences` found.
+
+        A REFERENCE THAT LANDS BACK INSIDE THE CRATE IS DROPPED, not hashed twice: the directory
+        digest already covers every byte of it, and a second entry would only add cost. The
+        entries that survive are exactly the inputs the digest is blind to.
+
+        A DIRECTORY IS HASHED AS A TREE. `include_dir!`-shaped references name a directory, and
+        the whole subtree is its content; `Get-CrateDirectoryDigest` is reused verbatim so one
+        walk answers for both, exclusions included.
+
+        A MISSING PATH IS A PROBLEM, NOT A ZERO. An input that is not there cannot be hashed, and
+        recording it as an empty digest would make two different trees agree. It joins `problems`,
+        and the caller refuses to prove any artefact of this crate.
+
+        THE ENTRY FORM IS `<64 hex><space><base>:<relative>`, hash first and fixed-width, for the
+        same reason `Get-CrateDirectoryDigest` gives for its own entries; `base` is `file` or
+        `manifest` so two spellings that resolve differently cannot collide.
+    #>
+    param([Parameter(Mandatory)][string] $CrateDirectory)
+
+    $entries = New-Object 'System.Collections.Generic.List[string]'
+    $problems = New-Object 'System.Collections.Generic.List[string]'
+    $seen = @{}
+    if (-not (Test-Path -LiteralPath $CrateDirectory -PathType Container)) {
+        $problems.Add("the crate directory '$CrateDirectory' does not exist, so its embedded inputs cannot be read")
+        return [ordered]@{ entries = [string[]]@(); problems = [string[]]$problems.ToArray() }
+    }
+    $root = (Resolve-Path -LiteralPath $CrateDirectory).ProviderPath.TrimEnd([char]'\', [char]'/')
+    $prefixLength = $root.Length + 1
+    $sources = New-Object 'System.Collections.Generic.List[string]'
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($root)
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        $directory = New-Object System.IO.DirectoryInfo $current
+        foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+            if ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+            if ($entry.Attributes -band [System.IO.FileAttributes]::Directory) {
+                if ([string]::Equals($entry.Name, '.git', [System.StringComparison]::Ordinal)) { continue }
+                if ([string]::Equals($entry.Name, 'target', [System.StringComparison]::Ordinal)) { continue }
+                $pending.Push($entry.FullName)
+                continue
+            }
+            if ($entry.Name.EndsWith('.rs', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $sources.Add($entry.FullName)
+            }
+        }
+    }
+    foreach ($source in (Sort-Ordinal -Values $sources.ToArray())) {
+        $label = ($source.Substring($prefixLength)) -replace '\\', '/'
+        $text = [System.IO.File]::ReadAllText($source)
+        foreach ($reference in (Get-EmbeddedInputReferences -Text $text -SourceLabel $label)) {
+            if (-not [string]::IsNullOrEmpty([string]$reference['reason'])) {
+                $problems.Add("$($label): $([string]$reference['reason'])")
+                continue
+            }
+            $base = if ([string]::Equals([string]$reference['baseKind'], 'manifest', [System.StringComparison]::Ordinal)) { $root } else { Split-Path -Parent $source }
+            $relative = [string]$reference['relative']
+            $key = "$([string]$reference['baseKind']):$($relative -replace '\\', '/')"
+            # ONE ENTRY PER DISTINCT REFERENCE. `core/schema-evolution` embeds
+            # `conformance/migrations/success.json` from three match arms and `core/events` embeds
+            # one schema five times; a second entry carries no information and costs another read
+            # of the file. Measured on this workspace: 51 entries fall to 38, and the seen-set also
+            # keeps the SET unambiguous -- the digest is over a set, and a repeated element would
+            # make its cardinality part of the key for no reason.
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            $full = $null
+            try {
+                # THE LEADING SEPARATOR IS STRIPPED, and this is not cosmetic. rustc resolves
+                # `concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/x.rs")` by string concatenation,
+                # so the crate directory and the relative part are joined with exactly one
+                # separator. `Join-Path 'X\apps\cli' '/../../tools'` leaves the empty segment in
+                # place (`X\apps\cli\/../../tools`), and `GetFullPath` then spends one `..` undoing
+                # it -- resolving to `X\apps\tools`, which does not exist. Measured: every one of
+                # the 18 `include!` sites in this tree came back a false `problem` until this line.
+                $full = [System.IO.Path]::GetFullPath((Join-Path $base ($relative -replace '^[\\/]+', '')))
+            } catch {
+                $problems.Add("$($label): embeds '$relative', which is not a usable path: $($_.Exception.Message)")
+                continue
+            }
+            if ($full.StartsWith($root + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) -or
+                [string]::Equals($full, $root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                # Inside the crate: the directory digest already carries every byte of it.
+                continue
+            }
+            if (Test-Path -LiteralPath $full -PathType Leaf) {
+                $digest = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+                $entries.Add("$digest $key")
+                continue
+            }
+            if (Test-Path -LiteralPath $full -PathType Container) {
+                $entries.Add("$(Get-CrateDirectoryDigest -Path $full) $key")
+                continue
+            }
+            $problems.Add("$($label): embeds '$relative', which does not exist at '$full'")
+        }
+    }
+    return [ordered]@{
+        entries  = [string[]](Sort-Ordinal -Values $entries.ToArray())
+        problems = [string[]]$problems.ToArray()
+    }
+}
+
+function Get-GateToolchainId {
+    <#
+      .SYNOPSIS
+        The identity of the compiler THIS GATE uses, not the one that answers on PATH.
+
+      .DESCRIPTION
+        `Get-ToolchainId` in ci/crate-input-hash.ps1 runs `rustc -Vv`, which answers for the
+        DEFAULT toolchain. This gate pins `+1.97.1` on every cargo call, and on a box whose default
+        is a nightly the two are different compilers. A key that names the wrong compiler is the
+        unsafe direction: it would let artefacts built by one toolchain be proven against a ledger
+        written by another. So when the gate pins a toolchain, the id is read THROUGH it.
+
+        No fallback. If `rustup run` cannot answer, this throws and the caller records an absent
+        hash, which fails closed. An infallible fallback here would give every toolchain on the
+        machine one generation, which is precisely the collision the field exists to prevent.
+    #>
+    param([AllowEmptyString()][string] $ToolchainArgument = '')
+
+    if ([string]::IsNullOrWhiteSpace($ToolchainArgument)) {
+        return (Get-ToolchainId)
+    }
+    $version = $ToolchainArgument.TrimStart([char]'+')
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $verbose = & rustup run $version rustc -Vv 2>&1
+        # `$?` FIRST, and this order is load-bearing: reading `$LASTEXITCODE` is itself a successful
+        # statement and resets `$?` to true. `$?` is what distinguishes "rustup ran and failed" from
+        # "rustup is not on PATH", where `$LASTEXITCODE` keeps whatever the PREVIOUS command left --
+        # a stale zero that would read as success. The variable is never pre-cleared, because
+        # ci/gate-stage-verdict-source.tests.ps1 forbids writing 0 to it anywhere in this file:
+        # the mute-stage poison lives in the same variable.
+        $ran = $?
+        $exit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if (-not $ran -or $exit -ne 0) {
+        throw "cannot read the toolchain id: 'rustup run $version rustc -Vv' did not succeed (ran=$ran, exit=$exit): $(@($verbose) -join ' ')"
+    }
+    return ((@($verbose) -join "`n") -replace "`r", '').Trim()
+}
+
+function Get-CargoDependencyGraph {
+    <#
+      .SYNOPSIS
+        The resolved package graph, read from `cargo metadata`, as plain maps a fold can walk.
+
+      .DESCRIPTION
+        `--all-features`, matching the build this gate actually runs (`cargo test --workspace
+        --all-features`). Measured on this workspace: without it, `graphhelm-postgres-event-store`
+        resolves to NO features while the gate compiles it with `test-support`. A key computed from
+        the default resolution would name a build nobody ran.
+
+        `--locked`, so the graph cannot be the product of a resolution this call silently performed.
+
+        RETURNED AS MAPS, not as the parsed document, so the fold below can be driven from a cell
+        with a hand-built graph. A fold reachable only through a real `cargo metadata` run can only
+        be tested against the workspace it happens to be standing in.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $WorkspaceRoot,
+        [AllowEmptyString()][string] $ToolchainArgument = ''
+    )
+
+    $manifestPath = Join-Path $WorkspaceRoot 'Cargo.toml'
+    $arguments = @('metadata', '--format-version', '1', '--locked', '--all-features',
+        '--manifest-path', $manifestPath)
+    if (-not [string]::IsNullOrWhiteSpace($ToolchainArgument)) {
+        $arguments = @($ToolchainArgument) + $arguments
+    }
+    # The same treatment Invoke-Stage gives every other native call, and needed for the same
+    # reason: under $ErrorActionPreference='Stop' a native stderr line becomes a terminating
+    # NativeCommandError before $LASTEXITCODE is ever read.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & cargo @arguments 2>&1
+        # `$?` FIRST -- see Get-GateToolchainId for why the order matters and why the variable is
+        # never pre-cleared to zero.
+        $ran = $?
+        $exit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if (-not $ran -or $exit -ne 0) {
+        throw "cannot read the dependency graph: 'cargo $($arguments -join ' ')' did not succeed (ran=$ran, exit=$exit)"
+    }
+    # `cargo metadata` emits its document as ONE line and everything else it says is stderr. The
+    # document is picked by SHAPE rather than by position, because a progress line printed first
+    # would otherwise be parsed as the document and fail with a message about JSON instead of a
+    # message about cargo.
+    $document = @($output | ForEach-Object { [string]$_ } |
+            Where-Object { $_.StartsWith('{', [System.StringComparison]::Ordinal) }) |
+        Select-Object -First 1
+    if (-not $document) {
+        throw "cannot read the dependency graph: 'cargo $($arguments -join ' ')' printed no JSON document"
+    }
+    $meta = $document | ConvertFrom-Json
+    if ($null -eq $meta.resolve -or $null -eq $meta.resolve.nodes) {
+        throw 'cannot read the dependency graph: cargo metadata carried no resolve section'
+    }
+
+    $packages = @{}
+    foreach ($package in $meta.packages) {
+        $packages[[string]$package.id] = [ordered]@{
+            name      = [string]$package.name
+            directory = (Split-Path -Parent ([string]$package.manifest_path))
+        }
+    }
+    $members = @{}
+    foreach ($member in $meta.workspace_members) { $members[[string]$member] = $true }
+    $nodes = @{}
+    foreach ($node in $meta.resolve.nodes) {
+        $nodes[[string]$node.id] = [ordered]@{
+            features = @($node.features | ForEach-Object { [string]$_ })
+            deps     = @($node.deps | ForEach-Object { [string]$_.pkg })
+        }
+    }
+    return [ordered]@{ packages = $packages; members = $members; nodes = $nodes }
+}
+
+function Get-CrateInputHashesFromGraph {
+    <#
+      .SYNOPSIS
+        One content-addressed input hash per workspace member, dependencies folded in transitively.
+
+      .DESCRIPTION
+        REACHABILITY, NOT A TOPOLOGICAL FOLD, and this is a deviation from #904's written design
+        made because the real graph refutes it: `cargo metadata` on this workspace reports THREE
+        back-edges among the workspace members (`core/execution` <-> `core/events`,
+        `core/simulation` <-> `core/events`, `core/simulation` <-> `core/execution`), all of them
+        dev-dependency cycles, which cargo permits and for which no topological order exists. A
+        recursive fold over that graph does not terminate, and a hang has no colour.
+
+        So each member gets a SHALLOW hash first -- its own directory, the lock, the root manifest,
+        the toolchain and its effective features, with no dependencies -- and its final hash folds
+        in the shallow hash of every workspace member REACHABLE from it, plus the package id of
+        every external package reachable from it. Reachability is a SET, so it is defined on a
+        cyclic graph and does not depend on traversal order.
+
+        It carries the same information a recursive fold would: a crate's hash moves when any
+        ancestor's own inputs move, which is the property #904 asks for. The one thing a set does
+        not encode is the SHAPE of the graph -- and an edge exists only because some crate's
+        `Cargo.toml` declares it, and that manifest is inside that crate's directory, so a changed
+        edge changes a shallow hash anyway.
+
+        EXTERNAL PACKAGES ARE FOLDED AS THEIR PACKAGE ID, not as a directory digest. The id carries
+        name, version and source, and `Cargo.lock` -- folded into every hash -- carries the
+        checksum. Hashing ~/.cargo/registry on every gate would cost more than the compile this
+        saves.
+
+        THE `member:` / `external:` PREFIXES are not decoration: without them a package id and a
+        digest are two opaque strings in one set, and a future edit that made an id look like a
+        digest would silently merge two populations that must not merge.
+    #>
+    param(
+        [Parameter(Mandatory)][object] $Graph,
+        [Parameter(Mandatory)][string] $ToolchainId,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $LockfileSha256,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $WorkspaceManifestSha256
+    )
+
+    $memberIds = Sort-Ordinal -Values (@($Graph.members.Keys | ForEach-Object { [string]$_ }))
+    if ($memberIds.Count -eq 0) {
+        throw 'cannot compute crate input hashes: the graph names no workspace members'
+    }
+
+    $trees = @{}
+    $shallow = @{}
+    $embeddedInputs = @{}
+    # #1038 review (lane S): which members embed a compile-time input this scanner could not
+    # resolve. A member in this map gets NO published hash, so every artefact built from it comes
+    # back `unproven-reuse` -- see the reading site in Get-TestArtifactManifest.
+    $unresolvedByPackageId = @{}
+    foreach ($id in $memberIds) {
+        if (-not $Graph.packages.ContainsKey($id)) {
+            throw "cannot compute crate input hashes: workspace member '$id' has no package record"
+        }
+        $package = $Graph.packages[$id]
+        $tree = Get-CrateDirectoryDigest -Path ([string]$package.directory)
+        $trees[$id] = $tree
+        $features = @()
+        if ($Graph.nodes.ContainsKey($id)) { $features = @($Graph.nodes[$id].features) }
+        # #1038 review (lane S): THE INPUTS THAT LIVE OUTSIDE THE DIRECTORY. `BuildScriptInputs` is
+        # the preimage field #904 reserved for exactly this population -- inputs a crate consumes
+        # that its own tree does not contain -- and folding the embedded-input digests in HERE, at
+        # the SHALLOW hash, is what makes them propagate: a dependent's hash folds this one, so a
+        # changed `schemas/*.json` moves every crate downstream of the crate that embeds it.
+        $embedded = Get-CrateEmbeddedInputDigests -CrateDirectory ([string]$package.directory)
+        if ($embedded.problems.Count -gt 0) {
+            $unresolvedByPackageId[$id] = ($embedded.problems -join '; ')
+        }
+        # KEPT, because the PUBLISHED hash is computed in a SECOND pass below and folding the
+        # embedded inputs only into the shallow hash would carry them to every crate DOWNSTREAM of
+        # this one and not to this one. Measured while writing the cell: with the fold here alone,
+        # a single-member graph whose test embeds `../../schemas/x.json` kept the same published
+        # hash across a V1 -> V2 edit of that file -- the exact false `proven-reuse` this work
+        # exists to close, reintroduced one line away from its fix.
+        $embeddedInputs[$id] = [string[]]$embedded.entries
+        $shallow[$id] = Get-CrateInputHash -Crate ([string]$package.name) -TreeObject $tree `
+            -LockSlice $LockfileSha256 -WorkspaceManifest $WorkspaceManifestSha256 `
+            -ToolchainId $ToolchainId -Features $features -DependencyHashes @() `
+            -BuildScriptInputs ([string[]]$embedded.entries)
+    }
+
+    $byPackageId = @{}
+    $byDirectory = @{}
+    $unresolvedPublished = @{}
+    $unresolvedByDirectory = @{}
+    foreach ($id in $memberIds) {
+        # Breadth-first reachability with a visited set. The visited set is what makes this
+        # terminate on the cyclic graph described above, and it is the whole reason this is not a
+        # recursion.
+        $visited = @{}
+        $frontier = New-Object 'System.Collections.Generic.Queue[string]'
+        if ($Graph.nodes.ContainsKey($id)) {
+            foreach ($dep in @($Graph.nodes[$id].deps)) { $frontier.Enqueue([string]$dep) }
+        }
+        while ($frontier.Count -gt 0) {
+            $next = $frontier.Dequeue()
+            if ($visited.ContainsKey($next)) { continue }
+            $visited[$next] = $true
+            if ($Graph.nodes.ContainsKey($next)) {
+                foreach ($dep in @($Graph.nodes[$next].deps)) { $frontier.Enqueue([string]$dep) }
+            }
+        }
+        $dependencyKeys = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($reached in $visited.Keys) {
+            $key = [string]$reached
+            if ([string]::Equals($key, $id, [System.StringComparison]::Ordinal)) { continue }
+            if ($shallow.ContainsKey($key)) {
+                $dependencyKeys.Add("member:$($shallow[$key])")
+            } else {
+                $dependencyKeys.Add("external:$key")
+            }
+        }
+        $package = $Graph.packages[$id]
+        $features = @()
+        if ($Graph.nodes.ContainsKey($id)) { $features = @($Graph.nodes[$id].features) }
+        $hash = Get-CrateInputHash -Crate ([string]$package.name) -TreeObject $trees[$id] `
+            -LockSlice $LockfileSha256 -WorkspaceManifest $WorkspaceManifestSha256 `
+            -ToolchainId $ToolchainId -Features $features `
+            -DependencyHashes $dependencyKeys.ToArray() `
+            -BuildScriptInputs ([string[]]$embeddedInputs[$id])
+        # #1038 review (lane S): FAIL CLOSED, AND TRANSITIVELY. A member whose own embedded inputs
+        # could not be resolved publishes no hash; so does a member that DEPENDS on one, because its
+        # hash folds a shallow hash that is itself incomplete, and a hash computed over fewer inputs
+        # than there are is the shape that certifies a stale binary. The reason travels with the
+        # refusal, so the manifest can name the file and the macro rather than only the refusal.
+        $reasons = New-Object 'System.Collections.Generic.List[string]'
+        if ($unresolvedByPackageId.ContainsKey($id)) {
+            $reasons.Add([string]$unresolvedByPackageId[$id])
+        }
+        foreach ($reached in (Sort-Ordinal -Values (@($visited.Keys | ForEach-Object { [string]$_ })))) {
+            if ([string]::Equals($reached, $id, [System.StringComparison]::Ordinal)) { continue }
+            if ($unresolvedByPackageId.ContainsKey($reached)) {
+                $reasons.Add("via dependency '$reached': $([string]$unresolvedByPackageId[$reached])")
+            }
+        }
+        $directoryKey = ConvertTo-ComparablePath -Path ([string]$package.directory)
+        if ($reasons.Count -gt 0) {
+            $joined = ($reasons.ToArray() -join '; ')
+            $unresolvedPublished[$id] = $joined
+            $unresolvedByDirectory[$directoryKey] = $joined
+            continue
+        }
+        $byPackageId[$id] = $hash
+        $byDirectory[$directoryKey] = $hash
+    }
+    return [ordered]@{
+        toolchainId             = $ToolchainId
+        lockfileSha256          = $LockfileSha256
+        workspaceManifestSha256 = $WorkspaceManifestSha256
+        byPackageId             = $byPackageId
+        byDirectory             = $byDirectory
+        unresolvedByPackageId   = $unresolvedPublished
+        unresolvedByDirectory   = $unresolvedByDirectory
+    }
+}
+
+function Get-CrateInputHashes {
+    <#
+      .SYNOPSIS
+        The input hash of every workspace member of a checkout, from the checkout alone.
+
+      .DESCRIPTION
+        A thin composer over three pieces that can each be measured on their own: the graph
+        (`cargo metadata`), the two workspace-wide inputs (`Cargo.lock`, and the ROOT `Cargo.toml`
+        where the build profiles live and which no crate's directory contains -- see
+        `Get-WorkspaceManifestBlob` in ci/crate-input-hash.ps1 for the measurement that established
+        that), and the fold.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $WorkspaceRoot,
+        [AllowEmptyString()][string] $ToolchainArgument = ''
+    )
+
+    $lockPath = Join-Path $WorkspaceRoot 'Cargo.lock'
+    $manifestPath = Join-Path $WorkspaceRoot 'Cargo.toml'
+    if (-not (Test-Path -LiteralPath $lockPath)) {
+        throw "cannot compute crate input hashes: '$lockPath' does not exist, so the resolved versions are unknown"
+    }
+    $lockSha = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifestSha = if (Test-Path -LiteralPath $manifestPath) {
+        (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else {
+        ''
+    }
+    $toolchainId = Get-GateToolchainId -ToolchainArgument $ToolchainArgument
+    $graph = Get-CargoDependencyGraph -WorkspaceRoot $WorkspaceRoot -ToolchainArgument $ToolchainArgument
+    return Get-CrateInputHashesFromGraph -Graph $graph -ToolchainId $toolchainId `
+        -LockfileSha256 $lockSha -WorkspaceManifestSha256 $manifestSha
+}
+
+function Get-ArtifactLedgerPath {
+    param([Parameter(Mandatory)][string] $TargetDir)
+    return (Join-Path $TargetDir '.graphhelm-artifact-ledger.json')
+}
+
+function Read-ArtifactLedger {
+    <#
+      .SYNOPSIS
+        What the last fully-proven run recorded about this target's executables.
+
+      .DESCRIPTION
+        RETURNS AN EMPTY MAP FOR EVERY FAILURE, and that is safe here in a way it is nowhere else
+        in this file: an absent entry produces `unproven-reuse`, which is RED. A ledger that cannot
+        be read therefore fails CLOSED -- the run behaves exactly as the gate behaves today, and
+        the only cost is the cold compile this mechanism exists to avoid.
+
+        Keyed by the executable path in its comparable spelling, because the producer of the key (a
+        compiler-artifact message) and the consumer (this map) are two different cargo surfaces and
+        neither promises the other's casing.
+    #>
+    param([Parameter(Mandatory)][string] $TargetDir)
+
+    $entries = @{}
+    $path = Get-ArtifactLedgerPath -TargetDir $TargetDir
+    if (-not (Test-Path -LiteralPath $path)) { return $entries }
+    try {
+        $document = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $entries
+    }
+    if ($null -eq $document -or $null -eq $document.PSObject.Properties['artifacts']) { return $entries }
+    foreach ($record in @($document.artifacts)) {
+        if ($null -eq $record) { continue }
+        $executable = ''
+        $sha = ''
+        $inputHash = ''
+        if ($null -ne $record.PSObject.Properties['executable']) { $executable = [string]$record.PSObject.Properties['executable'].Value }
+        if ($null -ne $record.PSObject.Properties['sha256']) { $sha = [string]$record.PSObject.Properties['sha256'].Value }
+        if ($null -ne $record.PSObject.Properties['crateInputHash']) { $inputHash = [string]$record.PSObject.Properties['crateInputHash'].Value }
+        if ([string]::IsNullOrWhiteSpace($executable)) { continue }
+        $entries[(ConvertTo-ComparablePath -Path $executable)] = [ordered]@{
+            executable     = $executable
+            sha256         = $sha
+            crateInputHash = $inputHash
+        }
+    }
+    return $entries
+}
+
+function Write-ArtifactLedger {
+    <#
+      .SYNOPSIS
+        Record this run's executables as the custody chain the NEXT run proves reuse against.
+
+      .DESCRIPTION
+        The caller writes this only when every artefact of the run was `rebuilt` or `proven-reuse`.
+        That condition is what makes the chain sound: the first entry for any executable can only
+        come from a run that built it inside the run's own window, where the mtime rule still has
+        full authority, and every later entry restates a chain that was checked by CONTENT.
+
+        An artefact missing either half of the pair is DROPPED rather than written with a blank,
+        because a blank comes back through `Get-ArtifactReuseProof` as an equality between two
+        empty strings -- a false `proven-reuse` manufactured by the writer.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $TargetDir,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][object] $Artifacts
+    )
+
+    # [object[]], NOT @() -- the cast this file already prescribes twice, at `stages =
+    # [object[]]$stageRecords` and inside `Test-StageOverlapped`, whose note says in so many words
+    # that `@(<a System.Collections.Generic.List[object] VARIABLE>)` throws "Argument types do not
+    # match" UNCONDITIONALLY on this machine's Windows PowerShell 5.1 (5.1.26100.9168) and that it
+    # therefore breaks every run that COMPLETES. `Get-TestArtifactManifest` builds `artifacts` as
+    # exactly such a list, and #904 opened both of these functions with `@($Artifacts)` anyway.
+    # Every cell handed them a literal `@(...)` ARRAY, so the trap lived only on the gate's own call
+    # path; it cost PR #1038's 36-minute run, which completed all 60 stages and then died with no
+    # manifest and no rc.
+    #
+    # THE CAST IS CORRECT ON EVERY SHAPE THIS SEAM TAKES, measured rather than reasoned about: a
+    # List[object] (234 records -> 234), a plain array, an empty array, an empty list, `$null` (zero
+    # iterations, which is what `[AllowNull()]` is for), and a LONE ordered dictionary -- which comes
+    # back as ONE element that is the record itself, not as its key/value pairs. My first draft hand-
+    # rolled a three-line normalisation to avoid a DictionaryEntry unrolling that does not happen,
+    # and said so in a comment; the sabotage that should have reddened for it stayed green, which is
+    # how the claim got checked.
+    $records = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($artifact in ([object[]]$Artifacts)) {
+        if ($null -eq $artifact) { continue }
+        $executable = [string]$artifact['executable']
+        $sha = [string]$artifact['sha256']
+        $inputHash = [string]$artifact['crateInputHash']
+        if ([string]::IsNullOrWhiteSpace($executable)) { continue }
+        if ([string]::IsNullOrWhiteSpace($sha)) { continue }
+        if ([string]::IsNullOrWhiteSpace($inputHash)) { continue }
+        $records.Add([ordered]@{
+                executable     = $executable
+                sha256         = $sha
+                crateInputHash = $inputHash
+            })
+    }
+    $document = [ordered]@{
+        writtenUtc = [DateTime]::UtcNow.ToString('o')
+        artifacts  = [object[]]$records
+    }
+    $path = Get-ArtifactLedgerPath -TargetDir $TargetDir
+    # No BOM, for the same reason the run manifest carries none: this file exists to be machine-read
+    # later, and a strict JSON parser rejects a leading BOM outright.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, ($document | ConvertTo-Json -Depth 5), $utf8NoBom)
+    return $path
+}
+
+function Get-ArtifactReuseProof {
+    <#
+      .SYNOPSIS
+        What this run can actually VOUCH FOR about one test executable.
+
+      .DESCRIPTION
+        Four states, and the two that are neither `rebuilt` nor `proven-reuse` are both RED -- which
+        is what makes this change unable to turn a green red: today EVERY artefact that was not
+        rebuilt is RED, and this can only move some of them to `proven-reuse`.
+
+        `unproven-reuse` and `contaminated` are kept APART even though they share a verdict,
+        because they want different remedies: the first is a target this machine holds no custody
+        record for (run once cold, or clean it), the second is a target whose INPUTS moved under a
+        binary that did not -- something edited a source and the binary did not follow, which is
+        the backdated-mtime shape this whole mechanism exists for.
+
+        BOTH HALVES MUST BE PRESENT, NOT MERELY EQUAL. A null exe hash and a null recorded hash are
+        equal, and an equality between two absences is exactly how a measurement that FAILED comes
+        back wearing the colour of one that passed.
+
+        The exe hash is compared case-INSENSITIVELY (`Get-FileHash` returns upper case, JSON
+        round-trips whatever was written) and the input hash case-SENSITIVELY (it is produced in
+        lower case by one function and nothing else may spell it).
+    #>
+    param(
+        [Parameter(Mandatory)][bool] $RebuiltThisRun,
+        [AllowNull()][AllowEmptyString()][string] $ExeSha256,
+        [AllowNull()][AllowEmptyString()][string] $CrateInputHash,
+        [AllowNull()][object] $LedgerEntry,
+        # NOT Mandatory, for the reason `Get-CrateInputHash`'s own note gives at length: a missing
+        # Mandatory parameter PROMPTS under the gate's own invocation, and a hang has no colour.
+        # The default is the safe one only because the caller that knows sets it; a caller that
+        # does not know is a caller with no scanner, which is the pre-#1038 world.
+        [bool] $UnresolvedInputs = $false
+    )
+
+    if ($RebuiltThisRun) { return 'rebuilt' }
+    # #1038 review (lane S): AN INPUT SET THIS RUN COULD NOT READ WHOLE proves nothing, and it is
+    # answered here rather than at the call site so there is ONE place a reuse can be refused. It
+    # ranks above the ledger comparison on purpose: the recorded hash and the computed hash could
+    # be EQUAL and still both be computed over an incomplete input set, which is an agreement
+    # between two measurements that were each missing the same file.
+    if ($UnresolvedInputs) { return 'unproven-reuse' }
+    if ($null -eq $LedgerEntry) { return 'unproven-reuse' }
+    $recordedSha = [string]$LedgerEntry['sha256']
+    $recordedInput = [string]$LedgerEntry['crateInputHash']
+    if ([string]::IsNullOrWhiteSpace($ExeSha256) -or [string]::IsNullOrWhiteSpace($CrateInputHash) -or
+        [string]::IsNullOrWhiteSpace($recordedSha) -or [string]::IsNullOrWhiteSpace($recordedInput)) {
+        return 'contaminated'
+    }
+    if ([string]::Equals($recordedSha, $ExeSha256, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($recordedInput, $CrateInputHash, [System.StringComparison]::Ordinal)) {
+        return 'proven-reuse'
+    }
+    return 'contaminated'
+}
+
+function Read-ArtifactManifestField {
+    <#
+      .SYNOPSIS
+        One field of the artefact manifest, for a writer that may not have been given one.
+
+      .DESCRIPTION
+        `Write-RunManifest` is called from three sites and only one of them passes an artefact
+        manifest: the HARNESS-BROKE path and the canary-abort path both run before any artefact is
+        enumerated. Reading `$ArtifactManifest.field` there would throw under `Set-StrictMode`,
+        inside the writer, after every stage has already run -- the shape that lost two whole runs'
+        evidence between the last stage and the record (see the `matrixReason` note near the top of
+        this file, and the `stages` field's [object[]] cast).
+
+        $null FOR ABSENT, which is the value the manifest already uses for NOT MEASURED everywhere
+        else. A zero would be a claim about a population nobody enumerated.
+    #>
+    param(
+        [AllowNull()][object] $Manifest,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if ($Manifest -isnot [System.Collections.IDictionary]) { return $null }
+    if (-not $Manifest.Contains($Name)) { return $null }
+    return $Manifest[$Name]
+}
+
+function Select-UnprovenReuse {
+    <#
+      .SYNOPSIS
+        The artefacts this run cannot vouch for -- the population that reddens the gate.
+
+      .DESCRIPTION
+        ONE PLACE, for the reason `$FreshnessStageName` is a constant in this file: the verdict, the
+        instrument flag, the `complete` stamp and the freshness cross-check all have to price the
+        SAME population, and four hand-written copies of one filter is four chances for three of
+        them to keep the old one. Editing the verdict alone would be the worst of the four
+        outcomes -- a legitimate warm run would fail to stamp `complete`, the NEXT run would read
+        `interrupted`, and the gate would abort before its first compile.
+
+        INDEXED, not dotted. Under `Set-StrictMode` a missing key on a dictionary THROWS when read
+        with `.`, and this is the seam a cell hands hand-built records to.
+
+        `return , $array`, AND THE COMMA IS LOAD-BEARING -- caught by this function's own cells
+        before it shipped. `return @(...)` hands the array to the pipeline, which UNROLLS it: with
+        one match the caller receives the record itself, and `.Count` on an ordered dictionary is
+        its number of KEYS. Measured: a population of exactly one unproven artefact answered 2.
+        With no matches the caller receives `$null`, and `.Count` throws. The same shape
+        `Sort-Ordinal` uses one file over, for the same reason.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][object] $Artifacts)
+
+    # ORDINAL MEMBERSHIP, spelled out. `-in` is the same culture comparer over a list -- the
+    # repository's own sweep lists it as `Iin` -- and this predicate decides the gate's verdict.
+    # Inlined rather than factored into a helper because this function is dot-sourced OUT of
+    # gate.ps1 on its own by a cell, and a call to a sibling it did not bring with it would throw.
+    $unproven = @('unproven-reuse', 'contaminated')
+    # [object[]], NOT @() -- see the note in `Write-ArtifactLedger` for the measurement, and
+    # `Test-StageOverlapped` for where this file already prescribes the same cast for the same reason.
+    # THIS is the site that actually fired: `$unprovenAtEnd = (Select-UnprovenReuse -Artifacts
+    # $artifactManifest.artifacts).Count` is the first statement of the tail after the last stage, so
+    # `@($Artifacts)` here is what lost #1038 its whole manifest after 60 green stages. Spelled out at
+    # both seams rather than shared, for this function's own stated reason: a cell dot-sources it out
+    # of gate.ps1 ALONE, and a call to a helper it did not bring would throw.
+    $matched = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($artifact in ([object[]]$Artifacts)) {
+        if ($null -eq $artifact) { continue }
+        $proof = [string]$artifact['reuseProof']
+        foreach ($candidate in $unproven) {
+            if ([string]::Equals($proof, $candidate, [System.StringComparison]::Ordinal)) {
+                $matched.Add($artifact)
+                break
+            }
+        }
+    }
+    return , $matched.ToArray()
+}
+
 function Get-TestArtifactManifest {
     # #956: THE CLAIM INSTANT MUST EXIST BEFORE ANY ARTEFACT IS JUDGED. Every freshness verdict
     # below is `$mtimeUtc -ge $runStartUtc`, and `-ge $null` is True for every file: called before
@@ -1417,12 +2388,43 @@ function Get-TestArtifactManifest {
     if ($null -eq $runStartUtc) {
         throw '#956: Get-TestArtifactManifest ran before the slot claim; $runStartUtc is null and every artefact would read fresh'
     }
+    # #904: THE INPUTS ARE READ BEFORE THE BUILD, not after it. The hash has to describe the tree
+    # that was HANDED to the compile below; computed afterwards it would describe whatever the tree
+    # had become, and the window between the two is precisely where a concurrent edit lives.
+    #
+    # CAUGHT, AND THE FAILURE IS RECORDED RATHER THAN FATAL. A throw here would abort a gate for a
+    # missing `rustup` or an unreadable file, and the fallback direction is safe in a way it almost
+    # never is: with no hashes, every artefact that was not rebuilt reads `contaminated`, which is
+    # RED -- exactly the verdict this gate gives today. Failing closed costs a cold compile; a throw
+    # costs the whole run.
+    #
+    # TIMED, for the same reason the build pass below is: this mechanism buys minutes and it also
+    # COSTS something -- one `cargo metadata` and a content hash of every workspace member -- and an
+    # uncounted cost decays in silence exactly the way an uncounted saving does. Measured on this
+    # box: 9.7 s over 25 members and 567 files, against the 322.8 s it is spent to avoid.
+    $crateInputHashWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $crateInputHashes = $null
+    $crateInputHashError = $null
+    try {
+        $crateInputHashes = Get-CrateInputHashes -WorkspaceRoot $repositoryRoot -ToolchainArgument $toolchain
+    } catch {
+        $crateInputHashError = [string]$_.Exception.Message
+        Write-Host "[gate] NOTE: the crate input hashes could not be computed, so no artefact can be PROVEN reused this run: $crateInputHashError" -ForegroundColor Yellow
+    }
+    $ledger = Read-ArtifactLedger -TargetDir $actualTargetDir
+    $crateInputHashWatch.Stop()
+
     # Same treatment Invoke-Stage gives every OTHER native call, needed here too: this cargo
     # invocation runs outside Invoke-Stage (its output is JSON to parse, not human text to
     # forward), so without this it inherits $ErrorActionPreference='Stop' directly and a native
     # stderr progress line becomes a terminating NativeCommandError before $LASTEXITCODE is ever
     # read - caught live (#152's own trap-guard script hit the identical bug on `cargo clean`
     # first, which is exactly why this got checked here too instead of assumed fine).
+    #
+    # #904: TIMED, because the whole point of proving a reuse is the time it buys, and a saving
+    # nobody counts is a saving that decays in silence. Measured on this box before the change:
+    # 323.8 s cold against 1.0 s warm, of a 1042 s gate.
+    $buildPassWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -1432,11 +2434,21 @@ function Get-TestArtifactManifest {
         $buildExit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
+        $buildPassWatch.Stop()
     }
+    # A NON-JSON LINE IS DISCARDED, AND ON A FAILED BUILD THAT IS THE ONLY COPY OF THE CAUSE.
+    # `$lines` carries cargo's stderr merged in, so a compile or link error arrives here as plain
+    # text, fails `ConvertFrom-Json`, and used to vanish at the `continue` below -- leaving a run
+    # whose build pass exited non-zero with no diagnosis anywhere on disk. Measured on this branch:
+    # a cold run reported `artifactBuildExit: 101` after enumerating 22 of 234 artefacts, published
+    # GREEN, and wrote a ledger covering the 22. Nothing said why. Kept only when the build FAILED,
+    # because on a green build these lines are hundreds of `Compiling ...` progress rows and
+    # printing them would bury the log.
+    $nonJson = New-Object System.Collections.Generic.List[string]
     $artifacts = New-Object System.Collections.Generic.List[object]
     foreach ($line in $lines) {
         $parsed = $null
-        try { $parsed = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        try { $parsed = $line | ConvertFrom-Json -ErrorAction Stop } catch { [void]$nonJson.Add([string]$line); continue }
         if (-not $parsed) { continue }
         if ($parsed.reason -ne 'compiler-artifact') { continue }
         if (-not $parsed.profile -or $parsed.profile.test -ne $true) { continue }
@@ -1454,6 +2466,45 @@ function Get-TestArtifactManifest {
             # the other packages the canary's own hash cannot see into.
             $freshBuild = ($mtimeUtc -ge $runStartUtc)
         }
+        # #904: WHICH CRATE'S INPUTS THIS BINARY WAS BUILT FROM. Looked up by package id first --
+        # measured on cargo 1.97.1, a compiler-artifact message's `package_id` is the same
+        # PackageIDSpec string `cargo metadata` reports as `id`, so the two surfaces agree -- and by
+        # the manifest's DIRECTORY second, which is the same fact spelled differently and survives a
+        # future cargo changing the id format. Which key answered is RECORDED rather than inferred:
+        # a lookup that fell through to neither leaves the hash absent, and an absent hash can never
+        # come back as a proven reuse.
+        $crateInputHash = $null
+        $crateInputHashSource = 'none'
+        # #1038 review (lane S): WHY there is no hash, when there is no hash. An absent hash was
+        # already RED, but it was red without a sentence, and the remedy for "this crate embeds a
+        # macro shape the scanner cannot resolve" is not the remedy for "cargo metadata failed".
+        $crateInputHashReason = $null
+        if ($null -ne $crateInputHashes) {
+            $packageId = [string]$parsed.package_id
+            $crateDirectory = ''
+            if ($parsed.PSObject.Properties['manifest_path']) {
+                $crateDirectory = ConvertTo-ComparablePath -Path (Split-Path -Parent ([string]$parsed.manifest_path))
+            }
+            if ($crateInputHashes.byPackageId.ContainsKey($packageId)) {
+                $crateInputHash = [string]$crateInputHashes.byPackageId[$packageId]
+                $crateInputHashSource = 'package-id'
+            } elseif (-not [string]::IsNullOrEmpty($crateDirectory) -and $crateInputHashes.byDirectory.ContainsKey($crateDirectory)) {
+                $crateInputHash = [string]$crateInputHashes.byDirectory[$crateDirectory]
+                $crateInputHashSource = 'manifest-path'
+            } elseif ($crateInputHashes.unresolvedByPackageId.ContainsKey($packageId)) {
+                $crateInputHashSource = 'unresolved-embedded-input'
+                $crateInputHashReason = [string]$crateInputHashes.unresolvedByPackageId[$packageId]
+            } elseif (-not [string]::IsNullOrEmpty($crateDirectory) -and $crateInputHashes.unresolvedByDirectory.ContainsKey($crateDirectory)) {
+                $crateInputHashSource = 'unresolved-embedded-input'
+                $crateInputHashReason = [string]$crateInputHashes.unresolvedByDirectory[$crateDirectory]
+            }
+        }
+        $ledgerKey = ConvertTo-ComparablePath -Path $exePath
+        $ledgerEntry = $null
+        if ($ledger.ContainsKey($ledgerKey)) { $ledgerEntry = $ledger[$ledgerKey] }
+        $reuseProof = Get-ArtifactReuseProof -RebuiltThisRun ([bool]$freshBuild) -ExeSha256 ([string]$hash) `
+            -CrateInputHash ([string]$crateInputHash) -LedgerEntry $ledgerEntry `
+            -UnresolvedInputs ([string]::Equals($crateInputHashSource, 'unresolved-embedded-input', [System.StringComparison]::Ordinal))
         $artifacts.Add([ordered]@{
             package    = $parsed.package_id
             target     = $parsed.target.name
@@ -1461,11 +2512,70 @@ function Get-TestArtifactManifest {
             sha256     = $hash
             mtimeUtc   = if ($mtimeUtc) { $mtimeUtc.ToString('o') } else { $null }
             freshBuild = $freshBuild
+            # #904: WHAT THIS RUN CAN VOUCH FOR. `freshBuild` above is unchanged and is now a
+            # RECORD -- what a cold-only gate would have said -- while `reuseProof` is the verdict.
+            crateInputHash       = $crateInputHash
+            crateInputHashSource = $crateInputHashSource
+            crateInputHashReason = $crateInputHashReason
+            ledgerInputHash      = if ($null -ne $ledgerEntry) { [string]$ledgerEntry['crateInputHash'] } else { $null }
+            ledgerSha256         = if ($null -ne $ledgerEntry) { [string]$ledgerEntry['sha256'] } else { $null }
+            reuseProof           = $reuseProof
         })
     }
+    # #904: COUNTED HERE, where the population is whole. A consumer that recomputed these from
+    # `artifacts` would be a second copy of the classification, and a second copy is a second
+    # chance to disagree.
+    $rebuilt = @($artifacts | Where-Object { [string]::Equals([string]$_['reuseProof'], 'rebuilt', [System.StringComparison]::Ordinal) }).Count
+    $proven = @($artifacts | Where-Object { [string]::Equals([string]$_['reuseProof'], 'proven-reuse', [System.StringComparison]::Ordinal) }).Count
+    $unproven = @($artifacts | Where-Object { [string]::Equals([string]$_['reuseProof'], 'unproven-reuse', [System.StringComparison]::Ordinal) }).Count
+    $contaminated = @($artifacts | Where-Object { [string]::Equals([string]$_['reuseProof'], 'contaminated', [System.StringComparison]::Ordinal) }).Count
+    # `cold` means NOTHING was reused; anything else is `warm`. A run with no artefacts at all is
+    # neither -- it is `unknown`, because zero reused out of zero is not a cold build, it is an
+    # enumeration that found nothing, and those two must not share a word.
+    $buildMode = if ($artifacts.Count -eq 0) { 'unknown' } elseif ($rebuilt -eq $artifacts.Count) { 'cold' } else { 'warm' }
+    # THE BUILD PASS'S OWN FAILURE IS SAID OUT LOUD, where a reader of the log meets it in order.
+    # The exit code alone reached the manifest and no further: `artifactBuildExit` has five sites in
+    # this file and not one of them is a verdict term, so a build pass that died mid-enumeration
+    # published GREEN over a partial artefact list. The caller decides the verdict (see the
+    # freshness cross-check); this function's job is to make the failure legible instead of leaving
+    # the count of enumerated artefacts as the only hint that something went wrong.
+    if ($buildExit -ne 0) {
+        Write-Host "[gate] THE ARTEFACT BUILD PASS FAILED: cargo exited $buildExit after enumerating $($artifacts.Count) test binary(ies)." -ForegroundColor Red
+        Write-Host '[gate] Every stage below still compiles what it needs, so stages can pass while this list is INCOMPLETE -- and an incomplete list is an incomplete artefact ledger.' -ForegroundColor Red
+        $tail = @($nonJson | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 30)
+        if ($tail.Count -gt 0) {
+            Write-Host "[gate] cargo's own last $($tail.Count) non-JSON line(s):" -ForegroundColor Red
+            foreach ($t in $tail) { Write-Host "    $t" }
+        } else {
+            Write-Host '[gate] cargo produced no non-JSON output, so it exited non-zero without saying why.' -ForegroundColor Red
+        }
+    }
     return [ordered]@{
-        buildExitCode = $buildExit
-        artifacts     = $artifacts
+        buildExitCode          = $buildExit
+        buildPassNonJsonTail   = @($nonJson | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 30)
+        artifacts              = $artifacts
+        # #904: the record the audit of this change reads. `staleArtifactCount` in the run manifest
+        # keeps saying what a cold-only gate would have refused; these say what was proven instead.
+        artifactsRebuilt       = $rebuilt
+        artifactsProvenReuse   = $proven
+        artifactsUnprovenReuse = $unproven
+        artifactsContaminated  = $contaminated
+        buildMode              = $buildMode
+        buildPassSecs          = [math]::Round($buildPassWatch.Elapsed.TotalSeconds, 3)
+        crateInputHashSecs     = [math]::Round($crateInputHashWatch.Elapsed.TotalSeconds, 3)
+        toolchainId            = if ($null -ne $crateInputHashes) { [string]$crateInputHashes.toolchainId } else { $null }
+        lockfileSha256         = if ($null -ne $crateInputHashes) { [string]$crateInputHashes.lockfileSha256 } else { $null }
+        crateInputHashError    = $crateInputHashError
+        # #1038 review (lane S): the crates whose compile-time inputs this run could not read whole,
+        # named -- `<package id>: <file>: <macro and argument>`. Published even when it is empty,
+        # because an empty list is a measurement that found nothing and an ABSENT field is a run
+        # that did not look, and a reader of two manifests must be able to tell those apart.
+        embeddedInputProblems  = if ($null -ne $crateInputHashes) {
+            [string[]]@(Sort-Ordinal -Values (@($crateInputHashes.unresolvedByPackageId.Keys |
+                            ForEach-Object { "$([string]$_): $([string]$crateInputHashes.unresolvedByPackageId[$_])" })))
+        } else {
+            $null
+        }
     }
 }
 
@@ -2690,15 +3800,44 @@ function Get-RunCoverage {
         without teaching it the flag list -- and it is the field that keeps meaning when a second
         skip switch is added, which a consumer matching on `postgres` alone would silently miss.
 
+        #904 ADDS A THIRD KEY, `build`, AND DELIBERATELY DOES NOT TOUCH `complete`. A warm run ran
+        every stage: it IS complete, and flipping that would make `ci/merge-proof.ps1` refuse every
+        warm run outright -- the whole saving, refused by the verifier. What a reader wants to know
+        is a different question ("did this run compile, or reuse?"), so it gets a different field.
+
+        `-BuildMode` IS NOT MANDATORY, and that is measured rather than stylistic. Under the gate's
+        own invocation (`powershell -NoProfile -ExecutionPolicy Bypass -File`, no `-NonInteractive`)
+        a missing Mandatory parameter PROMPTS instead of failing, so a caller that forgets it would
+        HANG the gate; and `ci/gate-manifest-provenance.tests.ps1` calls this function with
+        `-SkipPostgres` alone. Its default is `unknown`, never `warm`: ABSENT IS NOT A MEASUREMENT,
+        and the one value that must not be guessable is the flattering one.
+
         A SEAM THAT TAKES A BOOL AND RETURNS A RECORD, for the reason the other rules in this file
         are: `Write-RunManifest` drives the whole gate and cannot be run from a cell, so the rule
         lives where a cell can dot-source it out of the subject by AST.
     #>
-    param([Parameter(Mandatory)] [bool] $SkipPostgres)
+    param(
+        [Parameter(Mandatory)] [bool] $SkipPostgres,
+        [string] $BuildMode = 'unknown'
+    )
+
+    # IN THE BODY, NOT AS A [ValidateSet] ATTRIBUTE. `ci/classify-run.tests.ps1` derives the run
+    # STATUS vocabulary from the single ValidateSet this file carries, and refuses to read a second
+    # one -- with two, the one it reads is a sample rather than the vocabulary. A declarative guard
+    # here would have silently turned that census into a coin toss. The body check costs four lines,
+    # names the value it refused, and is ordinal for the reason every other comparison here is.
+    $recognised = $false
+    foreach ($candidate in @('cold', 'warm', 'unknown')) {
+        if ([string]::Equals($BuildMode, $candidate, [System.StringComparison]::Ordinal)) { $recognised = $true }
+    }
+    if (-not $recognised) {
+        throw "Get-RunCoverage was given BuildMode '$BuildMode', which is not one of cold, warm, unknown. A coverage record may not carry a word no consumer can read, and guessing which of the three was meant would put the flattering one in a durable record."
+    }
 
     return [ordered]@{
         postgres = if ($SkipPostgres) { 'skipped' } else { 'included' }
         complete = (-not $SkipPostgres)
+        build    = $BuildMode
     }
 }
 
@@ -2827,9 +3966,30 @@ function Write-RunManifest {
     $porcelain = @(& git status --porcelain --untracked-files=all 2>$null | ForEach-Object { [string]$_ })
     $dirt = Get-WorktreeDirt -Diff $diff -PorcelainLines $porcelain
     $dirtyDiffHash = $dirt.hash
-    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped)
+    # #904: READ OFF THE ARTEFACT MANIFEST, never recomputed here -- the record and the verdict
+    # then have no way to disagree. INDEXED rather than dotted, and that is measured: two of this
+    # function's three call sites hand it `$emptyArtifacts`, which carries `buildExitCode` and
+    # `artifacts` and none of the #904 fields, and under `Set-StrictMode` a missing key read with
+    # `.` THROWS -- inside the writer, after every stage has run, which is how a whole run's
+    # evidence gets lost between the last stage and the record (see the `matrixReason` note near
+    # the top of this file for the time that actually happened).
+    $buildMode = 'unknown'
+    if ($ArtifactManifest -is [System.Collections.IDictionary]) {
+        $recordedMode = [string]$ArtifactManifest['buildMode']
+        foreach ($candidate in @('cold', 'warm', 'unknown')) {
+            if ([string]::Equals($recordedMode, $candidate, [System.StringComparison]::Ordinal)) { $buildMode = $candidate }
+        }
+    }
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped) -BuildMode $buildMode
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
+    # #904: THE POPULATION THAT DECIDES, beside the one that used to. `$staleArtifacts` is every
+    # artefact a cold-only gate would have refused -- kept, unchanged, and still published, because
+    # it is the record that lets this change be audited: a reader can see how many reuses were
+    # PROVEN rather than having to trust that the number went down for a good reason.
+    # `$unprovenReuse` is what actually reddens the gate. See Select-UnprovenReuse for why the
+    # filter lives in one place and not in the four sites that need it.
+    $unprovenReuse = Select-UnprovenReuse -Artifacts $ArtifactManifest.artifacts
 
     # #199: what the status does NOT say, said out loud.
     #
@@ -2862,7 +4022,19 @@ function Write-RunManifest {
 # Set-StrictMode is a throw and without it a silent $null that reads as 'not suspect'.
 $targetSuspect = $false
 if ($null -ne $script:targetBuildState) { $targetSuspect = [bool] $script:targetBuildState.suspect }
-$passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($staleArtifacts.Count -eq 0) -and (-not $targetSuspect)
+# THE ARTEFACT BUILD PASS IS A TERM, because everything downstream is computed over the list it
+# produced. `artifactBuildExit` had five sites in this file and not one decided anything, so a pass
+# that died mid-enumeration published GREEN over a PARTIAL population: measured on this branch, a
+# cold run exited 101 after 22 of 234 artefacts, went green, and wrote an artefact ledger covering
+# the 22 -- which then made the next run refuse 212 it had no custody record for. The stages passed
+# because each compiles what it needs; the INSTRUMENT that counts them did not.
+#
+# A WRONG TYPE MUST WIDEN, the same rule the scope selector states: `$null` is what this reads when
+# the manifest could not be built at all (`$emptyArtifacts` carries `buildExitCode = $null`), and a
+# run that cannot say whether its build pass succeeded has not established that it did.
+$buildPassExit = $ArtifactManifest.buildExitCode
+$buildPassSucceeded = ($buildPassExit -is [int]) -and ($buildPassExit -eq 0)
+$passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($unprovenReuse.Count -eq 0) -and (-not $targetSuspect) -and $buildPassSucceeded
 $runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 
 # #199: "was the INSTRUMENT broken?" is DERIVED, never chosen -- and it is born HERE, beside the
@@ -2887,9 +4059,13 @@ $runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 # its own, so it forbids a GREEN without inventing a second way for a run to die.
 #
 # `unknown` is deliberately NOT here; see the reading site for the measurement. It is recorded in the
-# manifest as a fact about the instrument, and the `staleArtifactCount` term above still catches an
-# unknown target that really is stale.
-$instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed) -or $targetSuspect
+# manifest as a fact about the instrument, and the unproven-reuse term above still catches an
+# unknown target whose binaries this run cannot vouch for.
+#
+# #904: the term is `$unprovenReuse`, not `$staleArtifacts`. A binary that predates this run's start
+# and whose crate inputs are PROVEN unchanged against the ledger is not a broken instrument -- it is
+# the same program, established by content rather than by a timestamp.
+$instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $targetSuspect -or (-not $buildPassSucceeded)
 
     # #199: "is it real?" and "is it MINE?" are orthogonal, so they are two fields and not four
     # classes. Found by the first real case the taxonomy met (#166's gate, 2026-08-20): it went RED
@@ -3011,7 +4187,31 @@ $instrumentSuspect = ($staleArtifacts.Count -gt 0) -or (-not $CanaryPassed) -or 
         stages             = [object[]]$stageRecords
         artifactBuildExit  = $ArtifactManifest.buildExitCode
         testArtifacts      = [object[]]$ArtifactManifest.artifacts
+        # #904: UNCHANGED, deliberately. This is now the record of what a cold-only gate would have
+        # refused, which is how this change gets audited -- a reader comparing it against
+        # `artifactsProvenReuse` below can see exactly how many reuses the content check rescued.
         staleArtifactCount = $staleArtifacts.Count
+        # #904: the four states, the build's own mode, and the two workspace-wide inputs the hash
+        # is namespaced by. Read off the artefact manifest rather than recomputed, so the record and
+        # the verdict cannot disagree.
+        artifactsRebuilt       = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsRebuilt'
+        artifactsProvenReuse   = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsProvenReuse'
+        artifactsUnprovenReuse = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsUnprovenReuse'
+        artifactsContaminated  = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsContaminated'
+        buildMode              = $buildMode
+        buildPassSecs          = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'buildPassSecs'
+        # What the proof COST, beside what it bought. A mechanism whose overhead nobody records is
+        # one nobody can decide to retire.
+        crateInputHashSecs     = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'crateInputHashSecs'
+        # #1038 review (lane S): the crates whose compile-time inputs could not be read whole, named
+        # in the record rather than only refused in the run. Every artefact of such a crate is
+        # `unproven-reuse`, and without this field the only evidence would be a count.
+        embeddedInputProblems  = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'embeddedInputProblems'
+        toolchainId            = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'toolchainId'
+        lockfileSha256         = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'lockfileSha256'
+        # ABSENT IS NOT FALSE, and it is not 'no error' either: a run whose hashes could not be
+        # computed says so here, so a reader is never left inferring a cold compile's cause.
+        crateInputHashError    = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'crateInputHashError'
         # #909: per-stage executed-test counts. A count survives the 80-line tail that the stage's
         # transcript does not, so this is the only place a later reader can learn whether the
         # PostgreSQL axis was measured at all. Empty when no PostgreSQL stage ran.
@@ -3835,11 +5035,64 @@ try {
     # refuses early. The word is imprecise -- nothing was interrupted, the run completed badly -- and
     # the VERDICT is right, which is the half that matters; the reason string names the marker and
     # the abort names the remedy.
-    $staleAtEnd = @($artifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false }).Count
-    if ($staleAtEnd -eq 0) {
+    #
+    # #904: THE NEW COUNT, and this site is the one that must not be forgotten. Leave it reading
+    # `freshBuild -eq $false` and every legitimate warm run fails to stamp `complete`; the NEXT run
+    # then reads `interrupted` and aborts before its first compile -- a silent trap that turns the
+    # saving into a permanent refusal. That is why the filter is a function and not four copies.
+    $unprovenAtEnd = (Select-UnprovenReuse -Artifacts $artifactManifest.artifacts).Count
+    # #1038 review (lane S): AND THE BUILD PASS ITSELF MUST HAVE SUCCEEDED. The count above is taken
+    # over whatever the build pass ENUMERATED, so it is silent about a pass that stopped early: a
+    # cold run on this branch exited 101 after 22 of 234 test binaries, all 22 rebuilt, count 0 --
+    # and the two lines below then wrote a ledger covering 22 and stamped the target `complete`.
+    # The run itself was correctly RED (`$buildPassSucceeded` is a term of `$passedEverything`), but
+    # the TARGET kept a truncated custody record under a stamp saying the opposite, and every later
+    # run found 212 executables with no entry, called them `unproven-reuse`, and went RED -- while
+    # cargo refused to rebuild them, because by mtime they were fresh. Stuck RED until a human
+    # deleted the target.
+    #
+    # THE REMEDY IS TO LEAVE THE MARK UNSTAMPED, not to invent a state: `Write-TargetBuildState`
+    # takes `building` or `complete` and nothing else, and a `building` mark whose process is gone
+    # is exactly what `Get-TargetBuildState` reads back as `interrupted` -- suspect, and rebuilt
+    # cold by the next run. That is the vocabulary ci/gate-target-build-state.tests.ps1 already
+    # holds, and the word is right here in a way it is not on the stale path: the pass really was
+    # interrupted.
+    #
+    # THE SAME DERIVATION AS THE VERDICT'S, spelled the same way on purpose (`-is [int]` first, so
+    # the `$null` of a manifest that was never built widens to "not established").
+    $buildExitAtEnd = $artifactManifest.buildExitCode
+    $buildPassSucceededAtEnd = ($buildExitAtEnd -is [int]) -and ($buildExitAtEnd -eq 0)
+    # THE REFUSAL'S SENTENCE IS BUILT HERE, ABOVE THE GUARD, and that is a constraint of this file
+    # rather than a preference: ci/gate-target-build-state.tests.ps1 requires the `complete` stamp to
+    # sit within 400 characters of `$script:stagesCompleted`, so that a stamp can never drift onto a
+    # path that did not finish. Two branches' worth of prose after the stamp broke that distance;
+    # one short `else` keeps the guard readable and the stamp adjacent to the flag.
+    $unstampedNote = if (-not $buildPassSucceededAtEnd) {
+        "[gate] NOTE: the artefact build pass did not succeed (exit $buildExitAtEnd), so its list of $(@($artifactManifest.artifacts).Count) binary(ies) may be PARTIAL. No ledger is written and this target is left unstamped, so the next run reads it as interrupted and rebuilds cold."
+    } else {
+        "[gate] NOTE: $unprovenAtEnd artefact(s) this run cannot vouch for, so this target is NOT stamped as a clean reuse."
+    }
+    if ($unprovenAtEnd -eq 0 -and $buildPassSucceededAtEnd) {
+        # #904: ONLY HERE IS THE LEDGER WRITTEN, and BEFORE the stamp. Every artefact of this run
+        # was either rebuilt inside the run's own window -- where the mtime rule still has full
+        # authority -- or proven against the previous ledger by content; that is what makes the
+        # chain of custody sound, and a run that could not vouch for one of its binaries does not
+        # get to vouch for any of them. It goes first so the claim "this target is a clean reuse"
+        # is never recorded without the custody record that justifies it already on disk, and so
+        # the stamp stays adjacent to the completion flag that ci/gate-target-build-state.tests.ps1
+        # requires it to sit beside.
+        try {
+            $ledgerPath = Write-ArtifactLedger -TargetDir $actualTargetDir -Artifacts $artifactManifest.artifacts
+            Write-Host "[gate] artefact ledger written: $ledgerPath" -ForegroundColor DarkGray
+        } catch {
+            # A ledger this run could not write costs the NEXT run a cold compile and nothing else:
+            # an absent entry reads as `unproven-reuse`, which is RED, which is today's behaviour.
+            # Not worth failing a run that passed everything, and not worth hiding either.
+            Write-Host "[gate] NOTE: the artefact ledger could not be written, so the next run cannot prove a reuse: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
         Write-TargetBuildState -TargetDir $actualTargetDir -State 'complete' -Head ([string]$gatedHeadAtStart)
     } else {
-        Write-Host "[gate] NOTE: $staleAtEnd stale artefact(s), so this target is NOT stamped as a clean reuse." -ForegroundColor Yellow
+        Write-Host $unstampedNote -ForegroundColor Yellow
     }
     $script:stagesCompleted = $true
 } finally {
@@ -3923,12 +5176,16 @@ try {
 # bug was caught before the slot, not after - a manifest race is exactly the kind of thing that
 # would have shipped quietly otherwise).
 if ($artifactManifest -and $artifactManifest.artifacts) {
-    $staleCount = @($artifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false }).Count
+    # #904: the fourth and last consumer of the count. The QUESTION is unchanged -- did the stages
+    # run this tree's program? -- and only the way of answering it moved, from a timestamp to the
+    # content chain. A binary that predates the run's start but whose crate inputs are proven
+    # identical IS this tree's program, so it is no longer counted here.
+    $staleCount = (Select-UnprovenReuse -Artifacts $artifactManifest.artifacts).Count
     if ($staleCount -gt 0) {
         Write-Host ''
         # #822: the message says what it does to its siblings. A stale binary is a different program,
         # so the stages that ran it did not measure this tree; their reds are not findings about it.
-        Write-Host "[gate] FRESHNESS CROSS-CHECK: $staleCount test binary(ies) predate this run's start, so every stage that ran a test binary measured a DIFFERENT PROGRAM than this run's tree - see the manifest. The other stage results are not readable as results for this head." -ForegroundColor Red
+        Write-Host "[gate] FRESHNESS CROSS-CHECK: $staleCount test binary(ies) cannot be vouched for -- not rebuilt this run, and not proven unchanged against this target's ledger -- so every stage that ran a test binary may have measured a DIFFERENT PROGRAM than this run's tree - see the manifest. The other stage results are not readable as results for this head." -ForegroundColor Red
         # The same constant the verdict filters by: one name, one place. (#822 follow-up.)
         $failed += $FreshnessStageName
         $staleBinaryCount = $staleCount

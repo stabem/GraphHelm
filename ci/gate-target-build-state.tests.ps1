@@ -394,8 +394,14 @@ try {
     # had it, I fixed that and left the ordinary one -- a run finishing with STALE artefacts still
     # stamped `complete`, so the next run trusted the target and spent a full gate rediscovering the
     # same stale output.
-    Assert-True -Condition ($gateSource -cmatch '\$staleAtEnd -eq 0') `
-        'the end-of-stages stamp is written only over a run whose artefacts are fresh'
+    # #904 RESPELLED THE POPULATION, NOT THE PROPERTY. The condition used to be `$staleAtEnd`,
+    # every artefact whose mtime predates the run's start; it is now `$unprovenAtEnd`, every
+    # artefact this run can neither say it built nor prove unchanged against the target's ledger.
+    # The claim this cell makes -- the stamp is CONDITIONAL on the run being able to vouch for what
+    # it measured -- is the same one, and a cell that failed on a correct rename would spend a
+    # reviewer's attention on itself.
+    Assert-True -Condition ($gateSource -cmatch '\$unprovenAtEnd -eq 0') `
+        'the end-of-stages stamp is written only over a run that can vouch for every artefact it measured'
 
     # And the enumeration is bounded, not only the loop body: PowerShell's `foreach` statement
     # materialises its collection before the body runs once, so a counter inside the body bounds

@@ -1,0 +1,868 @@
+{
+    "status":  "GREEN",
+    "runClass":  "green",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "3601863017b5ee4b6daf102085cb4560e79bd3ad",
+    "pullRequest":  1038,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-904-content-addressed-reuse on origin IS this commit, read from the server",
+    "upstreamSha":  "3601863017b5ee4b6daf102085cb4560e79bd3ad",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true,
+                     "build":  "cold"
+                 },
+    "requiredFeaturesExcluded":  [
+
+                                 ],
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "D:/opus-1038-warmtest",
+    "queuedUtc":  "2026-09-11T17:10:33.5845660Z",
+    "runStartUtc":  "2026-09-11T17:10:33.6785342Z",
+    "slotWaitSecs":  0.094,
+    "runEndUtc":  "2026-09-11T17:37:44.2496990Z",
+    "canaryPassed":  true,
+    "psSuitesStartedEarly":  true,
+    "psSuitesOverlapped":  true,
+    "studioScopeIncluded":  true,
+    "studioNodePresent":  true,
+    "studioStartedEarly":  true,
+    "studioOverlapped":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.027,
+                       "startedUtc":  "2026-09-11T17:10:33.7667551Z",
+                       "endedUtc":  "2026-09-11T17:10:36.7983074Z"
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.711,
+                       "startedUtc":  "2026-09-11T17:11:13.9292202Z",
+                       "endedUtc":  "2026-09-11T17:11:16.6400384Z"
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  34.403,
+                       "startedUtc":  "2026-09-11T17:11:16.6415656Z",
+                       "endedUtc":  "2026-09-11T17:11:51.0450406Z"
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  648.391,
+                       "startedUtc":  "2026-09-11T17:11:51.0460393Z",
+                       "endedUtc":  "2026-09-11T17:22:39.4370105Z"
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  26.215,
+                       "startedUtc":  "2026-09-11T17:22:39.4725684Z",
+                       "endedUtc":  "2026-09-11T17:23:05.6879664Z"
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  18.748,
+                       "startedUtc":  "2026-09-11T17:23:05.6899727Z",
+                       "endedUtc":  "2026-09-11T17:23:24.4387415Z"
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.765,
+                       "startedUtc":  "2026-09-11T17:23:24.4402416Z",
+                       "endedUtc":  "2026-09-11T17:23:25.2053960Z"
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.208,
+                       "startedUtc":  "2026-09-11T17:23:25.2063998Z",
+                       "endedUtc":  "2026-09-11T17:23:27.4146123Z"
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.347,
+                       "startedUtc":  "2026-09-11T17:23:27.4161212Z",
+                       "endedUtc":  "2026-09-11T17:23:28.7633955Z"
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.174,
+                       "startedUtc":  "2026-09-11T17:23:28.7654057Z",
+                       "endedUtc":  "2026-09-11T17:23:29.9390951Z"
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.312,
+                       "startedUtc":  "2026-09-11T17:23:29.9405961Z",
+                       "endedUtc":  "2026-09-11T17:23:31.2530185Z"
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.863,
+                       "startedUtc":  "2026-09-11T17:23:31.2545278Z",
+                       "endedUtc":  "2026-09-11T17:23:32.1173070Z"
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.91,
+                       "startedUtc":  "2026-09-11T17:23:32.1208088Z",
+                       "endedUtc":  "2026-09-11T17:23:33.0306866Z"
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.492,
+                       "startedUtc":  "2026-09-11T17:23:33.0321869Z",
+                       "endedUtc":  "2026-09-11T17:23:34.5237212Z"
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.333,
+                       "startedUtc":  "2026-09-11T17:23:34.5262349Z",
+                       "endedUtc":  "2026-09-11T17:23:35.8594916Z"
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.205,
+                       "startedUtc":  "2026-09-11T17:23:35.8609914Z",
+                       "endedUtc":  "2026-09-11T17:23:40.0656197Z"
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.989,
+                       "startedUtc":  "2026-09-11T17:23:40.0675494Z",
+                       "endedUtc":  "2026-09-11T17:23:42.0572073Z"
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.069,
+                       "startedUtc":  "2026-09-11T17:23:42.0582068Z",
+                       "endedUtc":  "2026-09-11T17:23:43.1277434Z"
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.872,
+                       "startedUtc":  "2026-09-11T17:23:43.1287433Z",
+                       "endedUtc":  "2026-09-11T17:23:45.0010554Z"
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.14,
+                       "startedUtc":  "2026-09-11T17:23:45.0025560Z",
+                       "endedUtc":  "2026-09-11T17:23:46.1423814Z"
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.156,
+                       "startedUtc":  "2026-09-11T17:23:46.1438831Z",
+                       "endedUtc":  "2026-09-11T17:23:47.3002590Z"
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.039,
+                       "startedUtc":  "2026-09-11T17:23:47.3017593Z",
+                       "endedUtc":  "2026-09-11T17:23:49.3411868Z"
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.458,
+                       "startedUtc":  "2026-09-11T17:23:49.3426963Z",
+                       "endedUtc":  "2026-09-11T17:23:54.8006008Z"
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.65,
+                       "startedUtc":  "2026-09-11T17:23:54.8021101Z",
+                       "endedUtc":  "2026-09-11T17:23:58.4520643Z"
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.729,
+                       "startedUtc":  "2026-09-11T17:23:58.4535590Z",
+                       "endedUtc":  "2026-09-11T17:24:00.1828165Z"
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.972,
+                       "startedUtc":  "2026-09-11T17:24:00.1843152Z",
+                       "endedUtc":  "2026-09-11T17:24:02.1570109Z"
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.93,
+                       "startedUtc":  "2026-09-11T17:24:02.1585110Z",
+                       "endedUtc":  "2026-09-11T17:24:03.0883167Z"
+                   },
+                   {
+                       "name":  "cli: http_helper_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.695,
+                       "startedUtc":  "2026-09-11T17:24:03.0903179Z",
+                       "endedUtc":  "2026-09-11T17:24:03.7841750Z"
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.323,
+                       "startedUtc":  "2026-09-11T17:24:03.7851784Z",
+                       "endedUtc":  "2026-09-11T17:24:05.1090654Z"
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.956,
+                       "startedUtc":  "2026-09-11T17:24:05.1105621Z",
+                       "endedUtc":  "2026-09-11T17:24:06.0662383Z"
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.526,
+                       "startedUtc":  "2026-09-11T17:24:06.0682420Z",
+                       "endedUtc":  "2026-09-11T17:24:07.5940416Z"
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.211,
+                       "startedUtc":  "2026-09-11T17:24:07.5950467Z",
+                       "endedUtc":  "2026-09-11T17:24:09.8052573Z"
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.178,
+                       "startedUtc":  "2026-09-11T17:24:09.8072655Z",
+                       "endedUtc":  "2026-09-11T17:24:10.9849485Z"
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.333,
+                       "startedUtc":  "2026-09-11T17:24:10.9864520Z",
+                       "endedUtc":  "2026-09-11T17:24:12.3199487Z"
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.679,
+                       "startedUtc":  "2026-09-11T17:24:12.3209494Z",
+                       "endedUtc":  "2026-09-11T17:24:16.0006717Z"
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.011,
+                       "startedUtc":  "2026-09-11T17:24:16.0031726Z",
+                       "endedUtc":  "2026-09-11T17:24:20.0134092Z"
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.671,
+                       "startedUtc":  "2026-09-11T17:24:20.0144102Z",
+                       "endedUtc":  "2026-09-11T17:24:20.6864421Z"
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.482,
+                       "startedUtc":  "2026-09-11T17:24:20.6879476Z",
+                       "endedUtc":  "2026-09-11T17:24:23.1700201Z"
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.371,
+                       "startedUtc":  "2026-09-11T17:24:23.1715201Z",
+                       "endedUtc":  "2026-09-11T17:24:25.5425186Z"
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.713,
+                       "startedUtc":  "2026-09-11T17:24:25.5445347Z",
+                       "endedUtc":  "2026-09-11T17:24:27.2574106Z"
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  15.642,
+                       "startedUtc":  "2026-09-11T17:24:27.2594101Z",
+                       "endedUtc":  "2026-09-11T17:24:42.9006507Z"
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  3.42,
+                       "startedUtc":  "2026-09-11T17:24:42.9021469Z",
+                       "endedUtc":  "2026-09-11T17:24:46.3219589Z"
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.576,
+                       "startedUtc":  "2026-09-11T17:24:46.3229583Z",
+                       "endedUtc":  "2026-09-11T17:24:47.8999002Z"
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.964,
+                       "startedUtc":  "2026-09-11T17:24:47.9019139Z",
+                       "endedUtc":  "2026-09-11T17:24:48.8659159Z"
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.805,
+                       "startedUtc":  "2026-09-11T17:24:48.8669211Z",
+                       "endedUtc":  "2026-09-11T17:24:49.6724017Z"
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.051,
+                       "startedUtc":  "2026-09-11T17:24:49.6739018Z",
+                       "endedUtc":  "2026-09-11T17:24:51.7249660Z"
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.306,
+                       "startedUtc":  "2026-09-11T17:24:51.7269735Z",
+                       "endedUtc":  "2026-09-11T17:24:53.0328243Z"
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.366,
+                       "startedUtc":  "2026-09-11T17:24:53.0343238Z",
+                       "endedUtc":  "2026-09-11T17:24:54.4008511Z"
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  62.66,
+                       "startedUtc":  "2026-09-11T17:24:54.4028509Z",
+                       "endedUtc":  "2026-09-11T17:25:57.0633676Z"
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  71.569,
+                       "startedUtc":  "2026-09-11T17:25:57.0653613Z",
+                       "endedUtc":  "2026-09-11T17:27:08.6337186Z"
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.474,
+                       "startedUtc":  "2026-09-11T17:27:08.6352171Z",
+                       "endedUtc":  "2026-09-11T17:27:09.1093621Z"
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.389,
+                       "startedUtc":  "2026-09-11T17:27:09.1108709Z",
+                       "endedUtc":  "2026-09-11T17:27:09.4994789Z"
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.058,
+                       "startedUtc":  "2026-09-11T17:27:09.5019884Z",
+                       "endedUtc":  "2026-09-11T17:27:09.5594933Z"
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.046,
+                       "startedUtc":  "2026-09-11T17:27:09.5615022Z",
+                       "endedUtc":  "2026-09-11T17:27:09.6076048Z"
+                   },
+                   {
+                       "name":  "frozen release guard",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.944,
+                       "startedUtc":  "2026-09-11T17:27:09.6091126Z",
+                       "endedUtc":  "2026-09-11T17:27:10.5534693Z"
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  699.067,
+                       "startedUtc":  "2026-09-11T17:10:36.8199587Z",
+                       "endedUtc":  "2026-09-11T17:22:15.8864789Z"
+                   },
+                   {
+                       "name":  "apps/studio (npm)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  81.498,
+                       "startedUtc":  "2026-09-11T17:10:36.8766758Z",
+                       "endedUtc":  "2026-09-11T17:11:58.3748365Z"
+                   },
+                   {
+                       "name":  "PostgreSQL ignored matrix",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  315.105,
+                       "startedUtc":  "2026-09-11T17:27:12.6942727Z",
+                       "endedUtc":  "2026-09-11T17:32:34.2209133Z"
+                   },
+                   {
+                       "name":  "PostgreSQL matrix under a non-C collation",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  303.95,
+                       "startedUtc":  "2026-09-11T17:32:34.2314601Z",
+                       "endedUtc":  "2026-09-11T17:37:38.1826673Z"
+                   },
+                   {
+                       "name":  "required-features coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.002,
+                       "startedUtc":  "2026-09-11T17:37:38.1856764Z",
+                       "endedUtc":  "2026-09-11T17:37:39.1887831Z"
+                   }
+               ],
+    "artifactBuildExit":  101,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "suspended_window",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\suspended_window-697d0ee3e72240d1.exe",
+                              "sha256":  "D7E03142E3648B14145C6AD3E5D3D2388D939F6722434883AC285695EA53AB03",
+                              "mtimeUtc":  "2026-09-11T17:10:56.5517529Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-20ae088d3d62b82b6e8eb9048b37699aae4415989052eeb989fd362a92b3807c",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "FE285C98E0497B102661DF82E199C995F64098AD9ECE2AFD3F9FF4CA8FCF16B8",
+                              "mtimeUtc":  "2026-09-11T17:10:57.2978092Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-20ae088d3d62b82b6e8eb9048b37699aae4415989052eeb989fd362a92b3807c",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "DB9A893B9AE372202076DBFB2811B72D0B97FD528361D0363C547210D5836260",
+                              "mtimeUtc":  "2026-09-11T17:10:59.0733006Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-586448202e246b9303c62d38c330e9793b204f261a36c82fdb284f7a855a80b4",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "39117DDD724FD2426761F720EC69FF357FB9BD32A9E379B81C377CDA4C8C3039",
+                              "mtimeUtc":  "2026-09-11T17:10:59.3262454Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "D78E1C01AEEA53B87848AFC833517422D893260AAD62D29968172AA624E6A7B8",
+                              "mtimeUtc":  "2026-09-11T17:11:01.6226233Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "B7BC3D2DE44C841D6AA7578D997DC046DD03283F8E75CE8C47A6E3402ACBFD63",
+                              "mtimeUtc":  "2026-09-11T17:11:01.9615162Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "67FF6B514102725B376673CC7541BAF774B787AE3F28B62DA4387970070B8DB4",
+                              "mtimeUtc":  "2026-09-11T17:11:02.2191865Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "AD5C43561BE87BA305D05F87B34D58F46067C7DF69BCD6C0D6C8D7990F93A620",
+                              "mtimeUtc":  "2026-09-11T17:11:02.4778767Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "EADD4FEBF180F659A89584F384087AA52396237A059C92B2344975F889649E18",
+                              "mtimeUtc":  "2026-09-11T17:11:02.4683610Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "150051034EDEE36254ACFB7C194FEA087DD8A067BB2258624453EE7F8605C3E9",
+                              "mtimeUtc":  "2026-09-11T17:11:02.4683610Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "B3CA7C6F7BCCD6A473ED178F188222A7F90DA82DFF5AC0D18621773B8B0C1349",
+                              "mtimeUtc":  "2026-09-11T17:11:02.9745773Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "2D57E49594180C2A4ADF5A25C2E05C48DCAFB64A6261DECFDD9F9A208D7B0983",
+                              "mtimeUtc":  "2026-09-11T17:11:04.4380268Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "9ECDCE17001FC4911FAE13A24E4F7A7ACD5C0AAABE005B53565D53CB378EA1E3",
+                              "mtimeUtc":  "2026-09-11T17:11:04.5056873Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-50090cae570b07f8e689d907cc35926de1368081c75dd40d2921810126adf908",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "496AC42FF1D337B7EBA09B88F55073DE123718844C72CB459932EC93AFEC08D2",
+                              "mtimeUtc":  "2026-09-11T17:11:08.9135095Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-89425d0be20d0643169ceb142f8e28dd321649bcfa3989c8a5dc9dc0bf640fd5",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "E8FA67A7536C259BE06AE499D7A9A43FB290280EC89C185EF0F893A3B5F0DC2C",
+                              "mtimeUtc":  "2026-09-11T17:11:09.2036458Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-89425d0be20d0643169ceb142f8e28dd321649bcfa3989c8a5dc9dc0bf640fd5",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "89D6D70FB9A5024D710857D763F1D56CE70F7EE9D3F44127D2600598ED2DE95C",
+                              "mtimeUtc":  "2026-09-11T17:11:08.7668916Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-89425d0be20d0643169ceb142f8e28dd321649bcfa3989c8a5dc9dc0bf640fd5",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "7B61F1BBA7E8481D65531B35F4EF9D1598369EC9E8000B344E32157305BF6B94",
+                              "mtimeUtc":  "2026-09-11T17:11:09.2735856Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-89425d0be20d0643169ceb142f8e28dd321649bcfa3989c8a5dc9dc0bf640fd5",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "48E374384DB27E6105B748D339F06961AF4DE597EBC2B7A640712209CC042344",
+                              "mtimeUtc":  "2026-09-11T17:11:09.6348673Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-93fe8487f6ad315b0762ba7a5b49dfc12eaf65be7c05461d7418249a4889cf56",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "BC6291E43E13AF16D26A097F126918EA999F85226306294BDD68699385391482",
+                              "mtimeUtc":  "2026-09-11T17:11:09.8519010Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-89425d0be20d0643169ceb142f8e28dd321649bcfa3989c8a5dc9dc0bf640fd5",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "3D5340698C74FD07B95402B803163E54CB64C6EFF2177BB5CF289EC503BFE528",
+                              "mtimeUtc":  "2026-09-11T17:11:09.8953811Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-93fe8487f6ad315b0762ba7a5b49dfc12eaf65be7c05461d7418249a4889cf56",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "B6300DFDD6FFC87B7BCE6186C598E89C669645AF81D9C27844AD3FD9FDA79D2B",
+                              "mtimeUtc":  "2026-09-11T17:11:09.8638069Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-93fe8487f6ad315b0762ba7a5b49dfc12eaf65be7c05461d7418249a4889cf56",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          },
+                          {
+                              "package":  "path+file:///F:/github/GraphHelm/.claude/worktrees/issue-904-28d3bf/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "D:/opus-1038-warmtest\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "0300133E033B60032C8B193EEC3989F095F1CC18AB7AB6D4F1223187393FCE98",
+                              "mtimeUtc":  "2026-09-11T17:11:10.0016211Z",
+                              "freshBuild":  true,
+                              "crateInputHash":  "197e6217b1d2-93fe8487f6ad315b0762ba7a5b49dfc12eaf65be7c05461d7418249a4889cf56",
+                              "crateInputHashSource":  "package-id",
+                              "ledgerInputHash":  null,
+                              "ledgerSha256":  null,
+                              "reuseProof":  "rebuilt"
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "artifactsRebuilt":  22,
+    "artifactsProvenReuse":  0,
+    "artifactsUnprovenReuse":  0,
+    "artifactsContaminated":  0,
+    "buildMode":  "cold",
+    "buildPassSecs":  30.106,
+    "crateInputHashSecs":  5.581,
+    "toolchainId":  "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-pc-windows-msvc\nrelease: 1.97.1\nLLVM version: 22.1.6",
+    "lockfileSha256":  "93e2fd614fa545abfd5ad8104541de0e073bae1a8ba07781f313b5dcbd74d224",
+    "crateInputHashError":  null,
+    "postgresExecution":  {
+                              "PostgreSQL ignored matrix":  {
+                                                                "verdict":  "measured",
+                                                                "executed":  49,
+                                                                "groups":  258,
+                                                                "stdoutLines":  1339
+                                                            },
+                              "PostgreSQL matrix under a non-C collation":  {
+                                                                                "verdict":  "measured",
+                                                                                "executed":  49,
+                                                                                "groups":  258,
+                                                                                "stdoutLines":  1339
+                                                                            }
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "D:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-11T17:10:33Z | gate cwd=F:\\github\\GraphHelm\\.claude\\worktrees\\issue-904-28d3bf head=3601863017b5ee4b6daf102085cb4560e79bd3ad | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=39376 start=2026-09-11T17:10:32.3018165Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-11T17:10:33.7186211Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "absent",
+                          "path":  "D:/graphhelm-slot/SLOT.lock",
+                          "observedAtUtc":  "2026-09-11T17:37:39.2535163Z"
+                      },
+    "slotLockStartEndIdentical":  false,
+    "scope":  {
+                  "full":  true,
+                  "reason":  "FULL: no scope selection was given",
+                  "crates":  [
+
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "the PostgreSQL matrix runs: this is a FULL run"
+              },
+    "instrumentSuspect":  false,
+    "targetBuildState":  {
+                             "contaminated":  false,
+                             "suspect":  false,
+                             "state":  "fresh",
+                             "reason":  "the target directory holds no build output, so nothing is being reused"
+                         },
+    "overallPassed":  true
+}

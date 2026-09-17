@@ -86,7 +86,7 @@ if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\
 # the G lane, against a branch cut before #892 landed.
 #
 # BOTH VARIABLES, PER SLOT, because two different programs read two different names for the same
-# fact: `ci/gate.ps1:387` reads `GRAPHHELM_SLOT_DIR`, and `.factory/tools/slot-claim.sh:50` reads
+# fact: `ci/gate.ps1:1242` reads `GRAPHHELM_SLOT_DIR`, and `.factory/tools/slot-claim.sh:132` reads
 # `SLOT_LOCK`. Exporting only one was measured on #871: a run on the SSD claimed the HDD's lock as
 # well, and the HDD queue stood still for 27 minutes.
 # `-SlotRoot` exists so a TEST can point this at a throwaway directory. It is not an operational
@@ -506,9 +506,9 @@ function Invoke-OneEntry {
     # line and they have a single answer.
     #
     # The first version exported `GRAPHHELM_SLOT_DIR` and `SLOT_LOCK`. `SLOT_LOCK` is read by
-    # `.factory/tools/slot-claim.sh:50` and by nothing on this path -- the runner launches
+    # `.factory/tools/slot-claim.sh:132` and by nothing on this path -- the runner launches
     # `ci/gate.ps1` directly, never the shell wrapper -- so it LOOKED like it was doing work it was
-    # not (ISSUES 4). And `GRAPHHELM_SLOT_DIR` moves more than the lock: `ci/gate.ps1:1976` builds
+    # not (ISSUES 4). And `GRAPHHELM_SLOT_DIR` moves more than the lock: `ci/gate.ps1:4258` builds
     # the durable ledger as `<slot dir>/gate-runs`, while `ci/merge-proof.ps1` sweeps only
     # `D:\graphhelm-slot\gate-runs`. Pointing the slot dir at `E:` would have parked every SSD run's
     # manifest where the verifier does not look, and each would have earned "no independent record

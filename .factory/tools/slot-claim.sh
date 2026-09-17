@@ -47,7 +47,148 @@ set -u
 # reader notice in seconds instead of hours.
 PROTOCOL="ED-24 (a2619715): absence is free, claim is create-or-fail, release is delete"
 
-LOCK="${SLOT_LOCK:-D:/graphhelm-slot/SLOT.lock}"  # overridable so the REFUSAL can be tested off the real file
+# THE LOCK IS DERIVED FROM THE TARGET, because a wrapper that has to name it will eventually
+# name the wrong one -- and did (#906). The checklist has said since #892 that there is ONE LOCK
+# PER DISK, HDD at `D:/graphhelm-slot/SLOT.lock` and SSD at `E:/graphhelm-slot/SLOT.lock`, but
+# this script had one default and no idea which spindle the caller was about to build on. So the
+# safe configuration required every wrapper to set SLOT_LOCK correctly by hand, and the failure
+# of any single one was invisible to the others.
+#
+# MEASURED INSTANCE (#906, 2026-09-05 14:11:43Z): a lane launched with
+# CARGO_TARGET_DIR=E:/issues3-targets and no SLOT_LOCK, took the default, and wrote
+# `HELD by issues3 | ... | STATUS: gate #826 E:` into the file that governs D: -- while another
+# lane already held E:. The lock's own STATUS line said E: and the file it lived in governed D:.
+# Two builds on one SSD, both lanes believing they held a slot, arriving through the DEFAULT
+# rather than through a race.
+#
+# DERIVATION, NOT REFUSAL, when SLOT_LOCK is unset. A refusal there would hard-stop every lane
+# whose target is on E: and whose wrapper has not been updated -- a worse failure than the one
+# this closes. With the target known, the right lock is computable, so it is computed.
+#
+# REFUSAL when BOTH are given and their drives disagree, because that is not a lane that has not
+# caught up: it is a wrapper stating two different slots in one breath, and one of them is wrong.
+# Silence there would reproduce the measured instance with an explicit setting instead of a
+# default.
+#
+# The target comes from SLOT_TARGET, or from CARGO_TARGET_DIR which every gate wrapper already
+# sets -- so this claim chooses the matching default. This subprocess cannot export the path
+# into its parent: the wrapper must pass the same path as GRAPHHELM_SLOT_LOCK_PATH to gate.ps1,
+# as required by the merge checklist. Claim derivation alone does not configure the later gate.
+slot_drive_of() {
+  # THREE SPELLINGS OF THE SAME DISK, because this script is called from Git bash where an MSYS
+  # path is ordinary. `E:/x` and `E:\x` are the Windows forms; `/e/x` is what an MSYS shell
+  # produces for the same directory, and a wrapper that exports CARGO_TARGET_DIR from inside
+  # bash will hand over that third one (Codex P1 on #1030). Missing it made the drive
+  # undetectable, and an undetectable drive fell back to the D: default -- re-creating, for the
+  # path form nobody tested, exactly the defect this change exists to remove.
+  case "$1" in
+    [A-Za-z]:/*|[A-Za-z]:\\*) printf %s "$(printf %s "${1%%:*}" | tr "[:lower:]" "[:upper:]")" ;;
+    /[A-Za-z]/*) printf %s "$(printf %s "$1" | cut -c2 | tr "[:lower:]" "[:upper:]")" ;;
+    *) printf %s "" ;;
+  esac
+}
+
+SLOT_TARGET_PATH="${SLOT_TARGET:-${CARGO_TARGET_DIR:-}}"
+TARGET_DRIVE="$(slot_drive_of "$SLOT_TARGET_PATH")"
+
+# PRECEDENCE IS NOT AGREEMENT. SLOT_TARGET wins over CARGO_TARGET_DIR above, and that preference is
+# only safe while the two name the same disk. A wrapper that INHERITS SLOT_TARGET=E:/... from an
+# earlier lane and sets CARGO_TARGET_DIR=D:/... builds on D: while this script derives -- or
+# validates -- the E: lock: the D: ceiling goes unanswered and a second D: gate launches beside it.
+# That is the measured #906 shape reached through precedence rather than through a default (Codex
+# P1 on #1030), so a disagreement refuses instead of one variable masking the other.
+#
+# The comparison is between DISKS, not strings: `E:/t`, `E:\t` and `/e/t` are one disk and claim
+# normally. An unreadable drive beside a readable one is also a disagreement, because the readable
+# one would then place a lock for a build that may land anywhere.
+if [ -n "${SLOT_TARGET:-}" ] && [ -n "${CARGO_TARGET_DIR:-}" ]; then
+  SLOT_TARGET_DRIVE="$(slot_drive_of "$SLOT_TARGET")"
+  CARGO_TARGET_DRIVE="$(slot_drive_of "$CARGO_TARGET_DIR")"
+  if [ "$SLOT_TARGET_DRIVE" != "$CARGO_TARGET_DRIVE" ]; then
+    echo "slot-claim: REFUSED - the two target variables do not name one disk." >&2
+    echo "  SLOT_TARGET: $SLOT_TARGET (disk: ${SLOT_TARGET_DRIVE:-<unreadable>})" >&2
+    echo "  CARGO_TARGET_DIR: $CARGO_TARGET_DIR (disk: ${CARGO_TARGET_DRIVE:-<unreadable>})" >&2
+    echo "  ONE LOCK PER DISK: SLOT_TARGET wins here, so the lock would answer for a disk cargo is" >&2
+    echo "  not building on, leaving that disk's ceiling free for a second gate." >&2
+    echo "  Unset one of them, or spell the same disk in both." >&2
+    echo "  $PROTOCOL" >&2
+    exit 6
+  fi
+fi
+
+# A supplied target must identify a disk even when the lock is explicit. Otherwise the explicit
+# branch bypasses the refusal and can claim one drive for a relative target on another (#1030).
+# No target remains a supported legacy call; only a nonempty, unplaceable target is rejected.
+if [ -n "$SLOT_TARGET_PATH" ] && [ -z "$TARGET_DRIVE" ]; then
+  echo "slot-claim: REFUSED - the target names no disk this script can identify." >&2
+  echo "  target: $SLOT_TARGET_PATH" >&2
+  echo "  understood forms: X:/path, X:\\path, /x/path" >&2
+  echo "  ONE LOCK PER DISK: an explicit lock cannot place an unknown target disk." >&2
+  echo "  Give a target whose drive can be read." >&2
+  echo "  $PROTOCOL" >&2
+  exit 6
+fi
+
+if [ -n "${SLOT_LOCK:-}" ]; then
+  LOCK="$SLOT_LOCK"
+  LOCK_DRIVE="$(slot_drive_of "$LOCK")"
+  if [ -n "$TARGET_DRIVE" ] && [ -n "$LOCK_DRIVE" ] && [ "$TARGET_DRIVE" != "$LOCK_DRIVE" ]; then
+    echo "slot-claim: REFUSED - the lock and the target are on different disks." >&2
+    echo "  SLOT_LOCK names $LOCK_DRIVE: ($LOCK)" >&2
+    echo "  the target is on $TARGET_DRIVE: ($SLOT_TARGET_PATH)" >&2
+    echo "  ONE LOCK PER DISK: a claim on $LOCK_DRIVE: leaves the $TARGET_DRIVE: ceiling unanswered" >&2
+    echo "  and the $LOCK_DRIVE: slot held by a build that is not on it. Unset SLOT_LOCK to derive it." >&2
+    echo "  $PROTOCOL" >&2
+    exit 6
+  fi
+  if [ -n "$TARGET_DRIVE" ] && [ -z "$LOCK_DRIVE" ]; then
+    echo "slot-claim: REFUSED - the explicit lock names no disk this script can identify." >&2
+    echo "  SLOT_LOCK: $LOCK" >&2
+    echo "  the target is on $TARGET_DRIVE: ($SLOT_TARGET_PATH)" >&2
+    echo "  ONE LOCK PER DISK: an unplaced lock cannot satisfy the target disk ceiling." >&2
+    echo "  Set SLOT_LOCK to a path whose drive can be read, or unset it to derive the lock." >&2
+    echo "  $PROTOCOL" >&2
+    exit 6
+  fi
+elif [ -n "$TARGET_DRIVE" ]; then
+  LOCK="$TARGET_DRIVE:/graphhelm-slot/SLOT.lock"
+else
+  # SLOT_LOCK_DEFAULT exists for the same reason SLOT_LOCK does -- so a suite can exercise this
+  # path without touching the machine's real slot. It is not a second way to name a slot: it is
+  # only reached when the caller supplies NEITHER a lock nor a target, which in production means
+  # a wrapper that sets no CARGO_TARGET_DIR. A test of the derivation must be able to make the
+  # FALLBACK harmless too, because a broken derivation lands here -- and a suite whose failure
+  # mode is "claimed the real HDD slot and blocked the fleet" is not a suite anyone should run.
+  LOCK="${SLOT_LOCK_DEFAULT:-D:/graphhelm-slot/SLOT.lock}"
+fi
+# AND THE VARIABLE THE GATE ACTUALLY READS IS CHECKED TOO, because this script's careful choice
+# governs nothing by itself. `ci/gate.ps1:4509` builds its lock path with `Get-SlotLockPath`, and
+# `ci/slot-lock.ps1:345` returns `GRAPHHELM_SLOT_LOCK_PATH` verbatim when it is set -- so THAT is
+# the file the gate will claim. The checklist therefore makes forwarding it mandatory, and until
+# now this script refused a `SLOT_LOCK` on the wrong disk while ignoring the one that decides.
+#
+# MEASURED (lane S, review of #1030): target on W: with GRAPHHELM_SLOT_LOCK_PATH=D:/... exited 0
+# and claimed W: here, while the gate that followed would sit on D: -- a claim and a gate on two
+# disks, silently, which is #906 split across two processes instead of one.
+#
+# Compared against the lock THIS RUN chose, not against the target, so the explicit and derived
+# branches are both covered by one comparison. A chosen lock whose own disk cannot be read is
+# already refused above wherever a target exists; where no target exists there is nothing to
+# disagree with, and the comparison is skipped rather than guessed.
+if [ -n "${GRAPHHELM_SLOT_LOCK_PATH:-}" ]; then
+  GATE_LOCK_DRIVE="$(slot_drive_of "$GRAPHHELM_SLOT_LOCK_PATH")"
+  CHOSEN_LOCK_DRIVE="$(slot_drive_of "$LOCK")"
+  if [ -n "$CHOSEN_LOCK_DRIVE" ] && [ "$GATE_LOCK_DRIVE" != "$CHOSEN_LOCK_DRIVE" ]; then
+    echo "slot-claim: REFUSED - the gate's lock and this claim are on different disks." >&2
+    echo "  GRAPHHELM_SLOT_LOCK_PATH: $GRAPHHELM_SLOT_LOCK_PATH (disk: ${GATE_LOCK_DRIVE:-<unreadable>})" >&2
+    echo "  this claim would take: $LOCK (disk: $CHOSEN_LOCK_DRIVE)" >&2
+    echo "  ONE LOCK PER DISK: the gate reads GRAPHHELM_SLOT_LOCK_PATH, so it would claim or wait" >&2
+    echo "  on a different disk than the one this claim holds, leaving one ceiling unanswered." >&2
+    echo "  Forward the SAME path the claim takes, as the merge checklist requires." >&2
+    echo "  $PROTOCOL" >&2
+    exit 6
+  fi
+fi
 LOG="${SLOT_LOG:-D:/graphhelm-slot/check-activity.log}"
 AGENT="${1:?agent}"
 LANE="${2:?lane}"
@@ -95,6 +236,14 @@ STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 #   3  path or permission fault: nobody holds the slot
 #   4  the holder cannot be identified at all
 #   5  a holder pair was supplied, and it is unusable
+#   6  the disks disagree: nothing was claimed, and no wait is implied  <- #1030, four sites
+#
+# CODE 6 IS NOT CONTENTION AND NOT A FAULT. It fires BEFORE any claim, at four places above, and
+# every one of them is a caller stating two disks in one breath: an explicit SLOT_LOCK on a disk
+# other than the target's; a target, or an explicit lock, whose disk cannot be read at all;
+# SLOT_TARGET and CARGO_TARGET_DIR naming two disks; and GRAPHHELM_SLOT_LOCK_PATH -- the variable
+# the GATE reads -- naming a disk other than the one this claim takes. A caller that retries on 6
+# retries the same configuration forever: the remedy is to fix the variables, never to wait.
 #
 # THE PAIR IS ALWAYS SUPPLIED; there is no default and nothing here derives one. An earlier
 # revision defaulted to the parent process and it was retracted under measurement -- slot-holder.sh

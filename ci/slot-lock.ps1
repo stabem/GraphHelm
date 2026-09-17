@@ -67,7 +67,7 @@ function Test-SlotLockPathMatchesTargetDirShape {
 # produced its two arguments in-process. The gap was a parse, not a policy.
 #
 # ABSENT IS NOT MALFORMED, and neither is death. A lock with no holder line returns empty strings,
-# which `Test-SlotHolderLiveness` answers 'indeterminate' for -- the promise `slot-claim.sh:85`
+# which `Test-SlotHolderLiveness` answers 'indeterminate' for -- the promise `slot-claim.sh:226`
 # already makes in writing ("DEGRADES SAFELY: unset -> written empty -> ... 'indeterminate'").
 # An unattributable lock must never be declared recoverable.
 function Get-SlotHolderPairFromContent {

@@ -328,17 +328,34 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    count is the check; the CLAIM is the handshake** — two lanes measuring zero within the same minute both
    launched (C #862 09:17:18Z, M #871 09:17:38Z → two gates on the one platter, D: queue 16, C:/E:/F: 0).
    Before launching, the WRAPPER claims the slot with `.factory/tools/slot-claim.sh` and releases it when
-   the run ends. **ONE lock file per disk, and the script is its only writer**: HDD = `D:/graphhelm-slot/SLOT.lock`
-   (the script's default, `slot-claim.sh:50` `LOCK="${SLOT_LOCK:-D:/graphhelm-slot/SLOT.lock}"`); SSD = the same
-   script with `SLOT_LOCK=E:/graphhelm-slot/SLOT.lock`. The hand ledgers `D:\SLOT-HDD.claim` / `E:\SLOT-SSD.claim`
+   the run ends. **ONE lock file per disk, and the script is its only writer**: HDD = `D:/graphhelm-slot/SLOT.lock`,
+   SSD = `E:/graphhelm-slot/SLOT.lock`. **The claim script DERIVES its default from the drive of
+   `CARGO_TARGET_DIR` (or `SLOT_TARGET`), but the wrapper MUST also pass that same path to the gate
+   through `GRAPHHELM_SLOT_LOCK_PATH`.** The gate does not read `SLOT_LOCK` or `SLOT_TARGET` and its
+   default remains D:. Claiming E: without forwarding E:'s path can therefore hold E: while waiting
+   on D:. For a hand-written PowerShell wrapper using an E: target, set both values before the claim:
+   ```powershell
+   $env:SLOT_LOCK = 'E:/graphhelm-slot/SLOT.lock'
+   $env:GRAPHHELM_SLOT_LOCK_PATH = $env:SLOT_LOCK
+   ```
+   Use the corresponding D: path for a D: target. Preserve the holder PID/start-time pair through
+   the claim and child gate, launch only after a successful claim, and release the same path.
+   Explicit naming still wins, but a `SLOT_LOCK` whose drive DISAGREES with the
+   target's is refused with `exit 6` -- that is a wrapper stating two slots in one breath, and it is how the
+   measured incident happened: a lane built on `E:/issues3-targets` with no `SLOT_LOCK`, took the old D: default,
+   and wrote a claim whose own STATUS line said `E:` into the file that governs `D:` while another lane held `E:`
+   (14:11:43Z, two builds on one SSD, both lanes believing they held a slot). The hand ledgers
+   `D:\SLOT-HDD.claim` / `E:\SLOT-SSD.claim`
    are retired: two conventions that cannot see each other let D hold the HDD through the script while the
    ledger showed it free, and L hold the SSD through the ledger while the script never read it (12:07Z) — a
    lane reading one saw a free disk that was taken. Each lane deletes its own ledger line by name; a stale line
    is not a holder. **Launch only on exit 0; ANY non-zero exit means you did NOT claim** — the script has
-   five non-zero codes today (1 lock present, 2 write did not land, 3 path/permission failure whose
-   message says "Nobody holds the slot", 4/5 holder pair missing/unusable), and a reader who learns
-   "1 = busy" from a list reads 3 as free and launches (D, #889). The clause stays right when a sixth
-   code arrives. The claim is made by an ATOMIC create-or-fail — `[System.IO.File]::Open(path,
+   six non-zero codes today (1 lock present, 2 write did not land, 3 path/permission failure whose
+   message says "Nobody holds the slot", 4/5 holder pair missing/unusable, 6 the lock and the target
+   disagree about the disk — an explicit `SLOT_LOCK` on another disk, a target or explicit lock whose
+   disk cannot be read, or `SLOT_TARGET` and `CARGO_TARGET_DIR` naming two disks), and a reader who
+   learns "1 = busy" from a list reads 3 as free and launches (D, #889). The clause stays right when a
+   seventh code arrives — the count is a fact about today, and the rule above it is what holds. The claim is made by an ATOMIC create-or-fail — `[System.IO.File]::Open(path,
    CreateNew)` in PowerShell, `set -o noclobber` + `> file` or `mkdir` in bash — never "if absent, write"
    (two steps, the same race). The holder pair (pid, StartTime) is supplied by the process that OUTLIVES
    the claim — the gate wrapper, never a session's tool-call shell, which dies with the call (measured in

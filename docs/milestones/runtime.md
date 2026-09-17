@@ -457,9 +457,11 @@ suite list, alongside `cli_smoke`, `schema_cli`, `event_store_cli`, `execution_c
   candidate set and returns it in manifest order; nothing chooses among several eligible routes yet.
 - **The broker's access-audit ledger (§7.1) is deferred.** `CredentialBroker` durably stores,
   leases, and revokes, but keeps no record of which lease happened when or for which node.
-- **Three of the five route types in §2 are not built.** Only Direct API/BYOK (§2.2) and Native
-  runtime (§2.3) exist; the Aggregator (§2.1), OpenAI-compatible endpoint (§2.4), and local embedded
-  runtime (§2.5) transports are deferred.
+- **Three of the six route types in §2 are not built.** Only Direct API/BYOK (§2.2), Native
+  runtime (§2.3) and the System One judgment family (§2.6, served over the `direct_api` transport
+  by `adapters/model-gateway/src/systemone.rs` on the architect's judge door, #1109) exist; the
+  Aggregator (§2.1), OpenAI-compatible endpoint (§2.4), and local embedded runtime (§2.5)
+  transports are deferred.
 - **Session management (§13) is out of scope.** Every call is stateless — `ModelCall` carries a
   prompt and a token budget, never a session reference — so native-runtime history and session
   resume do not exist yet.

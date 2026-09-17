@@ -1,8 +1,11 @@
 # Graph Architect — what shipped in the first compile (#107)
 
-Base for every citation: the `issue-107-graph-architect` branch as of this document. Design:
-`docs/superpowers/specs/2026-09-11-graph-architect-design.md` (decisions D1–D10). Acceptance
-run: `docs/acceptance/m11-first-compile-2026-09-11.md`. Decisions on record: D-051 and D-052 in
+Base for every citation: the `issue-107-graph-architect` branch as of this document; §10 cites
+the epic #1109 branches. Design:
+`docs/superpowers/specs/2026-09-11-graph-architect-design.md` (decisions D1–D10); the typed
+judgments of #1109: `docs/superpowers/specs/2026-09-16-architect-judgments-design.md`.
+Acceptance run: `docs/acceptance/m11-first-compile-2026-09-11.md`; the keyed Tier B recipe:
+`docs/acceptance/architect-judgments-recipe.md`. Decisions on record: D-051, D-052 and D-054 in
 `docs/DECISION_REGISTER.md`.
 
 ## 1. One box of the pipeline, not the pipeline
@@ -36,6 +39,9 @@ the refusal. The loop is in `core/architect/src/synthesize.rs`.
 | in | customs budgets | `waitWithinSeconds` 86400, `clearanceWithinSeconds` 3600 (profile defaults; not exposed on the CLI) | `TaskProfile` |
 | in | program allowlist | the ONLY programs a synthesized shell call may name; no default | `--allow-program P` (repeatable), HTTP/MCP `allowPrograms` (defaults to the Runtime's `serve --allow-program` wiring, else `[]`) |
 | in | model door | a recording, or a gateway route | `--fixture <replies.json>` / `--manifest <m> --route <id>`; HTTP/MCP `fixture` / `route` |
+| in | judge door (#1109, §10) | a recording of typed answers, or a `typesafe` gateway route; absent means no judgment is asked | `--judge-fixture <answers.json>` / `--judge-route <id>`; HTTP/MCP `judgeFixture` / `judgeRoute` |
+| in | drafts (#1109, §10) | how many stance drafts to ask for and rank, 1..=3, default 1; more than one needs a judge | `--drafts N`, `drafts` |
+| in | library (#1109, §10) | a directory of graph templates with `.template.json` sidecars the judge may reuse or adapt; read only when a judge is named | `--library <dir>`, `library` |
 | out | `document` | the complete Graph DSL document (`apiVersion p50.dev/graph/v1`, `kind ExecutionGraph`, compiler-owned `metadata`, the model's `spec` with customs stamped) | every door; the CLI also writes it to `--out <path.json>` (`create_new`: an existing file is never overwritten) |
 | out | `rationale` | `[{node, reason}]` in node-id order: the node's objective, plus the stamp when the compiler added one | every door |
 | out | `stampedCustoms` | the node ids the compiler stamped `completion.customs` onto, sorted | every door |
@@ -43,6 +49,9 @@ the refusal. The loop is in `core/architect/src/synthesize.rs`.
 | out | `rounds` | the round whose draft was accepted (1 = no repair) | every door |
 | out | `promptSha256s` | the hash of every prompt asked, in order; `len() == rounds` | every door |
 | out | `usage` | `{inputTokens, outputTokens}` when the door reported any; absent for a recording (a figure nobody measured is never invented) | every door |
+| out | `judgments` | `{nodes: [{node, onGoal, kind, kindConfidence}], unresolved: [node ids], usage}` — the accepted draft's per-node answers verbatim, the nodes the judge left between the thresholds, and the judge's summed usage; **absent when no judge was named** (#1109, §10) | every door |
+| out | `ranking` | `{candidates: [{index, stance, coverage, waste, confidence, composite}], chosen, unresolved}`; **absent unless `drafts > 1`**; the chosen document also carries `metadata.labels.stance` (#1109, §10) | every door |
+| out | `reuse` | `{road, template, parameters, confidence, unresolved, usage}` — `reuse`, `adapt` or `create`, the template used or seeded, the parameter values a `reuse` filled, and the judge usage of the decision and fill calls (`usage` is summed here on every road; `judgments.usage` carries only the per-node and ranking calls); **absent unless a judge AND a non-empty library were named** (#1109, §10) | every door |
 
 Metadata is the compiler's, not the model's (D5): `id: arch_<sha8 of goal>_v1`, `name: <goal,
 first 80 chars>`, `executionId: exec_<sha8>`, `version: 1`, `labels { origin: architect,
@@ -95,7 +104,7 @@ surface `serve --allow-program` feeds the tool lease. A draft naming any other p
 authorize, and the architect never authorizes it. The first compile's own goal needs `cargo`,
 so the golden run passes `--allow-program cargo` explicitly.
 
-## 5. The ten named non-goals (spec §6, blueprint §4, unchanged)
+## 5. The ten named non-goals (spec §6, blueprint §4; items 1–9 unchanged, item 10 retired)
 
 1. Task Profiler (the profile is caller-supplied).
 2. Capability Discovery beyond the static, code-derived catalog.
@@ -106,7 +115,10 @@ so the golden run passes `--allow-program cargo` explicitly.
 7. Ghost nodes.
 8. Studio rendering of the rationale.
 9. Autopilot auto-publish (nothing publishes, nothing starts).
-10. Multi-draft judge panels (one draft per round, one road).
+10. ~~Multi-draft judge panels (one draft per round, one road).~~ **RETIRED by epic #1109
+    (spec D9): PR #1125 ranks up to three stance drafts with one typed judge call (§10, site 2).**
+    What stays retired is the panel of chat models arguing; what exists is one System One judge
+    answering closed questions under a fixed policy, and one draft per round on the default road.
 
 ## 6. Tier A is the gate; Tier B is unmeasured (D9)
 
@@ -120,7 +132,11 @@ to `completed`; HTTP and MCP return the CLI's bytes. The cell-to-test map is in
 **Tier B** — semantic quality (is the graph USEFUL for the goal?) is out of the commit loop and
 has not been measured. The golden suite proves determinism and validity, not usefulness. The
 next measurement is a paid judge run over a set of goals, recorded under `docs/acceptance/` the
-way the M08/M09 judge runs were.
+way the M08/M09 judge runs were. Since #1109 the judge is a typed one (§10), so the run has a
+recipe: `docs/acceptance/architect-judgments-recipe.md` names the prerequisites, the exact
+invocation per goal, and the table a threshold change must cite. The judge's own semantic
+usefulness (does `on_goal` track what a person would say?) is part of what that run measures,
+not something the Tier A cells prove.
 
 ## 7. Prompt-injection posture
 
@@ -176,10 +192,159 @@ the same variable and is reviewed in the commit like any golden.
 
 | door | invocation | returns |
 |---|---|---|
-| CLI | `graphhelm graph synthesize --goal <text> --out <path.json> [--mode M] [--max-nodes N] [--allow-program P]* (--fixture <replies.json> \| --manifest <m> --route <id> [--broker --keyring --key-id])` | the D8 JSON plus `out` |
-| HTTP | `POST /v1/graphs/synthesize` `{goal, mode?, maxNodes?, allowPrograms?, fixture?, route?}` (closed body; no `Idempotency-Key`, no execution id) | the D8 JSON, `command: graph.synthesize` |
+| CLI | `graphhelm graph synthesize --goal <text> --out <path.json> [--mode M] [--max-nodes N] [--allow-program P]* (--fixture <replies.json> \| --manifest <m> --route <id> [--broker --keyring --key-id]) [--judge-fixture <answers.json> \| --judge-route <id>] [--drafts N] [--library <dir>]` | the D8 JSON plus `out` |
+| HTTP | `POST /v1/graphs/synthesize` `{goal, mode?, maxNodes?, allowPrograms?, fixture?, route?, judgeFixture?, judgeRoute?, drafts?, library?}` (closed body; no `Idempotency-Key`, no execution id) | the D8 JSON, `command: graph.synthesize` |
 | MCP | tool `synthesize`, same closed schema, posting only the fields given | the route's reply, byte for byte |
 
 The three return the same `data` (`api_http::the_api_and_the_cli_compile_the_same_goal_to_the_same_bytes`,
-`mcp_stdio::the_synthesize_tool_reaches_the_architect_route_and_relays_its_document`). None of
-them publishes or starts an execution.
+`mcp_stdio::the_synthesize_tool_reaches_the_architect_route_and_relays_its_document`), with a
+judge too (`api_http::the_api_and_the_cli_agree_with_a_judge_and_report_the_unresolved_node`,
+`mcp_stdio::the_synthesize_tool_forwards_the_judge_fixture_and_relays_the_judgments`). None of
+them publishes or starts an execution. The judge fields are described in §10.
+
+## 10. The judge door and its four sites (#1109)
+
+Design: `docs/superpowers/specs/2026-09-16-architect-judgments-design.md` (decisions D1–D10 of
+that spec; cited below as "spec D*n*"). Decision on record: D-054. Landed by PRs #1114 (wire
+types), #1116 (judge port), #1118 (adapter), #1120 (site 3), #1125 (site 2), #1126 (sites 4 and
+1), #1127 (three doors).
+
+### 10.1 Two ports, not one wider port (spec D1)
+
+`DraftModel::draft(prompt) -> text` (§8) is untouched. Beside it, `JudgeModel::judge(&JudgeRequest)
+-> JudgeReply` (`core/architect/src/judge.rs`) is the compiler's SECOND model door: a System One
+model (TypeSafe's Jev; route family `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6) that cannot
+generate text and only answers closed questions over state the compiler hands it. The wire types
+— `Question` (`Noul | Choice | Score`), `JudgeRequest`, `Answer`, `JudgeReply`, `request_sha256`
+— live in `core/gateway/src/judgment.rs` and serialize to the documented `POST /v1/systemone`
+body. The adapter is `adapters/model-gateway/src/systemone.rs` (`SystemOneAdapter`, provider
+`typesafe`, transport `direct_api`, base URL `https://api.typesafe.ai`, model `jev-latest`), the
+key leased from the Credential Broker exactly as the Anthropic key is. The two doors refuse each
+other's routes: a `typesafe` route on the draft door and a chat route on the judge door are both
+`GatewayError::UnsupportedCapability`, and nothing is sent before the refusal.
+
+### 10.2 The three doors a judgment may enter through (spec D3)
+
+A judgment reaches the compiler ONLY as:
+
+1. a **repairable diagnostic** under its own code, appended to the round's diagnostics and fed
+   back to the draft model like any lint error — `GHA005_NODE_OFF_GOAL` (the judge read the node's
+   objective as not serving the goal) and `GHA006_NODE_KIND_MISMATCH` (the judge, confidently,
+   would type the objective differently from the draft);
+2. a **ranking** the code reads under one fixed, named policy (§10.4, site 2);
+3. a **report field**: `judgments`, `ranking`, `reuse` (§2), every one `Option` and absent when
+   the run named no judge.
+
+It never removes a diagnostic, never edits a draft, never bypasses `compile_round`. The
+allowlist (D-052), `GHG102` (D-051) and the node count stay deterministic and un-judged. The
+judge is asked about a draft only AFTER every deterministic check has passed, so a schema-, lint-
+or allowlist-broken draft never reaches it.
+
+### 10.3 Absent judge = today's bytes (spec D4)
+
+`synthesize(profile, catalog, model)` keeps its signature and its golden. The entry point with a
+judge is `synthesize_with(profile, catalog, model, &Extras)`, `Extras { judge: Option<&dyn
+JudgeModel>, drafts: u8, library: Option<&GraphLibrary> }`; `Extras::default()` (`drafts: 1`)
+reproduces `synthesize` byte for byte and `first-compile/expected.json` did not change.
+
+### 10.4 The four sites and their question shapes
+
+Question ids are the compiler's own and carry no meaning to the model; every question carries its
+whole meaning in `instructions` and `criteria`. The state is always the goal plus the node
+summaries `{id, type, objective}` — never the prompt, never the template.
+
+| site | module | question shape | what the code does with the answer |
+|---|---|---|---|
+| 3 — per-node judgments | `core/architect/src/judgment/nodes.rs` | per node: `on_goal:<id>` (`Noul`: does this node do work the goal needs?) and `kind:<id>` (`Choice` over the catalog's node types) | a "no" on `on_goal` is `GHA005`; a confident `kind` that differs from the draft's type is `GHA006`; both go back to the draft model with the round's other diagnostics; answers between the thresholds are listed under `judgments.unresolved` and do nothing |
+| 2 — rank N drafts | `core/architect/src/judgment/ranking.rs` | per candidate `i`: `coverage:<i>` (`Score` over the three `COVERAGE_LEVELS`, a position `0.0..=2.0`) and `waste:<i>` (`Noul`: does it do work the goal did not ask for?) | composite `coverage - waste`; the highest wins, a tie goes to the lower index; a top candidate under the acting threshold keeps draft 1 and sets `ranking.unresolved` |
+| 4 — reuse / adapt / create | `core/architect/src/judgment/reuse.rs` (`decide_request`, `read_decision`) | one `Choice` over the three roads, one `Choice` over the library's templates | selects the road BEFORE any draft is asked; `create`, and every unresolved answer, is today's road with `reuse` saying so |
+| 1 — template + typed parameters | `core/architect/src/judgment/reuse.rs` (`fill_request`, `read_fill`) | one `Choice` per closed-set parameter, its instructions the sidecar's `question`, its criteria the sidecar's `options` | fills the template without a draft model and validates it through the SAME chain a draft takes; one unresolved parameter falls to `create` |
+
+Site 2 asks for variants without touching the single-draft prompt (spec D7): `assemble_prompt`
+gains `stance: Option<&Stance>`; `None` yields exactly today's bytes; `Some` appends one fenced
+`<stance>` block after `</goal>`. The three fixed stances `minimal`, `verified`, `explicit`
+(`Stance::ALL`, in that order: draft 1 is always `minimal`) are the whole vocabulary; `drafts`
+is bounded to `1..=3` and refused as `invalidProfile` at `/drafts` outside it; more than one
+draft without a judge is refused before any prompt. Each draft is judged and repaired on its
+own, then ranked by ONE judge call.
+
+### 10.5 The thresholds (spec D6)
+
+`core/architect/src/judgment/policy.rs` holds three named constants:
+
+| constant | value | meaning |
+|---|---|---|
+| `ACT_THRESHOLD` | `0.80` | a `Choice`/`Score` answer acts on the compiler only at or above this confidence |
+| `NOUL_NO_THRESHOLD` | `0.35` | a `Noul` at or below this reads as "no" |
+| `NOUL_YES_THRESHOLD` | `0.65` | a `Noul` at or above this reads as "yes"; between the two it is unresolved |
+
+They are conservative starting VALUES TO BE MEASURED, not truths. A threshold moves only after a
+recorded run of real Jev over the goal set under `docs/acceptance/` (the recipe in
+`docs/acceptance/architect-judgments-recipe.md`), and the new value lands with a cell on each side
+of it (`policy_edges_are_exact` pins `value - ε` and `value + ε` today). An answer below the
+acting threshold does nothing — no diagnostic, no reorder, no fill — and is reported as
+`unresolved`, so the absence is visible rather than silent.
+
+### 10.6 The recorded judge door (spec D5)
+
+`RecordedJudgeModel` reads `{"answers": {"<request sha256>": <JudgeReply>, …}}` (≤ 4 MiB, keys
+lowercase hex sha256, keyed by `request_sha256` over the canonical request bytes exactly as
+`RecordedDraftModel` is keyed by the prompt hash). It is the judge in every Tier A test and is
+available to operators as `--judge-fixture` / `judgeFixture`; every Tier A cell is keyless. A
+recording that holds no reply refuses `judgeMissing { requestSha256 }`, naming the request the
+way `fixtureMissing` names the prompt; a door that cannot answer is `judgeUnavailable { message }`
+with the failure class, never a path or a key. `ARCHITECT_RECORD=1` re-records judge replies beside
+draft replies through the same missing-fixture loop (§8); the judge fixtures live under
+`core/architect/fixtures/judge/` and each carries an authored half (`rounds`) and a derived half
+(`answers`).
+
+### 10.7 The library contract (spec D8)
+
+A `GraphLibrary` (`core/architect/src/library.rs`, `GraphLibrary::load(dir)`) is a directory of
+graph documents in the authored format (`<id>.yaml` or `<id>.json`, at most `MAX_TEMPLATES = 64`)
+each beside a sidecar `<id>.template.json` (`SIDECAR_SUFFIX`) declaring `parameters: { <name>:
+{ question, options: { <value>: description } } }`; each chosen value substitutes `{{name}}` in
+the document's string fields. Only closed sets are parameters; free text never is. `reuse` fills
+and validates through the same chain as a draft — a filled template that fails lint or names a
+program outside the allowlist is refused (`capabilityMissing`), not repaired; `adapt` seeds the
+draft prompt with the template inside a fenced `<seed>` block; `create` is today's road. There is
+no default library directory and no bundled template: an absent or empty library makes the
+decision step a no-op, and a library without a judge is ignored and reports nothing. The fixture
+library under `core/architect/fixtures/library/` is test data, not a shipped catalog.
+
+### 10.8 The flags and fields on the three surfaces (spec D10)
+
+| surface | judge door | drafts | library |
+|---|---|---|---|
+| CLI (`apps/cli/src/args.rs`) | `--judge-route <id>` (needs `--manifest`; leased through `--broker --keyring --key-id` like `--route`) or `--judge-fixture <answers.json>`; mutually exclusive | `--drafts N` | `--library <dir>` |
+| HTTP `POST /v1/graphs/synthesize` | `judgeRoute` (a `direct_api` `typesafe` route of the server's manifest) or `judgeFixture` (a path on the Runtime host); mutually exclusive, refused at `/judgeFixture` | `drafts` (integer 1..=3) | `library` (a directory on the Runtime host) |
+| MCP tool `synthesize` (`apps/cli/src/commands/mcp/tools.rs`) | `judgeRoute` / `judgeFixture` | `drafts` | `library` |
+
+All three funnel through `apps/cli/src/commands/architect.rs::execute` and return the same
+bytes; a judge route that is missing or disabled is `GHCLI009` at `/judgeRoute`.
+
+KNOWN ASYMMETRY, recorded rather than repaired (D-050's shape: capability parity, not argument
+parity). On the CLI `--judge-route` requires `--manifest`, and `--fixture` beside `--manifest` is
+refused (`GHCLI001` at `/fixture`), so a recorded draft cannot be paired with a real judge on the
+CLI; HTTP accepts `fixture` + `judgeRoute`. Found by the judge-route cells in
+`apps/cli/tests/architect_cli.rs` (#1127), which therefore draft through a fake gateway route.
+Lifting it is a small follow-up on `model_source`, not a decision this record makes.
+
+### 10.9 Cell map — the guard test that holds each claim
+
+| claim | test | file |
+|---|---|---|
+| Wire pin: the documented request and response round-trip byte for byte; an unknown answer type is refused, not defaulted; the digest is a pure function of canonical bytes | `the_request_serializes_to_the_documented_body`; `the_documented_response_parses_to_typed_answers`; `an_answer_of_an_unknown_type_is_refused_not_defaulted`; `the_request_digest_is_a_pure_function_of_canonical_bytes` | `core/gateway/tests/judgment_wire.rs` |
+| Manifest: `typesafe` is a legal `direct_api` provider | `typesafe_is_a_legal_direct_api_provider` | `core/gateway/tests/manifest_contract.rs` |
+| Adapter: Bearer header, path `/v1/systemone`, documented body; every documented status maps to its taxonomy error; a body that is not a reply is `MalformedOutput` | `a_success_posts_the_documented_body_with_a_bearer_and_parses_the_answers`; `every_documented_status_maps_to_its_taxonomy_error`; `a_success_whose_body_is_not_a_reply_is_malformed_output` | `adapters/model-gateway/tests/systemone_adapter.rs` |
+| D1, both refusal arms, nothing sent | `a_chat_provider_on_the_judge_door_is_unsupported_and_sends_nothing`; `a_typesafe_route_on_the_draft_door_is_unsupported_and_sends_nothing` | `adapters/model-gateway/tests/systemone_adapter.rs` |
+| D5, the recorded door answers only what it recorded and is bounded and shaped | `a_recorded_judge_answers_only_the_request_it_recorded`; `a_recorded_judge_file_is_bounded_and_shaped` | `core/architect/tests/judge.rs` |
+| D4, absent judge = today's bytes; one draft adds no stance and no `ranking` key; a library without a judge says nothing | `no_judge_is_todays_bytes`; `one_draft_adds_no_stance_and_no_ranking_key`; `a_library_without_a_judge_is_ignored_and_says_nothing` | `core/architect/tests/judgment_nodes.rs`; `core/architect/tests/judgment_ranking.rs`; `core/architect/tests/library.rs` |
+| Site 3: an off-goal node is a repairable `GHA005` and round two wins; a low-confidence kind changes nothing and is reported unresolved; the judge is asked only after every deterministic check; a judge that cannot answer names the request and ends the run | `an_off_goal_node_is_a_repairable_gha005_and_round_two_wins`; `a_low_confidence_kind_changes_nothing_and_is_reported_unresolved`; `the_judge_is_asked_only_about_a_draft_that_passed_every_deterministic_check`; `a_judge_that_cannot_answer_names_the_request_and_ends_the_run` | `core/architect/tests/judgment_nodes.rs` |
+| D6, a cell on each side of every threshold; `drafts` outside `1..=3` is an invalid profile before any prompt | `policy_edges_are_exact`; `drafts_outside_one_to_three_is_an_invalid_profile_before_any_prompt` | `core/architect/tests/judgment_nodes.rs` |
+| Site 2: the best-covered candidate is chosen and the report says why; low confidence keeps the first draft; a tie goes to the lower index; more than one draft needs a judge | `the_best_covered_candidate_is_chosen_and_the_report_says_why`; `a_low_confidence_ranking_keeps_the_first_draft`; `a_tie_on_composite_goes_to_the_lower_index`; `drafts_outside_one_to_three_are_refused_before_any_prompt`; `more_than_one_draft_needs_a_judge` | `core/architect/tests/judgment_ranking.rs` |
+| Sites 4 and 1: the library loads every template with its sidecar and refuses a bad one; fill substitutes only declared closed values; `reuse` never asks the draft model; a filled template outside the allowlist is `capabilityMissing`; `adapt` seeds the prompt; `create` is today's road; an unsure road falls to `create` and says so; an unacted decision or fill is unresolved, never guessed | `a_library_loads_every_template_with_its_sidecar_and_refuses_a_bad_one`; `fill_substitutes_only_declared_closed_values_and_refuses_the_rest`; `reuse_fills_a_template_and_never_asks_the_draft_model`; `a_filled_template_outside_the_allowlist_is_capability_missing`; `adapt_seeds_the_draft_prompt_with_the_template`; `create_is_todays_road`; `an_unsure_road_falls_to_create_and_says_so`; `an_unacted_decision_or_fill_is_unresolved_never_guessed` | `core/architect/tests/library.rs` |
+| D10: the CLI relays the compiler's refusal of drafts without a judge; HTTP and MCP return the CLI's bytes WITH a judge and relay the unresolved node | `more_than_one_draft_without_a_judge_is_refused_by_the_compiler`; `the_api_and_the_cli_agree_with_a_judge_and_report_the_unresolved_node`; `the_synthesize_tool_forwards_the_judge_fixture_and_relays_the_judgments` | `apps/cli/tests/architect_cli.rs`; `apps/cli/tests/api_http.rs`; `apps/cli/tests/mcp_stdio.rs` |
+
+What no cell proves: whether the judge's answers track what a person would say. That is Tier B
+(§6) and waits for the recipe's recorded run.

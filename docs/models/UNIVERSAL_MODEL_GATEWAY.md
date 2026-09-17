@@ -68,6 +68,11 @@ confidence threshold escalates to a reasoning model or a person; it is never act
 A System One route is selected explicitly by the Model Router like any other route and is never
 an automatic paid fallback (§12).
 
+The family is served by `adapters/model-gateway/src/systemone.rs` (`SystemOneAdapter`) on the
+architect's judge door only; the manifest provider is `typesafe` over `direct_api`. A `typesafe`
+route handed to the draft door refuses `UnsupportedCapability` before any request is built, and a
+chat provider handed to the judge door refuses the same way.
+
 Early-access status, the skill agents load, and the live documentation index are recorded in
 `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md`.
 

@@ -1,5 +1,47 @@
 # Specification Changelog
 
+## Typed judgments in the Graph Architect, #1109 - 2026-09-16
+
+The Graph Architect gains a SECOND model port: a typed judge (TypeSafe's Jev, System One) that
+answers closed questions over state the compiler hands it and can never draft. Design
+`docs/superpowers/specs/2026-09-16-architect-judgments-design.md`; record
+`docs/harness/GRAPH_ARCHITECT.md` §10; decision D-054. An absent judge is today's bytes: the
+first-compile golden did not change.
+
+- **Judgment wire types (#1114).** `core/gateway/src/judgment.rs`: `Question` (`Noul | Choice |
+  Score`), `JudgeRequest`, `Answer`, `JudgeReply`, `request_sha256`, serializing to the documented
+  `POST /v1/systemone` body and pinned against the documented examples.
+- **The judge port and its recorded door (#1116).** `JudgeModel` beside `DraftModel`;
+  `RecordedJudgeModel` keyed by the request digest, `ARCHITECT_RECORD=1` records judge replies
+  beside draft replies; `judgeMissing { requestSha256 }` names the request a recording lacks.
+- **The System One adapter and the `typesafe` provider (#1118).**
+  `adapters/model-gateway/src/systemone.rs` over the existing transport, key leased from the
+  Credential Broker; the manifest admits provider `typesafe` for `direct_api`; a `typesafe`
+  route on the draft door and a chat route on the judge door both refuse
+  `UnsupportedCapability` and send nothing.
+- **Site 3, per-node judgments as repairable diagnostics (#1120).** `on_goal` (`Noul`) and
+  `kind` (`Choice`) per node; `GHA005_NODE_OFF_GOAL` and `GHA006_NODE_KIND_MISMATCH` go back to
+  the draft model like any lint error; the judge is asked only about a draft that passed every
+  deterministic check; thresholds are named constants in `judgment/policy.rs` (`0.80`, `0.35`,
+  `0.65`) with a cell on each side; an answer under the threshold does nothing and is reported
+  `unresolved`.
+- **Site 2, rank up to three stance drafts (#1125).** `--drafts 1..=3`; the three fixed stances
+  `minimal`, `verified`, `explicit` append one fenced `<stance>` block and leave the single-draft
+  prompt byte-identical; composite `coverage - waste`, ties to the lower index, low confidence
+  keeps draft 1. Non-goal 10 of `GRAPH_ARCHITECT.md` §5 ("multi-draft judge panels") is retired
+  by this PR.
+- **Sites 4 and 1, the graph library, the road decision and typed parameters (#1126).** A
+  caller-supplied directory of templates with `.template.json` sidecars declaring closed-set
+  parameters; the judge chooses `reuse` / `adapt` / `create` before any draft is asked; `reuse`
+  fills without a draft model and validates through the same chain a draft takes; `adapt` seeds
+  the prompt inside a fenced `<seed>` block; no default directory, no bundled template.
+- **Three doors, one execute (#1127).** CLI `--judge-route` / `--judge-fixture`, `--drafts`,
+  `--library`; HTTP `judgeRoute` / `judgeFixture`, `drafts`, `library`; the MCP `synthesize` tool
+  the same; all through `commands/architect.rs::execute`, byte-identical `data` with a judge.
+- **Records (#1124).** `GRAPH_ARCHITECT.md` §10 with the cell map, D-054, the Tier B recipe
+  `docs/acceptance/architect-judgments-recipe.md`, and `docs/milestones/runtime.md` counting six
+  route families.
+
 ## TypeSafe System One route and skill, #1106 - 2026-09-16
 
 GraphHelm was accepted into TypeSafe AI early access. Documentation only; no Runtime code.

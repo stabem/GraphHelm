@@ -75,6 +75,7 @@ two commands above.
     `GHA006_NODE_KIND_MISMATCH` fed back for repair); round 2 is the golden draft with that
     node's objective rewritten, judged `agent` by the same confidence.
   - `nodes-below-threshold.json` (paired with the golden draft): `kind:summarize` answers `tool`
+    LOAD-BEARING ELSEWHERE: `tests/library.rs::an_empty_library_with_a_judge_costs_no_judge_request_and_says_nothing` proves "no decision request" by this file holding NO decision-shaped answer (one digest, `kind:*`/`on_goal:*` keys only); adding one silently greens that cell.
     at confidence 0.60, under the acting threshold; the document is the golden and the node is
     reported `unresolved`.
   - `ranking-three-replies.json` (for `tests/judgment_ranking.rs`, recorded with

@@ -103,8 +103,22 @@ the Runtime and grants no authority; it tells an agent how to shape a judgment q
   DSL, capsules, artifacts, fixtures or logs;
 - a judgment is a typed signal on the classify/propose side; deterministic policy still decides;
 - the route is chosen explicitly, never as an automatic paid fallback;
-- no Runtime adapter exists yet; the first judgment site must be chosen and its thresholds
-  measured on GraphHelm's own data before one is written.
+- the Runtime adapter is `adapters/model-gateway/src/systemone.rs` (`SystemOneAdapter`, judge
+  door only); a manifest route for it looks like this, the key stored with `gateway credential set` and never in a tracked file:
+
+  ```json
+  { "id": "judge", "provider": "typesafe", "transport": "direct_api", "authentication": "api_key",
+    "billingMode": "per_token", "baseUrl": "https://api.typesafe.ai", "model": "jev-latest",
+    "credentialRef": "secret_typesafe", "profiles": ["balanced_reasoning"], "enabled": true }
+  ```
+
+- the thresholds the architect acts on are named constants in
+  `core/architect/src/judgment/policy.rs`, chosen conservatively and unmeasured; they move only
+  with a recorded run under `docs/acceptance/architect-judgments-recipe.md`;
+- `.claude/settings.json` pins the `typesafe-ai/skills` marketplace to the tag `v0.5.7` (the
+  version reviewed on 2026-09-16: six files, no hooks, no scripts). Claude Code's marketplace
+  source accepts `ref` (branch or tag) and not a commit sha, so a tag is the tightest pin the
+  format admits; moving it is a deliberate edit to that file, never a silent upstream change.
 
 ## MIT License
 

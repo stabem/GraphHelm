@@ -86,3 +86,21 @@ two commands above.
   - `ranking-unresolved.json`: the same four replies except the top candidate's confidence is
     0.50, under the acting threshold; candidate 0 (`minimal`, today's road) is kept and the
     report says `unresolved`.
+  - `reuse-*.json` (for `tests/library.rs`, recorded with `--test library`): the road decision
+    over `fixtures/library/` (spec D8), then what the road asks next. `reuse-reuse.json`: road
+    `reuse` (0.92), template `build-and-summarize` (0.90), then the fill (`program` `cargo`
+    0.95, `audience` `maintainer` 0.88) — no draft is asked. `reuse-npm.json`: the same with
+    `program` `npm`, which the catalog does not allow, so the filled template is
+    `CapabilityMissing`. `reuse-adapt.json` + `reuse-adapt-replies.json`: road `adapt` (0.90);
+    the draft prompt carries the template in a `<seed>` block, so the reply (the golden draft
+    text) is filed under its own key; then the per-node judgments. `reuse-create.json`: road
+    `create` (0.85), then the per-node judgments of the golden draft, drafted through
+    `first-compile/replies.json` (never rewritten here). `reuse-unsure.json`: road `reuse` at
+    0.55, under the acting threshold, so `create` is taken and the report says `unresolved`.
+- `library/`: the fixture graph library of spec D8, two templates. Each is an authored YAML
+  document (`<name>.yaml`, `metadata.labels.origin: library`, no `completion.customs` — the
+  compiler stamps those) and a sidecar `<name>.template.json` declaring
+  `{id, summary, parameters: {<name>: {question, options: {<value>: description}}}}`; a value
+  substitutes `{{name}}` in the document's string leaves. `build-and-summarize` is the golden
+  document with the shell program as `{{program}}` and the summary's audience as
+  `{{audience}}`; `run-tests` is one `tests` call with `{{program}}` only.

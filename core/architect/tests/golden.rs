@@ -275,6 +275,7 @@ fn the_template_hash_rides_the_reply_and_the_document_and_a_foreign_key_is_fixtu
         &catalog_with_cargo(),
         None,
         None,
+        None,
     ));
     assert_eq!(synthesized.prompt_sha256s, vec![expected_key.clone()]);
     let foreign = RecordedDraftModel::single(&"0".repeat(64), "{}");
@@ -489,6 +490,7 @@ fn a_budget_above_the_profile_is_repaired_under_gha004_and_round_two_wins() {
         &catalog_with_cargo(),
         Some(&repair),
         None,
+        None,
     ));
     assert_eq!(
         synthesized.prompt_sha256s[1], round_two,
@@ -533,6 +535,7 @@ fn more_nodes_than_the_profile_allows_is_too_many_nodes_without_a_repair() {
     let first = prompt_sha256(&assemble_prompt(
         &fixture_profile,
         &catalog_with_cargo(),
+        None,
         None,
         None,
     ));
@@ -581,6 +584,7 @@ fn the_repair_loop_repairs_a_round_two_reply_that_is_valid_wins() {
             &profile(),
             &catalog_with_cargo(),
             None,
+            None,
             None
         ))
     );
@@ -604,6 +608,7 @@ fn a_recording_that_answers_nothing_names_the_first_prompt() {
                 prompt_sha256(&assemble_prompt(
                     &profile(),
                     &catalog_with_cargo(),
+                    None,
                     None,
                     None
                 ))

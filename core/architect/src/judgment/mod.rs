@@ -5,10 +5,14 @@
 pub mod nodes;
 pub mod policy;
 pub mod ranking;
+pub mod reuse;
+
+use std::collections::BTreeMap;
 
 use graphhelm_gateway::call::Usage;
 
 use crate::judge::JudgeModel;
+use crate::library::GraphLibrary;
 
 /// What a caller may add to `synthesize` beyond the three inputs of the first compile (spec
 /// D4). `Extras::default()` reproduces `synthesize` byte for byte.
@@ -19,6 +23,9 @@ pub struct Extras<'a> {
     /// How many drafts to ask for and rank (site 2); `1` is today's road. Bounded to `1..=3`,
     /// refused as `InvalidProfile` at `/drafts` outside that.
     pub drafts: u8,
+    /// The caller's graph library (sites 4 and 1, spec D8). Read only when a judge is named and
+    /// the library holds at least one template; `None`, or an empty library, is today's road.
+    pub library: Option<&'a GraphLibrary>,
 }
 
 impl Default for Extras<'_> {
@@ -26,8 +33,27 @@ impl Default for Extras<'_> {
         Self {
             judge: None,
             drafts: 1,
+            library: None,
         }
     }
+}
+
+/// The report field of a run that named a judge AND a non-empty library (spec D8).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReuseReport {
+    /// The road taken: `reuse`, `adapt` or `create` (`reuse::Road::label`).
+    pub road: String,
+    /// The template the road used: filled under `reuse`, seeded under `adapt`; the one whose
+    /// fill was unresolved when `create` was fallen to for that reason; else `None`.
+    pub template: Option<String>,
+    /// The parameter values the judge resolved (every one, under `reuse`).
+    pub parameters: BTreeMap<String, String>,
+    /// The judge's confidence in the road answer; `0.0` when unanswered.
+    pub confidence: f64,
+    /// The decision or the fill fell under the acting threshold (or an answer was missing):
+    /// today's road was taken and nothing was reused (spec D6).
+    pub unresolved: bool,
 }
 
 /// One node's answers, verbatim, as the report shows them.

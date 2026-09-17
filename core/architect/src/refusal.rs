@@ -38,6 +38,12 @@ pub enum ArchitectRefusal {
     /// `ARCHITECT_RECORD=1` can record it.
     #[error("no recorded judge reply for request sha256 {request_sha256}")]
     JudgeMissing { request_sha256: String },
+    /// A caller-supplied graph library (spec D8) cannot be read as one: a sidecar without its
+    /// document, a file that is not YAML/JSON, a parameter value outside its options, a
+    /// placeholder no parameter declares. `path` is the offending file's NAME (or the template
+    /// id at fill time) — never a directory, never contents — and `message` is static prose.
+    #[error("library {path}: {message}")]
+    LibraryInvalid { path: String, message: String },
     /// The last round's reply was not a JSON object at all.
     #[error("round {round}: the reply is not JSON: {message}")]
     NotJson { round: u8, message: String },

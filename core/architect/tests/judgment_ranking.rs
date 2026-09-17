@@ -97,6 +97,7 @@ fn record(
         let extras = Extras {
             judge: Some(&judge),
             drafts: count,
+            library: None,
         };
         match synthesize_with(profile, catalog, &model, &extras) {
             Err(ArchitectRefusal::FixtureMissing { prompt_sha256 }) => {
@@ -168,6 +169,7 @@ fn compile_ranked(judge_relative: &str) -> Result<SynthesizedGraph, ArchitectRef
     let extras = Extras {
         judge: Some(&judge),
         drafts: 3,
+        library: None,
     };
     synthesize_with(&profile(), &catalog_with_cargo(), &model, &extras)
 }
@@ -316,6 +318,7 @@ fn one_draft_adds_no_stance_and_no_ranking_key() {
     let extras = Extras {
         judge: Some(&judge),
         drafts: 1,
+        library: None,
     };
     let out = synthesize_with(&profile(), &catalog_with_cargo(), &model, &extras).unwrap();
     assert!(out.ranking.is_none());

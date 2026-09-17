@@ -1,0 +1,52 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: lib_build_and_summarize_v1
+  name: Build and summarize
+  executionId: exec_lib_build_and_summarize
+  version: 1
+  labels:
+    origin: library
+spec:
+  entrypoints:
+    - build_check
+  nodes:
+    build_check:
+      type: tool
+      name: Build check
+      objective: Run the repository build and record its exit code.
+      optionality: required
+      tool:
+        call:
+          tool: shell
+          program: "{{program}}"
+          arguments:
+            - build
+            - --locked
+    summarize:
+      type: agent
+      name: Summarize the build
+      objective: Summarize the build outcome for the {{audience}}.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Summarize the build result.
+          capabilities:
+            - summarize.build
+          inputSchema: schema://BuildReport@1
+          outputSchema: schema://BuildSummary@1
+          completionContract:
+            requires:
+              - summary
+          instructions: State whether the build passed and cite the exit code.
+  edges:
+    - id: build_to_summary
+      from: build_check
+      to: summarize
+      type: control
+  budgets:
+    maxNodes: 2
+  policies: []
+  completion:
+    terminalNodes:
+      - summarize

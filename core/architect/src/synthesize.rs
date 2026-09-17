@@ -11,6 +11,8 @@
 //! Nothing here publishes, starts, reads a clock, or touches the network: the document returned
 //! is bytes for `execution start --file`, on the road every authored graph takes.
 
+use std::collections::BTreeMap;
+
 use graphhelm_gateway::call::Usage;
 use graphhelm_protocols::{Diagnostic, ExecutionGraph, GraphNode, NodeType};
 use graphhelm_runtime::classify::{NodeWorkKind, work_kind};
@@ -20,7 +22,8 @@ use sha2::{Digest, Sha256};
 
 use crate::catalog::CapabilityCatalog;
 use crate::judge::JudgeModel;
-use crate::judgment::{self, Extras, JudgmentReport, RankingReport};
+use crate::judgment::reuse::Road;
+use crate::judgment::{self, Extras, JudgmentReport, RankingReport, ReuseReport};
 use crate::model::DraftModel;
 use crate::profile::TaskProfile;
 use crate::refusal::ArchitectRefusal;
@@ -103,6 +106,10 @@ pub struct SynthesizedGraph {
     /// and which one this document is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ranking: Option<RankingReport>,
+    /// Present only when a judge AND a non-empty library were named (spec D8): which road was
+    /// taken, which template, and the parameter values a `reuse` filled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<ReuseReport>,
 }
 
 /// Compiles `profile.goal` into a graph document through `model`, or refuses. Today's road:
@@ -143,21 +150,109 @@ pub fn synthesize_with(
             message: "drafts must be 1, 2 or 3".to_owned(),
         });
     }
-    if extras.drafts == 1 {
-        return single_draft(profile, catalog, model, extras.judge, None).map(|(one, _)| one);
-    }
-    let Some(judge) = extras.judge else {
+    if extras.drafts > 1 && extras.judge.is_none() {
         return Err(ArchitectRefusal::InvalidProfile {
             pointer: "/drafts".to_owned(),
             message: "more than one draft needs a judge to rank them".to_owned(),
         });
-    };
+    }
+
+    // Sites 4 and 1 (spec D8): with a judge and a non-empty library, decide the road first. A
+    // `reuse` that fills every parameter returns here, on the SAME validation chain a draft
+    // takes and without asking the draft model; `adapt` seeds the draft prompt; `create`, and
+    // every unresolved answer, is today's road with the report saying so.
+    let mut reuse: Option<ReuseReport> = None;
+    let mut seed: Option<&Value> = None;
+    if let (Some(judge), Some(library)) = (extras.judge, extras.library)
+        && !library.templates().is_empty()
+    {
+        let reply = judge.judge(&judgment::reuse::decide_request(profile, library))?;
+        let (road, template, confidence, unresolved) =
+            judgment::reuse::read_decision(&reply, library);
+        match (road, template) {
+            (Road::Reuse, Some(template)) => {
+                let fill = judge.judge(&judgment::reuse::fill_request(profile, template))?;
+                let (values, unresolved_parameters) = judgment::reuse::read_fill(&fill, template);
+                if unresolved_parameters.is_empty() {
+                    let document = template.fill(&values)?;
+                    // Only the document's `spec` goes on: `compile_round` writes the
+                    // compiler's metadata, stamps customs, and runs count, schema, lint,
+                    // viability and the allowlist exactly as it does for a draft.
+                    let text = serde_json::to_string(&document["spec"]).expect("plain data");
+                    let report = ReuseReport {
+                        road: Road::Reuse.label().to_owned(),
+                        template: Some(template.id.clone()),
+                        parameters: values,
+                        confidence,
+                        unresolved: false,
+                    };
+                    return match compile_round(profile, catalog, &text) {
+                        Ok(compiled) => Ok(SynthesizedGraph {
+                            document: compiled.document,
+                            rationale: compiled.rationale,
+                            stamped_customs: compiled.stamped,
+                            template_sha256: template_sha256(),
+                            rounds: 0,
+                            prompt_sha256s: Vec::new(),
+                            usage: None,
+                            judgments: None,
+                            ranking: None,
+                            reuse: Some(report),
+                        }),
+                        Err(RoundFailure::Refused(refusal)) => Err(refusal),
+                        Err(RoundFailure::Invalid(diagnostics)) => Err(ArchitectRefusal::Invalid {
+                            rounds: 0,
+                            diagnostics,
+                        }),
+                        Err(RoundFailure::NotJson(message)) => {
+                            Err(ArchitectRefusal::NotJson { round: 0, message })
+                        }
+                    };
+                }
+                reuse = Some(ReuseReport {
+                    road: Road::Create.label().to_owned(),
+                    template: Some(template.id.clone()),
+                    parameters: values,
+                    confidence,
+                    unresolved: true,
+                });
+            }
+            (Road::Adapt, Some(template)) => {
+                seed = Some(&template.document);
+                reuse = Some(ReuseReport {
+                    road: Road::Adapt.label().to_owned(),
+                    template: Some(template.id.clone()),
+                    parameters: BTreeMap::new(),
+                    confidence,
+                    unresolved: false,
+                });
+            }
+            _ => {
+                reuse = Some(ReuseReport {
+                    road: Road::Create.label().to_owned(),
+                    template: None,
+                    parameters: BTreeMap::new(),
+                    confidence,
+                    unresolved,
+                });
+            }
+        }
+    }
+
+    if extras.drafts == 1 {
+        let (mut one, _) = single_draft(profile, catalog, model, extras.judge, None, seed)?;
+        one.reuse = reuse;
+        return Ok(one);
+    }
+    let judge = extras
+        .judge
+        .expect("checked above: more than one draft has a judge");
     let mut compiled = Vec::with_capacity(usize::from(extras.drafts));
     let mut prompt_sha256s = Vec::new();
     let mut usage: Option<Usage> = None;
     for stance in Stance::ALL.iter().take(usize::from(extras.drafts)) {
         // Each draft is itself judged per node (site 3) and repaired before it is a candidate.
-        let (one, graph) = single_draft(profile, catalog, model, Some(judge), Some(stance))?;
+        let (one, graph) = single_draft(profile, catalog, model, Some(judge), Some(stance), seed)?;
         prompt_sha256s.extend(one.prompt_sha256s.iter().cloned());
         usage = match (usage, one.usage) {
             (Some(left), Some(right)) => Some(add_usage(left, right)),
@@ -180,17 +275,20 @@ pub fn synthesize_with(
         judgments.usage = add_usage(judgments.usage, reply.usage);
     }
     chosen.ranking = Some(ranking);
+    chosen.reuse = reuse;
     Ok(chosen)
 }
 
 /// The single-draft loop: draft, compile, judge, repair; at most [`MAX_REPAIR_ROUNDS`] repairs.
 /// Returns the accepted document and the loaded graph it validated as, for the ranking hook.
+/// `seed` (the `adapt` road) rides every round's prompt.
 fn single_draft(
     profile: &TaskProfile,
     catalog: &CapabilityCatalog,
     model: &dyn DraftModel,
     judge: Option<&dyn JudgeModel>,
     stance: Option<&Stance>,
+    seed: Option<&Value>,
 ) -> Result<(SynthesizedGraph, ExecutionGraph), ArchitectRefusal> {
     let mut prompt_sha256s = Vec::new();
     let mut previous: Option<(String, Vec<Diagnostic>)> = None;
@@ -200,7 +298,7 @@ fn single_draft(
         let repair = previous
             .as_ref()
             .map(|(draft, diagnostics)| RepairContext { draft, diagnostics });
-        let prompt = assemble_prompt(profile, catalog, repair.as_ref(), stance);
+        let prompt = assemble_prompt(profile, catalog, repair.as_ref(), stance, seed);
         prompt_sha256s.push(prompt_sha256(&prompt));
         let reply = model.draft(&prompt)?;
         match compile_round(profile, catalog, &reply.text) {
@@ -243,6 +341,7 @@ fn single_draft(
                         usage: reply.usage,
                         judgments,
                         ranking: None,
+                        reuse: None,
                     },
                     compiled.graph,
                 ));

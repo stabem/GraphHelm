@@ -160,15 +160,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// "ignore the rules above" is still just the goal.
 ///
 /// A `stance` (spec D7) appends one fenced `<stance>` block directly after the `</goal>` fence,
-/// before the mode; `None` produces exactly the bytes the first compile produced, so no
-/// existing fixture key moves. The fence is found in the CONSTANT template, never in the
-/// substituted output, so a goal that spells `</goal>` cannot move where the stance lands.
+/// before the mode; a `seed` (spec D8, the `adapt` road) appends one fenced `<seed>` block
+/// holding the template document as compact JSON, after the stance when both are given.
+/// `None, None` produces exactly the bytes the first compile produced, so no existing fixture
+/// key moves. The fence is found in the CONSTANT template, never in the substituted output, so
+/// a goal that spells `</goal>` cannot move where a block lands, and the seed is inserted as
+/// data after substitution, so a placeholder it spells is never expanded.
 #[must_use]
 pub fn assemble_prompt(
     profile: &TaskProfile,
     catalog: &CapabilityCatalog,
     previous: Option<&RepairContext<'_>>,
     stance: Option<&Stance>,
+    seed: Option<&serde_json::Value>,
 ) -> String {
     let node_types = catalog
         .node_types
@@ -198,17 +202,24 @@ pub fn assemble_prompt(
         ("{{PROGRAMS}}", &programs),
         ("{{REPAIR}}", &repair),
     ];
-    let Some(stance) = stance else {
+    if stance.is_none() && seed.is_none() {
         return substitute(TEMPLATE, &values);
-    };
+    }
     let (head, tail) = TEMPLATE
         .split_once(GOAL_FENCE_END)
         .expect("TEMPLATE closes its goal fence");
     let mut prompt = substitute(head, &values);
     prompt.push_str(GOAL_FENCE_END);
-    prompt.push_str("<stance>\n");
-    prompt.push_str(stance.text());
-    prompt.push_str("\n</stance>\n");
+    if let Some(stance) = stance {
+        prompt.push_str("<stance>\n");
+        prompt.push_str(stance.text());
+        prompt.push_str("\n</stance>\n");
+    }
+    if let Some(seed) = seed {
+        prompt.push_str("<seed>\n");
+        prompt.push_str(&serde_json::to_string(seed).expect("a seed is plain JSON data"));
+        prompt.push_str("\n</seed>\n");
+    }
     prompt.push_str(&substitute(tail, &values));
     prompt
 }

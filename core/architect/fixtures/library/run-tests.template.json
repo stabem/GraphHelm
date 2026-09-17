@@ -1,0 +1,10 @@
+{
+  "id": "run-tests",
+  "summary": "Run the repository's test suite with one program and record the exit code.",
+  "parameters": {
+    "program": {
+      "question": "Which test program does the goal name or imply?",
+      "options": { "cargo": "a Rust workspace", "npm": "a Node package" }
+    }
+  }
+}

@@ -471,14 +471,17 @@ fn validate_direct_api(route: &ModelRoute) -> Result<(), ManifestError> {
     }
 
     // Milestone 05b Task 4 (docs/superpowers/plans/2026-08-14-gateway-slice.md): the BYOK
-    // adapters in `adapters/model-gateway/src/byok.rs` speak exactly two provider wire formats.
-    // A `direct_api` route naming any other provider would parse here but have no adapter able
-    // to place its call — refusing it at manifest load time turns that into a load-time error
-    // instead of a confusing runtime one the first time the route is dispatched.
-    if !matches!(route.provider.as_str(), "anthropic" | "openai") {
+    // adapters in `adapters/model-gateway/src/byok.rs` speak exactly two chat provider wire
+    // formats. `typesafe` is served by `adapters/model-gateway/src/systemone.rs` on the JUDGE
+    // door only (docs/superpowers/plans/2026-09-16-architect-judgments.md Task 3): a System One
+    // model answers typed questions and never drafts text. A `direct_api` route naming any other
+    // provider would parse here but have no adapter able to place its call — refusing it at
+    // manifest load time turns that into a load-time error instead of a confusing runtime one
+    // the first time the route is dispatched.
+    if !matches!(route.provider.as_str(), "anthropic" | "openai" | "typesafe") {
         return Err(ManifestError::StructuralViolation {
             route_id: route.id.clone(),
-            rule: "direct_api routes must use provider \"anthropic\" or \"openai\"",
+            rule: "direct_api routes must use provider \"anthropic\", \"openai\" or \"typesafe\"",
         });
     }
 

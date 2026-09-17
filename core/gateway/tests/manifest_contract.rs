@@ -96,14 +96,27 @@ fn duplicate_route_ids_unknown_fields_and_oversize_are_refused() {
 #[test]
 fn a_direct_api_route_with_an_unrecognized_provider_is_refused() {
     // Milestone 05b Task 4: the BYOK adapters (adapters/model-gateway/src/byok.rs) speak exactly
-    // two provider wire formats. A direct_api route naming any other provider would parse but
-    // have no adapter able to place its call — refused at load time instead.
+    // two chat provider wire formats, and the System One adapter
+    // (adapters/model-gateway/src/systemone.rs) one more. A direct_api route naming any other
+    // provider would parse but have no adapter able to place its call — refused at load time
+    // instead.
     let mut bad = valid_manifest_json();
     bad["routes"][0]["provider"] = "cohere".into();
     assert!(matches!(
         RouteManifest::from_json(&bad.to_string()).unwrap_err(),
         ManifestError::StructuralViolation { .. }
     ));
+}
+
+#[test]
+fn typesafe_is_a_legal_direct_api_provider() {
+    let json = serde_json::json!({ "manifestVersion": 1, "routes": [{
+        "id": "judge", "provider": "typesafe", "transport": "direct_api",
+        "authentication": "api_key", "billingMode": "per_token",
+        "baseUrl": "https://api.typesafe.ai", "model": "jev-latest",
+        "credentialRef": "secret_typesafe", "profiles": ["balanced_reasoning"], "enabled": true
+    }]});
+    assert!(RouteManifest::from_json(&json.to_string()).is_ok());
 }
 
 #[test]

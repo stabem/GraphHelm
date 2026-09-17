@@ -72,11 +72,14 @@ impl<'a> ByokAdapter<'a> {
         match self.route.provider() {
             "anthropic" => self.call_anthropic(key, request),
             "openai" => self.call_openai(key, request),
+            // A System One model answers typed questions and cannot draft text; it is served by
+            // `systemone.rs` on the judge door. Refused here before any request is built.
+            crate::systemone::TYPESAFE_PROVIDER => Err(GatewayError::UnsupportedCapability),
             _ => {
                 // Unreachable for any `direct_api` route obtained through
                 // `RouteManifest::from_json`: Task 4 closed this gap in
                 // `core/gateway/src/manifest.rs`'s `validate_direct_api`, which now refuses a
-                // `direct_api` route naming any provider but these two. Kept as a non-panicking
+                // `direct_api` route naming any provider but these three. Kept as a non-panicking
                 // fallback anyway — this function does not re-derive that invariant itself, and a
                 // closed match with no `ModelRoute` smart constructor reachable from here is a
                 // fact about today's callers, not a proof.
@@ -184,10 +187,18 @@ impl<'a> ByokAdapter<'a> {
         for (_name, value) in &mut request.headers {
             value.zeroize();
         }
-        result.map_err(|error| match error {
-            TransportError::Timeout => GatewayError::Timeout,
-            TransportError::Io(_) => GatewayError::ProviderUnavailable,
-        })
+        result.map_err(|error| map_transport_error(&error))
+    }
+}
+
+/// The one transport-failure table for every adapter in this crate (`systemone.rs` reuses it): a
+/// timeout is the taxonomy's own `Timeout`; every other transport failure (connection refused,
+/// TLS failure, protocol error) is the provider being unreachable right now, which
+/// §12/`outcome_for_error` retries rather than parks — the same posture as an HTTP 5xx.
+pub(crate) fn map_transport_error(error: &TransportError) -> GatewayError {
+    match error {
+        TransportError::Timeout => GatewayError::Timeout,
+        TransportError::Io(_) => GatewayError::ProviderUnavailable,
     }
 }
 

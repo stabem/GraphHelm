@@ -31,7 +31,7 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
     ExtensionCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand, SchemaCommand,
-    ToolCommand, TopLevel,
+    SynthesizeArgs, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -68,31 +68,42 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution.as_deref(),
                 stream.as_deref(),
             ),
-            GraphCommand::Synthesize {
-                goal,
-                out,
-                mode,
-                max_nodes,
-                allow_programs,
-                fixture,
-                manifest,
-                route,
-                broker,
-                keyring,
-                key_id,
-            } => architect::run(&architect::SynthesizeArguments {
-                goal,
-                out,
-                mode,
-                max_nodes,
-                allow_programs,
-                fixture,
-                manifest,
-                route,
-                broker,
-                keyring,
-                key_id,
-            }),
+            GraphCommand::Synthesize(synthesize) => {
+                let SynthesizeArgs {
+                    goal,
+                    out,
+                    mode,
+                    max_nodes,
+                    allow_programs,
+                    fixture,
+                    manifest,
+                    route,
+                    broker,
+                    keyring,
+                    key_id,
+                    judge_route,
+                    judge_fixture,
+                    drafts,
+                    library,
+                } = *synthesize;
+                architect::run(&architect::SynthesizeArguments {
+                    goal,
+                    out,
+                    mode,
+                    max_nodes,
+                    allow_programs,
+                    fixture,
+                    manifest,
+                    route,
+                    broker,
+                    keyring,
+                    key_id,
+                    judge_route,
+                    judge_fixture,
+                    drafts,
+                    library,
+                })
+            }
         },
         TopLevel::Schema(schema) => match schema.command {
             SchemaCommand::Catalog { catalog } => schema::catalog::run(&catalog),

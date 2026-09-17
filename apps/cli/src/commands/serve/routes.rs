@@ -10,7 +10,10 @@ use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use graphhelm_architect::{ArchitectRefusal, DraftModel, DraftReply, RecordedDraftModel};
+use graphhelm_architect::{
+    ArchitectRefusal, DraftModel, DraftReply, GraphLibrary, JudgeModel, RecordedDraftModel,
+    RecordedJudgeModel,
+};
 use graphhelm_events::{ClearanceOutcome, EventRepositoryError, EvidenceRead, EvidenceSealer};
 use graphhelm_gateway::call::ModelCall;
 use graphhelm_graph::GraphVersion;
@@ -24,11 +27,12 @@ use graphhelm_runtime::ports::ModelPort;
 use graphhelm_simulation::FixtureExecutor;
 use graphhelm_tool_broker::lease::{Capability, ToolLease};
 
-use graphhelm_gateway::manifest::{ModelRoute, RouteManifest};
+use graphhelm_gateway::manifest::{ModelRoute, RouteManifest, Transport};
+use graphhelm_model_gateway::systemone::TYPESAFE_PROVIDER;
 
 use super::ports::{
-    ModelWiring, ServeModelPort, ServeToolPort, WorkspaceRelease, build_opener, build_sealer,
-    find_route,
+    ModelWiring, RuntimeWiring, ServeModelPort, ServeToolPort, WorkspaceRelease, build_opener,
+    build_sealer, find_route,
 };
 use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
@@ -195,13 +199,17 @@ pub(super) async fn graph_topology(body: Bytes) -> Response {
 /// model call, so it runs OFF the reactor (#559) through `off_reactor`; the port's async `call`
 /// is driven from inside that blocking task (see `ServeDraftModel`).
 pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> Response {
-    const FIELDS: [&str; 6] = [
+    const FIELDS: [&str; 10] = [
         "goal",
         "mode",
         "maxNodes",
         "allowPrograms",
         "fixture",
         "route",
+        "judgeRoute",
+        "judgeFixture",
+        "drafts",
+        "library",
     ];
     let payload: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -296,6 +304,65 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             "/fixture",
         );
     }
+    let judge_fixture = match object.get("judgeFixture") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "\"judgeFixture\" must be a string naming a recorded-answers file on the \
+                 Runtime host",
+                "/judgeFixture",
+            );
+        }
+    };
+    let judge_route = match object.get("judgeRoute") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(id)) => Some(id.clone()),
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "\"judgeRoute\" must be a string naming a direct_api typesafe route in the \
+                 manifest",
+                "/judgeRoute",
+            );
+        }
+    };
+    if judge_fixture.is_some() && judge_route.is_some() {
+        return bad_request(
+            SYNTHESIZE_COMMAND,
+            "\"judgeFixture\" and \"judgeRoute\" are mutually exclusive: one judge door per \
+             request",
+            "/judgeFixture",
+        );
+    }
+    // The bound `1..=3` and "more than one draft needs a judge" are the compiler's own
+    // `InvalidProfile` refusal (`GHCLI026`), so every door refuses with the same words; this
+    // only checks the shape.
+    let drafts = match object.get("drafts") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64().and_then(|count| u8::try_from(count).ok()) {
+            Some(count) => Some(count),
+            None => {
+                return bad_request(
+                    SYNTHESIZE_COMMAND,
+                    "\"drafts\" must be a non-negative integer",
+                    "/drafts",
+                );
+            }
+        },
+    };
+    let library = match object.get("library") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
+        Some(_) => {
+            return bad_request(
+                SYNTHESIZE_COMMAND,
+                "\"library\" must be a string naming a template directory on the Runtime host",
+                "/library",
+            );
+        }
+    };
 
     let model: Box<dyn DraftModel + Send> = match fixture {
         Some(path) => {
@@ -354,6 +421,68 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             }
         },
     };
+    let judge: Option<Box<dyn JudgeModel + Send>> = match (judge_fixture, judge_route) {
+        (None, None) => None,
+        (Some(path), _) => {
+            // The same bounded, regular-file-only read the draft fixture takes, off the reactor.
+            let Some(loaded) = off_reactor(move || RecordedJudgeModel::from_file(&path)).await
+            else {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(SYNTHESIZE_COMMAND, "the judge fixture read task failed")
+                        .output,
+                );
+            };
+            match loaded {
+                Ok(judge) => Some(Box::new(judge)),
+                Err(refusal) => {
+                    return respond_outcome(
+                        architect::refused(&refusal).into_outcome(SYNTHESIZE_COMMAND),
+                    );
+                }
+            }
+        }
+        (None, Some(id)) => match state
+            .runtime
+            .as_ref()
+            .and_then(|wiring| wiring.model.as_ref().map(|model| (wiring, model)))
+        {
+            None => {
+                return bad_request(
+                    SYNTHESIZE_COMMAND,
+                    "this server has no model route wired (fixture-only or tools-only mode): \
+                     pass \"judgeFixture\" naming a recorded-answers file, or start serve with \
+                     --manifest/--route so a judge route can be leased",
+                    "/judgeRoute",
+                );
+            }
+            Some((wiring, model_wiring)) => {
+                match resolve_judge_route(wiring, model_wiring, SYNTHESIZE_COMMAND, &id).await {
+                    Ok(judge) => Some(Box::new(judge)),
+                    Err(MutationError::Prepared(response)) => return response,
+                    Err(MutationError::Command(failure)) => {
+                        return respond_failure(SYNTHESIZE_COMMAND, failure);
+                    }
+                }
+            }
+        },
+    };
+    let library: Option<GraphLibrary> = match library {
+        None => None,
+        Some(dir) => {
+            // A bounded directory listing (the crate's own `GraphLibrary::load`), off the reactor.
+            let Some(loaded) = off_reactor(move || architect::build_library(&dir)).await else {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(SYNTHESIZE_COMMAND, "the library read task failed").output,
+                );
+            };
+            match loaded {
+                Ok(library) => Some(library),
+                Err(failure) => return respond_outcome(failure.into_outcome(SYNTHESIZE_COMMAND)),
+            }
+        }
+    };
     let allow_programs = allow_programs.unwrap_or_else(|| {
         state
             .runtime
@@ -372,9 +501,15 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
             allow_programs: &allow_programs,
             wait_within_seconds: None,
             clearance_within_seconds: None,
+            drafts,
         };
-        architect::execute(&request, model.as_ref())
-            .map_err(|failure| failure.into_outcome(SYNTHESIZE_COMMAND))
+        architect::execute(
+            &request,
+            model.as_ref(),
+            judge.as_deref().map(|judge| judge as &dyn JudgeModel),
+            library.as_ref(),
+        )
+        .map_err(|failure| failure.into_outcome(SYNTHESIZE_COMMAND))
     })
     .await;
     match outcome {
@@ -388,6 +523,48 @@ pub(super) async fn synthesize(State(state): State<ServeState>, body: Bytes) -> 
         ),
         // `GHCLI026` is a domain refusal (exit 2): the caller's goal did not compile, a 400.
         Some(Err(outcome)) => respond_outcome(outcome),
+    }
+}
+
+/// The serve-side judge door: `"judgeRoute"` resolved against the FRESH manifest exactly as
+/// `"route"` is (`resolve_requested_route`'s reader, so the two cannot drift), required to be a
+/// `direct_api` route of provider `typesafe` (the only transport the System One adapter speaks;
+/// refused before any lease), and its credential leased through the SAME `ServeModelPort::build`
+/// a drive's executor uses — the broker and keyring are the server's, never the request's. The
+/// leased key then goes into the CLI's own [`architect::GatewayJudgeModel`], so the HTTP door
+/// and `--judge-route` place the identical call. The adapter is synchronous and the synthesis
+/// already runs off the reactor, so no bridge like `ServeDraftModel`'s is needed.
+#[allow(clippy::result_large_err)] // `MutationError::Prepared` carries a built response
+async fn resolve_judge_route(
+    wiring: &RuntimeWiring,
+    model_wiring: &ModelWiring,
+    command: &'static str,
+    requested: &str,
+) -> Result<architect::GatewayJudgeModel, MutationError> {
+    let manifest = reread_manifest(model_wiring).await?;
+    let route = find_route(&manifest, requested).ok_or_else(|| {
+        MutationError::Prepared(bad_request(
+            command,
+            &format!("\"judgeRoute\" does not name an enabled route in the manifest: {requested}"),
+            "/judgeRoute",
+        ))
+    })?;
+    if route.transport() != Transport::DirectApi || route.provider() != TYPESAFE_PROVIDER {
+        return Err(MutationError::Prepared(bad_request(
+            command,
+            "\"judgeRoute\" must name a direct_api typesafe route",
+            "/judgeRoute",
+        )));
+    }
+    match ServeModelPort::build(wiring, model_wiring, &route).await {
+        Ok(ServeModelPort::DirectApi { route, key }) => {
+            Ok(architect::GatewayJudgeModel::new(route, key))
+        }
+        // Unreachable after the transport check above; named rather than panicked on.
+        Ok(ServeModelPort::NativeRuntime { .. }) => Err(MutationError::from(setup_failure(
+            "the judge route resolved to a native_runtime port",
+        ))),
+        Err(message) => Err(MutationError::from(setup_failure(&message))),
     }
 }
 
@@ -2117,13 +2294,32 @@ async fn resolve_requested_route(
         }
     };
 
-    // The re-read is BOUNDED and regular-file-only -- the same reader `serve` started on and
-    // `gateway routes` uses -- and it runs off the reactor (#559): before this it was an
-    // unbounded `std::fs::read` on the request's own task.
-    //
-    // The path is NOT in any message. `manifest_path` is a filesystem location on the server,
-    // which a caller with a bearer token is not owed; the reply is a diagnostic and the operator
-    // already knows what they passed to `--manifest`.
+    let manifest = reread_manifest(wiring).await?;
+
+    find_route(&manifest, requested).ok_or_else(|| {
+        // The requested id is echoed back deliberately: it is the caller's OWN input (or the
+        // deployer's default, which the deployer knows), it is the one fact that makes this
+        // actionable, and `GET /v1/gateway/routes` is the listing that says what would have
+        // worked.
+        MutationError::Prepared(bad_request(
+            command,
+            &format!("\"route\" does not name an enabled route in the manifest: {requested}"),
+            "/route",
+        ))
+    })
+}
+
+/// The manifest, re-read from the file `--manifest` named, for every per-request route lookup.
+///
+/// The re-read is BOUNDED and regular-file-only -- the same reader `serve` started on and
+/// `gateway routes` uses -- and it runs off the reactor (#559): before this it was an
+/// unbounded `std::fs::read` on the request's own task.
+///
+/// The path is NOT in any message. `manifest_path` is a filesystem location on the server,
+/// which a caller with a bearer token is not owed; the reply is a diagnostic and the operator
+/// already knows what they passed to `--manifest`.
+#[allow(clippy::result_large_err)] // `MutationError::Prepared` carries a built response
+async fn reread_manifest(wiring: &ModelWiring) -> Result<RouteManifest, MutationError> {
     let manifest_path = wiring.manifest_path.clone();
     let read = off_reactor(move || crate::commands::gateway::read_bounded_manifest(&manifest_path))
         .await
@@ -2141,20 +2337,8 @@ async fn resolve_requested_route(
     let text = String::from_utf8(bytes).map_err(|_| {
         MutationError::from(setup_failure("the configured manifest is not valid UTF-8"))
     })?;
-    let manifest = RouteManifest::from_json(&text)
-        .map_err(|error| MutationError::from(setup_failure(&error.to_string())))?;
-
-    find_route(&manifest, requested).ok_or_else(|| {
-        // The requested id is echoed back deliberately: it is the caller's OWN input (or the
-        // deployer's default, which the deployer knows), it is the one fact that makes this
-        // actionable, and `GET /v1/gateway/routes` is the listing that says what would have
-        // worked.
-        MutationError::Prepared(bad_request(
-            command,
-            &format!("\"route\" does not name an enabled route in the manifest: {requested}"),
-            "/route",
-        ))
-    })
+    RouteManifest::from_json(&text)
+        .map_err(|error| MutationError::from(setup_failure(&error.to_string())))
 }
 
 /// Builds everything in the drive's setup that can refuse, so the *decision* is the last thing that

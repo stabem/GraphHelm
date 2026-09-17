@@ -246,7 +246,9 @@ fn the_documented_request_has_a_pinned_digest() {
 }
 
 /// A `Choice` option with no rubric serializes as JSON `null` (the API's `string | null`), and a
-/// reply's usage round-trips through `usage_wire::serialize` in snake_case.
+/// reply's usage round-trips through `usage_wire` in snake_case: the serialized value is read
+/// back into an equal `JudgeReply` (#1116 review finding: the cell said "round-trips" but only
+/// serialized).
 #[test]
 fn a_null_rubric_and_the_usage_serializer_are_pinned() {
     let question = Question::Choice {
@@ -268,8 +270,14 @@ fn a_null_rubric_and_the_usage_serializer_are_pinned() {
             output_tokens: None,
         },
     };
+    let wire = serde_json::to_value(&reply).unwrap();
     assert_eq!(
-        serde_json::to_value(&reply).unwrap()["usage"],
+        wire["usage"],
         serde_json::json!({ "input_tokens": 7, "output_tokens": null })
+    );
+    let back: JudgeReply = serde_json::from_value(wire).unwrap();
+    assert_eq!(
+        back, reply,
+        "the wire value reads back as the reply it was written from"
     );
 }

@@ -54,6 +54,10 @@ pub struct ReuseReport {
     /// The decision or the fill fell under the acting threshold (or an answer was missing):
     /// today's road was taken and nothing was reused (spec D6).
     pub unresolved: bool,
+    /// Summed over the library road's judge calls: the decision, plus the fill under `reuse`.
+    /// These calls are not in `JudgmentReport::usage`, and the pure `reuse` road has no
+    /// `JudgmentReport` at all (#1126 review finding).
+    pub usage: Usage,
 }
 
 /// One node's answers, verbatim, as the report shows them.
@@ -79,7 +83,8 @@ pub struct JudgmentReport {
     /// Nodes whose answers fell between the thresholds (or were missing): nothing was done,
     /// and that is visible (spec D6).
     pub unresolved: Vec<String>,
-    /// Summed over every judge call of the run, including the rounds that were repaired.
+    /// Summed over every per-node and ranking judge call of the run, including the rounds that
+    /// were repaired. The library road's calls are summed on `ReuseReport::usage` instead.
     pub usage: Usage,
 }
 

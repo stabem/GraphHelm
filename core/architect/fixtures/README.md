@@ -70,6 +70,10 @@ two commands above.
   - `nodes-off-goal.json` + `nodes-off-goal-replies.json`: round 1 judges `summarize` off goal
     (`noul` 0.10, a `GHA005_NODE_OFF_GOAL` fed back for repair); round 2 is the golden draft with
     that node's objective rewritten, judged on goal by every answer.
+  - `nodes-kind-mismatch.json` + `nodes-kind-mismatch-replies.json`: round 1 judges the agent
+    node `summarize` as `tool` at confidence 0.90, everything else on goal (a
+    `GHA006_NODE_KIND_MISMATCH` fed back for repair); round 2 is the golden draft with that
+    node's objective rewritten, judged `agent` by the same confidence.
   - `nodes-below-threshold.json` (paired with the golden draft): `kind:summarize` answers `tool`
     at confidence 0.60, under the acting threshold; the document is the golden and the node is
     reported `unresolved`.

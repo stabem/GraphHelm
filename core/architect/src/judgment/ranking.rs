@@ -87,8 +87,10 @@ pub fn request(profile: &TaskProfile, candidates: &[ExecutionGraph]) -> JudgeReq
 }
 
 /// Reads the reply for `count` candidates into a report. A missing or mistyped answer makes
-/// that candidate's composite `-inf` (never a verdict in its favour); `stance` is left empty
-/// for the caller, which knows which stance produced which index.
+/// that candidate's `coverage` / `waste` NaN and its composite `-inf` (never a verdict in its
+/// favour); on the wire every one of those is JSON `null`, because `serde_json` writes a
+/// non-finite `f64` as `null` (#1125 review finding). `stance` is left empty for the caller,
+/// which knows which stance produced which index.
 #[must_use]
 pub fn read(reply: &JudgeReply, count: u8) -> RankingReport {
     let mut candidates = Vec::with_capacity(usize::from(count));

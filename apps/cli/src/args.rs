@@ -1022,36 +1022,62 @@ pub enum GraphCommand {
     /// The model is either the recorded door (`--fixture`, keyless) or a gateway route
     /// (`--manifest --route`, with `--broker --keyring --key-id` for a `direct_api` route);
     /// exactly one of the two.
-    Synthesize {
-        #[arg(long)]
-        goal: String,
-        /// Where the document is written. Must end in `.json` and must not exist yet.
-        #[arg(long)]
-        out: PathBuf,
-        /// `autopilot`, `supervised` or `manual`; the profile's default (`supervised`) when
-        /// absent.
-        #[arg(long)]
-        mode: Option<String>,
-        #[arg(long = "max-nodes")]
-        max_nodes: Option<usize>,
-        /// Repeatable; the programs a synthesized shell call may name. There is no default: a
-        /// draft naming any other program is refused, and the architect never widens the list.
-        #[arg(long = "allow-program")]
-        allow_programs: Vec<String>,
-        /// A `{"replies": {"<prompt sha256>": "<text>"}}` recording (`core/architect/fixtures`).
-        #[arg(long)]
-        fixture: Option<PathBuf>,
-        #[arg(long)]
-        manifest: Option<PathBuf>,
-        #[arg(long)]
-        route: Option<String>,
-        #[arg(long)]
-        broker: Option<PathBuf>,
-        #[arg(long)]
-        keyring: Option<PathBuf>,
-        #[arg(long = "key-id")]
-        key_id: Option<String>,
-    },
+    /// Boxed: the flag set is the widest of the family (#1123 added four), and clap implements
+    /// `Args` for `Box<T>`, so the enum stays the size of its other variants.
+    Synthesize(Box<SynthesizeArgs>),
+}
+
+/// The flags of `graph synthesize`; see the variant's doc for the two model doors.
+#[derive(Debug, Args)]
+pub struct SynthesizeArgs {
+    #[arg(long)]
+    pub goal: String,
+    /// Where the document is written. Must end in `.json` and must not exist yet.
+    #[arg(long)]
+    pub out: PathBuf,
+    /// `autopilot`, `supervised` or `manual`; the profile's default (`supervised`) when
+    /// absent.
+    #[arg(long)]
+    pub mode: Option<String>,
+    #[arg(long = "max-nodes")]
+    pub max_nodes: Option<usize>,
+    /// Repeatable; the programs a synthesized shell call may name. There is no default: a
+    /// draft naming any other program is refused, and the architect never widens the list.
+    #[arg(long = "allow-program")]
+    pub allow_programs: Vec<String>,
+    /// A `{"replies": {"<prompt sha256>": "<text>"}}` recording (`core/architect/fixtures`).
+    #[arg(long)]
+    pub fixture: Option<PathBuf>,
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    #[arg(long)]
+    pub route: Option<String>,
+    #[arg(long)]
+    pub broker: Option<PathBuf>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long = "key-id")]
+    pub key_id: Option<String>,
+    /// The judge door over a gateway route: a `direct_api` route whose provider is
+    /// `typesafe`, named in `--manifest` and leased through `--broker --keyring --key-id`
+    /// like `--route`. Exclusive with `--judge-fixture`; no judge means today's road.
+    #[arg(
+        long = "judge-route",
+        requires = "manifest",
+        conflicts_with = "judge_fixture"
+    )]
+    pub judge_route: Option<String>,
+    /// The recorded judge door: a `{"answers": {"<request sha256>": <reply>}}` recording
+    /// (`core/architect/fixtures/judge`).
+    #[arg(long = "judge-fixture")]
+    pub judge_fixture: Option<PathBuf>,
+    /// How many drafts to ask for and rank, 1..=3; more than one needs a judge.
+    #[arg(long)]
+    pub drafts: Option<u8>,
+    /// A directory of graph templates (`<id>.yaml` beside `<id>.template.json`) the judge
+    /// may choose to reuse or adapt; read only when a judge is named.
+    #[arg(long)]
+    pub library: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

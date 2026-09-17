@@ -167,11 +167,15 @@ pub fn synthesize_with(
         && !library.templates().is_empty()
     {
         let reply = judge.judge(&judgment::reuse::decide_request(profile, library))?;
+        // The decision's usage, plus the fill's under `reuse`, is reported on `ReuseReport`
+        // (#1126 review finding): the pure `reuse` road has no `JudgmentReport` to carry it.
+        let mut reuse_usage = reply.usage;
         let (road, template, confidence, unresolved) =
             judgment::reuse::read_decision(&reply, library);
         match (road, template) {
             (Road::Reuse, Some(template)) => {
                 let fill = judge.judge(&judgment::reuse::fill_request(profile, template))?;
+                reuse_usage = add_usage(reuse_usage, fill.usage);
                 let (values, unresolved_parameters) = judgment::reuse::read_fill(&fill, template);
                 if unresolved_parameters.is_empty() {
                     let document = template.fill(&values)?;
@@ -185,6 +189,7 @@ pub fn synthesize_with(
                         parameters: values,
                         confidence,
                         unresolved: false,
+                        usage: reuse_usage,
                     };
                     return match compile_round(profile, catalog, &text) {
                         Ok(compiled) => Ok(SynthesizedGraph {
@@ -215,6 +220,7 @@ pub fn synthesize_with(
                     parameters: values,
                     confidence,
                     unresolved: true,
+                    usage: reuse_usage,
                 });
             }
             (Road::Adapt, Some(template)) => {
@@ -225,6 +231,7 @@ pub fn synthesize_with(
                     parameters: BTreeMap::new(),
                     confidence,
                     unresolved: false,
+                    usage: reuse_usage,
                 });
             }
             _ => {
@@ -234,6 +241,7 @@ pub fn synthesize_with(
                     parameters: BTreeMap::new(),
                     confidence,
                     unresolved,
+                    usage: reuse_usage,
                 });
             }
         }
@@ -311,7 +319,7 @@ fn single_draft(
                     let judged = judge.judge(&request)?;
                     judge_usage = add_usage(judge_usage, judged.usage);
                     let (mut diagnostics, nodes, unresolved) =
-                        judgment::nodes::read(&judged, &compiled.graph);
+                        judgment::nodes::read(&judged, &compiled.graph, catalog);
                     if !diagnostics.is_empty() {
                         sort_diagnostics(&mut diagnostics);
                         if round > MAX_REPAIR_ROUNDS {

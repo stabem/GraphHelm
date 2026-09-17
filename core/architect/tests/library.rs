@@ -293,6 +293,34 @@ fn a_library_loads_every_template_with_its_sidecar_and_refuses_a_bad_one() {
     );
 }
 
+/// `none` is `reuse::NO_TEMPLATE`, the `template` answer that names no template, so a template
+/// with that id could never be chosen: `load` refuses it (#1126 review finding), naming the
+/// sidecar and saying the id is reserved.
+#[test]
+fn a_template_named_none_is_refused_at_load() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("x.json"), "{}").unwrap();
+    std::fs::write(
+        dir.path().join("x.template.json"),
+        format!(r#"{{"id":"{NO_TEMPLATE}","summary":"","parameters":{{}}}}"#),
+    )
+    .unwrap();
+    match GraphLibrary::load(dir.path()) {
+        Err(ArchitectRefusal::LibraryInvalid { path, message }) => {
+            assert_eq!(path, "x.template.json");
+            assert!(message.contains("reserved"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // The same sidecar under any other id loads.
+    std::fs::write(
+        dir.path().join("x.template.json"),
+        r#"{"id":"not-none","summary":"","parameters":{}}"#,
+    )
+    .unwrap();
+    assert_eq!(GraphLibrary::load(dir.path()).unwrap().templates().len(), 1);
+}
+
 #[test]
 fn fill_substitutes_only_declared_closed_values_and_refuses_the_rest() {
     let library = library();
@@ -328,7 +356,9 @@ fn fill_substitutes_only_declared_closed_values_and_refuses_the_rest() {
 
 /// `judge/reuse-reuse.json`: road `reuse` (0.92), template `build-and-summarize` (0.90),
 /// program `cargo` (0.95), audience `maintainer` (0.88). No draft model is asked: the recorded
-/// draft model is EMPTY and the run still succeeds.
+/// draft model is EMPTY and the run still succeeds. The decision reply reports usage 3/5 and
+/// the fill 7/11, and the report sums them (#1126 review finding: the library road's judge
+/// calls were reported nowhere).
 #[test]
 fn reuse_fills_a_template_and_never_asks_the_draft_model() {
     let out = compile_with_library("judge/reuse-reuse.json", Drafts::Empty)
@@ -339,6 +369,14 @@ fn reuse_fills_a_template_and_never_asks_the_draft_model() {
     assert_eq!(reuse.parameters["program"], "cargo");
     assert_eq!(reuse.parameters["audience"], "maintainer");
     assert!(!reuse.unresolved);
+    assert_eq!(
+        reuse.usage,
+        Usage {
+            input_tokens: Some(3 + 7),
+            output_tokens: Some(5 + 11),
+        },
+        "the decision's and the fill's usage are summed on the report"
+    );
     assert!(out.prompt_sha256s.is_empty());
     assert_eq!(out.rounds, 0);
     assert!(out.usage.is_none());
@@ -355,6 +393,7 @@ fn reuse_fills_a_template_and_never_asks_the_draft_model() {
     let json = serde_json::to_value(&out).unwrap();
     assert_eq!(json["reuse"]["road"], "reuse");
     assert_eq!(json["reuse"]["parameters"]["audience"], "maintainer");
+    assert_eq!(json["reuse"]["usage"]["inputTokens"], 10);
 }
 
 /// A filled template that names a program outside the allowlist is `CapabilityMissing`, exactly
@@ -423,6 +462,11 @@ fn an_unsure_road_falls_to_create_and_says_so() {
     assert!(reuse.unresolved);
     assert!(reuse.template.is_none());
     assert!((reuse.confidence - 0.55).abs() < 1e-12);
+    assert_eq!(
+        reuse.usage.input_tokens,
+        Some(1),
+        "the decision call's usage is reported even when the road is unresolved"
+    );
     let model = RecordedDraftModel::from_file(&fixtures().join(GOLDEN_DRAFTS)).unwrap();
     let plain = synthesize(&profile(), &catalog_with_cargo(), &model).unwrap();
     assert_eq!(out.document, plain.document);
@@ -517,4 +561,28 @@ fn an_unacted_decision_or_fill_is_unresolved_never_guessed() {
         "a value outside the options is not a value"
     );
     assert_eq!(unresolved, vec!["program".to_owned()]);
+}
+
+/// Spec D8: an EMPTY library makes the decision step a no-op even with a judge named. The
+/// recorded judge here answers only the per-node request (`nodes-below-threshold.json`): a road
+/// decision would refuse `JudgeMissing`, so the run succeeding proves no decision request was
+/// built, and the `reuse` key is absent (#1126 second-pass finding: the
+/// `!templates().is_empty()` conjunct had no cell).
+#[test]
+fn an_empty_library_with_a_judge_costs_no_judge_request_and_says_nothing() {
+    let model = RecordedDraftModel::from_file(&fixtures().join(GOLDEN_DRAFTS)).unwrap();
+    let judge = RecordedJudgeModel::from_file(&fixtures().join("judge/nodes-below-threshold.json"))
+        .unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    let library = GraphLibrary::load(empty.path()).unwrap();
+    assert!(library.templates().is_empty());
+    let extras = Extras {
+        judge: Some(&judge),
+        library: Some(&library),
+        ..Extras::default()
+    };
+    let out = synthesize_with(&profile(), &catalog_with_cargo(), &model, &extras).unwrap();
+    assert!(out.reuse.is_none());
+    assert!(serde_json::to_value(&out).unwrap().get("reuse").is_none());
+    assert!(out.judgments.is_some(), "the per-node site still ran");
 }

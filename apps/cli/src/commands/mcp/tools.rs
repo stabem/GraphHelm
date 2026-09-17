@@ -699,6 +699,29 @@ fn synthesize_schema() -> serde_json::Value {
                 "description": "A route id of the server's manifest; the deployer's default \
                                 when absent.",
             },
+            "judgeRoute": {
+                "type": "string",
+                "description": "A direct_api typesafe route id of the server's manifest: the \
+                                judge door over the gateway. Exclusive with judgeFixture; no \
+                                judge means no judgment is asked.",
+            },
+            "judgeFixture": {
+                "type": "string",
+                "description": "Recorded-answers file path on the Runtime host: the keyless \
+                                judge door.",
+            },
+            "drafts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "description": "How many drafts to ask for and rank; more than one needs a \
+                                judge.",
+            },
+            "library": {
+                "type": "string",
+                "description": "A template directory path on the Runtime host the judge may \
+                                choose to reuse or adapt.",
+            },
         }),
         &["goal"],
     )
@@ -1336,16 +1359,22 @@ pub(crate) fn call(
         // as they do to a raw HTTP caller.
         "synthesize" => require(arguments, "goal").map(|goal| {
             let mut body = serde_json::json!({ "goal": goal });
-            for field in ["mode", "fixture", "route"] {
+            for field in [
+                "mode",
+                "fixture",
+                "route",
+                "judgeRoute",
+                "judgeFixture",
+                "library",
+            ] {
                 if let Some(value) = str_arg(arguments, field) {
                     body[field] = serde_json::Value::String(value.to_owned());
                 }
             }
-            if let Some(max_nodes) = arguments
-                .get("maxNodes")
-                .and_then(serde_json::Value::as_u64)
-            {
-                body["maxNodes"] = serde_json::json!(max_nodes);
+            for field in ["maxNodes", "drafts"] {
+                if let Some(count) = arguments.get(field).and_then(serde_json::Value::as_u64) {
+                    body[field] = serde_json::json!(count);
+                }
             }
             if let Some(programs) = arguments.get("allowPrograms") {
                 body["allowPrograms"] = programs.clone();

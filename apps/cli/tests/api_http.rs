@@ -211,6 +211,16 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
 }
 
 fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
+    serve_with_env(events, extra, &[])
+}
+
+/// `serve_with` plus environment variables the child alone sees — the gateway passphrase a
+/// server that leases a `direct_api` credential reads fresh from `GRAPHHELM_GATEWAY_KEY`.
+fn serve_with_env(
+    events: &Path,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+) -> (ServerGuard, String, String) {
     let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
@@ -220,6 +230,7 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
             "127.0.0.1:0",
         ])
         .args(extra)
+        .envs(envs.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -6378,6 +6389,67 @@ fn the_api_and_the_cli_compile_the_same_goal_to_the_same_bytes() {
     );
 }
 
+/// #1123 (spec D10): the judge door is one more field, and the three-door identity holds WITH a
+/// judge. `judge/nodes-below-threshold.json` answers `kind` = `tool` for `summarize` at 0.60,
+/// below the acting threshold: the document is the golden one, and `judgments.unresolved`
+/// names the node — on the CLI and over HTTP, byte for byte.
+#[test]
+fn the_api_and_the_cli_agree_with_a_judge_and_report_the_unresolved_node() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let judge = root().join("core/architect/fixtures/judge/nodes-below-threshold.json");
+    let goal = first_compile_goal();
+
+    let out = directory.path().join("judged.json");
+    let cli = cli_envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &goal,
+        "--out",
+        out.to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixture.to_str().unwrap(),
+        "--judge-fixture",
+        judge.to_str().unwrap(),
+    ]);
+    assert_eq!(cli["ok"], true, "{cli}");
+    assert_eq!(
+        cli["data"]["judgments"]["unresolved"],
+        serde_json::json!(["summarize"]),
+        "{cli}"
+    );
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/graphs/synthesize"),
+        &token,
+        &[],
+        &serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+            "judgeFixture": judge.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(
+        reply["data"]["judgments"]["unresolved"],
+        serde_json::json!(["summarize"])
+    );
+    let mut cli_data = cli["data"].clone();
+    cli_data.as_object_mut().unwrap().remove("out");
+    assert_eq!(
+        serde_json::to_vec(&reply["data"]).unwrap(),
+        serde_json::to_vec(&cli_data).unwrap(),
+        "one reply on every door, judge included"
+    );
+}
+
 /// The route's refusals are argument-shaped 400s carrying the CLI's own codes: a fixture-only
 /// server asked without a fixture names both doors; a compiler refusal is `GHCLI026` at `/goal`
 /// with the refusal as compact JSON, exactly as the CLI prints it; an unknown body field is
@@ -6435,6 +6507,524 @@ fn the_architect_route_refuses_with_the_cli_codes_and_names_both_model_doors() {
     assert_eq!(status, 400, "{reply}");
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
     assert_eq!(reply["diagnostics"][0]["path"], "/maxNode");
+}
+
+/// #1123 / #1127: the five body shapes the judge and ranking fields added, each refused as a
+/// 400 at its own pointer with a message naming the field, on a fixture-only server — none of
+/// them reaches a manifest, a broker or a compiler. The unknown-field refusal is re-checked with
+/// a near-miss of the new field, so a rename of `judgeRoute` cannot quietly widen the body.
+#[test]
+fn the_architect_route_refuses_every_new_judge_and_ranking_shape_at_its_pointer() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/graphs/synthesize");
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let judge = root().join("core/architect/fixtures/judge/nodes-below-threshold.json");
+    let fixture = fixture.to_str().unwrap();
+    let judge = judge.to_str().unwrap();
+
+    // (extra body fields, expected pointer, words the message must carry)
+    let cells: Vec<(Value, &str, &[&str])> = vec![
+        (
+            serde_json::json!({ "judgeRoute": "judge", "judgeFixture": judge }),
+            "/judgeFixture",
+            &["\"judgeFixture\"", "\"judgeRoute\""],
+        ),
+        (
+            serde_json::json!({ "judgeRoute": 7 }),
+            "/judgeRoute",
+            &["\"judgeRoute\"", "string"],
+        ),
+        (
+            serde_json::json!({ "judgeRoute": ["judge"] }),
+            "/judgeRoute",
+            &["\"judgeRoute\"", "string"],
+        ),
+        // A fixture-only server has nothing to lease from: the refusal names the recorded
+        // door and the flags that would wire a route, at the field's own pointer.
+        (
+            serde_json::json!({ "judgeRoute": "judge" }),
+            "/judgeRoute",
+            &["\"judgeFixture\"", "--manifest", "--route"],
+        ),
+        (
+            serde_json::json!({ "drafts": -1 }),
+            "/drafts",
+            &["\"drafts\"", "non-negative integer"],
+        ),
+        (
+            serde_json::json!({ "drafts": 1.5 }),
+            "/drafts",
+            &["\"drafts\"", "non-negative integer"],
+        ),
+        (
+            serde_json::json!({ "drafts": 256 }),
+            "/drafts",
+            &["\"drafts\"", "non-negative integer"],
+        ),
+        (
+            serde_json::json!({ "drafts": "2" }),
+            "/drafts",
+            &["\"drafts\"", "non-negative integer"],
+        ),
+        (
+            serde_json::json!({ "library": 3 }),
+            "/library",
+            &["\"library\"", "string"],
+        ),
+        (
+            serde_json::json!({ "library": ["templates"] }),
+            "/library",
+            &["\"library\"", "string"],
+        ),
+        (
+            serde_json::json!({ "judgeRoutes": "judge" }),
+            "/judgeRoutes",
+            &[],
+        ),
+    ];
+    for (extra, pointer, words) in cells {
+        let mut body = serde_json::json!({
+            "goal": first_compile_goal(),
+            "allowPrograms": ["cargo"],
+            "fixture": fixture,
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let (status, reply) = post_json(&url, &token, &[], &body);
+        assert_eq!(status, 400, "{extra}: {reply}");
+        assert_eq!(reply["ok"], false, "{extra}: {reply}");
+        assert_eq!(reply["command"], "graph.synthesize", "{extra}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+            "{extra}: {reply}"
+        );
+        assert_eq!(reply["diagnostics"][0]["path"], pointer, "{extra}: {reply}");
+        let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+        for word in words {
+            assert!(
+                message.contains(word),
+                "{extra}: the message must carry {word}: {message}"
+            );
+        }
+    }
+
+    // The control: the same body with none of the offending fields is a 200, so every 400 above
+    // was the field's doing and not the goal's, the fixture's or the token's.
+    let (status, reply) = post_json(
+        &url,
+        &token,
+        &[],
+        &serde_json::json!({
+            "goal": first_compile_goal(),
+            "allowPrograms": ["cargo"],
+            "fixture": fixture,
+            "judgeFixture": judge,
+            "drafts": 1,
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+}
+
+// -------------------------------------------------------------------------------------------
+// #1123 / #1127: `judgeRoute`, the HTTP judge door that spends a credential the SERVER holds.
+//
+// The server starts with a manifest, a broker and the keyring the broker seals under — the
+// `ServeModelPort` wiring — and `GRAPHHELM_GATEWAY_KEY` in its environment, exactly as a real
+// deployment would. A fake System One on loopback answers `POST /v1/systemone` with the recorded
+// below-threshold reply and records what it saw; the draft door stays the recorded one
+// (`fixture`), which is what makes the reply byte-comparable to the CLI's recorded run.
+// -------------------------------------------------------------------------------------------
+
+/// The judge route's credential, planted through `gateway credential set` with the value on
+/// stdin. Must appear in exactly one place: the `Authorization` header of the one
+/// `POST /v1/systemone` — never in a response body and never in the server's own output.
+const JUDGE_SENTINEL: &str = "ts-JUDGE-SENTINEL-http-fedcba9876543210";
+
+/// 64 lowercase hexadecimal characters — a well-formed `GRAPHHELM_GATEWAY_KEY`.
+fn gateway_passphrase() -> String {
+    "0123456789abcdef".repeat(4)
+}
+
+/// One HTTP request captured by [`fake_system_one`], for assertions.
+struct CapturedRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+/// A fake System One on an OS-assigned loopback port: every connection is read as one HTTP/1.1
+/// request (headers, then `Content-Length` bytes of body), answered with `judge_body` on
+/// `/v1/systemone` and 404 elsewhere, and pushed onto the returned log. The listener thread
+/// lives for the test process.
+fn fake_system_one(judge_body: String) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                return;
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let captured = read_captured_request(&mut stream);
+            let (status, body) = match captured.path.as_str() {
+                "/v1/systemone" => (200, judge_body.as_str()),
+                _ => (404, "{}"),
+            };
+            let head = format!(
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+            let _ = stream.flush();
+            log.lock().unwrap().push(captured);
+        }
+    });
+    (format!("http://{address}"), seen)
+}
+
+fn read_captured_request(stream: &mut TcpStream) -> CapturedRequest {
+    let header_split = |buffer: &[u8]| buffer.windows(4).position(|window| window == b"\r\n\r\n");
+    let content_length = |head: &[u8]| {
+        String::from_utf8_lossy(head)
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    };
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(header_end) = header_split(&buffer)
+            && buffer.len() - (header_end + 4) >= content_length(&buffer[..header_end])
+        {
+            break;
+        }
+        let read = stream.read(&mut chunk).unwrap();
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+    let header_end = header_split(&buffer).expect("the request must have a header/body split");
+    let head = String::from_utf8_lossy(&buffer[..header_end]).into_owned();
+    let mut lines = head.split("\r\n");
+    let mut parts = lines.next().unwrap_or_default().split_whitespace();
+    let method = parts.next().unwrap_or_default().to_owned();
+    let path = parts.next().unwrap_or_default().to_owned();
+    let headers = lines
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
+        .collect();
+    let length = content_length(&buffer[..header_end]);
+    let body_start = header_end + 4;
+    let body = String::from_utf8_lossy(&buffer[body_start..body_start + length]).into_owned();
+    CapturedRequest {
+        method,
+        path,
+        headers,
+        body,
+    }
+}
+
+/// The below-threshold recording's one reply, served verbatim by the fake: `kind` = `tool` for
+/// `summarize` at 0.60 lands that node in `judgments.unresolved`.
+fn recorded_judge_reply_body() -> String {
+    let recording: Value = serde_json::from_slice(
+        &std::fs::read(root().join("core/architect/fixtures/judge/nodes-below-threshold.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let answers = recording["answers"].as_object().unwrap();
+    assert_eq!(answers.len(), 1, "one request, one reply: {recording}");
+    answers.values().next().unwrap().to_string()
+}
+
+/// `chat`: a chat route (`anthropic`, `direct_api`), also the server's default `--route`.
+/// `judge`: the one shape `judgeRoute` accepts (`typesafe`, `direct_api`), pointed at the fake.
+/// `dormant`: that shape, disabled.
+fn judge_manifest_value(base_url: &str) -> Value {
+    serde_json::json!({
+        "manifestVersion": 1,
+        "routes": [
+            {
+                "id": "chat",
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_anthropic",
+                "profiles": ["critical_reasoning"],
+                "enabled": true
+            },
+            {
+                "id": "judge",
+                "provider": "typesafe",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "jev-latest",
+                "credentialRef": "secret_typesafe",
+                "profiles": ["balanced_reasoning"],
+                "enabled": true
+            },
+            {
+                "id": "dormant",
+                "provider": "typesafe",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": base_url,
+                "model": "jev-latest",
+                "credentialRef": "secret_typesafe",
+                "profiles": ["balanced_reasoning"],
+                "enabled": false
+            }
+        ]
+    })
+}
+
+/// A server wired for a judge lease: the fake System One, a manifest naming it, a broker holding
+/// `secret_typesafe` (= [`JUDGE_SENTINEL`], planted through `gateway credential set` on stdin),
+/// the keyring both seal under, and `serve --manifest --broker --route --keyring --key-id` with
+/// `GRAPHHELM_GATEWAY_KEY` in its environment. Returns the guard, base URL, token and the fake's
+/// request log.
+fn serve_with_judge_route(
+    directory: &Path,
+) -> (
+    ServerGuard,
+    String,
+    String,
+    Arc<Mutex<Vec<CapturedRequest>>>,
+) {
+    let (base_url, seen) = fake_system_one(recorded_judge_reply_body());
+    let manifest = write_json(directory, "manifest.json", &judge_manifest_value(&base_url));
+    let broker = directory.join("broker");
+    let keyring = directory.join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let planted = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "credential",
+            "set",
+            "--broker",
+            broker.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "test-key",
+            "--ref",
+            "secret_typesafe",
+            "--provider",
+            "typesafe",
+            "--usable-by",
+            "judge",
+        ])
+        .env("GRAPHHELM_GATEWAY_KEY", gateway_passphrase())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(JUDGE_SENTINEL.as_bytes())?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    assert!(
+        planted.status.success(),
+        "credential set: stdout={} stderr={}",
+        String::from_utf8_lossy(&planted.stdout),
+        String::from_utf8_lossy(&planted.stderr)
+    );
+
+    let events = directory.join("events");
+    let (guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--broker",
+            broker.to_str().unwrap(),
+            "--route",
+            "chat",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "test-key",
+        ],
+        &[("GRAPHHELM_GATEWAY_KEY", &gateway_passphrase())],
+    );
+    (guard, base, token, seen)
+}
+
+/// `judgeRoute` on a server that CAN lease: a chat route is refused by name at `/judgeRoute`
+/// BEFORE any lease and before any request — the fake sees nothing; a disabled route and an
+/// undeclared route are refused as not enabled, likewise before any lease.
+#[test]
+fn judge_route_over_http_refuses_a_chat_or_dormant_route_before_any_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_guard, base, token, seen) = serve_with_judge_route(directory.path());
+    let url = format!("{base}/v1/graphs/synthesize");
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+
+    for (route, word) in [
+        ("chat", "direct_api typesafe"),
+        ("dormant", "enabled route"),
+        ("absent", "enabled route"),
+    ] {
+        let (status, reply) = post_json(
+            &url,
+            &token,
+            &[],
+            &serde_json::json!({
+                "goal": first_compile_goal(),
+                "allowPrograms": ["cargo"],
+                "fixture": fixture.to_str().unwrap(),
+                "judgeRoute": route,
+            }),
+        );
+        assert_eq!(status, 400, "{route}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+            "{route}: {reply}"
+        );
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/judgeRoute",
+            "{route}: {reply}"
+        );
+        let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+        assert!(
+            message.contains("\"judgeRoute\"") && message.contains(word),
+            "{route}: {message}"
+        );
+        assert!(
+            !reply.to_string().contains(JUDGE_SENTINEL),
+            "{route}: the key never reaches a reply"
+        );
+    }
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "no request may reach the judge before the route is accepted"
+    );
+}
+
+/// Spec D10 over the credential door: `judgeRoute: "judge"` beside the recorded draft `fixture`
+/// is a 200 whose `data` is byte for byte the CLI's `--fixture --judge-fixture` reply (minus the
+/// `out` path the CLI alone writes) — the fake serves the recording's own bytes, so the two judge
+/// doors are the same judgment. The server leased the key itself: the fake saw exactly one
+/// `POST /v1/systemone` carrying `Authorization: Bearer <sentinel>`, and the sentinel is in no
+/// reply and in nothing the server printed.
+#[test]
+fn judge_route_over_http_leases_the_servers_key_and_returns_the_clis_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (guard, base, token, seen) = serve_with_judge_route(directory.path());
+    let fixture = root().join("core/architect/fixtures/first-compile/replies.json");
+    let judge = root().join("core/architect/fixtures/judge/nodes-below-threshold.json");
+    let goal = first_compile_goal();
+
+    let out = directory.path().join("cli.json");
+    let cli = cli_envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &goal,
+        "--out",
+        out.to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixture.to_str().unwrap(),
+        "--judge-fixture",
+        judge.to_str().unwrap(),
+    ]);
+    assert_eq!(cli["ok"], true, "{cli}");
+
+    let (status, reply) = post_json(
+        &format!("{base}/v1/graphs/synthesize"),
+        &token,
+        &[],
+        &serde_json::json!({
+            "goal": goal,
+            "allowPrograms": ["cargo"],
+            "fixture": fixture.to_str().unwrap(),
+            "judgeRoute": "judge",
+        }),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(
+        reply["data"]["judgments"]["unresolved"],
+        serde_json::json!(["summarize"]),
+        "{reply}"
+    );
+    let mut cli_data = cli["data"].clone();
+    cli_data.as_object_mut().unwrap().remove("out");
+    assert_eq!(
+        serde_json::to_vec(&reply["data"]).unwrap(),
+        serde_json::to_vec(&cli_data).unwrap(),
+        "the leased judge and the recorded judge are one reply"
+    );
+    assert!(
+        !reply.to_string().contains(JUDGE_SENTINEL),
+        "the key never reaches a reply"
+    );
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "exactly one judgment was asked");
+    let call = &seen[0];
+    assert_eq!(call.method, "POST");
+    assert_eq!(call.path, "/v1/systemone");
+    assert_eq!(
+        header_value(&call.headers, "authorization"),
+        Some(format!("Bearer {JUDGE_SENTINEL}").as_str()),
+        "the server's leased key is the bearer"
+    );
+    assert!(
+        !call.body.contains(JUDGE_SENTINEL),
+        "no key in the body: {}",
+        call.body
+    );
+    let sent: Value = serde_json::from_str(&call.body).unwrap();
+    assert_eq!(sent["model"], "jev-latest", "{sent}");
+    drop(seen);
+
+    let printed = format!(
+        "{}\n{}",
+        guard.stdout_lines.lock().unwrap().join("\n"),
+        guard.stderr_lines.lock().unwrap().join("\n")
+    );
+    assert!(
+        !printed.contains(JUDGE_SENTINEL),
+        "the server never prints the key: {printed}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

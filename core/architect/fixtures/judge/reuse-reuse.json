@@ -17,8 +17,8 @@
         }
       },
       "usage": {
-        "input_tokens": 1,
-        "output_tokens": 1
+        "input_tokens": 3,
+        "output_tokens": 5
       }
     },
     {
@@ -38,8 +38,8 @@
         }
       },
       "usage": {
-        "input_tokens": 1,
-        "output_tokens": 1
+        "input_tokens": 7,
+        "output_tokens": 11
       }
     }
   ],
@@ -61,8 +61,8 @@
         }
       },
       "usage": {
-        "input_tokens": 1,
-        "output_tokens": 1
+        "input_tokens": 7,
+        "output_tokens": 11
       }
     },
     "a860cfb56981032aa0ae6d78105ecd5b8efcc654ec0086651b0ec7f0cb315147": {
@@ -82,8 +82,8 @@
         }
       },
       "usage": {
-        "input_tokens": 1,
-        "output_tokens": 1
+        "input_tokens": 3,
+        "output_tokens": 5
       }
     }
   }

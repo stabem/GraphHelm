@@ -8,12 +8,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use graphhelm_architect::judgment::policy::{ACT_THRESHOLD, NOUL_NO_THRESHOLD, acts, noul_is_no};
-use graphhelm_architect::{
-    ArchitectRefusal, CapabilityCatalog, Extras, MAX_REPAIR_ROUNDS, RecordedDraftModel,
-    RecordedJudgeModel, SynthesizedGraph, TaskProfile, synthesize, synthesize_with,
+use graphhelm_architect::judgment::nodes::read;
+use graphhelm_architect::judgment::policy::{
+    ACT_THRESHOLD, NOUL_NO_THRESHOLD, NOUL_YES_THRESHOLD, acts, noul_is_no, noul_is_yes,
 };
-use graphhelm_gateway::judgment::JudgeReply;
+use graphhelm_architect::{
+    ArchitectRefusal, CapabilityCatalog, Extras, MAX_REPAIR_ROUNDS, NODE_KIND_MISMATCH_CODE,
+    RecordedDraftModel, RecordedJudgeModel, SynthesizedGraph, TaskProfile, synthesize,
+    synthesize_with,
+};
+use graphhelm_gateway::call::Usage;
+use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeReply};
+use graphhelm_protocols::ExecutionGraph;
 
 const RECORD_VARIABLE: &str = "ARCHITECT_RECORD";
 
@@ -38,6 +44,39 @@ fn catalog_with_cargo() -> CapabilityCatalog {
 
 fn recording() -> bool {
     std::env::var_os(RECORD_VARIABLE).is_some()
+}
+
+/// The golden document as the graph `nodes::read` is given: `build_check` (`tool`) and
+/// `summarize` (`agent`).
+fn golden_graph() -> ExecutionGraph {
+    read_json(&fixtures().join("first-compile/expected.json"))
+}
+
+fn choice(choice: &str, confidence: f64) -> Answer {
+    Answer::Choice {
+        choice: choice.to_owned(),
+        probabilities: BTreeMap::new(),
+        confidence,
+    }
+}
+
+fn noul(noul: f64) -> Answer {
+    Answer::Noul { noul }
+}
+
+/// A hand-built reply for the golden graph: `build_check` on goal and `tool`, `summarize` as
+/// the cell says.
+fn golden_reply(summarize_on_goal: Answer, summarize_kind: Answer) -> JudgeReply {
+    JudgeReply {
+        model: JEV_LATEST.to_owned(),
+        answers: BTreeMap::from([
+            ("on_goal:build_check".to_owned(), noul(0.95)),
+            ("kind:build_check".to_owned(), choice("tool", 0.9)),
+            ("on_goal:summarize".to_owned(), summarize_on_goal),
+            ("kind:summarize".to_owned(), summarize_kind),
+        ]),
+        usage: Usage::default(),
+    }
 }
 
 fn expected_document_bytes(document: &serde_json::Value) -> Vec<u8> {
@@ -187,6 +226,21 @@ fn policy_edges_are_exact() {
     assert!(!noul_is_no(NOUL_NO_THRESHOLD + 1e-9));
     assert!(acts(ACT_THRESHOLD + 1e-9));
     assert!(!acts(ACT_THRESHOLD - 1e-9));
+    // `NOUL_YES_THRESHOLD` bounds the unresolved band from above (`nodes::read`); it had no
+    // edge cell on either side (#1125 second-pass finding).
+    assert!(noul_is_yes(NOUL_YES_THRESHOLD + 1e-9));
+    assert!(!noul_is_yes(NOUL_YES_THRESHOLD - 1e-9));
+}
+
+/// The boundaries are INCLUSIVE, and that is a separate claim from direction: the `± 1e-9` cells
+/// above stay green if `>=` becomes `>`; these do not.
+#[test]
+fn policy_boundaries_are_inclusive() {
+    assert!(acts(ACT_THRESHOLD));
+    assert!(noul_is_no(NOUL_NO_THRESHOLD));
+    assert!(noul_is_yes(NOUL_YES_THRESHOLD));
+    // The band between the two noul thresholds is unresolved on both open sides.
+    assert!(!noul_is_no(NOUL_NO_THRESHOLD + 1e-9) && !noul_is_yes(NOUL_YES_THRESHOLD - 1e-9));
 }
 
 /// Spec D4: `synthesize` and `synthesize_with(.., &Extras::default())` are one road, and that
@@ -270,6 +324,101 @@ fn an_off_goal_node_is_a_repairable_gha005_and_round_two_wins() {
         out.document["spec"]["nodes"]["summarize"]["objective"],
         plain.document["spec"]["nodes"]["summarize"]["objective"]
     );
+}
+
+/// Fixture `judge/nodes-kind-mismatch.json` (#1120 review finding: GHA006 was emitted by no
+/// test): the judge types the agent node `summarize` as `tool` at confidence 0.90 with the
+/// first draft, everything else on goal, so the ONLY diagnostic of round 1 is
+/// `GHA006_NODE_KIND_MISMATCH` and it is fed back for repair; with the repaired draft of
+/// `judge/nodes-kind-mismatch-replies.json` the judge answers `agent`, and round 2 wins.
+#[test]
+fn a_confident_kind_mismatch_is_a_repairable_gha006_and_round_two_wins() {
+    let out = compile_judged(
+        "judge/nodes-kind-mismatch-replies.json",
+        "judge/nodes-kind-mismatch.json",
+        &profile(),
+        &catalog_with_cargo(),
+    )
+    .unwrap_or_else(|refusal| panic!("{refusal:?}"));
+    assert_eq!(out.rounds, 2, "round 1 was repaired for the mismatch");
+    assert_eq!(out.prompt_sha256s.len(), 2);
+    let judgments = out.judgments.expect("a judge was named");
+    assert!(judgments.unresolved.is_empty());
+    let summarize = judgments
+        .nodes
+        .iter()
+        .find(|node| node.node == "summarize")
+        .unwrap();
+    assert_eq!(
+        summarize.kind, "agent",
+        "the accepted round's answer matches"
+    );
+    assert!(acts(summarize.kind_confidence));
+    assert_eq!(judgments.usage.input_tokens, Some(2));
+    // The round-2 draft answered a prompt that quoted GHA006: it is not the golden draft.
+    let plain_model =
+        RecordedDraftModel::from_file(&fixtures().join("first-compile/replies.json")).unwrap();
+    let plain = synthesize(&profile(), &catalog_with_cargo(), &plain_model).unwrap();
+    assert_ne!(
+        out.document["spec"]["nodes"]["summarize"]["objective"],
+        plain.document["spec"]["nodes"]["summarize"]["objective"]
+    );
+    assert_eq!(out.document["spec"]["nodes"]["summarize"]["type"], "agent");
+}
+
+/// Pure cell over `nodes::read` (#1120 review finding): a confident `kind` that IS a catalog
+/// type and differs from the draft's is GHA006 at the node's `/type`; a confident `kind` the
+/// catalog does not offer is unresolved, with no diagnostic, never a mismatch.
+#[test]
+fn a_kind_outside_the_catalog_is_unresolved_not_a_mismatch() {
+    let graph = golden_graph();
+    let catalog = catalog_with_cargo();
+    assert!(catalog.node_types.iter().any(|kind| kind == "tool"));
+    assert!(!catalog.node_types.iter().any(|kind| kind == "oracle"));
+
+    let mismatch = golden_reply(noul(0.95), choice("tool", 0.9));
+    let (diagnostics, _, unresolved) = read(&mismatch, &graph, &catalog);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, NODE_KIND_MISMATCH_CODE);
+    assert_eq!(diagnostics[0].path, "/spec/nodes/summarize/type");
+    assert!(unresolved.is_empty());
+
+    let outside = golden_reply(noul(0.95), choice("oracle", 0.9));
+    let (diagnostics, judgments, unresolved) = read(&outside, &graph, &catalog);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(unresolved, vec!["summarize".to_owned()]);
+    let summarize = judgments
+        .iter()
+        .find(|node| node.node == "summarize")
+        .unwrap();
+    assert_eq!(summarize.kind, "oracle", "the answer is reported verbatim");
+}
+
+/// Pure cell over `nodes::read` (#1120 review finding): `on_goal` is a probability, so a
+/// `noul` outside `[0.0, 1.0]`, or NaN, is unresolved with no diagnostic; the edges `0.0` and
+/// `1.0` are in range and read as "no" and "yes".
+#[test]
+fn an_on_goal_outside_zero_to_one_is_unresolved() {
+    let graph = golden_graph();
+    let catalog = catalog_with_cargo();
+    for bad in [-0.01, 1.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let reply = golden_reply(noul(bad), choice("agent", 0.9));
+        let (diagnostics, _, unresolved) = read(&reply, &graph, &catalog);
+        assert!(diagnostics.is_empty(), "noul {bad}: {diagnostics:?}");
+        assert_eq!(unresolved, vec!["summarize".to_owned()], "noul {bad}");
+    }
+    let no = golden_reply(noul(0.0), choice("agent", 0.9));
+    let (diagnostics, _, unresolved) = read(&no, &graph, &catalog);
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "0.0 is a resolved no: {diagnostics:?}"
+    );
+    assert!(unresolved.is_empty());
+    let yes = golden_reply(noul(1.0), choice("agent", 0.9));
+    let (diagnostics, _, unresolved) = read(&yes, &graph, &catalog);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(unresolved.is_empty());
 }
 
 /// Fixture `judge/nodes-below-threshold.json`: the judge answers `kind` = `tool` for the

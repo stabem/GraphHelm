@@ -2183,3 +2183,52 @@ fn the_synthesize_tool_reaches_the_architect_route_and_relays_its_document() {
         "the tool must relay the route's own answer, not compose a second one"
     );
 }
+
+/// #1123 (spec D10): `judgeFixture` travels through the tool and the route's reply carries the
+/// judgments — the same `data` the HTTP door returns for the same two recordings.
+#[test]
+fn the_synthesize_tool_forwards_the_judge_fixture_and_relays_the_judgments() {
+    let harness = wired("exec-mcp-synthesize-judge");
+    let fixture = root_dir().join("core/architect/fixtures/first-compile/replies.json");
+    let judge = root_dir().join("core/architect/fixtures/judge/nodes-below-threshold.json");
+    let goal =
+        std::fs::read_to_string(root_dir().join("core/architect/fixtures/first-compile/GOAL.txt"))
+            .unwrap()
+            .trim_end()
+            .to_owned();
+    let arguments = serde_json::json!({
+        "goal": goal,
+        "allowPrograms": ["cargo"],
+        "fixture": fixture.to_str().unwrap(),
+        "judgeFixture": judge.to_str().unwrap(),
+    });
+
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!(2), "synthesize", arguments.clone()),
+    ]);
+    let (is_error, envelope) = tool_envelope(&session.replies[1]);
+    assert!(!is_error, "{envelope}");
+    assert_eq!(envelope["command"], "graph.synthesize");
+    assert_eq!(
+        envelope["data"]["judgments"]["unresolved"],
+        serde_json::json!(["summarize"]),
+        "{envelope}"
+    );
+    assert_eq!(envelope["data"]["rounds"], 1);
+
+    let (status, direct) = post_json(
+        &harness.base,
+        &harness.token,
+        "/v1/graphs/synthesize",
+        &[],
+        &arguments,
+    );
+    assert_eq!(status, 200, "{direct}");
+    assert_eq!(
+        serde_json::to_vec(&envelope["data"]).unwrap(),
+        serde_json::to_vec(&direct["data"]).unwrap(),
+        "the tool must relay the route's own answer, judge included"
+    );
+}

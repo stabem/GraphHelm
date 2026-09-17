@@ -15,6 +15,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::judgment::reuse::NO_TEMPLATE;
 use crate::model::MAX_FIXTURE_BYTES;
 use crate::refusal::ArchitectRefusal;
 
@@ -81,8 +82,8 @@ impl GraphLibrary {
     /// [`ArchitectRefusal::LibraryInvalid`] naming the offending file when `dir` is not a
     /// directory or cannot be listed, a sidecar has no document, either file exceeds
     /// [`MAX_FIXTURE_BYTES`] or is not what its extension says, the sidecar carries an unknown
-    /// key or an empty or duplicate `id`, the document is not a mapping, or there are more than
-    /// [`MAX_TEMPLATES`] sidecars.
+    /// key or an empty, reserved (`none`, the judge's "no template" answer) or duplicate `id`,
+    /// the document is not a mapping, or there are more than [`MAX_TEMPLATES`] sidecars.
     pub fn load(dir: &Path) -> Result<Self, ArchitectRefusal> {
         let dir_name = file_name(dir);
         let metadata = std::fs::metadata(dir)
@@ -120,6 +121,15 @@ impl GraphLibrary {
             })?;
             if sidecar.id.is_empty() {
                 return Err(invalid(&sidecar_name, "the sidecar's id is empty"));
+            }
+            // `none` is the `template` answer that names no template, so a template with that
+            // id could never be chosen: refuse it here rather than load it unreachable (#1126
+            // review finding).
+            if sidecar.id == NO_TEMPLATE {
+                return Err(invalid(
+                    &sidecar_name,
+                    format!("the sidecar's id `{NO_TEMPLATE}` is reserved"),
+                ));
             }
             if templates.iter().any(|known| known.id == sidecar.id) {
                 return Err(invalid(&sidecar_name, "the sidecar's id is already taken"));
@@ -194,9 +204,20 @@ impl Template {
     ///
     /// # Errors
     /// [`ArchitectRefusal::LibraryInvalid`] (naming the template id) when a declared parameter
-    /// has no value, a value is not one of the parameter's options, or a `{{` survives the
-    /// substitution: a placeholder no parameter declares is never handed on as text.
+    /// has no value, a value is not one of the parameter's options, `values` names a parameter
+    /// the template does not declare (a stray key is a caller defect to see, #1126 review
+    /// finding), or a `{{` survives the substitution: a placeholder no parameter declares is
+    /// never handed on as text.
     pub fn fill(&self, values: &BTreeMap<String, String>) -> Result<Value, ArchitectRefusal> {
+        if let Some(name) = values
+            .keys()
+            .find(|name| !self.parameters.contains_key(*name))
+        {
+            return Err(invalid(
+                &self.id,
+                format!("parameter {name} is not declared by the template"),
+            ));
+        }
         for (name, parameter) in &self.parameters {
             let value = values
                 .get(name)
@@ -281,16 +302,27 @@ mod tests {
         assert!(template.fill(&values).is_err(), "never a second pass");
     }
 
+    /// An undeclared KEY in `values` refuses (#1126 review finding: the contract is refusal
+    /// both ways, a value outside the options and a parameter the template never declared);
+    /// with only declared keys, a number or boolean leaf is untouched.
     #[test]
-    fn an_undeclared_value_is_ignored_and_a_number_leaf_is_untouched() {
+    fn an_undeclared_key_refuses_and_a_number_leaf_is_untouched() {
         let template = template(
             serde_json::json!({"a": "{{program}}", "n": 7, "b": true}),
             &["cargo"],
         );
-        let values = BTreeMap::from([
+        let stray = BTreeMap::from([
             ("program".to_owned(), "cargo".to_owned()),
             ("extra".to_owned(), "x".to_owned()),
         ]);
+        match template.fill(&stray) {
+            Err(ArchitectRefusal::LibraryInvalid { path, message }) => {
+                assert_eq!(path, "t");
+                assert!(message.contains("extra"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let values = BTreeMap::from([("program".to_owned(), "cargo".to_owned())]);
         let filled = template.fill(&values).unwrap();
         assert_eq!(filled, serde_json::json!({"a": "cargo", "n": 7, "b": true}));
     }

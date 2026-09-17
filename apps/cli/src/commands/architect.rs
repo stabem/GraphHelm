@@ -30,15 +30,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use graphhelm_architect::{
-    ArchitectRefusal, CapabilityCatalog, DraftModel, DraftReply, RecordedDraftModel, TaskProfile,
-    synthesize,
+    ArchitectRefusal, CapabilityCatalog, DraftModel, DraftReply, Extras, GraphLibrary, JudgeModel,
+    RecordedDraftModel, RecordedJudgeModel, TaskProfile, synthesize_with,
 };
 use graphhelm_events::SecretBytes;
 use graphhelm_gateway::call::ModelCall;
+use graphhelm_gateway::judgment::{JudgeReply, JudgeRequest};
 use graphhelm_gateway::manifest::{ModelRoute, Transport};
 use graphhelm_model_gateway::broker::CredentialBroker;
 use graphhelm_model_gateway::byok::ByokAdapter;
 use graphhelm_model_gateway::runtime::RuntimeAdapter;
+use graphhelm_model_gateway::systemone::{SystemOneAdapter, TYPESAFE_PROVIDER};
 use graphhelm_model_gateway::transport::UreqTransport;
 use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
@@ -118,6 +120,10 @@ pub(crate) struct SynthesizeRequest<'a> {
     pub(crate) allow_programs: &'a [String],
     pub(crate) wait_within_seconds: Option<u64>,
     pub(crate) clearance_within_seconds: Option<u64>,
+    /// How many drafts to ask for and rank; `1` (today's road) when absent. The bound `1..=3`
+    /// and the "more than one needs a judge" rule are the compiler's own (`InvalidProfile`),
+    /// never pre-empted here, so every door refuses with the same words.
+    pub(crate) drafts: Option<u8>,
 }
 
 /// Which model answers the prompt.
@@ -135,14 +141,33 @@ pub(crate) enum ModelSource<'a> {
     },
 }
 
-/// Compiles the request through `model` and returns the one JSON of spec D8 (`document`,
-/// `rationale`, `stampedCustoms`, `templateSha256`, `rounds`, `promptSha256s`, `usage`).
+/// Which judge answers the compiler's closed questions (spec D1, D10), when one is named.
+pub(crate) enum JudgeSource<'a> {
+    /// The recorded door: keyless, offline, the judge in every test.
+    Fixture(&'a Path),
+    /// A `direct_api` route of a gateway manifest whose provider is `typesafe`, leased exactly
+    /// as the draft door's `direct_api` route is.
+    Gateway {
+        manifest: &'a Path,
+        route: &'a str,
+        broker: Option<&'a Path>,
+        keyring: Option<&'a Path>,
+        key_id: Option<&'a str>,
+    },
+}
+
+/// Compiles the request through `model` — and `judge` and `library` when the caller named
+/// them — and returns the one JSON of spec D8 (`document`, `rationale`, `stampedCustoms`,
+/// `templateSha256`, `rounds`, `promptSha256s`, `usage`, plus `judgments`/`ranking`/`reuse`
+/// when a judge was asked). No judge, one draft, no library is today's road byte for byte.
 ///
 /// # Errors
 /// `GHCLI026_ARCHITECT_REFUSED` at `/goal`, carrying the refusal as compact JSON.
 pub(crate) fn execute(
     request: &SynthesizeRequest<'_>,
     model: &dyn DraftModel,
+    judge: Option<&dyn JudgeModel>,
+    library: Option<&GraphLibrary>,
 ) -> Result<Value, Failure> {
     let mut profile = TaskProfile::new(request.goal);
     if let Some(mode) = request.mode {
@@ -158,7 +183,13 @@ pub(crate) fn execute(
         profile.clearance_within_seconds = seconds;
     }
     let catalog = CapabilityCatalog::from_runtime(request.allow_programs);
-    let synthesized = synthesize(&profile, &catalog, model).map_err(|refusal| refused(&refusal))?;
+    let extras = Extras {
+        judge,
+        drafts: request.drafts.unwrap_or(1),
+        library,
+    };
+    let synthesized =
+        synthesize_with(&profile, &catalog, model, &extras).map_err(|refusal| refused(&refusal))?;
     serde_json::to_value(&synthesized).map_err(|_| {
         refused(&ArchitectRefusal::ModelUnavailable {
             message: "the synthesized graph could not be serialized".to_owned(),
@@ -208,6 +239,62 @@ pub(crate) fn build_model(source: &ModelSource<'_>) -> Result<Box<dyn DraftModel
             Ok(Box::new(model))
         }
     }
+}
+
+/// Opens the judge door `source` names.
+///
+/// # Errors
+/// A recording that cannot be read or parsed is the compiler's own `JudgeUnavailable` refusal.
+/// A gateway door fails as [`build_model`]'s does, plus `GHCLI009` at `/judgeRoute` when the
+/// route is not a `direct_api` route of provider `typesafe`: that is the only transport the
+/// System One adapter speaks, and refusing here costs no lease.
+pub(crate) fn build_judge(source: &JudgeSource<'_>) -> Result<Box<dyn JudgeModel>, Failure> {
+    match source {
+        JudgeSource::Fixture(path) => {
+            let judge = RecordedJudgeModel::from_file(path).map_err(|refusal| refused(&refusal))?;
+            Ok(Box::new(judge))
+        }
+        JudgeSource::Gateway {
+            manifest,
+            route,
+            broker,
+            keyring,
+            key_id,
+        } => {
+            let manifest = gateway::load_manifest(manifest)?;
+            let route = manifest
+                .routes()
+                .iter()
+                .find(|candidate| candidate.id() == *route)
+                .ok_or_else(|| {
+                    gateway::invalid(
+                        "--judge-route does not name a route in the manifest",
+                        "/judgeRoute",
+                    )
+                })?;
+            if !route.enabled() {
+                return Err(gateway::invalid("the judge route is disabled", "/judgeRoute").into());
+            }
+            if route.transport() != Transport::DirectApi || route.provider() != TYPESAFE_PROVIDER {
+                return Err(gateway::invalid(
+                    "--judge-route must name a direct_api typesafe route",
+                    "/judgeRoute",
+                )
+                .into());
+            }
+            let key = lease_credential(route, *broker, *keyring, *key_id)?;
+            Ok(Box::new(GatewayJudgeModel::new(route.clone(), key)))
+        }
+    }
+}
+
+/// Loads the graph library at `dir`.
+///
+/// # Errors
+/// The compiler's own `LibraryInvalid` refusal (a file path, an unreadable directory, a bad
+/// sidecar), as `GHCLI026` — the crate names the offending file, never the directory path.
+pub(crate) fn build_library(dir: &Path) -> Result<GraphLibrary, Failure> {
+    GraphLibrary::load(dir).map_err(|refusal| refused(&refusal))
 }
 
 /// The `direct_api` lease, exactly as `gateway/probe.rs` performs it: keyring directory present,
@@ -311,6 +398,32 @@ impl DraftModel for GatewayDraftModel {
     }
 }
 
+/// The gateway-backed [`JudgeModel`]: a `direct_api` `typesafe` route and the credential leased
+/// for it. `judge` places one synchronous call through [`SystemOneAdapter`] over
+/// `UreqTransport` and maps a [`graphhelm_gateway::taxonomy::GatewayError`] onto
+/// [`ArchitectRefusal::JudgeUnavailable`] with the error's own `Display` text — fixed static
+/// prose, never a path, never a key. Shared with the HTTP route, which leases the same way.
+pub(crate) struct GatewayJudgeModel {
+    route: ModelRoute,
+    key: SecretBytes,
+}
+
+impl GatewayJudgeModel {
+    pub(crate) fn new(route: ModelRoute, key: SecretBytes) -> Self {
+        Self { route, key }
+    }
+}
+
+impl JudgeModel for GatewayJudgeModel {
+    fn judge(&self, request: &JudgeRequest) -> Result<JudgeReply, ArchitectRefusal> {
+        SystemOneAdapter::new(&self.route, Arc::new(UreqTransport::new()))
+            .call(&self.key, request)
+            .map_err(|error| ArchitectRefusal::JudgeUnavailable {
+                message: error.to_string(),
+            })
+    }
+}
+
 /// The flags of `graph synthesize`, grouped the way `tool::invoke::InvokeArguments` groups its
 /// own, so the dispatch arm in `commands/mod.rs` stays one call.
 pub struct SynthesizeArguments {
@@ -325,6 +438,10 @@ pub struct SynthesizeArguments {
     pub broker: Option<PathBuf>,
     pub keyring: Option<PathBuf>,
     pub key_id: Option<String>,
+    pub judge_route: Option<String>,
+    pub judge_fixture: Option<PathBuf>,
+    pub drafts: Option<u8>,
+    pub library: Option<PathBuf>,
 }
 
 pub fn run(arguments: &SynthesizeArguments) -> Outcome {
@@ -338,6 +455,14 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
     check_out_path(&arguments.out)?;
     let source = model_source(arguments)?;
     let model = build_model(&source)?;
+    let judge = match judge_source(arguments)? {
+        Some(source) => Some(build_judge(&source)?),
+        None => None,
+    };
+    let library = match arguments.library.as_deref() {
+        Some(dir) => Some(build_library(dir)?),
+        None => None,
+    };
     let request = SynthesizeRequest {
         goal: &arguments.goal,
         mode: arguments.mode.as_deref(),
@@ -345,8 +470,9 @@ fn run_inner(arguments: &SynthesizeArguments) -> Result<Value, Failure> {
         allow_programs: &arguments.allow_programs,
         wait_within_seconds: None,
         clearance_within_seconds: None,
+        drafts: arguments.drafts,
     };
-    let mut reply = execute(&request, model.as_ref())?;
+    let mut reply = execute(&request, model.as_ref(), judge.as_deref(), library.as_ref())?;
     let document = reply
         .get("document")
         .ok_or_else(|| argument("the synthesized reply carries no document", "/out"))?;
@@ -406,6 +532,36 @@ fn model_source(arguments: &SynthesizeArguments) -> Result<ModelSource<'_>, Fail
     }
 }
 
+/// At most one judge door: `--judge-fixture`, or `--judge-route` against the same `--manifest`
+/// (and broker coordinates) the draft route uses. clap already refuses the pair and a
+/// `--judge-route` without `--manifest`; this only reads what survived.
+fn judge_source(arguments: &SynthesizeArguments) -> Result<Option<JudgeSource<'_>>, Failure> {
+    match (
+        arguments.judge_fixture.as_deref(),
+        arguments.judge_route.as_deref(),
+    ) {
+        (Some(_), Some(_)) => Err(argument(
+            "--judge-fixture and --judge-route are mutually exclusive",
+            "/judgeFixture",
+        )),
+        (Some(fixture), None) => Ok(Some(JudgeSource::Fixture(fixture))),
+        (None, Some(route)) => {
+            let manifest = arguments
+                .manifest
+                .as_deref()
+                .ok_or_else(|| argument("--judge-route requires --manifest", "/manifest"))?;
+            Ok(Some(JudgeSource::Gateway {
+                manifest,
+                route,
+                broker: arguments.broker.as_deref(),
+                keyring: arguments.keyring.as_deref(),
+                key_id: arguments.key_id.as_deref(),
+            }))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
 /// Writes the document pretty-printed with a trailing newline — the same bytes
 /// `core/architect/fixtures/first-compile/expected.json` holds — through `create_new`, and syncs
 /// it. A failure names the error kind and never the path.
@@ -446,6 +602,10 @@ mod tests {
             broker: None,
             keyring: None,
             key_id: None,
+            judge_route: None,
+            judge_fixture: None,
+            drafts: None,
+            library: None,
         }
     }
 

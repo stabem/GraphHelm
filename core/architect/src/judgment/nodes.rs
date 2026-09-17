@@ -83,11 +83,14 @@ pub fn request(
 }
 
 /// Reads the reply into diagnostics (repairable), one judgment per node, and the unresolved
-/// ids. A missing or mistyped answer is treated as unresolved, never as a verdict.
+/// ids. A missing or mistyped answer is treated as unresolved, never as a verdict; so is an
+/// `on_goal` outside `[0.0, 1.0]` (or NaN), and a `kind` that is not one of `catalog.node_types`
+/// (#1120 review findings): an answer the question did not offer is not a mismatch.
 #[must_use]
 pub fn read(
     reply: &JudgeReply,
     graph: &ExecutionGraph,
+    catalog: &CapabilityCatalog,
 ) -> (Vec<Diagnostic>, Vec<NodeJudgment>, Vec<String>) {
     let mut diagnostics = Vec::new();
     let mut judgments = Vec::new();
@@ -104,7 +107,10 @@ pub fn read(
             _ => (String::new(), f64::NAN),
         };
         let mut resolved = true;
-        if on_goal.is_nan() || (!noul_is_no(on_goal) && !noul_is_yes(on_goal)) {
+        // A `noul` is a probability; a value outside `[0.0, 1.0]` (NaN included, which fails
+        // both comparisons) is unresolved, never read as a verdict (#1120 review finding).
+        let on_goal_in_range = (0.0..=1.0).contains(&on_goal);
+        if !on_goal_in_range || (!noul_is_no(on_goal) && !noul_is_yes(on_goal)) {
             resolved = false;
         } else if noul_is_no(on_goal) {
             diagnostics.push(Diagnostic::error(
@@ -117,7 +123,10 @@ pub fn read(
                 DRAFT_SOURCE,
             ));
         }
-        if kind_confidence.is_nan() || !acts(kind_confidence) {
+        // A `choice` outside the catalog the question offered is unresolved, never a mismatch
+        // (#1120 review finding): a mismatch is a catalog type that differs from the draft's.
+        let kind_in_catalog = catalog.node_types.contains(&kind);
+        if kind_confidence.is_nan() || !acts(kind_confidence) || !kind_in_catalog {
             resolved = false;
         } else if kind != node.node_type.as_str() {
             diagnostics.push(Diagnostic::error(

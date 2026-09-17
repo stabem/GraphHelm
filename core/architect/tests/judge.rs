@@ -46,6 +46,41 @@ fn a_recorded_judge_answers_only_the_request_it_recorded() {
     }
 }
 
+/// `RecordedJudgeModel::from_file` (#1116 review finding: the disk door had no cell): a file
+/// holding one valid entry answers that request; a directory is refused `JudgeUnavailable`
+/// with a message that names the failure class and never the path.
+#[test]
+fn a_recorded_judge_file_is_read_from_disk_and_a_directory_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let key = request_sha256(&request());
+    let path = dir.path().join("judge.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "answers": { key.clone(): reply() } }).to_string(),
+    )
+    .unwrap();
+    let model = RecordedJudgeModel::from_file(&path).unwrap();
+    assert_eq!(model.recorded_requests(), vec![key.as_str()]);
+    assert_eq!(model.judge(&request()).unwrap(), reply());
+
+    match RecordedJudgeModel::from_file(dir.path()) {
+        Err(ArchitectRefusal::JudgeUnavailable { message }) => {
+            assert!(message.contains("not a regular file"), "{message}");
+            assert!(
+                !message.contains(&dir.path().to_string_lossy().into_owned()),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    match RecordedJudgeModel::from_file(&dir.path().join("absent.json")) {
+        Err(ArchitectRefusal::JudgeUnavailable { message }) => {
+            assert!(message.contains("cannot inspect"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn a_recorded_judge_file_is_bounded_and_shaped() {
     let key = request_sha256(&request());

@@ -1603,6 +1603,25 @@ fn create_directory_link(target: &std::path::Path, link: &std::path::Path) -> st
 }
 
 #[cfg(windows)]
+fn create_directory_junction(
+    target: &std::path::Path,
+    link: &std::path::Path,
+) -> std::io::Result<()> {
+    let status = std::process::Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("mklink /J failed"))
+    }
+}
+
+#[cfg(windows)]
 fn is_windows_symlink_privilege_error(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(1314)
 }
@@ -2247,6 +2266,12 @@ fn the_nameless_storage_sites_are_a_visible_class_pinned_by_count_and_by_file() 
     );
 
     assert!(
+        census.refusals.is_empty(),
+        "the census encountered filesystem failures, so the counts above are incomplete: {:?}",
+        census.refusals
+    );
+
+    assert!(
         census.oversized.is_empty(),
         concat!(
             "these files are past the census size bound and were not read, so the counts above ",
@@ -2306,6 +2331,532 @@ fn every_failpoint_variant_reaches_the_provocation_loop() {
     );
 }
 
+/// #837: the five latent gaps #1015 declared and did not close, each with its own cell.
+///
+/// Every one of them fails in the SAME direction -- a guard reddening for correct code, or a guard
+/// blind to a real site -- and every one was measured as latent before being deferred: zero
+/// instances of the damage in the tree, with the shape present for two of them. They land together
+/// because they are one class, not because they arrived together.
+#[test]
+fn the_five_latent_census_gaps_are_closed() {
+    let root = std::path::Path::new("/w");
+
+    // 1. THE CHECKOUT'S OWN ANCESTORS MUST NOT DECIDE. Under `C:\src\GraphHelm` an absolute-path
+    // component search finds `src` in every path, so every crate-level `tests/` reads as production
+    // and the mandatory gate reddens on correct code -- on somebody else's machine, never on the
+    // author's.
+    assert!(
+        is_inside_src(root, std::path::Path::new("/w/core/events/src/tests")),
+        "a directory genuinely under a crate's src is inside src"
+    );
+    assert!(
+        !is_inside_src(root, std::path::Path::new("/w/core/events/tests")),
+        "a crate's integration directory is not"
+    );
+    assert!(
+        !is_inside_src(
+            std::path::Path::new("/src/GraphHelm"),
+            std::path::Path::new("/src/GraphHelm/core/events/tests")
+        ),
+        "and a checkout whose own ancestor is called `src` does not make every tests/ production -- \
+         the judgement is relative to the workspace, not to the disk"
+    );
+
+    // 2. THE ALIAS MUST BE ON THE ERROR TYPE, not on a sibling in the same group.
+    assert!(
+        imports_the_nameless_variant("use graphhelm_events::EventRepositoryError as RepoError;"),
+        "aliasing the error type hides every later `RepoError::Storage` from the census"
+    );
+    assert!(
+        imports_the_nameless_variant(
+            "use graphhelm_events::EventRepositoryError::{self as RepoError};"
+        ),
+        "a grouped self alias of the error type hides every later `RepoError::Storage`"
+    );
+    assert!(
+        !imports_the_nameless_variant(
+            "use graphhelm_events::{EventRepositoryError, EventStore as Store};"
+        ),
+        "but aliasing a SIBLING hides nothing -- the type and `Storage` stay spelled, and refusing \
+         this reddens the mandatory suite for code that did nothing"
+    );
+    assert!(
+        !imports_the_nameless_variant(
+            "use graphhelm_events::{EventRepositoryError, EventStore::{self as Store}};"
+        ),
+        "a grouped self alias of a SIBLING hides nothing -- the error type stays spelled"
+    );
+
+    // 3. A VISIBILITY PREFIX STILL OPENS A `use`.
+    assert!(
+        imports_the_nameless_variant(
+            "pub(crate) use graphhelm_events::EventRepositoryError as RepoError;"
+        ),
+        "a re-export with a visibility prefix is still an import that renames the type"
+    );
+
+    // 4. ANY `cfg` PREDICATE CONTAINING `test` OPENS A TEST REGION.
+    // NO INDENTATION INSIDE THE LITERAL. A run of spaces in an authored string is what
+    // `authored_strings_across_the_workspace` forbids, and the region detector cares about the
+    // column-zero closer, never about what the body is indented by.
+    let compound = "#[cfg(all(test, target_os = \"linux\"))]\nmod tests {\nlet x = 1;\n}\n";
+    let (regions, unclosed) = cfg_test_regions(compound);
+    assert_eq!(
+        unclosed, 0,
+        "the compound-attribute module finds its closer"
+    );
+    assert_eq!(
+        regions.len(),
+        1,
+        "a compound cfg predicate containing `test` opens a region: {regions:?}"
+    );
+    // AND THE CONTROL: a cfg that does not mention test opens nothing. Without this the fix reads
+    // as "any cfg is a test module", which would swallow production code whole.
+    let unrelated = "#[cfg(windows)]\nmod platform {\nlet x = 1;\n}\n";
+    assert_eq!(
+        cfg_test_regions(unrelated).0.len(),
+        0,
+        "a cfg without `test` opens no region -- `latest` and `testing` must not match either"
+    );
+    let lookalike = "#[cfg(feature = \"latest\")]\nmod platform {\nlet x = 1;\n}\n";
+    assert_eq!(
+        cfg_test_regions(lookalike).0.len(),
+        0,
+        "`latest` contains the letters of `test` and is not a test predicate"
+    );
+    let negated = "#[cfg(not(test))]\nmod platform {\nlet x = 1;\n}\n";
+    assert_eq!(
+        cfg_test_regions(negated).0.len(),
+        0,
+        "cfg(not(test)) is production code and must stay in the census"
+    );
+    let either = "#[cfg(any(test, unix))]\nmod platform {\nlet x = 1;\n}\n";
+    assert_eq!(
+        cfg_test_regions(either).0.len(),
+        0,
+        "cfg(any(test, unix)) also includes production and is not test-only"
+    );
+    let quoted_comma = "#[cfg(all(feature = \"x,test,y\"))]\nmod platform {\nlet x = 1;\n}\n";
+    assert_eq!(
+        cfg_test_regions(quoted_comma).0.len(),
+        0,
+        "commas inside a cfg string literal do not make production code test-only"
+    );
+
+    // 5. `#[cfg(test)] mod NAME;` MAKES `NAME` TEST-ONLY, whatever it is called.
+    let temporary = std::env::temp_dir().join(format!("h837-{}", std::process::id()));
+    std::fs::create_dir_all(&temporary).expect("the probe directory must be creatable");
+    std::fs::write(
+        temporary.join("mod.rs"),
+        "pub fn live() {}\n#[cfg(test)]\nmod probe_tests;\n",
+    )
+    .expect("the probe module file must be writable");
+    std::fs::write(
+        temporary.join("ordinary.rs"),
+        "#[cfg(test)]\nmod probe;\n#[cfg(test)]\npub(super) mod restricted_probe;\n#[cfg(test)]\npub(in crate::tests) mod crate_probe;\n#[cfg(test)]\n#[path = \"ordinary_probe.rs\"]\npub(crate) mod ordinary_probe;\n",
+    )
+    .expect("the ordinary parent module must be writable");
+    std::fs::create_dir_all(temporary.join("ordinary"))
+        .expect("the ordinary module directory must be creatable");
+    std::fs::write(
+        temporary.join("ordinary").join("probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the nested test module file must be writable");
+    std::fs::write(
+        temporary.join("ordinary").join("restricted_probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the restricted-visibility test module file must be writable");
+    std::fs::write(
+        temporary.join("ordinary").join("crate_probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the crate-visibility test module file must be writable");
+    std::fs::write(
+        temporary.join("probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the production sibling file must be writable");
+    std::fs::write(temporary.join("ordinary_probe.rs"), "")
+        .expect("the path-attribute target must be writable");
+    std::fs::write(
+        temporary.join("large.rs"),
+        vec![b'x'; (LARGEST_SOURCE_FILE + 1) as usize],
+    )
+    .expect("the oversized module file must be writable");
+    let entries: Vec<_> = std::fs::read_dir(&temporary)
+        .expect("the probe directory must be readable")
+        .flatten()
+        .collect();
+    let mut oversized = Vec::new();
+    let mut refusals = Vec::new();
+    let declared = test_only_modules(&temporary, &entries, &mut oversized, &mut refusals);
+    assert!(
+        declared.contains(&temporary.join("probe_tests.rs"))
+            || declared.contains(&temporary.join("probe_tests")),
+        "an external cfg-test module declaration resolves its child path: {declared:?}"
+    );
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("probe.rs")),
+        "an ordinary parent module resolves its child below the parent's module directory: {declared:?}"
+    );
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("restricted_probe.rs")),
+        "a pub(super) test module resolves its child below the parent's module directory: {declared:?}"
+    );
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("crate_probe.rs")),
+        "a pub(in ...) test module resolves its child below the parent's module directory: {declared:?}"
+    );
+    assert!(
+        !declared.contains(&temporary.join("probe.rs")),
+        "the same-named production sibling must remain visible: {declared:?}"
+    );
+    assert!(
+        declared.contains(&temporary.join("ordinary_probe.rs")),
+        "a path attribute resolves relative to the declaring file: {declared:?}"
+    );
+    let mut census = StorageCensus::default();
+    census.walk(&temporary, &temporary);
+    assert_eq!(
+        census.production, 1,
+        "the nested test child is excluded while the same-named sibling remains production: {:?}",
+        census.production_files
+    );
+    assert_eq!(
+        census.production_files,
+        vec!["probe.rs".to_owned()],
+        "the production sibling is the only fixture counted"
+    );
+    let _ = std::fs::remove_dir_all(&temporary);
+    assert_eq!(
+        oversized,
+        vec!["large.rs".to_owned()],
+        "module-file discovery reports an oversized file without reading it"
+    );
+    assert!(
+        refusals.is_empty(),
+        "fixture had unexpected refusals: {refusals:?}"
+    );
+}
+
+#[test]
+fn grouped_self_alias_of_event_repository_error_is_visible() {
+    assert!(
+        imports_the_nameless_variant(
+            "use graphhelm_events::EventRepositoryError::{self as RepoError};"
+        ),
+        "a grouped self alias must not hide the error type from the census"
+    );
+    assert!(
+        !imports_the_nameless_variant(
+            "use graphhelm_events::{EventRepositoryError, EventStore::{self as Store}};"
+        ),
+        "a grouped self alias of a sibling must not hide the visible error type"
+    );
+    // A SUBSTRING IS NOT A NAME. `WrappedEventRepositoryError as Wrapped` contains the needle and
+    // renames a DIFFERENT type; without an identifier boundary in front of the match the guard
+    // reports an alias of the error type that nobody wrote, and the mandatory suite reddens on
+    // correct source. Measured at this head:
+    // `grep -rnE "[A-Za-z0-9_]EventRepositoryError" --include=*.rs core apps adapters tools` -> 0,
+    // so this is a seal placed before the first instance, not a repair of a live one.
+    // (Codex P2, thread PRRT_kwDOTyQgUM6hxMqc.)
+    assert!(
+        !imports_the_nameless_variant("use crate::WrappedEventRepositoryError as Wrapped;"),
+        "a type whose name merely ENDS with the error type's name is not an alias of it"
+    );
+    assert!(
+        !imports_the_nameless_variant("use crate::WrappedEventRepositoryError::{self as Wrapped};"),
+        "the grouped form of a suffix-named sibling is not an alias of the error type either"
+    );
+    assert!(
+        imports_the_nameless_variant("use crate::inner::EventRepositoryError as RepoError;"),
+        "a path-qualified alias of the error type itself is still an alias"
+    );
+}
+
+#[test]
+fn restricted_visibility_external_test_modules_are_discovered() {
+    let temporary = std::env::temp_dir().join(format!("h837-restricted-{}", std::process::id()));
+    std::fs::create_dir_all(temporary.join("ordinary"))
+        .expect("the restricted-visibility fixture must be creatable");
+    std::fs::write(
+        temporary.join("ordinary.rs"),
+        "#[cfg(test)]\npub(super) mod restricted_probe;\n#[cfg(test)]\npub(in crate::tests) mod crate_probe;\n",
+    )
+    .expect("the restricted-visibility parent must be writable");
+    for name in ["restricted_probe.rs", "crate_probe.rs"] {
+        std::fs::write(
+            temporary.join("ordinary").join(name),
+            "EventRepositoryError::Storage\n",
+        )
+        .expect("the restricted-visibility child must be writable");
+    }
+    let entries: Vec<_> = std::fs::read_dir(&temporary)
+        .expect("the restricted-visibility fixture must be readable")
+        .flatten()
+        .collect();
+    let mut oversized = Vec::new();
+    let mut refusals = Vec::new();
+    let declared = test_only_modules(&temporary, &entries, &mut oversized, &mut refusals);
+    let _ = std::fs::remove_dir_all(&temporary);
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("restricted_probe.rs")),
+        "pub(super) test modules must resolve from the declaring module file: {declared:?}"
+    );
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("crate_probe.rs")),
+        "pub(in ...) test modules must resolve from the declaring module file: {declared:?}"
+    );
+    assert!(
+        oversized.is_empty() && refusals.is_empty(),
+        "restricted-visibility discovery must not create refusals: oversized={oversized:?}, refusals={refusals:?}"
+    );
+}
+
+/// One indentation level of generated Rust, composed at run time.
+///
+/// The indentation these fixtures need belongs to the GENERATED source, not to this file, so it
+/// cannot be written as `\n` followed by spaces inside an authored literal:
+/// `authored_strings_carry_no_collapsed_indentation` in `core/events/tests/source_invariants.rs`
+/// rejects any run of three or more spaces inside a string literal, and that guard carries no
+/// per-file exemption by design. A backslash continuation would not help either -- it removes THIS
+/// file's indentation from a continued literal, while the runs here are wanted in the VALUE.
+/// Composing the run at run time is what keeps both true.
+fn generated_indent() -> String {
+    " ".repeat(4)
+}
+
+/// Join already-indented lines into a newline-terminated Rust source fixture.
+fn generated_source(lines: &[&str]) -> String {
+    let mut source = lines.join("\n");
+    source.push('\n');
+    source
+}
+
+#[test]
+fn rustfmt_wrapped_cfg_external_test_modules_are_discovered() {
+    let temporary = std::env::temp_dir().join(format!("h837-wrapped-cfg-{}", std::process::id()));
+    std::fs::create_dir_all(temporary.join("ordinary"))
+        .expect("the wrapped-cfg fixture must be creatable");
+    let indent = generated_indent();
+    std::fs::write(
+        temporary.join("ordinary.rs"),
+        generated_source(&[
+            "#[cfg(all(",
+            &format!("{indent}test,"),
+            &format!("{indent}feature = \"wrapped-cfg\","),
+            "))]",
+            "pub(super) mod probe;",
+        ]),
+    )
+    .expect("the wrapped-cfg parent must be writable");
+    std::fs::write(
+        temporary.join("ordinary").join("probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the wrapped-cfg child must be writable");
+    std::fs::write(
+        temporary.join("probe.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the production sibling must be writable");
+
+    let entries: Vec<_> = std::fs::read_dir(&temporary)
+        .expect("the wrapped-cfg directory must be readable")
+        .flatten()
+        .collect();
+    let mut oversized = Vec::new();
+    let mut refusals = Vec::new();
+    let declared = test_only_modules(&temporary, &entries, &mut oversized, &mut refusals);
+    assert!(
+        declared.contains(&temporary.join("ordinary").join("probe.rs")),
+        "a rustfmt-wrapped cfg(test) declaration must resolve its child: {declared:?}"
+    );
+
+    let mut census = StorageCensus::default();
+    census.walk(&temporary, &temporary);
+    assert_eq!(
+        census.production_files,
+        vec!["probe.rs".to_owned()],
+        "the wrapped test child is excluded while its same-named production sibling remains: {:?}",
+        census.production_files
+    );
+    let _ = std::fs::remove_dir_all(&temporary);
+    assert!(
+        oversized.is_empty(),
+        "fixture had oversized files: {oversized:?}"
+    );
+    assert!(refusals.is_empty(), "fixture had refusals: {refusals:?}");
+}
+
+#[test]
+fn cfg_comments_do_not_hide_inline_or_external_production_modules() {
+    let temporary = std::env::temp_dir().join(format!("h837-cfg-comments-{}", std::process::id()));
+    std::fs::create_dir_all(temporary.join("ordinary"))
+        .expect("the cfg-comment fixture must be creatable");
+    let indent = generated_indent();
+    let commented_predicate = [
+        "#[cfg(all(".to_owned(),
+        format!("{indent}unix /*,"),
+        format!("{indent}test,"),
+        format!("{indent}*/"),
+        "))]".to_owned(),
+    ];
+    let predicate: Vec<&str> = commented_predicate.iter().map(String::as_str).collect();
+    let inline_body = format!("{indent}EventRepositoryError::Storage");
+    let mut inline_lines = predicate.clone();
+    inline_lines.extend_from_slice(&["mod inline_production {", &inline_body, "}"]);
+    std::fs::write(temporary.join("inline.rs"), generated_source(&inline_lines))
+        .expect("the inline production fixture must be writable");
+    let mut external_lines = predicate.clone();
+    external_lines.push("pub(super) mod external_production;");
+    std::fs::write(
+        temporary.join("ordinary.rs"),
+        generated_source(&external_lines),
+    )
+    .expect("the external production fixture must be writable");
+    std::fs::write(
+        temporary.join("ordinary").join("external_production.rs"),
+        "EventRepositoryError::Storage\n",
+    )
+    .expect("the external production child must be writable");
+
+    let entries: Vec<_> = std::fs::read_dir(&temporary)
+        .expect("the cfg-comment directory must be readable")
+        .flatten()
+        .collect();
+    let mut oversized = Vec::new();
+    let mut refusals = Vec::new();
+    let declared = test_only_modules(&temporary, &entries, &mut oversized, &mut refusals);
+    assert!(
+        !declared.contains(&temporary.join("ordinary").join("external_production.rs")),
+        "a cfg attribute containing comments must not classify the external production child as test-only: {declared:?}"
+    );
+
+    let mut census = StorageCensus::default();
+    census.walk(&temporary, &temporary);
+    assert_eq!(
+        census.production, 2,
+        "comment-bearing cfg predicates keep both inline and external production sites: {:?}",
+        census.production_files
+    );
+    let _ = std::fs::remove_dir_all(&temporary);
+    assert!(
+        oversized.is_empty(),
+        "fixture had oversized files: {oversized:?}"
+    );
+    assert!(refusals.is_empty(), "fixture had refusals: {refusals:?}");
+}
+
+#[test]
+fn census_refuses_invalid_utf8_instead_of_dropping_a_source() {
+    let temporary = std::env::temp_dir().join(format!("h837-invalid-{}", std::process::id()));
+    std::fs::create_dir_all(&temporary).expect("the invalid-source fixture must be creatable");
+    let path = temporary.join("invalid.rs");
+    std::fs::write(&path, [0xff, 0xfe]).expect("the invalid-source fixture must be writable");
+    let refusal = match read_bounded_source(&path) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("invalid UTF-8 must be explicit"),
+    };
+    assert!(
+        refusal.contains("not UTF-8"),
+        "unexpected refusal: {refusal}"
+    );
+    let _ = std::fs::remove_dir_all(&temporary);
+}
+
+#[test]
+fn census_prepass_refuses_file_type_failures() {
+    let mut refusals = Vec::new();
+    let kind = prepass_entry_kind(
+        std::path::Path::new("synthetic/entry.rs"),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "synthetic refusal",
+        )),
+        &mut refusals,
+    );
+
+    assert!(
+        kind.is_none(),
+        "a failed prepass lookup cannot classify an entry"
+    );
+    assert_eq!(refusals.len(), 1, "the prepass failure must be visible");
+    assert!(
+        refusals[0].contains("HARNESS-BROKE: file_type failed for synthetic/entry.rs"),
+        "unexpected refusal: {:?}",
+        refusals
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn census_rejects_a_root_junction_before_following_it() {
+    let temporary = tempfile::tempdir().expect("the junction probe directory must be creatable");
+    let target = temporary.path().join("target");
+    std::fs::create_dir(&target).expect("the junction target must be creatable");
+    std::fs::write(target.join("probe.rs"), "EventRepositoryError::Storage\n")
+        .expect("the junction target source must be writable");
+    let linked = temporary.path().join("linked");
+    if let Err(error) = create_directory_junction(&target, &linked) {
+        panic!("OBSERVER_MISSING: Windows cannot create the root junction fixture: {error}");
+    }
+
+    let mut direct = StorageCensus::default();
+    direct.walk(&target, temporary.path());
+    assert_eq!(
+        direct.production, 1,
+        "the direct directory proves the fixture contains a production source"
+    );
+
+    let mut through_junction = StorageCensus::default();
+    through_junction.walk(&linked, temporary.path());
+    assert_eq!(
+        through_junction.production, 0,
+        "a root junction must not make the census read outside its selected area"
+    );
+    assert!(
+        through_junction
+            .refusals
+            .iter()
+            .any(|refusal| refusal.contains("root area") && refusal.contains("reparse")),
+        "root junction refusal was not explicit: {:?}",
+        through_junction.refusals
+    );
+}
+
+#[test]
+fn census_refuses_before_external_module_discovery_when_budget_is_exhausted() {
+    let temporary = std::env::temp_dir().join(format!("h837-budget-{}", std::process::id()));
+    std::fs::create_dir_all(&temporary).expect("the budget probe directory must be creatable");
+    std::fs::write(temporary.join("ordinary.rs"), "#[cfg(test)]\nmod probe;\n")
+        .expect("the budget probe module must be writable");
+
+    let mut census = StorageCensus {
+        entries_seen: MAX_CENSUS_ENTRIES,
+        ..Default::default()
+    };
+    census.walk(&temporary, &temporary);
+
+    assert_eq!(
+        census.entries_seen,
+        MAX_CENSUS_ENTRIES + 1,
+        "the shared entry budget refuses the first entry beyond its limit"
+    );
+    assert_eq!(
+        census.budget_refusals.len(),
+        1,
+        "budget exhaustion is recorded as a refusal"
+    );
+    assert!(
+        census.test_only_paths.is_empty(),
+        "external-module discovery does not run after the shared budget refuses the directory"
+    );
+    let _ = std::fs::remove_dir_all(&temporary);
+}
+
 /// #824's controls must stay BARE, and the census above is the reason this cell exists.
 ///
 /// `apply.rs` proves `is_io` accepts BOTH shapes: a `StorageAt` that names its cause, and a bare
@@ -2344,6 +2895,209 @@ fn workspace_root() -> std::path::PathBuf {
         .and_then(std::path::Path::parent)
         .expect("core/events is two levels below the workspace root")
         .to_path_buf()
+}
+
+const LARGEST_SOURCE_FILE: u64 = 4 * 1024 * 1024;
+
+/// Module files in a directory can declare external `#[cfg(test)] mod NAME;` children.
+///
+/// The external form declares a test module without opening a block. Its child path depends on the
+/// declaring file (`ordinary.rs` resolves `mod probe;` to `ordinary/probe.rs`), and a path attribute
+/// can override that rule. Returning resolved paths keeps a same-named production sibling visible.
+fn test_only_modules(
+    root: &std::path::Path,
+    entries: &[std::fs::DirEntry],
+    oversized: &mut Vec<String>,
+    refusals: &mut Vec<String>,
+) -> Vec<std::path::PathBuf> {
+    let mut names = Vec::new();
+    for entry in entries {
+        let Some(kind) = prepass_entry_kind(&entry.path(), entry.file_type(), refusals) else {
+            continue;
+        };
+        if kind.is_symlink() || !kind.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+            continue;
+        }
+        let source = match read_bounded_source(&path) {
+            Ok(Some(source)) => source,
+            Ok(None) => continue,
+            Err(error) => {
+                refusals.push(error);
+                continue;
+            }
+        };
+        let BoundedSource::Text(text) = source else {
+            record_oversized(&path, root, oversized);
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for index in 0..lines.len() {
+            let Some((implies_test, attribute_end)) = cfg_attribute_at(&lines, index) else {
+                continue;
+            };
+            if !implies_test {
+                continue;
+            }
+            let mut explicit_path = None;
+            let mut candidate = attribute_end + 1;
+            while lines
+                .get(candidate)
+                .is_some_and(|line| line.trim_start().starts_with("#["))
+            {
+                if explicit_path.is_none() {
+                    explicit_path = module_path_attribute(lines[candidate]);
+                }
+                candidate += 1;
+            }
+            let Some(next) = lines.get(candidate) else {
+                continue;
+            };
+            let declaration = next.trim();
+            if !declaration.ends_with(';') {
+                continue;
+            }
+            let Some(rest) = declaration
+                .strip_prefix("mod ")
+                .or_else(|| declaration.strip_prefix("pub mod "))
+                .or_else(|| declaration.strip_prefix("pub(crate) mod "))
+                .or_else(|| {
+                    declaration
+                        .strip_prefix("pub(")
+                        .and_then(|rest| rest.split_once(") mod ").map(|(_, rest)| rest))
+                })
+            else {
+                continue;
+            };
+            let module = rest.trim_end_matches(';').trim();
+            names.extend(resolved_external_module_paths(&path, module, explicit_path));
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+fn prepass_entry_kind(
+    path: &std::path::Path,
+    kind: Result<std::fs::FileType, std::io::Error>,
+    refusals: &mut Vec<String>,
+) -> Option<std::fs::FileType> {
+    match kind {
+        Ok(kind) => Some(kind),
+        Err(error) => {
+            refusals.push(format!(
+                "HARNESS-BROKE: file_type failed for {}: {error}",
+                path.display()
+            ));
+            None
+        }
+    }
+}
+
+enum BoundedSource {
+    Text(String),
+    Oversized,
+}
+
+fn read_bounded_source(path: &std::path::Path) -> Result<Option<BoundedSource>, String> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "HARNESS-BROKE: metadata failed for {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    if metadata.len() > LARGEST_SOURCE_FILE {
+        return Ok(Some(BoundedSource::Oversized));
+    }
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "HARNESS-BROKE: open failed for {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    let mut limited = std::io::Read::take(file, LARGEST_SOURCE_FILE.saturating_add(1));
+    let mut bytes = Vec::new();
+    if let Err(error) = std::io::Read::read_to_end(&mut limited, &mut bytes) {
+        return Err(format!(
+            "HARNESS-BROKE: read failed for {}: {error}",
+            path.display()
+        ));
+    }
+    if bytes.len() as u64 > LARGEST_SOURCE_FILE {
+        return Ok(Some(BoundedSource::Oversized));
+    }
+    String::from_utf8(bytes)
+        .map(BoundedSource::Text)
+        .map(Some)
+        .map_err(|_| format!("HARNESS-BROKE: source is not UTF-8: {}", path.display()))
+}
+
+fn record_oversized(path: &std::path::Path, root: &std::path::Path, oversized: &mut Vec<String>) {
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    if !oversized.iter().any(|existing| existing == &relative) {
+        oversized.push(relative);
+    }
+}
+
+fn module_path_attribute(line: &str) -> Option<&str> {
+    let body = line
+        .trim()
+        .strip_prefix("#[path")?
+        .strip_suffix(']')?
+        .trim();
+    let value = body.strip_prefix('=')?.trim();
+    value.strip_prefix('"')?.strip_suffix('"')
+}
+
+fn resolved_external_module_paths(
+    declaring_file: &std::path::Path,
+    module: &str,
+    explicit_path: Option<&str>,
+) -> Vec<std::path::PathBuf> {
+    let parent = declaring_file
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    if let Some(path) = explicit_path {
+        return vec![parent.join(path)];
+    }
+
+    let stem = declaring_file
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("");
+    let base = if matches!(stem, "mod" | "lib" | "main") {
+        parent.join(module)
+    } else {
+        parent.join(stem).join(module)
+    };
+    vec![base.clone(), base.with_extension("rs"), base.join("mod.rs")]
+}
+
+/// Whether a path sits under a crate's `src`, judged RELATIVE to the workspace.
+///
+/// Extracted so a cell can drive it with fabricated paths: the hazard is a checkout whose own
+/// ancestors contain a directory called `src`, and no test can relocate the real workspace.
+fn is_inside_src(root: &std::path::Path, path: &std::path::Path) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| component.as_os_str() == "src")
 }
 
 /// First path segment of every workspace member, so the census walks what the workspace contains
@@ -2407,7 +3161,60 @@ fn imports_the_nameless_variant(text: &str) -> bool {
             // following it. Resolving names is a compiler's job, and a lexical census that
             // pretends to resolve names is worse than one that states its limit -- it would be
             // confidently wrong about a population instead of admitting it cannot see one.
-            statement.contains(" as ") || names_the_bare_variant(&statement)
+            // THE ALIAS MUST BE ON THE ERROR TYPE. A grouped import may rename a SIBLING --
+            // `use graphhelm_events::{EventRepositoryError, EventStore as Store};` -- while the
+            // error type and `Storage` stay fully qualified and perfectly visible to the census.
+            // A bare `" as "` test refused that import and reddened the mandatory suite for code
+            // that hid nothing. Zero instances today; the narrowing lands before one exists.
+            // (Codex P2 on #1015.)
+            // THE MATCH MUST BE A WHOLE NAME, NOT A SUFFIX OF ONE. `match_indices` finds the needle
+            // inside `WrappedEventRepositoryError` too, and that type's own `as Wrapped` then reads
+            // as an alias of the error type -- a finding on source that hid nothing, which reddens
+            // the mandatory suite. The check is on the character BEFORE the match, which is the
+            // half the text after it cannot supply. Zero instances at this head; the seal lands
+            // before the first one. (Codex P2, thread PRRT_kwDOTyQgUM6hxMqc.)
+            let error_type_matches = |statement: &str| {
+                statement
+                    .match_indices("EventRepositoryError")
+                    .filter(|(at, _)| {
+                        statement[..*at]
+                            .chars()
+                            .next_back()
+                            .is_none_or(|before| before != '_' && !before.is_alphanumeric())
+                    })
+                    .map(|(at, _)| at)
+                    .collect::<Vec<_>>()
+            };
+            let aliases_the_error_type = error_type_matches(&statement).into_iter().any(|at| {
+                let after = statement[at + "EventRepositoryError".len()..].trim_start();
+                after.starts_with("as ")
+            });
+            // `EventRepositoryError::{self as RepoError}` is the grouped form of the same alias.
+            // Inspect only the group immediately following the error type: a sibling's
+            // `self as Store` must remain a non-finding control.
+            let grouped_self_aliases_error_type =
+                error_type_matches(&statement).into_iter().any(|at| {
+                    let after = statement[at + "EventRepositoryError".len()..].trim_start();
+                    let Some(group) = after
+                        .strip_prefix("::")
+                        .map(str::trim_start)
+                        .and_then(|rest| rest.strip_prefix('{'))
+                    else {
+                        return false;
+                    };
+                    let Some((members, _)) = group.split_once('}') else {
+                        return false;
+                    };
+                    members.split(',').any(|member| {
+                        let member = member.trim_start();
+                        member
+                            .strip_prefix("self")
+                            .is_some_and(|rest| rest.trim_start().starts_with("as "))
+                    })
+                });
+            aliases_the_error_type
+                || grouped_self_aliases_error_type
+                || names_the_bare_variant(&statement)
         })
 }
 
@@ -2416,7 +3223,15 @@ fn use_statements(text: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current: Option<String> = None;
     for line in text.lines().map(str::trim) {
-        if current.is_none() && !line.starts_with("use ") {
+        // A VISIBILITY PREFIX STILL OPENS A `use`. `pub(crate) use ...EventRepositoryError as
+        // RepoError;` followed by `RepoError::Storage` spells neither needle, and a filter that
+        // accepts only a bare `use ` never sees it. One such re-export exists in this tree
+        // (`core/events/src/lib.rs`), hiding nothing -- the shape is live, the damage was not.
+        // (Codex P2 on #1015.)
+        let opens_a_use = line.starts_with("use ")
+            || line.starts_with("pub use ")
+            || (line.starts_with("pub(") && line.contains(") use "));
+        if current.is_none() && !opens_a_use {
             continue;
         }
         let statement = current.get_or_insert_with(String::new);
@@ -2472,6 +3287,12 @@ struct StorageCensus {
     /// Budget refusals, in the house's words. Asserted empty: a walk that stopped early would
     /// otherwise report a smaller class with every pin agreeing.
     budget_refusals: Vec<String>,
+    /// Resolved external test-module paths discovered in ancestor directories. A declaration in
+    /// `ordinary.rs` is discovered beside the `ordinary/` directory, then applies while that
+    /// directory is walked.
+    test_only_paths: Vec<std::path::PathBuf>,
+    /// Filesystem failures that would otherwise make the lexical census incomplete.
+    refusals: Vec<String>,
 }
 
 /// Aggregate bounds, in the shape `apps/cli/tests/source_invariants.rs` already uses.
@@ -2482,9 +3303,67 @@ struct StorageCensus {
 /// would shrink the class exactly like a skipped oversized file, and every pin would agree.
 const MAX_CENSUS_ENTRIES: usize = 20_000;
 const MAX_CENSUS_DEPTH: usize = 24;
+const MAX_CFG_ATTRIBUTE_LINES: usize = 128;
+
+fn collect_bounded_entries(
+    directory: &std::path::Path,
+    entries_seen: &mut usize,
+    budget_refusals: &mut Vec<String>,
+) -> Option<Vec<std::fs::DirEntry>> {
+    let directory_entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            budget_refusals.push(format!(
+                "HARNESS-BROKE: read_dir failed for {}: {error}",
+                directory.display()
+            ));
+            return None;
+        }
+    };
+    let mut entries = Vec::new();
+    for entry in directory_entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                budget_refusals.push(format!(
+                    "HARNESS-BROKE: directory entry failed for {}: {error}",
+                    directory.display()
+                ));
+                return None;
+            }
+        };
+        *entries_seen += 1;
+        if *entries_seen > MAX_CENSUS_ENTRIES {
+            budget_refusals.push(format!(
+                "HARNESS-BROKE: the Storage census exceeded {MAX_CENSUS_ENTRIES} entries at {}",
+                directory.display()
+            ));
+            return None;
+        }
+        entries.push(entry);
+    }
+    Some(entries)
+}
 
 impl StorageCensus {
     fn walk(&mut self, area: &std::path::Path, root: &std::path::Path) {
+        let metadata = match std::fs::symlink_metadata(area) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.refusals.push(format!(
+                    "HARNESS-BROKE: root area metadata failed for {}: {error}",
+                    area.display()
+                ));
+                return;
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            self.refusals.push(format!(
+                "HARNESS-BROKE: root area is a symlink or reparse point: {}",
+                area.display()
+            ));
+            return;
+        }
         self.walk_bounded(area, root, 0);
     }
 
@@ -2496,26 +3375,35 @@ impl StorageCensus {
             ));
             return;
         }
-        let Ok(entries) = std::fs::read_dir(area) else {
+        // The prepass and the walk share this count. Collecting first means discovery cannot read
+        // an unbounded second directory stream before the walk's budget sees it.
+        let Some(entries) =
+            collect_bounded_entries(area, &mut self.entries_seen, &mut self.budget_refusals)
+        else {
             return;
         };
-        for entry in entries.flatten() {
-            // INSIDE the walk, never before it: a budget checked only at the top cannot see the
-            // shape of what it is walking.
-            self.entries_seen += 1;
-            if self.entries_seen > MAX_CENSUS_ENTRIES {
-                self.budget_refusals.push(format!(
-                    "HARNESS-BROKE: the Storage census exceeded {MAX_CENSUS_ENTRIES} entries at {}",
-                    area.display()
-                ));
-                return;
-            }
+        self.test_only_paths.extend(test_only_modules(
+            root,
+            &entries,
+            &mut self.oversized,
+            &mut self.refusals,
+        ));
+        self.test_only_paths.sort_unstable();
+        self.test_only_paths.dedup();
+        for entry in entries {
             let path = entry.path();
             // `is_dir()` FOLLOWS symlinks, so a link pointing at an ancestor makes this walk recurse
             // until the stack ends -- in a test the local gate runs on every PR. `file_type()` comes
             // from the directory entry and does not follow. (Codex P1 on #1015.)
-            let Ok(kind) = entry.file_type() else {
-                continue;
+            let kind = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(error) => {
+                    self.refusals.push(format!(
+                        "HARNESS-BROKE: file_type failed for {}: {error}",
+                        path.display()
+                    ));
+                    continue;
+                }
             };
             if kind.is_symlink() {
                 continue;
@@ -2532,10 +3420,21 @@ impl StorageCensus {
                 // a bare `Storage` compiled into production there was invisible to the count and
                 // to the file set (Codex P2 on #1015). The boundary is whether `src` is already
                 // above us: sibling of `src` is skipped, inside `src` is walked.
-                let inside_src = path
-                    .components()
-                    .any(|component| component.as_os_str() == "src");
+                //
+                // RELATIVE TO THE WORKSPACE, not absolute. Searching the absolute path for a
+                // component named `src` makes the answer depend on where somebody cloned the
+                // repository: under `C:\src\GraphHelm` every path has one, every crate-level
+                // `tests/` reads as production, and the census scans the integration suites --
+                // the mandatory gate red on correct code, on any machine whose checkout happens to
+                // sit under a directory called `src`. (Codex P1 on #1015.)
+                let inside_src = is_inside_src(root, &path);
                 if name == "target" || (name == "tests" && !inside_src) {
+                    continue;
+                }
+                // A `#[cfg(test)] mod NAME;` in this directory's own module file makes its
+                // resolved child path test-only. Compare full paths: `ordinary.rs` may declare
+                // `ordinary/probe.rs` while a production `probe.rs` remains beside it.
+                if self.test_only_paths.iter().any(|module| module == &path) {
                     continue;
                 }
                 self.walk_bounded(&path, root, depth + 1);
@@ -2544,26 +3443,22 @@ impl StorageCensus {
             if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
                 continue;
             }
-            // BOUNDED BEFORE READ, and the bound REFUSES rather than skips. Reading every `.rs`
-            // whole lets one very large file stall or OOM the local gate (Codex P1 on #1015) --
-            // but skipping an oversized file silently would be worse than the stall: the census
-            // would report a smaller class and every pin would agree with it. So the size is
-            // taken from METADATA, no bytes are read, and an oversized file is collected and
-            // asserted against. A census that cannot read a file must say so, not shrink.
-            const LARGEST_SOURCE_FILE: u64 = 4 * 1024 * 1024;
-            let oversized = std::fs::metadata(&path)
-                .map(|data| data.len() > LARGEST_SOURCE_FILE)
-                .unwrap_or(false);
-            if oversized {
-                self.oversized.push(
-                    path.strip_prefix(root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .replace(std::path::MAIN_SEPARATOR, "/"),
-                );
+            if self.test_only_paths.iter().any(|module| module == &path) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&path) else {
+            // BOUNDED BEFORE READ, and the bound REFUSES rather than skips. The helper checks
+            // metadata first, then reads at most one byte past the cap so a file that grows after
+            // metadata is still reported as oversized instead of being read without a bound.
+            let source = match read_bounded_source(&path) {
+                Ok(Some(source)) => source,
+                Ok(None) => continue,
+                Err(error) => {
+                    self.refusals.push(error);
+                    continue;
+                }
+            };
+            let BoundedSource::Text(text) = source else {
+                record_oversized(&path, root, &mut self.oversized);
                 continue;
             };
             // EXACT variant, not a prefix. `Storage` is a prefix of `StorageAt`, so the first
@@ -2615,7 +3510,7 @@ impl StorageCensus {
     }
 }
 
-/// Byte ranges of top-level `#[cfg(test)]` modules: attribute line to the next line that is a lone
+/// Byte ranges of top-level test-only `#[cfg]` modules: attribute line to the next line that is a lone
 /// closing brace in COLUMN ZERO.
 ///
 /// **Brace counting was tried first and is wrong on this tree.** `core/events/src/local.rs` carries
@@ -2628,6 +3523,114 @@ impl StorageCensus {
 /// and a top-level module's closing brace is not. The assumption is not left implicit -- the census
 /// counts regions that never found their closer and the cell asserts that count is zero, so a file
 /// that breaks the rule says so instead of quietly moving sites between the two populations.
+fn cfg_predicate_implies_test(predicate: &str) -> bool {
+    let predicate = predicate.trim();
+    if predicate == "test" {
+        return true;
+    }
+    let Some(arguments) = predicate
+        .strip_prefix("all(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in arguments.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if character == '"' {
+            in_string = true;
+            continue;
+        }
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                if cfg_predicate_implies_test(&arguments[start..index]) {
+                    return true;
+                }
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    cfg_predicate_implies_test(&arguments[start..])
+}
+
+fn cfg_attribute_implies_test(line: &str) -> bool {
+    let head = line.trim();
+    let Some(predicate) = head
+        .strip_prefix("#[cfg(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    cfg_predicate_implies_test(predicate)
+}
+
+/// Returns whether the cfg attribute at `index` implies test and its final line.
+///
+/// rustfmt wraps long predicates across lines. The bounded line window prevents malformed source
+/// from making this lexical census scan unbounded while retaining the existing conservative
+/// fail-closed behavior when no complete attribute is found.
+fn cfg_attribute_at(lines: &[&str], index: usize) -> Option<(bool, usize)> {
+    let first = lines.get(index)?.trim();
+    if !first.starts_with("#[cfg(") {
+        return None;
+    }
+
+    let mut attribute = String::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for offset in 0..MAX_CFG_ATTRIBUTE_LINES {
+        let line = lines.get(index + offset)?.trim_end_matches('\r');
+        // Comments can contain commas, parentheses, and the word `test` without affecting cfg
+        // semantics. Reject the whole attribute conservatively before scanning its boundaries; a
+        // false production count is safer than excluding a real production site.
+        if line.contains("/*") || line.contains("//") {
+            return Some((false, index + offset));
+        }
+        if offset > 0 {
+            attribute.push('\n');
+        }
+        attribute.push_str(line);
+        for character in line.chars() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match character {
+                '"' => in_string = true,
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        if !in_string && depth == 0 && attribute.trim_end().ends_with(")]") {
+            return Some((cfg_attribute_implies_test(&attribute), index + offset));
+        }
+    }
+    None
+}
+
 fn cfg_test_regions(text: &str) -> (Vec<(usize, usize)>, usize) {
     let mut regions = Vec::new();
     let mut unclosed = 0usize;
@@ -2656,7 +3659,8 @@ fn cfg_test_regions(text: &str) -> (Vec<(usize, usize)>, usize) {
         // production, so the mandatory gate failed on a test-only change -- a guard reddening for
         // correct code, which is the failure direction that gets guards deleted. (Codex P2 on
         // #1015.)
-        let mut candidate = index + 1;
+        let cfg_attribute = cfg_attribute_at(&lines, index);
+        let mut candidate = cfg_attribute.map_or(index + 1, |(_, end)| end + 1);
         while lines
             .get(candidate)
             .is_some_and(|line| line.starts_with("#["))
@@ -2674,7 +3678,11 @@ fn cfg_test_regions(text: &str) -> (Vec<(usize, usize)>, usize) {
                 is_module && !declaration
             })
             .unwrap_or(false);
-        if lines[index].starts_with("#[cfg(test)]") && opens_a_module {
+        // A TEST-ONLY predicate must imply `test`. `all(test, unix)` does; `not(test)` and
+        // `any(test, unix)` also include production and therefore remain in the census. Parsing the
+        // small predicate grammar prevents a token search from silently excluding production code.
+        let opens_a_test_region = cfg_attribute.is_some_and(|(implies_test, _)| implies_test);
+        if opens_a_test_region && opens_a_module {
             let mut end = index + 1;
             while end < lines.len() && lines[end].trim_end_matches('\r') != "}" {
                 end += 1;

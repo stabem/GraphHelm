@@ -93,11 +93,11 @@ fn offends(line: &str) -> bool {
 /// on purpose is a guard talking about itself, while data whose indentation IS the value is a fact
 /// about the format. Merging them would let either survive on the other's justification.
 /// **The cost of exempting by file, stated because it is the sharp edge of this shape.** A real
-/// defect elsewhere in an exempt file is invisible HERE. Six of the eight are guard files that
+/// defect elsewhere in an exempt file is invisible HERE. Six of the nine are guard files that
 /// their own crate's per-crate guard still scans — which is the first thing making the twelve
 /// load-bearing rather than redundant, and a reason not to delete them without replacing that
-/// coverage. The exceptions are named in their entries.
-const EXEMPT: [(&str, &str); 8] = [
+/// coverage. The exceptions are named in their entries, and each entry states its own gap.
+const EXEMPT: [(&str, &str); 9] = [
     // ---- Species A: a guard quoting the defect on purpose. -------------------------------------
     // These files exist to hold examples of collapsed runs. Rewriting them to satisfy this sweep
     // would delete the samples the predicate is tested against, which is the one edit a guard must
@@ -144,6 +144,16 @@ const EXEMPT: [(&str, &str); 8] = [
          is a sample of REAL Rust source code (an append call, a comment) whose leading indentation \
          is the input `names_an_append`/`is_comment` are measured against, not authored prose that \
          leaked whitespace",
+    ),
+    (
+        "adapters/tool-host/tests/cancellation_record_asymmetry.rs",
+        "fixture source snippets for the cancellation-record census; indentation is the value the \
+         lexical projection must see. The census projects Rust source while PRESERVING byte \
+         offsets and line numbers, so a snippet's leading run is the input its truth table and its \
+         BOM/shebang offset cells are measured against -- re-indenting one would change the answer \
+         it asserts. NOTE: `adapters/tool-host` has no per-crate `source_invariants.rs`, so unlike \
+         the six guard files above, an authored-string defect elsewhere in this file is outside \
+         every sweep",
     ),
 ];
 

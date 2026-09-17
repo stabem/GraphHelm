@@ -270,7 +270,12 @@ fn the_template_hash_rides_the_reply_and_the_document_and_a_foreign_key_is_fixtu
         synthesized.prompt_sha256s.len(),
         usize::from(synthesized.rounds)
     );
-    let expected_key = prompt_sha256(&assemble_prompt(&profile(), &catalog_with_cargo(), None));
+    let expected_key = prompt_sha256(&assemble_prompt(
+        &profile(),
+        &catalog_with_cargo(),
+        None,
+        None,
+    ));
     assert_eq!(synthesized.prompt_sha256s, vec![expected_key.clone()]);
     let foreign = RecordedDraftModel::single(&"0".repeat(64), "{}");
     match synthesize(&profile(), &catalog_with_cargo(), &foreign) {
@@ -483,6 +488,7 @@ fn a_budget_above_the_profile_is_repaired_under_gha004_and_round_two_wins() {
         &profile(),
         &catalog_with_cargo(),
         Some(&repair),
+        None,
     ));
     assert_eq!(
         synthesized.prompt_sha256s[1], round_two,
@@ -528,6 +534,7 @@ fn more_nodes_than_the_profile_allows_is_too_many_nodes_without_a_repair() {
         &fixture_profile,
         &catalog_with_cargo(),
         None,
+        None,
     ));
     let model = RecordedDraftModel::single(&first, &reply);
     match synthesize(&fixture_profile, &catalog_with_cargo(), &model) {
@@ -570,7 +577,12 @@ fn the_repair_loop_repairs_a_round_two_reply_that_is_valid_wins() {
     assert_eq!(synthesized.prompt_sha256s.len(), 2);
     assert_eq!(
         synthesized.prompt_sha256s[0],
-        prompt_sha256(&assemble_prompt(&profile(), &catalog_with_cargo(), None))
+        prompt_sha256(&assemble_prompt(
+            &profile(),
+            &catalog_with_cargo(),
+            None,
+            None
+        ))
     );
     let golden = first_compile();
     assert_eq!(synthesized.document, golden.document);
@@ -589,7 +601,12 @@ fn a_recording_that_answers_nothing_names_the_first_prompt() {
         }) => {
             assert_eq!(
                 hash,
-                prompt_sha256(&assemble_prompt(&profile(), &catalog_with_cargo(), None))
+                prompt_sha256(&assemble_prompt(
+                    &profile(),
+                    &catalog_with_cargo(),
+                    None,
+                    None
+                ))
             );
         }
         other => panic!("{other:?}"),

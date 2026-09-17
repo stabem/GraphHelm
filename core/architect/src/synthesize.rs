@@ -20,11 +20,11 @@ use sha2::{Digest, Sha256};
 
 use crate::catalog::CapabilityCatalog;
 use crate::judge::JudgeModel;
-use crate::judgment::{self, Extras, JudgmentReport};
+use crate::judgment::{self, Extras, JudgmentReport, RankingReport};
 use crate::model::DraftModel;
 use crate::profile::TaskProfile;
 use crate::refusal::ArchitectRefusal;
-use crate::template::{RepairContext, assemble_prompt, prompt_sha256, template_sha256};
+use crate::template::{RepairContext, Stance, assemble_prompt, prompt_sha256, template_sha256};
 
 /// How many times a refused draft is fed back for repair. Round 1 is the draft; rounds 2 and 3
 /// are repairs; a third invalid draft is the refusal.
@@ -85,16 +85,24 @@ pub struct SynthesizedGraph {
     pub stamped_customs: Vec<String>,
     /// The version of the template that assembled every prompt of this run.
     pub template_sha256: String,
-    /// The round whose draft was accepted (1 when no repair was needed).
+    /// The round whose draft was accepted (1 when no repair was needed). Under a ranking, the
+    /// chosen draft's own round.
     pub rounds: u8,
-    /// The prompt hash of every round asked, in order; `len() == rounds`.
+    /// The prompt hash of every round asked, in order; `len() == rounds` for one draft. Under a
+    /// ranking, every draft's prompts in stance order, so `len()` is the sum over the drafts.
     pub prompt_sha256s: Vec<String>,
-    /// The usage the door reported for the accepted round, when it reported any.
+    /// The usage the door reported for the accepted round, when it reported any. Under a
+    /// ranking, summed over every draft's accepted round.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
     /// Present only when a judge was named (spec D4): the accepted draft's per-node judgments.
+    /// Under a ranking, its `usage` also carries the one ranking call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub judgments: Option<JudgmentReport>,
+    /// Present only when more than one draft was asked for (spec D7): every candidate's scores
+    /// and which one this document is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ranking: Option<RankingReport>,
 }
 
 /// Compiles `profile.goal` into a graph document through `model`, or refuses. Today's road:
@@ -112,11 +120,13 @@ pub fn synthesize(
 
 /// Compiles `profile.goal` into a graph document through `model`, with what `extras` adds: a
 /// judge whose per-node verdicts become repairable diagnostics after every deterministic check
-/// has passed (spec D3), reported under `judgments`.
+/// has passed (spec D3), reported under `judgments`; and, with `drafts > 1`, one draft per
+/// stance of [`Stance::ALL`], each judged and repaired on its own, then ranked by ONE judge
+/// call (spec D7), the chosen one returned with `metadata.labels.stance` and `ranking` set.
 ///
 /// # Errors
-/// Every arm of [`ArchitectRefusal`]: the profile out of bounds or `extras.drafts` outside
-/// `1..=3` (before any prompt), the door unreachable or the fixture missing (propagated as-is),
+/// Every arm of [`ArchitectRefusal`]: the profile out of bounds, `extras.drafts` outside
+/// `1..=3`, or `drafts > 1` without a judge (all before any prompt), the door unreachable or the fixture missing (propagated as-is),
 /// the judge unreachable or its recording missing, the last draft not JSON or still invalid
 /// after every repair (with that draft's diagnostics, judged ones included), a program outside
 /// the catalog, more nodes than the ceiling, or a node that can park after stamping.
@@ -133,16 +143,55 @@ pub fn synthesize_with(
             message: "drafts must be 1, 2 or 3".to_owned(),
         });
     }
-    single_draft(profile, catalog, model, extras.judge)
+    if extras.drafts == 1 {
+        return single_draft(profile, catalog, model, extras.judge, None).map(|(one, _)| one);
+    }
+    let Some(judge) = extras.judge else {
+        return Err(ArchitectRefusal::InvalidProfile {
+            pointer: "/drafts".to_owned(),
+            message: "more than one draft needs a judge to rank them".to_owned(),
+        });
+    };
+    let mut compiled = Vec::with_capacity(usize::from(extras.drafts));
+    let mut prompt_sha256s = Vec::new();
+    let mut usage: Option<Usage> = None;
+    for stance in Stance::ALL.iter().take(usize::from(extras.drafts)) {
+        // Each draft is itself judged per node (site 3) and repaired before it is a candidate.
+        let (one, graph) = single_draft(profile, catalog, model, Some(judge), Some(stance))?;
+        prompt_sha256s.extend(one.prompt_sha256s.iter().cloned());
+        usage = match (usage, one.usage) {
+            (Some(left), Some(right)) => Some(add_usage(left, right)),
+            (left, right) => left.or(right),
+        };
+        compiled.push((*stance, one, graph));
+    }
+    let graphs: Vec<ExecutionGraph> = compiled.iter().map(|(_, _, graph)| graph.clone()).collect();
+    let reply = judge.judge(&judgment::ranking::request(profile, &graphs))?;
+    let mut ranking = judgment::ranking::read(&reply, extras.drafts);
+    for (candidate, (stance, _, _)) in ranking.candidates.iter_mut().zip(&compiled) {
+        candidate.stance = stance.label().to_owned();
+    }
+    let (stance, mut chosen, _) = compiled.swap_remove(usize::from(ranking.chosen));
+    // A label, written AFTER validation: `graph.schema.json` admits free string labels.
+    chosen.document["metadata"]["labels"]["stance"] = Value::String(stance.label().to_owned());
+    chosen.prompt_sha256s = prompt_sha256s;
+    chosen.usage = usage;
+    if let Some(judgments) = chosen.judgments.as_mut() {
+        judgments.usage = add_usage(judgments.usage, reply.usage);
+    }
+    chosen.ranking = Some(ranking);
+    Ok(chosen)
 }
 
 /// The single-draft loop: draft, compile, judge, repair; at most [`MAX_REPAIR_ROUNDS`] repairs.
+/// Returns the accepted document and the loaded graph it validated as, for the ranking hook.
 fn single_draft(
     profile: &TaskProfile,
     catalog: &CapabilityCatalog,
     model: &dyn DraftModel,
     judge: Option<&dyn JudgeModel>,
-) -> Result<SynthesizedGraph, ArchitectRefusal> {
+    stance: Option<&Stance>,
+) -> Result<(SynthesizedGraph, ExecutionGraph), ArchitectRefusal> {
     let mut prompt_sha256s = Vec::new();
     let mut previous: Option<(String, Vec<Diagnostic>)> = None;
     let mut round: u8 = 1;
@@ -151,7 +200,7 @@ fn single_draft(
         let repair = previous
             .as_ref()
             .map(|(draft, diagnostics)| RepairContext { draft, diagnostics });
-        let prompt = assemble_prompt(profile, catalog, repair.as_ref());
+        let prompt = assemble_prompt(profile, catalog, repair.as_ref(), stance);
         prompt_sha256s.push(prompt_sha256(&prompt));
         let reply = model.draft(&prompt)?;
         match compile_round(profile, catalog, &reply.text) {
@@ -183,16 +232,20 @@ fn single_draft(
                         usage: judge_usage,
                     });
                 }
-                return Ok(SynthesizedGraph {
-                    document: compiled.document,
-                    rationale: compiled.rationale,
-                    stamped_customs: compiled.stamped,
-                    template_sha256: template_sha256(),
-                    rounds: round,
-                    prompt_sha256s,
-                    usage: reply.usage,
-                    judgments,
-                });
+                return Ok((
+                    SynthesizedGraph {
+                        document: compiled.document,
+                        rationale: compiled.rationale,
+                        stamped_customs: compiled.stamped,
+                        template_sha256: template_sha256(),
+                        rounds: round,
+                        prompt_sha256s,
+                        usage: reply.usage,
+                        judgments,
+                        ranking: None,
+                    },
+                    compiled.graph,
+                ));
             }
             Err(RoundFailure::Refused(refusal)) => return Err(refusal),
             Err(RoundFailure::NotJson(message)) => {

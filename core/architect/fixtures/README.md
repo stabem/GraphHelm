@@ -73,3 +73,16 @@ two commands above.
   - `nodes-below-threshold.json` (paired with the golden draft): `kind:summarize` answers `tool`
     at confidence 0.60, under the acting threshold; the document is the golden and the node is
     reported `unresolved`.
+  - `ranking-three-replies.json` (for `tests/judgment_ranking.rs`, recorded with
+    `--test judgment_ranking`): one authored draft per stance of `Stance::ALL`, in order — the
+    golden draft without `summarize` (`minimal`), the golden draft (`verified`), the golden draft
+    with `summarize` split into two agent nodes (`explicit`). Each passes the whole deterministic
+    chain, so the three `replies` keys are the three stance prompts and nothing is repaired.
+  - `ranking-three.json`: four authored judge replies, in the order the compiler asks — the
+    per-node judgments of each draft (every node on goal, every kind matching, so no draft is
+    repaired) and then the ONE ranking reply, where candidate 2 scores `coverage` 2.0 at
+    confidence 0.9 and the others lower, waste at most 0.1 everywhere; candidate 2 (`explicit`)
+    is chosen.
+  - `ranking-unresolved.json`: the same four replies except the top candidate's confidence is
+    0.50, under the acting threshold; candidate 0 (`minimal`, today's road) is kept and the
+    report says `unresolved`.

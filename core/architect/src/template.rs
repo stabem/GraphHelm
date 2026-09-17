@@ -75,6 +75,52 @@ RULES
 - Output JSON only. No prose, no markdown fences, no comments.
 {{REPAIR}}";
 
+/// The closing goal fence and its newline, as [`TEMPLATE`] spells it: the seam a stance block
+/// is inserted at.
+const GOAL_FENCE_END: &str = "</goal>\n";
+
+/// A drafting stance for one of N ranked drafts (spec D7). Three fixed texts are the whole
+/// vocabulary; `None` in [`assemble_prompt`] yields the first compile's exact prompt bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stance {
+    Minimal,
+    Verified,
+    Explicit,
+}
+
+impl Stance {
+    /// Every stance, in the order `drafts` takes them: draft 1 is `Minimal`.
+    pub const ALL: [Stance; 3] = [Stance::Minimal, Stance::Verified, Stance::Explicit];
+
+    /// The label written to `metadata.labels.stance` and to the ranking report.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Verified => "verified",
+            Self::Explicit => "explicit",
+        }
+    }
+
+    /// The text of the `<stance>` block.
+    #[must_use]
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::Minimal => {
+                "Prefer the fewest nodes that can meet the goal; merge steps that one node can do."
+            }
+            Self::Verified => {
+                "Prefer a draft where every claim the goal makes is checked by a tool node before \
+                 the run ends."
+            }
+            Self::Explicit => {
+                "Prefer one node per distinct step, each with a narrow objective, even if that \
+                 means more nodes."
+            }
+        }
+    }
+}
+
 /// The head of the block a repair round appends. Named so a test can tell a first round from a
 /// repair round without matching the whole text.
 pub const REPAIR_HEAD: &str = "Your previous draft was refused. Diagnostics:";
@@ -112,11 +158,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// placeholder is quoted, not expanded. Both are fenced (`<goal>`, `<previous-draft>`) and the
 /// template says the fenced text is the operator's request, not instructions: a goal that reads
 /// "ignore the rules above" is still just the goal.
+///
+/// A `stance` (spec D7) appends one fenced `<stance>` block directly after the `</goal>` fence,
+/// before the mode; `None` produces exactly the bytes the first compile produced, so no
+/// existing fixture key moves. The fence is found in the CONSTANT template, never in the
+/// substituted output, so a goal that spells `</goal>` cannot move where the stance lands.
 #[must_use]
 pub fn assemble_prompt(
     profile: &TaskProfile,
     catalog: &CapabilityCatalog,
     previous: Option<&RepairContext<'_>>,
+    stance: Option<&Stance>,
 ) -> String {
     let node_types = catalog
         .node_types
@@ -146,7 +198,19 @@ pub fn assemble_prompt(
         ("{{PROGRAMS}}", &programs),
         ("{{REPAIR}}", &repair),
     ];
-    substitute(TEMPLATE, &values)
+    let Some(stance) = stance else {
+        return substitute(TEMPLATE, &values);
+    };
+    let (head, tail) = TEMPLATE
+        .split_once(GOAL_FENCE_END)
+        .expect("TEMPLATE closes its goal fence");
+    let mut prompt = substitute(head, &values);
+    prompt.push_str(GOAL_FENCE_END);
+    prompt.push_str("<stance>\n");
+    prompt.push_str(stance.text());
+    prompt.push_str("\n</stance>\n");
+    prompt.push_str(&substitute(tail, &values));
+    prompt
 }
 
 /// One left-to-right pass: at each `{{`, the known placeholder starting there (no name is a

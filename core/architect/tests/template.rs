@@ -3,7 +3,7 @@
 //! and names the hash an operator would have to record.
 
 use graphhelm_architect::{
-    ArchitectRefusal, CapabilityCatalog, DraftModel, RecordedDraftModel, RepairContext,
+    ArchitectRefusal, CapabilityCatalog, DraftModel, RecordedDraftModel, RepairContext, Stance,
     TaskProfile, assemble_prompt, prompt_sha256, template_sha256,
 };
 use graphhelm_protocols::Diagnostic;
@@ -12,8 +12,8 @@ use graphhelm_protocols::Diagnostic;
 fn the_assembled_prompt_is_a_pure_function_of_its_inputs_and_carries_the_catalog() {
     let profile = TaskProfile::new("check that the repository builds");
     let catalog = CapabilityCatalog::from_runtime(&["cargo".to_owned()]);
-    let a = assemble_prompt(&profile, &catalog, None);
-    let b = assemble_prompt(&profile, &catalog, None);
+    let a = assemble_prompt(&profile, &catalog, None, None);
+    let b = assemble_prompt(&profile, &catalog, None, None);
     assert_eq!(a, b);
     assert!(a.contains("cargo"), "the allowlist reaches the prompt");
     assert!(a.contains("\"agent\""), "the node types reach the prompt");
@@ -28,12 +28,12 @@ fn the_assembled_prompt_is_a_pure_function_of_its_inputs_and_carries_the_catalog
     assert_eq!(template_sha256().len(), 64);
     assert_eq!(prompt_sha256(&a).len(), 64);
     assert_ne!(
-        assemble_prompt(&TaskProfile::new("a different goal"), &catalog, None),
+        assemble_prompt(&TaskProfile::new("a different goal"), &catalog, None, None),
         a,
         "the goal is part of the prompt"
     );
     assert_ne!(
-        assemble_prompt(&profile, &CapabilityCatalog::from_runtime(&[]), None),
+        assemble_prompt(&profile, &CapabilityCatalog::from_runtime(&[]), None, None),
         a,
         "the allowlist is part of the prompt"
     );
@@ -54,8 +54,8 @@ fn a_repair_round_appends_the_diagnostics_verbatim() {
         draft,
         diagnostics: &diagnostics,
     };
-    let first = assemble_prompt(&profile, &catalog, None);
-    let second = assemble_prompt(&profile, &catalog, Some(&repair));
+    let first = assemble_prompt(&profile, &catalog, None, None);
+    let second = assemble_prompt(&profile, &catalog, Some(&repair), None);
     assert_ne!(first, second);
     assert!(second.contains("GHG003_EDGE_TARGET_UNKNOWN"), "{second}");
     assert!(second.contains("/spec/edges/0/to"), "{second}");
@@ -133,4 +133,32 @@ fn a_recorded_model_file_is_bounded_and_shaped() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// Spec D7: `None` is the first compile's exact prompt bytes (its sha256 is the one key the
+/// golden `first-compile/replies.json` files its reply under, read from the file rather than
+/// hard-coded), and a stance is one fenced block right after the goal fence, so the key moves.
+#[test]
+fn a_prompt_without_a_stance_is_byte_identical_to_the_first_compile() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/first-compile");
+    let goal = std::fs::read_to_string(fixtures.join("GOAL.txt")).unwrap();
+    let profile = TaskProfile::new(goal.trim_end());
+    let catalog = CapabilityCatalog::from_runtime(&["cargo".to_owned()]);
+    let replies: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixtures.join("replies.json")).unwrap()).unwrap();
+    let keys: Vec<&String> = replies["replies"].as_object().unwrap().keys().collect();
+    assert_eq!(keys.len(), 1, "the golden holds one round");
+    let before = assemble_prompt(&profile, &catalog, None, None);
+    assert_eq!(&prompt_sha256(&before), keys[0]);
+    for stance in Stance::ALL {
+        let with = assemble_prompt(&profile, &catalog, None, Some(&stance));
+        assert!(
+            with.contains("</goal>\n<stance>\n"),
+            "the stance follows the goal fence: {with}"
+        );
+        assert!(with.contains(stance.text()));
+        assert!(with.ends_with(&before[before.find("\nEXECUTION MODE").unwrap()..]));
+        assert_ne!(prompt_sha256(&before), prompt_sha256(&with));
+    }
+    assert!(!before.contains("<stance>"));
 }

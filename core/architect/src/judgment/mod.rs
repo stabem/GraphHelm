@@ -4,6 +4,7 @@
 
 pub mod nodes;
 pub mod policy;
+pub mod ranking;
 
 use graphhelm_gateway::call::Usage;
 
@@ -54,4 +55,36 @@ pub struct JudgmentReport {
     pub unresolved: Vec<String>,
     /// Summed over every judge call of the run, including the rounds that were repaired.
     pub usage: Usage,
+}
+
+/// One ranked candidate, as the report shows it (site 2, spec D7).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Candidate {
+    /// The candidate's position: draft 1 is index 0.
+    pub index: u8,
+    /// The label of the stance that drafted it (`Stance::label`).
+    pub stance: String,
+    /// The coverage score, a position on `ranking::COVERAGE_LEVELS`; `NaN` when unanswered.
+    pub coverage: f64,
+    /// The probability the candidate does work the goal did not ask for; `NaN` when unanswered.
+    pub waste: f64,
+    /// The judge's confidence in the coverage score; `0.0` when unanswered.
+    pub confidence: f64,
+    /// `coverage - waste`, or `-inf` when either answer was missing or mistyped.
+    pub composite: f64,
+}
+
+/// The report field of a run that asked for more than one draft (site 2, spec D7).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankingReport {
+    /// Every candidate, in index order.
+    pub candidates: Vec<Candidate>,
+    /// The index of the document returned: the highest composite, ties to the lower index; `0`
+    /// when `unresolved`.
+    pub chosen: u8,
+    /// The top candidate's confidence was under the acting threshold (or its answers were
+    /// missing): the first draft was kept and nothing was ranked (spec D6).
+    pub unresolved: bool,
 }

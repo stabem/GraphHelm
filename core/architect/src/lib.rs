@@ -32,7 +32,8 @@ pub mod template;
 pub use catalog::{CapabilityCatalog, TOOL_FAMILIES};
 pub use judge::{JudgeModel, RecordedJudgeModel};
 pub use judgment::nodes::{NODE_KIND_MISMATCH_CODE, NODE_OFF_GOAL_CODE};
-pub use judgment::{Extras, JudgmentReport, NodeJudgment};
+pub use judgment::ranking::COVERAGE_LEVELS;
+pub use judgment::{Candidate, Extras, JudgmentReport, NodeJudgment, RankingReport};
 pub use model::{DraftModel, DraftReply, MAX_FIXTURE_BYTES, RecordedDraftModel};
 pub use profile::{
     DEFAULT_CLEARANCE_WITHIN_SECONDS, DEFAULT_MAX_NODES, DEFAULT_WAIT_WITHIN_SECONDS,
@@ -46,5 +47,5 @@ pub use synthesize::{
     synthesize, synthesize_with,
 };
 pub use template::{
-    REPAIR_HEAD, RepairContext, TEMPLATE, assemble_prompt, prompt_sha256, template_sha256,
+    REPAIR_HEAD, RepairContext, Stance, TEMPLATE, assemble_prompt, prompt_sha256, template_sha256,
 };

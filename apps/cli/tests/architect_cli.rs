@@ -773,6 +773,182 @@ fn the_judge_route_spends_the_leased_key_only_in_the_authorization_header() {
     );
 }
 
+/// #1137: A RECORDED DRAFT PAIRS WITH A REAL JUDGE — the combination `serve/routes.rs` has
+/// always accepted (`fixture` + `judgeRoute`) and `model_source` refused, so the same capability
+/// existed over HTTP and not from a terminal. `GRAPH_ARCHITECT.md` §10.8 recorded that asymmetry
+/// instead of repairing it, and the cell above drafts through a fake gateway route only because
+/// of it.
+///
+/// **The discriminator is the request count, not the exit code.** A run that quietly fell back to
+/// the gateway for its draft would also exit 0 and also produce a document; what says the FIXTURE
+/// served the draft is that the provider saw ONE request and it was the judge's. `/v1/messages`
+/// is never called and the draft credential is never leased.
+///
+/// The document is then pinned against the both-doors-recorded run byte for byte, so "the fixture
+/// served the draft" is a claim about the OUTPUT and not only about the traffic.
+#[test]
+fn a_recorded_draft_pairs_with_a_real_judge_route_and_asks_the_provider_only_to_judge() {
+    let (directory, manifest, seen) = judge_route_bench();
+    let out = directory.path().join("paired.json");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    let output = command()
+        .args([
+            "graph",
+            "synthesize",
+            "--goal",
+            &first_compile_goal(),
+            "--out",
+            out.to_str().unwrap(),
+            "--allow-program",
+            "cargo",
+            // The draft door: a recording. No `--route`.
+            "--fixture",
+            fixtures()
+                .join("first-compile/replies.json")
+                .to_str()
+                .unwrap(),
+            // The judge door: the real thing, over the manifest this run also supplies.
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--judge-route",
+            "judge",
+            "--broker",
+            broker.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "test-key",
+        ])
+        .env("GRAPHHELM_GATEWAY_KEY", passphrase())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_no_leak(&output, &out);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ok"], true, "{value}");
+
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.len(),
+            1,
+            "the recorded draft must cost the provider nothing: {:?}",
+            seen.iter().map(|request| &request.path).collect::<Vec<_>>()
+        );
+        assert_eq!(seen[0].path, "/v1/systemone", "the one call is the judge's");
+        assert_eq!(
+            header_value(&seen[0].headers, "authorization"),
+            Some(format!("Bearer {JUDGE_SENTINEL}").as_str())
+        );
+        assert!(
+            !seen[0]
+                .headers
+                .iter()
+                .any(|(_, value)| value.contains(DRAFT_SENTINEL)),
+            "the draft credential is never leased on this run"
+        );
+    }
+
+    // The same goal through BOTH recorded doors: the pairing must produce the same document, and
+    // this is what makes the request-count assertion above a claim about the result rather than
+    // only about the traffic.
+    let recorded_out = directory.path().join("both-recorded.json");
+    let recorded = envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &first_compile_goal(),
+        "--out",
+        recorded_out.to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixtures()
+            .join("first-compile/replies.json")
+            .to_str()
+            .unwrap(),
+        "--judge-fixture",
+        fixtures()
+            .join("judge/nodes-below-threshold.json")
+            .to_str()
+            .unwrap(),
+    ]);
+    assert_eq!(recorded["ok"], true, "{recorded}");
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        std::fs::read(&recorded_out).unwrap(),
+        "--out must be byte-equal to the both-recorded run"
+    );
+}
+
+/// #1137: what is still refused, and the two arms ask different questions.
+///
+/// `--fixture` with `--route` is two DRAFT doors and stays refused. `--fixture` with `--manifest`
+/// and no judge door is refused because the manifest would then serve nothing — and without this
+/// arm the change would read as "`--manifest` beside `--fixture` is simply ignored", which is a
+/// silent no-op for a typo rather than an answer to one.
+#[test]
+fn a_fixture_still_refuses_a_draft_route_and_a_manifest_that_serves_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = fixtures().join("first-compile/replies.json");
+    let manifest = directory.path().join("manifest.json");
+    std::fs::write(&manifest, "{}").unwrap();
+
+    let two_draft_doors = envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &first_compile_goal(),
+        "--out",
+        directory.path().join("a.json").to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixture.to_str().unwrap(),
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--route",
+        "draft",
+        "--judge-route",
+        "judge",
+    ]);
+    assert_eq!(two_draft_doors["ok"], false, "{two_draft_doors}");
+    assert_eq!(
+        two_draft_doors["diagnostics"][0]["path"], "/fixture",
+        "{two_draft_doors}"
+    );
+
+    let manifest_serves_nothing = envelope(&[
+        "graph",
+        "synthesize",
+        "--goal",
+        &first_compile_goal(),
+        "--out",
+        directory.path().join("b.json").to_str().unwrap(),
+        "--allow-program",
+        "cargo",
+        "--fixture",
+        fixture.to_str().unwrap(),
+        "--manifest",
+        manifest.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        manifest_serves_nothing["ok"], false,
+        "{manifest_serves_nothing}"
+    );
+    assert_eq!(
+        manifest_serves_nothing["diagnostics"][0]["path"], "/judgeRoute",
+        "{manifest_serves_nothing}"
+    );
+}
+
 /// `--judge-route` naming a chat route (`anthropic`, `direct_api`) is `GHCLI009` at
 /// `/judgeRoute`, the message naming the one shape accepted — and it costs no lease and no
 /// request: the provider sees nothing, not even the draft, because the judge door is checked

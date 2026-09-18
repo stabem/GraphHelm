@@ -323,12 +323,20 @@ library under `core/architect/fixtures/library/` is test data, not a shipped cat
 All three funnel through `apps/cli/src/commands/architect.rs::execute` and return the same
 bytes; a judge route that is missing or disabled is `GHCLI009` at `/judgeRoute`.
 
-KNOWN ASYMMETRY, recorded rather than repaired (D-050's shape: capability parity, not argument
-parity). On the CLI `--judge-route` requires `--manifest`, and `--fixture` beside `--manifest` is
-refused (`GHCLI001` at `/fixture`), so a recorded draft cannot be paired with a real judge on the
-CLI; HTTP accepts `fixture` + `judgeRoute`. Found by the judge-route cells in
-`apps/cli/tests/architect_cli.rs` (#1127), which therefore draft through a fake gateway route.
-Lifting it is a small follow-up on `model_source`, not a decision this record makes.
+The rule across the three surfaces is **capability parity, not argument parity**: the same doors
+are reachable everywhere, spelled the way each surface spells things.
+
+A recorded draft pairs with a real judge on the CLI as it always has over HTTP: `--fixture` with
+`--manifest --judge-route` (#1137). `--manifest` is not a draft door on its own, so `--fixture`
+beside it is not two doors — it carries the JUDGE's route. What is refused is the real conflict,
+`--fixture` with `--route`, and `--fixture` with a `--manifest` that serves no judge, because the
+manifest would then serve nothing and a silent no-op is the worse answer to a typo.
+
+Until #1137 that pairing was refused on the CLI and accepted over HTTP, which is why the
+judge-route cells in `apps/cli/tests/architect_cli.rs` (#1127) draft through a fake gateway route;
+`a_recorded_draft_pairs_with_a_real_judge_route_and_asks_the_provider_only_to_judge` is the cell
+that holds it now, and it discriminates on the REQUEST COUNT — one call, and it is the judge's —
+because a run that fell back to the gateway for its draft would also exit 0.
 
 ### 10.9 Cell map — the guard test that holds each claim
 

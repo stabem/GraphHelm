@@ -502,18 +502,38 @@ fn check_out_path(out: &Path) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Exactly one door: `--fixture`, or `--manifest` with `--route`. The broker coordinates travel
-/// with the gateway door and are checked there, where the route's transport says whether they
-/// are needed.
+/// Exactly one DRAFT door: `--fixture`, or `--manifest` with `--route`. The broker coordinates
+/// travel with the gateway door and are checked there, where the route's transport says whether
+/// they are needed.
+///
+/// **`--manifest` is not a draft door on its own, so `--fixture` beside it is not two doors**
+/// (#1137). The manifest also carries the JUDGE's route, and `serve/routes.rs` has always
+/// accepted `fixture` + `judgeRoute` in one request while this function refused the same pairing
+/// on the CLI — so a recorded draft could be paired with a real judge over HTTP and not from a
+/// terminal. `docs/harness/GRAPH_ARCHITECT.md` §10.8 recorded that asymmetry rather than repairing
+/// it, and `architect_cli.rs::the_judge_route_spends_the_leased_key_only_in_the_authorization_header`
+/// drafts through a fake gateway route only because of it.
+///
+/// What is still refused is the real conflict: `--fixture` with `--route`, which is two draft
+/// doors. `--fixture` with `--manifest` and NO judge door is refused too, because the manifest
+/// would then serve nothing — a silent no-op is the worse answer to a typo than a refusal.
 fn model_source(arguments: &SynthesizeArguments) -> Result<ModelSource<'_>, Failure> {
     match (
         arguments.fixture.as_deref(),
         arguments.manifest.as_deref(),
         arguments.route.as_deref(),
     ) {
-        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(argument(
-            "--fixture and --manifest/--route are mutually exclusive",
+        (Some(_), _, Some(_)) => Err(argument(
+            "--fixture and --route are mutually exclusive: one draft door per run",
             "/fixture",
+        )),
+        (Some(fixture), Some(_), None) if arguments.judge_route.is_some() => {
+            Ok(ModelSource::Fixture(fixture))
+        }
+        (Some(_), Some(_), None) => Err(argument(
+            "--fixture with --manifest requires --judge-route: the fixture serves the draft and \
+             the manifest serves the judge, so without a judge route the manifest serves nothing",
+            "/judgeRoute",
         )),
         (Some(fixture), None, None) => Ok(ModelSource::Fixture(fixture)),
         (None, Some(manifest), Some(route)) => Ok(ModelSource::Gateway {

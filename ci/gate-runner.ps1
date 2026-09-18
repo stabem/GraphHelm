@@ -147,6 +147,20 @@ function Invoke-External {
 #
 # `--json` alone carries no spaces and survives. The parse moves into PowerShell, where the quoting
 # is ours rather than the argument passer's.
+# The pass predicate lives in its own file so the guard cells can load it directly: this script
+# has top-level code and cannot be dot-sourced by a test without running a gate (#1133).
+#
+# IT IS A SIBLING, AND COPYING THIS FILE ALONE BREAKS IT. The test harness copies the runner into a
+# temp directory to sabotage one line, and the first version of this dot-source failed there with a
+# bare exit 1 -- a missing dependency wearing a runner error's clothes. Whoever copies this script
+# must copy `gate-passes.ps1` beside it, and if they do not, this says so by name.
+$passesModule = Join-Path $PSScriptRoot 'gate-passes.ps1'
+if (-not (Test-Path -LiteralPath $passesModule)) {
+    Write-Error "gate-runner requires ci/gate-passes.ps1 beside it (looked in '$PSScriptRoot'); copy the sibling or run from the repository"
+    exit 2
+}
+. $passesModule
+
 function Resolve-PullRequestBranch {
     param(
         [Parameter(Mandatory)] [string] $PullRequest,
@@ -204,11 +218,37 @@ function Get-NextEntry {
         $entry = $null
         try { $entry = (Get-Content -LiteralPath $f.FullName -Raw) | ConvertFrom-Json } catch { }
         if (-not $entry) { continue }
+        # PASSES, NOT REVIEW OBJECTS (#1133). The line here was
+        # `gh api pulls/N/reviews --jq length`, which counted objects with no filter on verdict,
+        # head, author or surface -- so a score rose monotonically over a branch's life, never
+        # decayed across a rebase, and an old pull request outranked a ready one permanently.
+        # `Get-LivePassCount` counts distinct reviewer sessions carrying a verdict word AND this
+        # entry's head, excluding the lane that enqueued it. See ci/gate-passes.ps1.
         $passes = 0
-        $probe = Invoke-External 'gh' @('api', "repos/stabem/GraphHelm/pulls/$($entry.pr)/reviews", '--jq', 'length')
-        if ($probe.Code -eq 0 -and $probe.Output.Count -gt 0) {
-            $parsed = 0
-            if ([int]::TryParse(([string]$probe.Output[0]).Trim(), [ref] $parsed)) { $passes = $parsed }
+        $lane = ''
+        if ($entry | Get-Member -Name 'lane' -MemberType NoteProperty) { $lane = [string] $entry.lane }
+        $entryHead = ''
+        if ($entry | Get-Member -Name 'head' -MemberType NoteProperty) { $entryHead = [string] $entry.head }
+        if (Test-HeadSha $entryHead) {
+            # A GATE RECEIPT MOVES THE HEAD WITHOUT INVALIDATING A PASS (#1133, found in review).
+            # The tip a gate commits touches only `.factory/gate-runs/`, so the passes name the
+            # parent. Measured on #1125: 0 at the manifest tip, 2 at its parent. Without this a
+            # re-gate after a flake costs a pull request the position its reviewers earned.
+            # `Get-LivePassCount` resolves the manifest-only parent itself when the argument is
+            # absent, so this call site does not have to remember -- a caller who forgot was the
+            # second half of the finding that added it.
+            $tally = Get-LivePassCount -PullRequest "$($entry.pr)" -Head $entryHead -AuthorLane $lane
+            $passes = $tally.Count
+            # A ZERO FROM A FAILED READ IS NOT A ZERO FROM AN UNREVIEWED PULL REQUEST, and the old
+            # scorer could not say which it was holding. Ordering still proceeds -- age breaks the
+            # tie and nothing starves -- but the log names the difference.
+            if (-not $tally.Measured) {
+                Write-Note "pass count for #$($entry.pr) is PARTIAL: a surface did not answer; ordering with $passes"
+            }
+        } else {
+            # An entry with no usable head cannot have its passes measured against anything. It is
+            # not dropped here: the head validation downstream owns that decision and says why.
+            Write-Note "pass count for #$($entry.pr) skipped: entry carries no valid head"
         }
         [pscustomobject]@{ File = $f; Entry = $entry; Passes = $passes; Age = $f.CreationTimeUtc }
     }

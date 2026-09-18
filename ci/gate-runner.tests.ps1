@@ -38,7 +38,7 @@
 #   1  #943 arrangement: the target assignment and the launch are both found, in order
 #   1  the target is removed between them          1  and the runner says so in the log
 #   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
-$ExpectedAssertionCount = 35
+$ExpectedAssertionCount = 37
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -381,6 +381,12 @@ exit /b %ERRORLEVEL%
         'ARRANGEMENT: the selection passes the skip list, so removing it is a sabotage and not a no-op'
     [System.IO.File]::WriteAllText($sabotaged,
         $runnerText.Replace($withExclusion, 'Get-NextEntry -Directory $QueueDirectory'))
+    # The runner dot-sources `gate-passes.ps1` from beside itself (#1133), so the sabotaged copy
+    # needs the sibling too. Without this the copy dies on the missing dependency and the cell
+    # below reads exit 1 -- a dependency failure that would have been scored as the runner's
+    # behaviour under sabotage.
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $runner) 'gate-passes.ps1') `
+        -Destination (Join-Path (Split-Path -Parent $sabotaged) 'gate-passes.ps1') -Force
 
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $sabotaged,
         '-Slot', 'HDD', '-SlotRoot', $slotRoot, '-Once',
@@ -660,6 +666,78 @@ owhere head=$serverHead | STATUS: gate run",
     $script:listOutput = @()
     Assert-True -Condition (Test-BenchIsRegistered -RepositoryRoot 'X' -BenchPath 'D:\benches\pr200') `
         'a worktree list that FAILS answers registered, so an unanswerable question never authorises a delete'
+
+    # ---------------------------------------------------------------------------------------------
+    # #1133: READINESS ORDER IS MEASURED IN PASSES, NOT IN REVIEW OBJECTS. This is the acceptance
+    # cell for the whole change: the queue must prefer the entry somebody is waiting on. #501 is
+    # OLDER and answers with twenty comment objects that are not passes -- real bodies, identity
+    # lines, no verdict word -- which is exactly the shape that scored 20 on the live queue and
+    # outranked a ready pull request for two weeks. #502 is YOUNGER and carries two passes at its
+    # enqueued head from two lanes, neither the author.
+    #
+    # The assertion is on ORDER inside one -Once drain, not on which entry runs: -Once processes
+    # the queue, so the observable is which head the log names FIRST.
+    # ---------------------------------------------------------------------------------------------
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force
+    $head501 = '4' * 40
+    $head502 = '5' * 40
+    $noisy = @(1..20 | ForEach-Object {
+        [pscustomobject]@{ body = "Session: chatty-lane-$_ [aaaaaa] | Head: 44444444`n`nRe-queued, will report when the gate answers." } })
+    $passes502 = @(
+        [pscustomobject]@{ body = "Session: reviewer-one-aaaaaa [111111] | Head: 55555555`n`n**APPROVE** - crate tests and clippy green." },
+        [pscustomobject]@{ body = "Lane: T | Session: reviewer-two-bbbbbb [222222] | Head: 55555555`n`nAPPROVE-WITH-RISK - one residual, named." })
+    $json501 = Join-Path $root 'api-501.json'
+    $json502 = Join-Path $root 'api-502.json'
+    [System.IO.File]::WriteAllText($json501, (ConvertTo-Json @($noisy) -Depth 4 -Compress))
+    [System.IO.File]::WriteAllText($json502, (ConvertTo-Json @($passes502) -Depth 4 -Compress))
+
+    $orderShim = @"
+@echo off
+setlocal enabledelayedexpansion
+set "A1=%~1"
+set "A2=%~2"
+set "A3=%~3"
+if "%A1%"=="api" (
+  echo %A2% | findstr /C:"/502/" >nul
+  if not errorlevel 1 (
+    type "$json502"
+  ) else (
+    type "$json501"
+  )
+  exit /b 0
+)
+if "%A3%"=="501" (
+  echo {"headRefName":"issue-501-noisy","headRefOid":"$head501","state":"OPEN"}
+  exit /b 0
+)
+if "%A3%"=="502" (
+  echo {"headRefName":"issue-502-ready","headRefOid":"$head502","state":"OPEN"}
+  exit /b 0
+)
+echo unknown pull request 1>&2
+exit /b 1
+"@
+    Set-Content -LiteralPath $shimPath -Value $orderShim -Encoding ASCII
+
+    # #501 is written FIRST so it is the older entry: under the old scorer it won on objects, and
+    # under a scorer that ignored passes entirely it would win on age. Either way it goes first,
+    # which is what makes this cell able to fail.
+    $entry501 = [ordered]@{ pr = 501; head = $head501; lane = 'noisy-author-lane'; enqueued_at = (Get-Date).ToUniversalTime().ToString('o') }
+    Set-Content -LiteralPath (Join-Path $queue '501-44444444.json') -Value (ConvertTo-Json $entry501) -Encoding UTF8
+    Start-Sleep -Milliseconds 1200
+    $entry502 = [ordered]@{ pr = 502; head = $head502; lane = 'ready-author-lane'; enqueued_at = (Get-Date).ToUniversalTime().ToString('o') }
+    Set-Content -LiteralPath (Join-Path $queue '502-55555555.json') -Value (ConvertTo-Json $entry502) -Encoding UTF8
+
+    $orderLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state 2>&1
+    $orderText = ($orderLog | Out-String)
+    $at502 = $orderText.IndexOf($head502.Substring(0, 8), [System.StringComparison]::Ordinal)
+    $at501 = $orderText.IndexOf($head501.Substring(0, 8), [System.StringComparison]::Ordinal)
+
+    Assert-True -Condition (($at502 -ge 0) -and ($at501 -ge 0)) `
+        "CONTROL: the log names both heads, so the comparison below has two operands (502 at $at502, 501 at $at501)"
+    Assert-True -Condition (($at502 -ge 0) -and ($at501 -ge 0) -and ($at502 -lt $at501)) `
+        'the entry with two live passes is picked before the older entry with twenty verdict-less objects (#1133)'
 
 } finally {
     $ErrorActionPreference = $previousPreference

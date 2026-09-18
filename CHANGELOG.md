@@ -1,5 +1,24 @@
 # Specification Changelog
 
+## The red banner decides the failed stages, #1149 - 2026-09-18
+
+`graphhelm gate classify-red`'s excerpt took `failedStages` from every `[gate] FAILED: <stage>`
+line. The gate's own self-test fixtures (`ci/gate-*.tests.ps1`) fail on purpose, to prove the gate
+reports failures, and they print the gate's own vocabulary into the gate's own log - so those lines
+count the gate testing itself as stages that failed.
+
+- **Measured on the first live System One call.** `1128-20260917T005738.log` carries EIGHT
+  `[gate] FAILED:` lines and exactly ONE stage failed; seven are self-test fixtures. The judge was
+  shown "eight unrelated stages failed" for a single flaky test, and the classification hedged.
+- **`[gate] RED - failed stages:` now decides whenever it is present**, and the printed lines
+  remain the evidence for the one shape that never reaches a banner: a run that dies before any
+  verdict line, the canary abort included (#1140 deviation 2). The banner's presence is tracked as
+  its own flag, not as "did it yield anything", so a banner naming nothing reports nothing rather
+  than falling back to the noise this excludes.
+- Nothing else changes: `failedTests`, the panic, the first error line and the tail are untouched,
+  and the classification is still shadow-only - it changes no verdict, selects no stage, counts no
+  pass and re-queues nothing.
+
 ## A human summary on stderr, #1150 - 2026-09-18
 
 `graphhelm init`, `graphhelm gateway setup` and `graphhelm gateway probe` now write a short human

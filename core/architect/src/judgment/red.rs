@@ -5,11 +5,19 @@
 //! (`AGENTS.md`: deterministic policy and evidence decide gates; a judge classifies and proposes).
 //!
 //! The excerpt reads four shapes the runner log has (`ci/gate.ps1`, `cargo test`):
-//! `[gate] RED - failed stages: a, b`, `[gate] FAILED: <stage> (exit N)` (a stage that failed
-//! before the verdict line, the canary abort included), `test <name> ... FAILED`, the first
-//! `panicked at` line (joined with the next line when the location wrapped onto it, which the
-//! PowerShell transcript does), and the first `error:`/`error[` line. Everything is capped so
-//! the state handed to the judge is bounded whatever the log's size.
+//! `[gate] RED - failed stages: a, b`, `[gate] FAILED: <stage> (exit N)`,
+//! `test <name> ... FAILED`, the first `panicked at` line (joined with the next line when the
+//! location wrapped onto it, which the PowerShell transcript does), and the first
+//! `error:`/`error[` line. Everything is capped so the state handed to the judge is bounded
+//! whatever the log's size.
+//!
+//! **The first two answer the same question and disagree, so the banner DECIDES whenever it is
+//! present** (#1149). `[gate] FAILED:` is a line the gate prints; the banner is the answer the
+//! gate computed. The gate's own self-test fixtures fail on purpose and print the gate's own
+//! vocabulary into the gate's own log, so the printed lines count the gate testing itself:
+//! measured on the first live System One call, eight of them for one failed stage. The printed
+//! lines remain the evidence for the one shape that never reaches a banner — a run that dies
+//! before any verdict line, the canary abort included.
 
 use std::collections::BTreeMap;
 
@@ -106,13 +114,54 @@ pub fn excerpt(log: &str) -> RedExcerpt {
         .map(|line| line.trim_end_matches('\r'))
         .collect();
     let mut out = RedExcerpt::default();
+    // TWO SOURCES FOR ONE FIELD, kept apart until the end (#1149).
+    //
+    // `[gate] FAILED: <stage>` is a line the gate PRINTS; `[gate] RED - failed stages:` is the
+    // answer the gate COMPUTED. They disagree, and measurably: the gate's own self-test
+    // fixtures (`ci/gate-*.tests.ps1`) fail on purpose, to prove the gate reports failures, and
+    // they print the gate's own vocabulary into the gate's own log. Measured on the first live
+    // System One call, `1128-20260917T005738.log` carried EIGHT such lines for ONE failed stage,
+    // so the judge was shown "eight unrelated stages failed" for a single flaky test.
+    //
+    // The banner wins whenever it EXISTS -- tracked as its own flag rather than by "did the
+    // banner yield anything", so a banner that names nothing reports nothing instead of silently
+    // falling back to the noise this exists to exclude.
+    let mut banner_stages: Vec<String> = Vec::new();
+    let mut banner_seen = false;
+    let mut printed_stages: Vec<String> = Vec::new();
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index];
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix(RED_BANNER) {
+            // TWO BANNERS POOL, they do not supersede -- and the reason is NOT that the rest of
+            // this struct pools. It does not. MEASURED on a two-run log
+            // (`two_banners_pool_and_a_two_run_log_has_no_coherent_answer`, which asserts each
+            // of these rather than describing them):
+            //
+            //     failed_stages  pools       failed_tests  pools
+            //     first_panic    FIRST-wins  tail          LAST-wins beyond MAX_TAIL_LINES
+            //
+            // So under two runs this excerpt is ALREADY a mixture, and no choice for this field
+            // makes it describe one run. An earlier version of this comment claimed the
+            // neighbours all pooled and argued from consistency; that premise was false, and a
+            // reviewer had withdrawn a live objection on the strength of it (`eloquent-jones`
+            // measured it, #1153).
+            //
+            // What actually decides it: a second banner means the FILE holds two runs, which is
+            // a malformed input this type has no correct answer for. Between the two available
+            // behaviours, pooling discards nothing and last-wins silently drops a stage that
+            // really did fail. The cost is the honest one to state -- pooling can show the judge
+            // more failed stages than any single run had, which is the very contamination the
+            // rest of this change removes. It is preferred anyway because its failure is VISIBLE
+            // (a stage list that does not match any one run) where last-wins produces a
+            // plausible subset that reads as a clean single run.
+            //
+            // Not settled: whether a two-run log should be REFUSED rather than excerpted. That is
+            // the answer neither behaviour gives and it is out of this change's scope.
+            banner_seen = true;
             for stage in rest.split(',') {
-                push_unique(&mut out.failed_stages, stage);
+                push_unique(&mut banner_stages, stage);
             }
         } else if let Some(rest) = trimmed.strip_prefix(STAGE_FAILED) {
             // `[gate] FAILED: contamination canary (ci-canary) (exit 101)`: the exit suffix is
@@ -121,7 +170,7 @@ pub fn excerpt(log: &str) -> RedExcerpt {
                 Some(at) if rest.ends_with(')') => &rest[..at],
                 _ => rest,
             };
-            push_unique(&mut out.failed_stages, stage);
+            push_unique(&mut printed_stages, stage);
         } else if let Some(rest) = trimmed.strip_prefix("test ") {
             if let Some(name) = rest.strip_suffix(" ... FAILED")
                 && out.failed_tests.len() < MAX_FAILED_TESTS
@@ -151,6 +200,14 @@ pub fn excerpt(log: &str) -> RedExcerpt {
         }
         index += 1;
     }
+    // The canary abort is the shape that never reaches a verdict line, so the printed lines are
+    // the only evidence a run of that shape leaves (#1140 deviation 2). Everything else has the
+    // banner, and the banner is what the gate itself concluded.
+    out.failed_stages = if banner_seen {
+        banner_stages
+    } else {
+        printed_stages
+    };
     let mut tail: Vec<String> = lines
         .iter()
         .rev()
@@ -375,6 +432,55 @@ error: could not compile `cpufeatures` (lib) due to 1 previous error
 [gate] run manifest committed: gate: run manifest for 3b375369bf0e (#1116)
 ";
 
+    /// A banner that names NOTHING, beside decoys — the case `banner_seen` exists for.
+    ///
+    /// Without this fixture the flag is indistinguishable from `!banner_stages.is_empty()`:
+    /// every other banner fixture here names at least one stage, so both rules agree on all of
+    /// them and a one-token edit removes the distinction in silence
+    /// (`unruffled-babbage-df857c-1d` on #1153, who measured the substitution at 16 passed,
+    /// 0 failed). "The gate concluded: no failed stages" is an ASSERTION, and falling back to
+    /// the printed lines here would re-import the self-test noise in exactly the case where the
+    /// banner is most informative.
+    const EMPTY_BANNER_LOG: &str = "\
+[gate] ps suites
+[gate] FAILED: background stdout evidence (exit 2)
+[gate] FAILED: stderr evidence (exit 101)
+[gate] RED - failed stages:
+";
+
+    /// TWO banners, which means the LOG holds two runs (the banner has one producer per run).
+    const TWO_BANNER_LOG: &str = "\
+[gate] FAILED: stdout evidence (exit 101)
+[gate] RED - failed stages: workspace tests
+[gate] RED - failed stages: clippy (deny warnings)
+";
+
+    /// The shape #1149 measured on the FIRST REAL JEV CALL, reduced to its essentials.
+    ///
+    /// `D:\graphhelm-slot\runner\1128-20260917T005738.log` carries EIGHT
+    /// `[gate] FAILED: <stage>` lines and exactly ONE stage failed. Seven of them are
+    /// `ci/gate-*.tests.ps1` cells that fail ON PURPOSE, to prove the gate reports failures --
+    /// the gate's own self-test fixtures, printing the gate's own vocabulary into the gate's own
+    /// log. The excerpt read all eight and handed the judge "eight unrelated stages failed",
+    /// which does not read like one flaky test; the live classification hedged and `same_as`
+    /// came back below the yes threshold.
+    ///
+    /// The authoritative line was in the log the whole time and the excerpt already read it.
+    const SELF_TEST_NOISE_LOG: &str = "\
+[gate] workspace tests
+test eof_arriving_after_the_deadline_is_not_silently_accepted ... FAILED
+[gate] FAILED: workspace tests (exit 101)
+[gate] ps suites
+[gate] FAILED: background stdout evidence (exit 2)
+[gate] FAILED: background stderr evidence (exit 2)
+[gate] FAILED: background silent failure (exit 2)
+[gate] FAILED: stdout evidence (exit 101)
+[gate] FAILED: information stream evidence (exit 101)
+[gate] FAILED: stderr evidence (exit 101)
+[gate] FAILED: no output at all (exit 101)
+[gate] RED - failed stages: workspace tests
+";
+
     const REAL_DEFECT_LOG: &str = "\
 [gate] clippy (deny warnings)
 [gate] workspace tests
@@ -439,6 +545,154 @@ assertion `left == right` failed
         assert_eq!(excerpt.first_panic, None);
         let error = excerpt.first_error_line.unwrap();
         assert!(error.contains("not enough space on the disk"), "{error}");
+    }
+
+    /// #1149: THE BANNER DECIDES when it is there, and the `FAILED:` lines are the fallback for
+    /// the one shape that never reaches it.
+    ///
+    /// The gate's own self-test fixtures print `[gate] FAILED: <stage>` into the gate's own log
+    /// on purpose, so counting those lines counts the gate testing itself as stages that failed.
+    /// `[gate] RED - failed stages:` is the gate's own answer to the same question, computed
+    /// rather than pattern-matched.
+    ///
+    /// The three arms are one claim each and are not interchangeable:
+    ///   - the noise log: a banner beside seven decoys, and only the banner survives;
+    ///   - the canary abort: no banner exists, so the fallback must still be live -- without this
+    ///     arm the fix could delete the `FAILED:` reading entirely and still pass;
+    ///   - the real-defect log: a banner naming TWO stages, so the first arm's `len() == 1` is
+    ///     not being satisfied by a rule that simply keeps one.
+    #[test]
+    fn the_red_banner_decides_the_failed_stages_and_the_failed_lines_are_the_fallback() {
+        let noisy = excerpt(SELF_TEST_NOISE_LOG);
+        assert_eq!(
+            noisy.failed_stages,
+            ["workspace tests"],
+            "the gate's own self-test fixtures are not stages that failed: {:?}",
+            noisy.failed_stages
+        );
+        // The decoys really are in the text the excerpt read, so the assertion above is a
+        // statement about the rule and not about a fixture that never carried them.
+        assert!(
+            SELF_TEST_NOISE_LOG.contains("[gate] FAILED: stderr evidence (exit 101)"),
+            "the fixture must carry the decoys or this cell proves nothing"
+        );
+        // And the real failure is still reported through its test name, which is what the judge
+        // matches a known flake on -- the fix must not cost that.
+        assert_eq!(
+            noisy.failed_tests,
+            ["eof_arriving_after_the_deadline_is_not_silently_accepted"]
+        );
+
+        // The canary abort: the run dies before any verdict line, so no banner is ever written
+        // and the `FAILED:` reading is the only evidence there is (#1140 deviation 2).
+        assert!(!DISK_FULL_LOG.contains(RED_BANNER));
+        assert_eq!(
+            excerpt(DISK_FULL_LOG).failed_stages,
+            ["contamination canary (ci-canary)"]
+        );
+
+        // A banner naming two stages still yields two.
+        assert_eq!(
+            excerpt(REAL_DEFECT_LOG).failed_stages,
+            ["clippy (deny warnings)", "workspace tests"]
+        );
+    }
+
+    /// #1153 review: **the flag is `banner_seen`, not `!banner_stages.is_empty()`, and this is
+    /// the only cell that can tell those two apart.**
+    ///
+    /// Every other banner fixture in this module names at least one stage, so both rules agree
+    /// on all of them; `unruffled-babbage-df857c-1d` measured the substitution and the suite
+    /// stayed at 16 passed, 0 failed. A one-token edit removed the whole point of the change in
+    /// silence, which is the defect class this module was written to close, committed by the
+    /// module itself.
+    ///
+    /// The behaviour asserted here is the position, stated: **"failed stages: " with nothing
+    /// after it is the gate ASSERTING that none failed**, not an absence of an answer. Falling
+    /// back to the printed lines here would re-import the self-test noise in exactly the case
+    /// where the banner is most informative.
+    #[test]
+    fn a_banner_that_names_nothing_is_an_answer_and_not_an_absence() {
+        let excerpt = excerpt(EMPTY_BANNER_LOG);
+        assert!(
+            excerpt.failed_stages.is_empty(),
+            "an empty banner is the gate saying none failed: {:?}",
+            excerpt.failed_stages
+        );
+        // The decoys are in the text, so the emptiness above is a statement about the rule and
+        // not about a fixture with nothing in it to find.
+        assert!(
+            EMPTY_BANNER_LOG.contains("[gate] FAILED: stderr evidence (exit 101)"),
+            "the fixture must carry the printed lines the fallback would have taken"
+        );
+    }
+
+    /// #1153 review: TWO banners POOL, **and a two-run log has no coherent answer** -- which is
+    /// the correction of an argument this cell used to carry in its own name.
+    ///
+    /// It previously read `..._because_every_other_field_of_the_excerpt_pools`, and that premise
+    /// is FALSE. `eloquent-jones` measured it on a two-run log and it reproduces here, asserted
+    /// below rather than described: stages and tests pool, `first_panic` is FIRST-wins, and the
+    /// tail is LAST-wins once a log exceeds `MAX_TAIL_LINES`. So under two runs the excerpt is
+    /// already a mixture and no choice for `failed_stages` makes it describe one run. The
+    /// consistency argument cannot do the work it was asked to do -- in either direction.
+    ///
+    /// **This matters beyond the field.** `unruffled-babbage-df857c-1d` argued last-wins, and
+    /// withdrew a live objection on the strength of that false premise. A reviewer conceding to
+    /// something false is worse than the field being wrong, because it closes the question instead
+    /// of deciding it. The question is re-opened by this cell existing in this form.
+    ///
+    /// What actually decides it is stated at the collecting site in `excerpt`: a malformed input,
+    /// pooling discards nothing, last-wins silently drops a stage that really failed, and pooling's
+    /// failure is visible where last-wins produces a plausible subset. Whether such a log should be
+    /// REFUSED instead is open and out of scope.
+    #[test]
+    fn two_banners_pool_and_a_two_run_log_has_no_coherent_answer() {
+        let two_banners = excerpt(TWO_BANNER_LOG);
+        assert_eq!(
+            two_banners.failed_stages,
+            ["workspace tests", "clippy (deny warnings)"],
+            "in log order, both runs, no repeats"
+        );
+
+        // THE MEASUREMENT THE OLD NAME GOT WRONG, asserted so the claim cannot rot back into
+        // prose. Two runs, each with its own stage, test and panic.
+        const TWO_RUNS: &str = "\
+[gate] FAILED: printed one (exit 1)
+test run_one_test ... FAILED
+thread 'run_one_test' panicked at one.rs:1:1:
+[gate] RED - failed stages: run one stage
+[gate] FAILED: printed two (exit 1)
+test run_two_test ... FAILED
+thread 'run_two_test' panicked at two.rs:2:2:
+[gate] RED - failed stages: run two stage
+";
+        let mixed = excerpt(TWO_RUNS);
+        assert_eq!(
+            mixed.failed_stages,
+            ["run one stage", "run two stage"],
+            "stages pool"
+        );
+        assert_eq!(
+            mixed.failed_tests,
+            ["run_one_test", "run_two_test"],
+            "tests pool"
+        );
+        assert!(
+            mixed
+                .first_panic
+                .as_deref()
+                .is_some_and(|panic| panic.contains("run_one_test")),
+            "first_panic is FIRST-wins, not pooled: {:?}",
+            mixed.first_panic
+        );
+        assert!(
+            !mixed
+                .first_panic
+                .as_deref()
+                .is_some_and(|panic| panic.contains("run_two_test")),
+            "and run two's panic is absent, which is what makes it a mixture"
+        );
     }
 
     #[test]

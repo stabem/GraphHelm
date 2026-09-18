@@ -404,7 +404,6 @@ function Invoke-OneEntry {
         Set-EntryStatus -EntryPath $entryPath -State 'waiting: pull request not resolvable'
         return 'stalled'
     }
-    $branch = $resolvedPr.Branch
     $serverHead = $resolvedPr.Head
 
     # A MERGED PULL REQUEST IS NOT A HEAD THAT MOVED, and the check below cannot see it (#902).
@@ -422,6 +421,22 @@ function Invoke-OneEntry {
         Set-EntryStatus -EntryPath $entryPath -State "dropped: pull request is $($resolvedPr.State)"
         Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
         return 'dropped'
+    }
+
+    # A BRANCH NAME THAT BEGINS WITH A DASH IS REFUSED, NOT HANDLED. `git check-ref-format` accepts
+    # `--upload-pack=nope`, and every git command below that receives the name as a word reads it as
+    # an option: the fetch without `--` RAN the value as its upload-pack (measured in this suite),
+    # and `worktree add` cannot create such a branch at all (its internal checkout reads it as an
+    # option even behind `-B<name>` and `--`). No queued branch has ever been named this way; the
+    # refusal names the reason so the entry is not left stalled behind a sentence nobody can read.
+    # The terminal-state check above intentionally comes first: a CLOSED or MERGED entry is safe to
+    # discard even when its historical branch name begins with a dash, and must not remain queued
+    # forever behind the named refusal.
+    $branch = $resolvedPr.Branch
+    if ("$branch" -match '^-') {
+        Write-Note "entry $($Candidate.File.Name): the branch name '$branch' begins with a dash and would be read as an option; refusing"
+        Set-EntryStatus -EntryPath $entryPath -State "refused: branch name begins with a dash ($branch)"
+        return 'stalled'
     }
 
     if ($serverHead -ne $head) {
@@ -473,7 +488,43 @@ function Invoke-OneEntry {
     # THE BENCH IS THE PULL REQUEST'S REAL BRANCH. Not an alias: the manifest commit is written to
     # whatever branch the bench holds, so an alias lands the record on a branch nobody merges.
     Set-EntryStatus -EntryPath $entryPath -State 'preparing bench'
-    $null = Invoke-External 'git' @('-C', $repoRoot, 'fetch', '-q', 'origin', "$branch")
+    # THE REFSPEC IS MADE TO COVER THE BRANCH, and only then is the branch fetched. A bare
+    # `fetch origin <branch>` updates `refs/remotes/origin/<branch>` only when the configured refspec
+    # covers it: a clone made with `--single-branch` (Codex P2 on #979) fetches the tip into
+    # FETCH_HEAD and nothing else, and every feature branch stalls quietly, all at once. Naming the
+    # destination in the fetch is not enough either, and neither are the two tracking keys:
+    # `@{upstream}` maps `refs/heads/<branch>` through the CONFIGURED refspec and under a narrow one
+    # answers "not stored as a remote-tracking branch" -- a bench that builds, a manifest that says
+    # pushed: null again (measured by ISSUES 4 on #979). THE WIDENING IS THE WILDCARD, added once
+    # when absent -- never a branch-specific line: that line outlives the branch, and once the branch
+    # is deleted after its merge every plain `git fetch origin` in this clone dies with "couldn't
+    # find remote ref" until someone repairs the config by hand (Codex on #979).
+    $wildcard = '+refs/heads/*:refs/remotes/origin/*'
+    $refspecs = Invoke-External 'git' @('-C', $repoRoot, 'config', '--get-all', 'remote.origin.fetch')
+    if (@(@($refspecs.Output) | Where-Object { $_ -eq $wildcard }).Count -eq 0) {
+        $null = Invoke-External 'git' @('-C', $repoRoot, 'config', '--add', 'remote.origin.fetch', $wildcard)
+    }
+    # AND THE FETCH MUST SUCCEED BEFORE ITS REF IS READ. `refs/remotes/origin/<branch>` may still hold
+    # what an EARLIER run fetched; a fetch that fails now (the branch deleted between the `gh` lookup
+    # and here) would leave that stale ref in place, the runner would gate the stale commit and, at
+    # the end, push to recreate a branch somebody deleted (Codex on #979). Stalled, naming the fetch.
+    # `--` BEFORE THE BRANCH: a branch name is allowed to begin with `--` (`git check-ref-format`
+    # accepts `--upload-pack=x`), and without the separator git reads it as an option -- the fetch
+    # fails and the entry stalls for a reason nobody can see (Codex on #979).
+    # FULLY QUALIFIED: a bare name is resolved tags-first (gitrevisions), so a branch that shares its
+    # name with a tag would fetch the tag, exit 0, and leave origin/<branch> untouched (Codex on #979).
+    # `refs/heads/<branch>` names the branch and nothing else; the widened wildcard refspec above is
+    # what lets git update the remote-tracking ref for an explicitly named source.
+    $fetch = Invoke-External 'git' @('-C', $repoRoot, 'fetch', '-q', 'origin', '--', "refs/heads/${branch}") -CaptureError
+    if ($fetch.Code -ne 0) {
+        $why = (@($fetch.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+        if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($fetch.Code) and said nothing" }
+        # The same prefix as the add's failure below, so the reader has ONE sentence to search for
+        # and git's own words follow it either way (#951's contract); the fetch is named after it.
+        Write-Note "entry $($Candidate.File.Name): the bench could not be prepared -- fetch of origin/$branch failed: $why; leaving it queued"
+        Set-EntryStatus -EntryPath $entryPath -State "waiting: bench could not be prepared -- fetch of origin/$branch failed: $why"
+        return 'stalled'
+    }
     if (Test-Path -LiteralPath $bench) {
         # THE REMOVE'S EXIT CODE IS THE ANSWER, AND IT USED TO BE DISCARDED (#1045).
         #
@@ -504,10 +555,25 @@ function Invoke-OneEntry {
             }
         }
     }
-    $add = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'add', '-B', $branch, $bench, $head) -CaptureError
+    # AND THE BRANCH MUST TRACK ORIGIN, OR THE RECORD CANNOT VOUCH. `ci/gate.ps1` answers `pushed`
+    # from `@{upstream}`; `worktree add -B <branch> <bench> <sha>` creates a branch with neither
+    # `branch.<b>.remote` nor `branch.<b>.merge`, so every manifest from a bench for a branch this
+    # clone had never held came back `pushed: null` and merge-proof refused it (#939, #947, #967,
+    # #968 from D:/orch-runner-clone, 2026-09-07). The author's own repository hid the defect:
+    # there the branch pre-existed with tracking, and `-B` leaves branch config alone.
+    #
+    # THE TWO KEYS ARE WRITTEN, NOT INFERRED. `--track` (and the default when the start point is a
+    # remote-tracking ref) decides trackability from the CONFIGURED refspec, so under a
+    # `--single-branch` clone it refuses even when the ref exists ("starting point is not a
+    # branch", measured by ISSUES 4 on #979). The bench therefore starts from the queued SHA --
+    # always resolvable -- and the upstream is set as the two config keys `@{upstream}` reads.
+    # `-B<branch>` ATTACHED, for the same reason the fetch carries `--`: a branch named
+    # `--upload-pack=nope` handed to `-B` as a separate word is read as an option ("unknown option
+    # `upload-pack=nope'", measured), and the fetch without `--` went further and RAN it.
+    $add = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'add', "-B${branch}", $bench, $head) -CaptureError
     if ($add.Code -ne 0) {
         # SAY WHICH OF THE THREE, because only one of them has an action attached (#902). A disk
-        # failure, a head this repository does not have, and a branch another worktree holds all
+        # failure, an origin branch this repository has not fetched, and a branch another worktree holds all
         # produced the same sentence, and the third is the ordinary case: a lane's own worktree
         # holds its branch a second after it opens the pull request, and `git worktree add -B`
         # refuses while it does. git's own stderr already names the branch and the worktree, so
@@ -520,16 +586,74 @@ function Invoke-OneEntry {
     }
     # THE BENCH BRANCH MUST TRACK ORIGIN, or the gate has no server to ask (#1040). `worktree add -B`
     # creates the branch with no upstream; `ci/gate.ps1` answers `pushed` by asking the server named
-    # by `<branch>@{upstream}`, so without this line every runner receipt carries `pushed: null` and
-    # `ci/merge-proof.ps1` refuses it. The remote ref exists: the head was resolved through `gh pr
-    # view` after a fetch. Refuse the entry if the upstream cannot be set, the way a detached bench
-    # is refused below -- a run that cannot publish a readable receipt is not worth spending.
-    $track = Invoke-External 'git' @('-C', $bench, 'branch', '--set-upstream-to', "origin/$branch", $branch) -CaptureError
-    if ($track.Code -ne 0) {
-        $why = (@($track.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
-        if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($track.Code) and said nothing" }
-        Write-Note "entry $($Candidate.File.Name): the bench branch cannot track origin/$branch -- $why"
-        Set-EntryStatus -EntryPath $entryPath -State "refused: bench branch has no upstream -- $why"
+    # by `<branch>@{upstream}`, so without this the runner's receipts all carry `pushed: null` and
+    # `ci/merge-proof.ps1` refuses them. A bench that cannot be wired is refused here, before the run
+    # is spent, the way a detached bench is refused below.
+    #
+    # THE TWO KEYS ARE WRITTEN FIRST, AND `--set-upstream-to` IS THE REPAIR. `@{upstream}` is read
+    # out of exactly this pair, and both values name a FULL ref path, so they cannot be steered by
+    # what else the clone happens to hold. `git branch --set-upstream-to origin/<branch>` resolves
+    # its argument through the ordinary ref-name rules instead, and in a clone that also holds a
+    # LOCAL branch called `origin/<branch>` -- the state Codex named on this pull request -- it dies
+    # with "ambiguous object name" on a bench that is perfectly wirable. So the unambiguous write
+    # goes first and git's own wiring is what answers when the write did not take (`.git/config`
+    # locked for an instant, Codex on #979): the fallback is where the diagnosis lives, and a run on
+    # a bench that cannot vouch is never spent either way.
+    $null = Invoke-External 'git' @('-C', $bench, 'config', "branch.${branch}.remote", 'origin')
+    $null = Invoke-External 'git' @('-C', $bench, 'config', "branch.${branch}.merge", "refs/heads/${branch}")
+    # AND THE UPSTREAM IS READ BACK, NOT ASSUMED -- both writes above discard their exit codes, and
+    # the question the gate will ask is asked here first.
+    #
+    # THE READ-BACK ASKS FOR THE FULL REF, NOT THE ABBREVIATION (Codex P2 on this pull request).
+    # `rev-parse --abbrev-ref @{upstream}` is documented to return a NON-AMBIGUOUS short name, not a
+    # fixed spelling: in a clone that also holds a local branch named `origin/<branch>` it answers
+    # `remotes/origin/<branch>`, and an equality against `origin/<branch>` would then reject a bench
+    # that is correctly configured -- removing it and stalling that entry on every retry.
+    # `--symbolic-full-name` has one spelling for one ref, so the comparison cannot be fooled.
+    $wanted = "refs/remotes/origin/${branch}"
+    $upstream = Invoke-External 'git' @('-C', $bench, 'rev-parse', '--symbolic-full-name', '@{upstream}') -CaptureError
+    $upstreamName = if ($upstream.Code -eq 0 -and $upstream.Output.Count -gt 0) { ([string]$upstream.Output[0]).Trim() } else { '' }
+    if ($upstreamName -ne $wanted) {
+        $track = Invoke-External 'git' @('-C', $bench, 'branch', '--set-upstream-to', "origin/$branch", $branch) -CaptureError
+        if ($track.Code -ne 0) {
+            $why = (@($track.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+            if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($track.Code) and said nothing" }
+            Write-Note "entry $($Candidate.File.Name): the bench branch cannot track origin/$branch -- $why"
+            # THE BENCH GOES WITH THE REFUSAL, for the reason the head-mismatch block below gives:
+            # left behind it holds the branch, and the next entry for it fails its own add with the
+            # wrong reason.
+            $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench)
+            Set-EntryStatus -EntryPath $entryPath -State "refused: bench branch has no upstream -- $why"
+            return 'stalled'
+        }
+        $upstream = Invoke-External 'git' @('-C', $bench, 'rev-parse', '--symbolic-full-name', '@{upstream}') -CaptureError
+        $upstreamName = if ($upstream.Code -eq 0 -and $upstream.Output.Count -gt 0) { ([string]$upstream.Output[0]).Trim() } else { '' }
+    }
+    if ($upstreamName -ne $wanted) {
+        $why = (@($upstream.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+        if ([string]::IsNullOrWhiteSpace($why)) { $why = "@{upstream} answered '$upstreamName'" }
+        Write-Note "entry $($Candidate.File.Name): the bench could not be prepared -- upstream not configured: $why; leaving it queued"
+        $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench)
+        Set-EntryStatus -EntryPath $entryPath -State "waiting: bench could not be prepared -- upstream not configured: $why"
+        return 'stalled'
+    }
+    # THE SERVER MUST BE AT THE QUEUED HEAD. The entry was resolved against `gh` a moment ago and
+    # the fetch above brought the tracking ref to the server tip; if the two disagree the branch
+    # moved in between, and a run on the queued sha would vouch for a commit the server no longer
+    # names as the tip. Refuse, and let the resolve run again next time.
+    $originRef = Invoke-External 'git' @('-C', $repoRoot, 'rev-parse', '--verify', '--quiet', "refs/remotes/origin/${branch}")
+    $benchHeadSha = if ($originRef.Code -eq 0 -and $originRef.Output.Count -gt 0) { ([string]$originRef.Output[0]).Trim() } else { '' }
+    if ($benchHeadSha -ne $head) {
+        Write-Note "entry $($Candidate.File.Name): origin/$branch is at '$benchHeadSha', not at the queued head $head; leaving it queued"
+        # THE REFUSED BENCH GOES FIRST, because it holds the branch: left behind, the next entry for
+        # that branch fails its own add with "already checked out" and reports the wrong reason.
+        # Bench before status, and the order is the order: a crash between the two leaves a removed
+        # bench with no status, which is simply re-picked and re-prepared next run; the other order
+        # leaves a status-written bench still holding the branch -- the jam this block removes.
+        $null = Invoke-External 'git' @('-C', $repoRoot, 'worktree', 'remove', '--force', $bench)
+        Set-EntryStatus -EntryPath $entryPath -State 'waiting: origin branch is not at the queued head'
+        # 'stalled', not nothing: the outer loop skips an entry only on that word (#951), and a
+        # refusal that returns no outcome is re-selected at once and wedges the line (Codex, #979).
         return 'stalled'
     }
     $symbolic = Invoke-External 'git' @('-C', $bench, 'symbolic-ref', '--quiet', 'HEAD')

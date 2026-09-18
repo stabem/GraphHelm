@@ -12,7 +12,7 @@
 # And every detector has its NEGATIVE control beside it, because the expensive failure for a tool
 # like this is not a miss -- it is a false positive, which is how a sweep gets deleted three months
 # later by somebody who stopped believing it.
-$ExpectedAssertionCount = 49
+$ExpectedAssertionCount = 90
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -254,9 +254,11 @@ $behind = Format-TreeProvenance -Head 'efd85d07' -GitDir 'C:/repo/.git/worktrees
 Assert-True -Condition ($behind -like '*374 commit(s) BEHIND*') `
     'a tree behind origin/main says so with the count -- 374 is the real number one of the fleet worktrees carried'
 
-$level = Format-TreeProvenance -Head 'abc12345' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0
-Assert-True -Condition (($level -like '*level with origin/main*') -and ($level -notlike '*UNKNOWN*')) `
-    'level is said only when BOTH sides are zero and the tree is clean'
+# -HeadBefore matches -Head deliberately: this cell asserts that the distance is known and the
+# three head readings agree; working-copy continuity is a separate, explicitly UNKNOWN fact.
+$level = Format-TreeProvenance -Head 'abc12345' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'abc12345' -HeadAfterAll 'abc12345'
+Assert-True -Condition (($level -like '*level with origin/main*') -and ($level -like '*working-copy continuity: UNKNOWN*') -and ($level -notlike '*distance from origin/main: UNKNOWN*')) `
+    'level is said only when BOTH sides are zero, while working-copy continuity remains explicitly UNKNOWN'
 
 # THE REGRESSION CELL for the #1006 review's sharpest finding. `rev-list --count HEAD..origin/main`
 # counts what origin/main has and HEAD does not, so a branch AHEAD of main and missing nothing
@@ -273,6 +275,13 @@ $dirty = Format-TreeProvenance -Head 'abc12345' -GitDir 'C:/repo/.git' -GitCommo
 # failed against correct output -- the cell was wrong, not the code.
 Assert-True -Condition (($dirty -like '*2 uncommitted change(s) were SCANNED*') -and ($dirty -like '*level with origin/main*')) `
     "a dirty tree says so BESIDE the distance, because the commit is level and the bytes scanned are not it (got: $dirty)"
+
+$rewrittenSameCount = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 7 }) -ReflogAfter ([pscustomobject]@{ Top = 'bbbb2222'; Count = 7 })
+Assert-True -Condition (($rewrittenSameCount -like '*reflog was REWRITTEN*') -and ($rewrittenSameCount -like '*whether an entry was appended is UNKNOWN*') -and ($rewrittenSameCount -like '*whether HEAD moved is UNKNOWN*') -and ($rewrittenSameCount -notlike '*, and HEAD MOVED*') -and ($rewrittenSameCount -notlike '*MOVED AND RETURNED*')) `
+    "an OID change with no net reflog growth keeps append and movement UNKNOWN, not inferred (got: $rewrittenSameCount)"
+
+Assert-True -Condition ($level -like '*working-copy continuity: UNKNOWN*') `
+    "a clean trailing status does not claim atomic working-copy contents (got: $level)"
 
 # The shape must ACCEPT the dirty suffix on every distance, including `level`. Without this the
 # mandatory suite went red on any clean-but-dirty checkout, and this bench passed only because it
@@ -301,6 +310,271 @@ $undetermined = Format-TreeProvenance -Head '' -GitDir '' -GitCommonDir '' -Behi
 Assert-True -Condition (($undetermined -like '*could NOT be determined*') -and ($undetermined -like '*UNKNOWN head*')) `
     'with nothing measured, the line says so on both axes rather than printing a confident blank'
 
+# EVERY FIELD IN THIS LINE IS MEASURED AFTER THE SCAN, and the scan is not instant. The file list
+# comes from the index at T0, the bytes are read across [T0,T1], and the head, distance and dirty
+# count are asked at T1 -- so a checkout landing inside that window makes all of them name a tree
+# that did not produce the findings printed beside them. The line would be confidently wrong,
+# which is the one failure this line exists to prevent (Codex P2 on #1006).
+#
+# THE NEGATIVE IS PRINTED TOO. Reporting movement only when it happens leaves a quiet line
+# ambiguous between "did not move" and "was never asked", and the quiet reading is the
+# reassuring one. It also makes the wiring provable end to end below: only a run that really
+# took a head before the listing can print the unchanged sentence.
+$moved = Format-TreeProvenance -Head 'bbbb2222' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'bbbb2222'
+# THE SENTENCE REPORTS THE DISAGREEMENT, and stops there. It used to say `NO head here describes
+# what was read`, which is a denial the readings do not support: a checkout landing between the
+# first head read and the listing leaves the whole scan produced by the NEW head, which the two
+# later readings name (Codex P2 on #1024). What is observed is that the boundaries disagree, so
+# that is what is said.
+Assert-True -Condition (($moved -like '*the tree MOVED*') -and ($moved -like '*aaaa1111*') -and ($moved -like '*bbbb2222*') -and ($moved -like '*cannot say which*') -and ($moved -notlike '*NO head*')) `
+    "a head that differs across the boundaries says the readings DISAGREE and that the line cannot say which produced the findings, rather than denying that any did (got: $moved)"
+
+# ABBREVIATIONS ARE FOR DISPLAY ONLY. `rev-parse --short` lengthens an abbreviation to stay
+# unique, so a concurrent fetch or object write changes the text without changing HEAD -- a
+# reviewer reproduced the same commit reading `23b4` then `23b41` at `core.abbrev=4`, which
+# every comparison here would have called a move. Full ids are read; the line shortens them.
+$fullShas = Format-TreeProvenance -Head '1111111111111111111111111111111111111111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore '2222222222222222222222222222222222222222' -HeadAfterAll '1111111111111111111111111111111111111111'
+Assert-True -Condition ($fullShas -like 'Tree: 11111111 in *') `
+    "the head is NAMED with an 8-character abbreviation, which is all a single id needs (got: $fullShas)"
+
+# EIGHT CHARACTERS NAMES ONE COMMIT AND CANNOT TELL TWO APART. The disagreement branch is the
+# only place this line prints ids for a reader to COMPARE, and two ids sharing an 8-character
+# prefix would print identically there -- a line saying the readings DISAGREE while showing the
+# same value three times, leaving the operator unable to identify what was observed (Codex P2 on
+# #1024). That branch prints them whole; every other place still names one id in eight.
+Assert-True -Condition ($fullShas -like '*2222222222222222222222222222222222222222 ->*') `
+    "and the disagreement prints the ids WHOLE, because that is the branch a reader compares (got: $fullShas)"
+
+# THE COLLISION ITSELF, not an argument about it: two ids sharing their first eight characters.
+$collide = Format-TreeProvenance -Head 'abcd1234aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'abcd1234bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' -HeadAfterAll 'abcd1234aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+Assert-True -Condition (($collide -like '*abcd1234bbbb*') -and ($collide -like '*abcd1234aaaa*')) `
+    "two ids sharing an 8-character prefix stay distinguishable in the disagreement (got: $collide)"
+
+# Read here, not borrowed: the later cells define their own copy further down the file, and a
+# variable from below is not in scope yet -- StrictMode says so rather than treating it as empty.
+$headReadLines = @([System.IO.File]::ReadAllText($toolPath) -split "`r?`n")
+$shortReads = @($headReadLines | Where-Object { $_.Contains('rev-parse --short HEAD') })
+$fullReads = @($headReadLines | Where-Object { $_.Contains('rev-parse HEAD 2>$null') })
+Assert-True -Condition (@($fullReads).Count -eq 3) `
+    "CONTROL: all three head readings are present and ask for the full id (got $(@($fullReads).Count))"
+
+Assert-True -Condition (@($shortReads).Count -eq 0) `
+    'and none of them asks for an abbreviation, which can lengthen under a concurrent write and read as a move'
+
+# THE SWEEP BY PROPERTY, because the last three fixes were one-sided: the twin head, the pinned
+# distance while status and ls-files -v were not, and full ids for `rev-parse` while the reflog
+# still abbreviated. Each was applied to the instrument under discussion instead of to every
+# instrument with the property (J on #1024). The property: ANY git output this tool compares as
+# TEXT must be the full object id, because abbreviations lengthen under a concurrent object
+# write. Enumerated with a COUNT control, so adding a git call to this file reds this cell and
+# whoever adds it has to decide whether their output is compared.
+$gitCalls = @($headReadLines | Where-Object { $_.Contains('& git ') -and $_.Contains(' -C ') })
+Assert-True -Condition (@($gitCalls).Count -eq 9) `
+    "CONTROL: the tool makes 9 git calls (got $(@($gitCalls).Count)) -- a new one must be classified, not inherited"
+
+Assert-True -Condition (@($gitCalls | Where-Object { $_.Contains('--short') }).Count -eq 0) `
+    'no git call asks for an abbreviated object id'
+
+# A COMMAND WHOSE OUTPUT IS PARSED MUST NOT BE CONFIGURABLE BY WHOEVER RUNS IT. This file
+# inherited a developer's git configuration three separate times -- core.logAllRefUpdates left
+# the fixture with no reflog, GIT_DEFAULT_HASH made its object ids 64 characters, and
+# color.ui=always wrapped the parsed reflog column in ANSI -- each time turning the authoritative
+# gate red over something that has nothing to do with what is measured. Each was reported
+# separately because each was fixed separately; the property is swept here so the fourth one
+# cannot arrive on a call that simply was not the one under discussion.
+Assert-True -Condition (@($gitCalls | Where-Object { $_.Contains('-c color.ui=false') }).Count -eq @($gitCalls).Count) `
+    "every git call pins color.ui, so a developer's color.ui=always cannot decorate a value this tool parses (got $(@($gitCalls | Where-Object { $_.Contains('-c color.ui=false') }).Count) of $(@($gitCalls).Count))"
+
+$reflogCalls = @($gitCalls | Where-Object { $_.Contains('reflog') })
+# `--no-color` AS WELL AS the config pin: `color.diff` is more specific than `color.ui` and wins
+# for the log family that `reflog show` belongs to. Measured: `-c color.diff=always -c
+# color.ui=false` still returns the oid wrapped in ESC[33m; the command's own option returns it
+# clean. A blanket pin covers the general case, and where the command has its own option, the
+# option is the authority -- a subordinate setting can always override the general one.
+Assert-True -Condition ($reflogCalls[0].Contains('--no-color')) `
+    'the reflog read passes --no-color, because a more specific color setting overrides the config pin for the log family'
+
+Assert-True -Condition ((@($reflogCalls).Count -eq 1) -and $reflogCalls[0].Contains('--no-abbrev')) `
+    'and the reflog read asks for full ids too -- its first column abbreviates by default (8 characters against 40) and that column is compared with String::Equals'
+
+$stable = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 7 }) -ReflogAfter ([pscustomobject]@{ Top = 'aaaa1111'; Count = 7 })
+Assert-True -Condition (($stable -like '*head unchanged at all 3 readings*') -and ($stable -like '*reflog SNAPSHOTS are equal*') -and ($stable -like '*not proof that no update happened*') -and ($stable -notlike '*tree MOVED*') -and ($stable -notlike '*MOVED AND RETURNED*')) `
+    "an unchanged head says so explicitly rather than by silence, and NAMES the interval the reflog covers rather than claiming the whole run (got: $stable)"
+
+# AND IT SAYS WHAT IT DOES NOT COVER. Something is read last, and whatever it is has an
+# unobserved tail: an A->B->A completed between the last reflog snapshot and the final head read
+# is invisible to every reading here, and a further snapshot would only move the tail rather
+# than remove it (Codex P2 on #1024). The remedy available to a line is to stop claiming past
+# its instrument.
+# `-notlike '*MOVED*'` above became `'*tree MOVED*'` because the sentence now contains the word
+# reMOVED, and a case-insensitive substring negative cannot tell one from the other -- the
+# absence would have fired on prose that says nothing about movement.
+Assert-True -Condition ($stable -like '*Nothing here observes what happens after the last snapshot*') `
+    "and it states the tail it cannot see, instead of reading as a guarantee over the whole run (got: $stable)"
+
+# THE LIMIT OF SAMPLING, said in the line rather than left for a reader to work out. Three
+# equal readings establish that three instants agreed, not that nothing happened between them
+# (Codex P2 on #1024). Without the reflog the sentence has to claim the narrower fact.
+$sampledOnly = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111'
+Assert-True -Condition (($sampledOnly -like '*which are SAMPLES*') -and ($sampledOnly -notlike '*reflog records no HEAD update*')) `
+    "with no reflog the line says the 3 readings are SAMPLES and that a move and a move back would not have been seen (got: $sampledOnly)"
+
+# AND THE DETECTOR EARNS ITS PLACE: equal heads at every boundary, and the reflog says HEAD was
+# updated anyway. No number of head samples reports this; the reflog does, because git appends
+# an entry for every update whether or not the sha comes back.
+$returned = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 7 }) -ReflogAfter ([pscustomobject]@{ Top = 'bbbb2222'; Count = 9 })
+Assert-True -Condition (($returned -like '*MOVED AND RETURNED*') -and ($returned -like '*bbbb2222*') -and ($returned -like '*aaaa1111*') -and ($returned -notlike '*unchanged*')) `
+    "three identical heads and a reflog whose newest entry names a DIFFERENT commit is a proven move and return -- nothing but HEAD standing elsewhere writes another oid there (got: $returned)"
+
+# AND IT SURVIVES PRUNING, which a counter does not. `git reflog expire` running in another lane
+# can remove more old entries than an A->B->A checkout appended, leaving the count equal or
+# LOWER while HEAD moved -- a count-based detector then reports no movement (Codex P2 on #1024).
+# Pruning never removes the newest entry, and every HEAD update appends one, so the top line
+# decides and the count only describes.
+$pruned = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 40 }) -ReflogAfter ([pscustomobject]@{ Top = 'bbbb2222'; Count = 6 })
+# AN OID THAT CHANGED WITHOUT AN APPEND IS A REWRITE, NOT A MOVE. `git reflog delete HEAD@{0}`
+# removes the newest entry and EXPOSES an older one with a different oid while HEAD never moves;
+# an expire that reaches the newest entry does the same. A move APPENDS, so an oid change with no
+# growth in the count cannot be told from a rewrite, and UNKNOWN is the honest answer (Codex P2
+# on #1024). This cell used to assert the opposite -- that the oid alone proved the move.
+Assert-True -Condition (($pruned -like '*reflog was REWRITTEN*') -and ($pruned -like '*bbbb2222*') -and ($pruned -like '*UNKNOWN*') -and ($pruned -notlike '*MOVED AND RETURNED*')) `
+    "an oid that changed while the count FELL is reported as a rewrite of unknown meaning, not as a proven move (got: $pruned)"
+
+# AND THE PRUNE THAT LEAVES THE NEWEST ENTRY ALONE. Both marks stay usable, neither signal
+# fires, and the line used to say the snapshots were equal with the 'same count' -- contradicted
+# by the measurement it was reporting (Codex P2 on #1024).
+$prunedOnly = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 40 }) -ReflogAfter ([pscustomobject]@{ Top = 'aaaa1111'; Count = 6 })
+Assert-True -Condition (($prunedOnly -like '*reflog was PRUNED*') -and ($prunedOnly -like '*40 to 6*') -and ($prunedOnly -notlike '*SNAPSHOTS are equal*')) `
+    "a count that fell with the newest entry unchanged is reported as a prune, with both counts, instead of being called equal snapshots (got: $prunedOnly)"
+
+# AND IT CLAIMS NO ABSENCE OF APPENDS. A NET decrease cannot rule out concurrent appends: an
+# in-place operation such as a hard reset onto the same commit appends an entry with the SAME
+# oid, and a prune of two older ones hides it in the net -- top equal, count down, an append that
+# happened (Codex P2 on #1024). The line reports the two things it saw and marks the third
+# unknown.
+Assert-True -Condition (($prunedOnly -like '*whether anything was APPENDED in between is*') -and ($prunedOnly -like '*UNKNOWN*') -and ($prunedOnly -notlike '*no HEAD update was appended*')) `
+    "and it says whether anything was appended is UNKNOWN, rather than reading a net decrease as proof that nothing was (got: $prunedOnly)"
+
+# AND THE TOP LINE IS NOT A UNIQUE IDENTITY, which is the top-line detector's own blind spot. The
+# same B->A checkout performed twice writes byte-identical top text, so a marker built only on it
+# reports no movement while the count climbs -- reproduced by a reviewer at 5 to 7 with the top
+# unchanged (Codex P2 on #1024). Each signal covers what the other misses: the top survives
+# pruning, the count survives repetition, so EITHER is movement. Requiring both would be an AND of
+# two partial detectors, which detects neither.
+$repeated = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 5 }) -ReflogAfter ([pscustomobject]@{ Top = 'aaaa1111'; Count = 7 })
+Assert-True -Condition (($repeated -like '*HEAD OPERATION was RECORDED*') -and ($repeated -like '*gained 2 entr*') -and ($repeated -notlike '*MOVED AND RETURNED*') -and ($repeated -notlike '*unchanged*')) `
+    "a same-oid reflog append reports an OPERATION, never a move: `git reset --hard HEAD` writes an entry with the oid HEAD already had, and the count alone cannot tell that from a move and a return (got: $repeated)"
+
+# THE ORDER OF THE LAST TWO READINGS, asserted on the source because a race cannot be staged from
+# a cell. Something has to be read last. When the REFLOG was last, a checkout landing between the
+# final head read and it left all three head samples equal and the reflog changed, and the line
+# said MOVED AND RETURNED for a HEAD that moved and did NOT return. With the head last, a move in
+# that same gap makes the heads DISAGREE, which is a true sentence (Codex P2 on #1024).
+# Read here rather than borrowed from a later cell: a variable defined further down the file is
+# not in scope yet, and StrictMode says so rather than treating it as empty.
+$toolLines = @([System.IO.File]::ReadAllText($toolPath) -split "`r?`n")
+$reflogReadIndex = @(0..($toolLines.Count - 1) | Where-Object { $toolLines[$_].Contains('$reflogAfter = Get-HeadReflogMark') })
+$finalHeadIndex = @(0..($toolLines.Count - 1) | Where-Object { $toolLines[$_].Contains('$endOutput = @(& git') -and $toolLines[$_].Contains('rev-parse') })
+Assert-True -Condition ((@($reflogReadIndex).Count -eq 1) -and (@($finalHeadIndex).Count -eq 1)) `
+    "CONTROL: one trailing reflog read and one final head read (got $(@($reflogReadIndex).Count) and $(@($finalHeadIndex).Count))"
+
+Assert-True -Condition ($reflogReadIndex[0] -lt $finalHeadIndex[0]) `
+    'the reflog is read BEFORE the final head, so a checkout in the gap between them disagrees on the head instead of being reported as a move that returned'
+
+# THE CASE ONLY THREE BOUNDARIES CATCH: moved and moved back. The first and last readings agree,
+# so a two-boundary check calls this stable, while the distance was counted against a head that
+# neither of them names.
+$thereAndBack = Format-TreeProvenance -Head 'bbbb2222' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111'
+Assert-True -Condition (($thereAndBack -like '*the tree MOVED*') -and ($thereAndBack -notlike '*unchanged*')) `
+    "a tree that moved and moved back is MOVED, not stable -- the outer boundaries agree and the middle one does not (got: $thereAndBack)"
+
+# THE THIRD STATE, which is the one a convenience default would erase: if the head could not be
+# read before the scan, an empty string must NOT compare equal to the head read after it and
+# report a stable tree. Absence and agreement are different facts.
+$unaskedMove = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore '' -HeadAfterAll 'aaaa1111'
+Assert-True -Condition (($unaskedMove -like '*whether the tree MOVED is UNKNOWN (1 of the 3*') -and ($unaskedMove -notlike '*unchanged*')) `
+    'an unread before-head reports UNKNOWN movement, never a stable tree -- the empty string must not read as equal to the head measured at the end'
+
+# THE MIRROR, and it did not exist until a reviewer asked for it. The cell above guards the
+# BEFORE head; the AFTER head reaches the same comparison through $headText, which is the sha OR
+# the literal 'an UNKNOWN head'. A real sha is never equal to that literal, so a failed post-scan
+# read printed "MOVED during the scan (<sha> -> an UNKNOWN head)" -- a movement nobody observed,
+# manufactured out of a failure, in the line whose whole job is to refuse exactly that. I applied
+# the discipline to the parameter I was adding and not to its twin (J on #1024). Either head
+# missing means the question was not answered.
+# UNKNOWN IS FOR WHEN NOTHING WAS ESTABLISHED, not for whenever something was missed. A failed
+# reading removes evidence; it does not remove the evidence that survived. With two readings
+# that DISAGREE and a third unread, movement is already proven, and reporting UNKNOWN throws
+# away a fact the run holds -- in the flattering direction, because UNKNOWN reads as 'probably
+# fine' where MOVED reads as 'do not trust these findings' (Codex P2 on #1024).
+$provenDespiteUnread = Format-TreeProvenance -Head 'bbbb2222' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll ''
+Assert-True -Condition (($provenDespiteUnread -like '*the head readings DISAGREE*') -and ($provenDespiteUnread -like '*1 of the 3 head readings failed*') -and ($provenDespiteUnread -notlike '*whether the tree MOVED is UNKNOWN*')) `
+    "two readings that disagree PROVE movement even with the third unread, and the line reports the movement while still naming the failed boundary (got: $provenDespiteUnread)"
+
+# The same rule for the OTHER independent witness: a changed reflog oid is proof that does not
+# come from the head samples at all, so an unread head must not suppress it either.
+$reflogProofDespiteUnread = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll '' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 5 }) -ReflogAfter ([pscustomobject]@{ Top = 'bbbb2222'; Count = 6 })
+Assert-True -Condition (($reflogProofDespiteUnread -like '*HEAD MOVED during the run*') -and ($reflogProofDespiteUnread -like '*independent of the head*') -and ($reflogProofDespiteUnread -notlike '*whether the tree MOVED is UNKNOWN*')) `
+    "a changed reflog oid is proof independent of the head readings, so one unread head does not suppress it (got: $reflogProofDespiteUnread)"
+
+# A same-oid reflog append is still a known operation when one head boundary is unread. The
+# operation evidence comes from the two reflog snapshots; only the separate question of whether
+# the tree moved remains UNKNOWN. Losing the operation sentence in this state would turn a known
+# `git reset --hard HEAD` into a generic sample failure.
+$sameOidOperationDespiteUnread = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll '' -ReflogBefore ([pscustomobject]@{ Top = 'aaaa1111'; Count = 5 }) -ReflogAfter ([pscustomobject]@{ Top = 'aaaa1111'; Count = 6 })
+Assert-True -Condition (($sameOidOperationDespiteUnread -like '*HEAD OPERATION was RECORDED*') -and ($sameOidOperationDespiteUnread -like '*gained 1 entr*') -and ($sameOidOperationDespiteUnread -like '*whether the tree MOVED is UNKNOWN*') -and ($sameOidOperationDespiteUnread -like '*1 of the 3 head readings failed*')) `
+    "a same-oid reflog append remains recorded evidence while an unread head keeps movement UNKNOWN (got: $sameOidOperationDespiteUnread)"
+
+# AND THE PAIR PRINTED FOR COMPARISON IS WHOLE HERE TOO. The full-id rule was applied to the
+# disagreement branch alone and left this one abbreviating two DISTINCT oids, which print
+# identically when they share eight characters -- a line claiming HEAD stood on another commit
+# while showing the same value twice. Same property, one branch later.
+# The fixture names the SAME commit in the head readings and in the opening marker, because the
+# marker check added beside this cell makes an inconsistent fixture exercise a different branch:
+# a marker that disagrees with HEAD at the first reading is now reported as out of step, and a
+# cell about printing a movement pair whole would silently stop reaching the movement branch at
+# all. A fixture has to be a tree that could exist.
+$reflogCollide = Format-TreeProvenance -Head 'abcd1234bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'abcd1234bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' -HeadAfterAll 'abcd1234bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' -ReflogBefore ([pscustomobject]@{ Top = 'abcd1234bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; Count = 5 }) -ReflogAfter ([pscustomobject]@{ Top = 'abcd1234aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; Count = 6 })
+Assert-True -Condition (($reflogCollide -like '*MOVED AND RETURNED*') -and ($reflogCollide -like '*abcd1234bbbb*') -and ($reflogCollide -like '*abcd1234aaaa*')) `
+    "the reflog-movement branch prints its two oids whole, so a shared 8-character prefix does not make it claim a move while showing one value twice (got: $reflogCollide)"
+
+# THE INITIAL MARKER IS ITSELF A READING, and until this cell it was trusted as an axiom. The
+# whole oid-changed inference reads "the newest entry named X before and Y after, so HEAD stood
+# somewhere else in between" -- which only follows if the entry named where HEAD WAS at the
+# start. `git reflog delete HEAD@{0}` without `--updateref` removes the newest entry and leaves
+# HEAD exactly where it is, so the marker exposes an OLDER commit while HEAD never moved. A
+# later in-place `git reset --hard HEAD` then appends an entry naming HEAD: oid changed, count
+# grew, and every one of the three head readings is the same value -- the exact input shape of
+# MOVED AND RETURNED, produced by a tree that never left the commit (Codex P2 on #1024). The
+# rewrite happens BEFORE the first snapshot, so the delta table sees ordinary growth and cannot
+# catch it; the marker has to be checked against the head read at the same instant instead.
+$desyncedMarker = Format-TreeProvenance -Head 'aaaa1111' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111' -ReflogBefore ([pscustomobject]@{ Top = 'bbbb2222'; Count = 2 }) -ReflogAfter ([pscustomobject]@{ Top = 'aaaa1111'; Count = 3 })
+Assert-True -Condition (($desyncedMarker -notlike '*MOVED AND RETURNED*') -and ($desyncedMarker -notlike '*, and HEAD MOVED*') -and ($desyncedMarker -like '*out of step with HEAD*') -and ($desyncedMarker -like '*whether HEAD MOVED is UNKNOWN*') -and ($desyncedMarker -like '*bbbb2222*') -and ($desyncedMarker -like '*aaaa1111*')) `
+    "a reflog marker that already disagreed with HEAD at the first reading cannot carry the movement inference: the line says the log was out of step and reports movement as UNKNOWN (got: $desyncedMarker)"
+
+$unreadAfter = Format-TreeProvenance -Head '' -GitDir 'C:/repo/.git' -GitCommonDir 'C:/repo/.git' -Behind 0 -Ahead 0 -Dirty 0 -HeadBefore 'aaaa1111' -HeadAfterAll 'aaaa1111'
+Assert-True -Condition (($unreadAfter -like '*whether the tree MOVED is UNKNOWN*') -and ($unreadAfter -notlike '*aaaa1111 ->*')) `
+    "an unreadable head AFTER the scan reports UNKNOWN movement too, never a move from the head that was read into a failure (got: $unreadAfter)"
+
+# And the distance is pinned to the sha that was READ, not asked of HEAD a second time: a
+# checkout between the two calls would leave the head and the distance describing different
+# commits, inside the one line whose job is to say which commit these findings came from. The
+# behaviour cannot be forced from a cell without a race, so the SHAPE is asserted against the
+# tool's own source, with the read proved first.
+$toolText = [System.IO.File]::ReadAllText($toolPath)
+Assert-True -Condition ($toolText.Length -gt 10000) `
+    "CONTROL: the tool source was read ($($toolText.Length) chars), so the absence below is about a file that exists"
+
+# ASSERTED ON THE COMMAND LINE, NOT ON THE FILE. The comments above that call deliberately
+# QUOTE "origin/main...HEAD" to explain what the two-dot form got wrong, so a file-wide absence
+# check fails on the sentence describing the fix. Same trap, second suite.
+$revListLines = @($toolText -split "`r?`n" | Where-Object { $_.Contains('-C $Root rev-list') -and (-not $_.TrimStart().StartsWith('#')) })
+Assert-True -Condition (@($revListLines).Count -eq 1) `
+    "CONTROL: exactly one rev-list call in the tool (got $(@($revListLines).Count)), so the assertion below is about a known line"
+
+Assert-True -Condition ($revListLines[0].Contains('origin/main...$head') -and (-not $revListLines[0].Contains('origin/main...HEAD'))) `
+    "the distance is counted against the sha already read, not against HEAD again -- the same window one level down (got: $($revListLines[0].Trim()))"
+
 # THE HALF THE CELLS ABOVE DO NOT REACH, and E found it by sabotage on the review of this PR:
 # every assertion above drives `Format-TreeProvenance`, the PURE half. `Get-TreeProvenance` -- the
 # half that actually runs `git rev-parse` and `git rev-list` -- was covered by nothing. E replaced
@@ -328,9 +602,16 @@ $shape = '^Tree: [0-9a-f]{7,40} in (a linked worktree|the MAIN checkout), (level
 Assert-True -Condition ($realProvenance -match $shape) `
     "the real git half returns the documented shape on whatever checkout this suite runs in (got: $realProvenance)"
 
-$headOutput = @(& git -C $PSScriptRoot rev-parse --short HEAD 2>$null)
+# NOT `--short`: its width is `core.abbrev`, and the formatter prints a fixed 8, so at
+# `core.abbrev=12` this cell demanded a longer value than the line can contain and reddened the
+# authoritative gate over a developer's configuration (Codex P2 on #1024). The FOURTH time this
+# pair of files inherited a git setting, and the first one inside the tests, which is why the
+# tool-side property guard could not see it -- a sweep is only as wide as the population it
+# walks. The rule the formatter applies is applied here too: read the full id, take eight.
+$headOutput = @(& git -c color.ui=false -C $PSScriptRoot rev-parse HEAD 2>$null)
 $headExit = $LASTEXITCODE
-$actualHead = if ($headExit -eq 0) { ([string](@($headOutput | Where-Object { $_ } | Select-Object -First 1))).Trim() } else { '' }
+$fullHead = if ($headExit -eq 0) { ([string](@($headOutput | Where-Object { $_ } | Select-Object -First 1))).Trim() } else { '' }
+$actualHead = if ($fullHead.Length -ge 8) { $fullHead.Substring(0, 8) } else { $fullHead }
 Assert-True -Condition (($actualHead.Length -gt 0) -and $realProvenance.Contains($actualHead)) `
     "and it names THIS checkout's head ($actualHead), which a plausible hardcoded string cannot -- the discriminating half of this cell"
 
@@ -365,7 +646,21 @@ function Invoke-FixtureGit {
 $aheadRepo = Join-Path ([System.IO.Path]::GetTempPath()) ("sweep-ahead-" + [Guid]::NewGuid().ToString('N'))
 [System.IO.Directory]::CreateDirectory($aheadRepo) | Out-Null
 try {
-    & git -C $aheadRepo init --quiet 2>$null
+    # THE HASH IS STATED AT INIT, not configured afterwards: `extensions.objectFormat` needs
+    # repositoryformatversion 1 and setting it on a v0 repo makes every later git call answer
+    # `fatal: repo version is 0, but v1-only extension found` -- measured, on the first attempt.
+    # `GIT_DEFAULT_HASH=sha256` in a developer's environment otherwise makes an unqualified init
+    # produce 64-character ids, and the shape assertion below -- correctly reading a FULL oid --
+    # would fail for a configuration unrelated to what is measured (Codex P2 on #1024). Same
+    # class as the reflog setting: the fixture states what it needs.
+    & git -C $aheadRepo init --quiet --object-format=sha1 2>$null
+    # REFLOGS ON, EXPLICITLY. A developer with global `core.logAllRefUpdates=false` gives this
+    # throwaway repository no reflog at all: `git reflog show HEAD` succeeds with zero lines,
+    # `Get-HeadReflogMark` correctly answers $null, and the end-to-end assertion below fails --
+    # the authoritative local gate red for a configuration that has nothing to do with what is
+    # being measured (Codex P2 on #1024). The fixture states what it needs instead of inheriting
+    # it, the same reason the commits here pass their own identity and signing settings.
+    & git -C $aheadRepo config core.logAllRefUpdates true 2>$null
     # -c commit.gpgSign=false: a global signing setting with no usable key in the gate environment
     # made both commits fail, leaving $baseSha empty and reddening a mandatory suite for a reason
     # that has nothing to do with what it measures (review of #1006).
@@ -417,6 +712,60 @@ try {
     Assert-True -Condition ($hiddenRepoLine -like '*hidden from*index flag*') `
         "and the line says so, instead of letting the silence read as a clean tree (got: $hiddenRepoLine)"
     & git -C $aheadRepo update-index --no-assume-unchanged 'a.ps1' 2>$null
+
+    # THE MARK IS AN OID, and nothing proved it until a sabotage stayed green: every formatter cell
+    # hands Top a value that already looks like an oid, so returning the whole reflog LINE instead
+    # would have satisfied all of them. The line carries a message, and two operations leaving HEAD
+    # on the same commit write different messages -- comparing lines would call that a move. Asked
+    # of the real repository, where the answer is git's and not the cell's.
+    $realMark = Get-HeadReflogMark -Root $aheadRepo
+    Assert-True -Condition ($null -ne $realMark) `
+        'CONTROL: the throwaway tree has a usable reflog, so the shape assertion below is about a value that exists'
+
+    Assert-True -Condition ($realMark.Top -match '^[0-9a-f]{40}$|^[0-9a-f]{64}$') `
+        "the mark's Top is a FULL object id and nothing else -- 40 for SHA-1, 64 for SHA-256, and neither is a display line (got: $($realMark.Top))"
+
+    # THE HOSTILE CONFIGURATION, BUILT RATHER THAN ASSUMED. Setting `color.diff always` on the
+    # bench does not reach this fixture -- a throwaway `git init` inherits global and system
+    # config, not another repository's local file -- so an attempt to reproduce the reviewer's
+    # case from the bench reddened only the source assertion and left this cell green. The
+    # condition has to be constructed WHERE the reading happens.
+    #
+    # `color.diff` is more specific than `color.ui` and wins for the log family that
+    # `reflog show` belongs to, so the `-c color.ui=false` pin does not suppress it and the oid
+    # arrives wrapped in ESC[33m (Codex P2 on #1024).
+    & git -C $aheadRepo config color.diff always 2>$null
+    $colouredMark = Get-HeadReflogMark -Root $aheadRepo
+    & git -C $aheadRepo config --unset color.diff 2>$null
+
+    Assert-True -Condition ($null -ne $colouredMark) `
+        'CONTROL: the reflog is still readable with color.diff=always, so the shape check below is about decoration and not about a failed read'
+
+    Assert-True -Condition ($colouredMark.Top -match '^[0-9a-f]{40}$|^[0-9a-f]{64}$') `
+        "a repository with color.diff=always still yields a bare object id, because the reflog read passes --no-color and not only the config pin (got: $($colouredMark.Top))"
+
+    # THE WIRING, END TO END, and the reason the unchanged sentence is printed at all. Every
+    # movement cell above drives the PURE formatter with hand-made shas; none of them proves the
+    # SCRIPT reads a head before its file listing. This runs the real tool in repository-wide
+    # mode against the throwaway tree -- the only mode where provenance is asked -- and the only
+    # way its output can carry the unchanged sentence is if that read actually happened. Delete
+    # the capture and this cell reads UNKNOWN.
+    Push-Location -LiteralPath $aheadRepo
+    try {
+        $sweepOut = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $toolPath 2>&1 | Out-String)
+    } finally {
+        Pop-Location
+    }
+    Assert-True -Condition ($sweepOut -like '*Tree:*') `
+        "CONTROL: the repository-wide run reached the provenance line at all (got: $sweepOut)"
+    Assert-True -Condition ($sweepOut -like '*head unchanged at all 3 readings*') `
+        "and the script really takes a head BEFORE its listing: a tree that did not move says so, which an unread before-head cannot print (got: $sweepOut)"
+
+    # AND THE DETECTOR IS WIRED, not only implemented. This tree has a reflog, so a run that
+    # really read it before and after says so; a run that never called the helper falls to the
+    # SAMPLES sentence and reds here.
+    Assert-True -Condition ($sweepOut -like '*reflog SNAPSHOTS are equal*') `
+        "and the reflog readings are taken by the real run, not just accepted as parameters (got: $sweepOut)"
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $aheadRepo -ErrorAction SilentlyContinue
 }

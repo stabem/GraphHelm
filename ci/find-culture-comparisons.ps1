@@ -246,6 +246,31 @@ function Format-TreeProvenance {
         $Dirty,
         # Scanned files marked assume-unchanged or skip-worktree: `git status` cannot see them.
         $Hidden,
+        # The short head read BEFORE the file list was taken. Every other field here is measured
+        # AFTER the scan, so all of them describe the tree at the end of a window whose contents
+        # were read across it: the list comes from the index at T0, the bytes are read over
+        # [T0,T1], and the head, distance and dirty count are asked at T1. A checkout landing
+        # inside that window makes every one of them name a tree that did not produce these
+        # findings -- a provenance line that is confidently wrong, which is the exact defect this
+        # line was added to end (Codex P2 on #1006). Empty means it could not be read, which is
+        # NOT the same as unchanged and is not allowed to read as it.
+        [string] $HeadBefore,
+        # The head read AFTER every provenance query, not only after the scan. `$Head` is taken
+        # before `rev-list` so the distance can be pinned to it, which leaves the working-tree
+        # counts still to come: a checkout between them makes the line report a stable tree while
+        # its dirty count describes a different one. The window closes only when the last
+        # boundary is after the last question (Codex P2 on #1024, the half the first fix missed).
+        [string] $HeadAfterAll,
+        # HEAD reflog entry counts, before the listing and after every provenance query.
+        # $null when the reflog could not be used. THREE SAMPLES DO NOT PROVE CONTINUITY: a
+        # tree that moves and moves back between two readings shows equal heads at both, and
+        # the findings still combine two revisions (Codex P2 on #1024). The reflog is the one
+        # cheap thing here that DETECTS rather than samples -- git appends an entry for every
+        # HEAD update, commit and checkout alike, so a grown count proves movement that equal
+        # shas would hide. A count of 0 means the reflog is unusable, not that nothing moved:
+        # a live checkout with commits always has at least one entry.
+        $ReflogBefore,
+        $ReflogAfter,
         [string] $BehindReason
     )
 
@@ -259,7 +284,18 @@ function Format-TreeProvenance {
         'a linked worktree'
     }
 
-    $headText = if ([string]::IsNullOrWhiteSpace($Head)) { 'an UNKNOWN head' } else { $Head }
+    # ABBREVIATE FOR DISPLAY, COMPARE IN FULL. `rev-parse --short` lengthens an abbreviation as
+    # needed to stay unique, so a concurrent fetch or object write changes the TEXT without
+    # changing HEAD -- reproduced by a reviewer at `core.abbrev=4`, where the same commit read
+    # `23b4` and then `23b41`, and every comparison below would have called that a move (Codex
+    # P2 on #1024). The three reads now ask for the full object id; this is the only place a
+    # short form is produced, and nothing compares it.
+    function Format-Sha {
+        param([string] $Value)
+        if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+        return $Value.Substring(0, [Math]::Min(8, $Value.Length))
+    }
+    $headText = if ([string]::IsNullOrWhiteSpace($Head)) { 'an UNKNOWN head' } else { Format-Sha $Head }
 
     $behindText = if ($null -eq $Behind) {
         "distance from origin/main: UNKNOWN ($BehindReason)"
@@ -290,7 +326,233 @@ function Format-TreeProvenance {
         ''
     }
 
-    return "Tree: $headText in $where, $behindText$dirtyText$hiddenText"
+    # The parser reads WORKING-COPY bytes, while the status count is a trailing observation. A
+    # process can edit a scanned file and restore it before status runs, leaving the heads,
+    # reflog, and dirty count unchanged even though the findings came from transient bytes. No
+    # lock or content snapshot exists here to prove atomic working-copy continuity, so say that
+    # limit instead of turning equal trailing observations into a guarantee.
+    $workingCopyText = ', working-copy continuity: UNKNOWN (files were read from disk; trailing status does not prove atomic contents)'
+
+    # SAID IN EVERY STATE, including the good one. If movement were reported only when it
+    # happened, a line with no such clause would be ambiguous between "did not move" and "was
+    # never asked" -- and the quiet reading is the reassuring one. Stating the negative also
+    # makes the wiring testable end to end: only a run that really took a head before the scan
+    # can print the unchanged sentence.
+    #
+    # BOTH HEADS, not just the one this parameter was added for. `$headText` is `$Head` OR the
+    # literal 'an UNKNOWN head' when the post-scan read failed -- so comparing a real sha to it
+    # is never equal, and the line asserted `MOVED during the scan (<sha> -> an UNKNOWN head)`:
+    # a movement nobody observed, from a failed read. I applied the empty-is-not-equal
+    # discipline to the before-head and not to its twin, which is the shape of a one-sided
+    # sweep (J's BLOCK on #1024). Either head missing means the question was not answered.
+    # THREE BOUNDARIES, and unchanged is said only when all three agree: before the file list,
+    # before the distance is counted, and after every working-tree question. Two would let a
+    # tree move and move back between them and still read as stable.
+    $unread = @(@($HeadBefore, $Head, $HeadAfterAll) | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count
+    $headsAgree = ($unread -eq 0) -and
+        [string]::Equals($HeadBefore, $Head, [System.StringComparison]::Ordinal) -and
+        [string]::Equals($Head, $HeadAfterAll, [System.StringComparison]::Ordinal)
+    $reflogUsable = ($null -ne $ReflogBefore) -and ($null -ne $ReflogAfter)
+    # EITHER SIGNAL IS MOVEMENT, because each one alone has a blind spot the other covers. The
+    # TOP LINE catches a move whose entries were pruned away, since a prune cannot remove the
+    # newest entry. THE COUNT catches a REPEATED move: the same B->A checkout twice writes
+    # byte-identical top text, so the marker is not a unique entry identity -- reproduced at
+    # counts 5 to 7 with the top unchanged (Codex P2 on #1024). Requiring both would be an AND
+    # of two partial detectors, which is a detector for neither.
+    # AN ENTRY PROVES AN OPERATION, NOT A MOVE. `git reset --hard HEAD` appends an entry whose
+    # oid is the one HEAD already had: nothing moved, and a count that only grows would report
+    # MOVED AND RETURNED (Codex P2 on #1024). What the two ends can establish is that an
+    # operation was RECORDED -- and that is enough for the reader, because `reset --hard` also
+    # rewrites the working tree the scan was reading. The line says what was observed and names
+    # the two readings it cannot tell apart.
+    # TWO SIGNALS, TWO DIFFERENT FACTS, and collapsing them is what made the line overstate. The
+    # newest entry's OID changing PROVES HEAD stood on another commit: nothing else writes a
+    # different oid there. The count growing proves only that an OPERATION was recorded, which a
+    # hard reset onto the same commit does without moving anything. Each also covers the other's
+    # blind spot: the oid survives pruning, the count survives a repeated move whose newest entry
+    # names the same commit as before it.
+    # A TABLE, not another branch. Two independent observations -- did the newest entry's OID
+    # change, and which way did the count move -- make six states, and this predicate has now
+    # been wrong in three of them, once per review round. Enumerating them is what stops the
+    # next hole being the next round's finding:
+    #
+    #   oid changed + count grew    an entry was APPENDED naming another commit: HEAD moved
+    #   oid changed + count same    nothing was appended, yet the newest entry changed: the log
+    #   oid changed + count fell    was REWRITTEN (`reflog delete`, `expire`), and a rewrite is
+    #                               indistinguishable from a move -- report UNKNOWN, not a move
+    #   oid same    + count grew    an operation was recorded that left HEAD's id alone
+    #   oid same    + count fell    entries were PRUNED: the snapshots are not equal, and saying
+    #                               'same count' would contradict the measurement
+    #   oid same    + count same    equal snapshots
+    #
+    # The two rewrite rows are Codex P2s on #1024: `git reflog delete HEAD@{0}` removes the
+    # newest entry and EXPOSES an older one with a different oid while HEAD never moves, and a
+    # prune that leaves the newest entry alone lowers the count under a sentence claiming the
+    # snapshots are equal.
+    $reflogOidChanged = $reflogUsable -and
+        (-not [string]::Equals($ReflogBefore.Top, $ReflogAfter.Top, [System.StringComparison]::Ordinal))
+    $reflogCountGrew = $reflogUsable -and ($ReflogAfter.Count -gt $ReflogBefore.Count)
+    $reflogCountFell = $reflogUsable -and ($ReflogAfter.Count -lt $ReflogBefore.Count)
+    # THE INITIAL MARKER IS A READING TOO, and every row of the table above silently treated it
+    # as an axiom. The whole oid-changed inference is "the newest entry named X before and Y
+    # after, so HEAD stood somewhere else in between" -- which only follows if X was where HEAD
+    # WAS when the snapshot was taken. `git reflog delete HEAD@{0}` (without `--updateref`, which
+    # is the option that would move the ref) removes the newest entry and EXPOSES an older one
+    # while HEAD stays put, so the marker starts out naming a commit HEAD is not on. A later
+    # in-place `git reset --hard HEAD` then appends an entry naming HEAD: the oid "changes", the
+    # count grows, all three head readings are identical -- byte for byte the input shape of
+    # MOVED AND RETURNED, from a tree that never left (Codex P2 on #1024). The rewrite happens
+    # BEFORE the first snapshot, so the delta table sees ordinary growth and cannot catch it.
+    # The check is cheap and local: `$HeadBefore` and `$ReflogBefore` are taken by the caller at
+    # the same instant, so they are comparable, and if they disagree the marker is not a
+    # position of HEAD and cannot carry a conclusion about HEAD.
+    $reflogMarkerDesynced = $reflogUsable -and
+        (-not [string]::IsNullOrWhiteSpace($HeadBefore)) -and
+        (-not [string]::IsNullOrWhiteSpace($ReflogBefore.Top)) -and
+        (-not [string]::Equals($ReflogBefore.Top, $HeadBefore, [System.StringComparison]::Ordinal))
+    # A move APPENDS. An oid that changed without an append is the log being rewritten under us.
+    # And neither conclusion is available at all once the marker is known to be out of step.
+    $reflogMarkerUnusable = $reflogOidChanged -and $reflogMarkerDesynced
+    $reflogMoved = $reflogOidChanged -and $reflogCountGrew -and (-not $reflogMarkerDesynced)
+    $reflogRewritten = $reflogOidChanged -and (-not $reflogCountGrew) -and (-not $reflogMarkerDesynced)
+    $reflogGrew = $reflogMoved -or $reflogCountGrew
+    $reflogDelta = if ($reflogUsable -and ($ReflogAfter.Count -gt $ReflogBefore.Count)) {
+        "gained $($ReflogAfter.Count - $ReflogBefore.Count) entr(ies)"
+    } else {
+        'recorded a new entry, and was pruned during the run so the gain cannot be counted'
+    }
+
+    # WHAT THIS CANNOT SEE, named because the file states pruning, repetition and
+    # three-samples-are-not-continuity separately and their COMPOSITION is a fourth thing. One
+    # event blinds both signals at once: a repeated B->A checkout writes byte-identical top
+    # text, and a prune landing in the same run can remove exactly as many entries as those
+    # moves added -- top equal, count equal, heads equal, and the line says no HEAD update was
+    # recorded. It needs a concurrent expirer, which is not hypothetical here: the pruning
+    # clause above exists because another lane can expire mid-run. A third signal would not
+    # close it; an entry IDENTITY that survives both would be a different mechanism, and this
+    # file does not have one. Requiring both signals would be an AND of two partial detectors,
+    # which is a detector for neither -- so the OR stands and the gap is declared instead.
+    # The reflog also sees only HEAD updates: a working-tree edit with no ref change is
+    # invisible to it, which is what the dirty and index-flag counts beside it are for.
+    # PROVEN MOVEMENT OUTRANKS AN UNREAD BOUNDARY. `$unread -gt 0` used to be the FIRST branch,
+    # so a run whose two successful head readings DISAGREED -- movement already proven -- was
+    # reported as UNKNOWN, and a changed reflog oid was suppressed with it. Unknown is the answer
+    # when nothing was established, not whenever something was missed: a failed reading removes
+    # evidence, it does not remove the evidence that survived (Codex P2 on #1024). The failed
+    # boundary is still named, in the branch that reports the movement.
+    $readHeads = @(@($HeadBefore, $Head, $HeadAfterAll) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $readHeadsDisagree = (@($readHeads | Select-Object -Unique).Count -gt 1)
+    $unreadNote = if ($unread -gt 0) { " ($unread of the 3 head readings failed)" } else { '' }
+
+    # FULL IDS WHEREVER TWO ARE PRINTED TO BE COMPARED. Eight characters NAMES one commit and
+    # cannot TELL TWO APART, so any branch showing a pair shows them whole. The first version of
+    # this rule was applied to the disagreement branch alone and left the reflog-movement branch
+    # abbreviating two distinct oids -- the same one-sided sweep, one commit after writing that a
+    # sweep is only as wide as the property named (Codex P2 on #1024).
+    $movedText = if ($readHeadsDisagree) {
+        ", and the tree MOVED: the head readings DISAGREE ($HeadBefore -> $Head -> " +
+        "$HeadAfterAll), so this line cannot say which of them the findings came from$unreadNote"
+    } elseif ($reflogMarkerUnusable) {
+        ", and whether HEAD MOVED is UNKNOWN: the reflog's newest entry named " +
+        "$($ReflogBefore.Top) while HEAD read $HeadBefore at the same instant, so the log was " +
+        'ALREADY out of step with HEAD before the scan -- a reflog delete without --updateref ' +
+        "does exactly that. Its newest entry then changed to $($ReflogAfter.Top), which an " +
+        'in-place operation can produce without HEAD ever leaving the commit above, so the ' +
+        'change is not evidence of a move'
+    } elseif ($reflogMoved -and ($unread -eq 0)) {
+        ", and HEAD MOVED AND RETURNED during the run: all 3 readings say " +
+        "$(Format-Sha $Head), and the reflog's newest entry names $($ReflogAfter.Top) " +
+        "where it named $($ReflogBefore.Top) before -- HEAD stood on another commit " +
+        'in between, so these findings can combine revisions'
+    } elseif ($reflogMoved) {
+        ", and HEAD MOVED during the run: the reflog's newest entry names $($ReflogAfter.Top) " +
+        "where it named $($ReflogBefore.Top) before, which is proof independent of the head " +
+        "readings$unreadNote"
+    } elseif ($reflogRewritten) {
+        ", and the reflog was REWRITTEN during the run: its newest entry changed from " +
+        "$($ReflogBefore.Top) to $($ReflogAfter.Top) with no net count growth, which can be " +
+        'a reflog delete or an expire; whether an entry was appended is UNKNOWN, so whether HEAD ' +
+        'moved is UNKNOWN because a rewrite and a move look the same from here'
+    } elseif ($reflogGrew -and $headsAgree) {
+        ", and a HEAD OPERATION was RECORDED during the run: all 3 readings say " +
+        "$(Format-Sha $Head), the reflog $reflogDelta between them, and its newest entry still " +
+        "names $(Format-Sha $ReflogAfter.Top) -- a move and a return, or an in-place operation " +
+        'such as a hard reset onto the same commit, are indistinguishable from the ends, so ' +
+        'these findings can combine revisions'
+    } elseif ($reflogGrew) {
+        ", and a HEAD OPERATION was RECORDED during the run: the reflog $reflogDelta between " +
+        "the snapshots and its newest entry still names $(Format-Sha $ReflogAfter.Top); whether " +
+        "the tree MOVED is UNKNOWN$unreadNote because a head boundary was unread"
+    } elseif ($unread -gt 0) {
+        ", and whether the tree MOVED is UNKNOWN ($unread of the 3 head readings failed)"
+    } elseif ($reflogCountFell) {
+        ", and the reflog was PRUNED during the run: its newest entry is unchanged at " +
+        "$($ReflogAfter.Top) and its count fell from $($ReflogBefore.Count) to " +
+        "$($ReflogAfter.Count), so the snapshots are NOT equal. What is observed is the " +
+        "matching newest entry and the smaller count; whether anything was APPENDED in " +
+        'between is UNKNOWN, because an in-place operation appends an entry with the SAME ' +
+        'oid and a prune of older ones hides it in the net'
+    } elseif ($reflogUsable) {
+        ', head unchanged at all 3 readings, and the reflog SNAPSHOTS are equal (same newest ' +
+        'entry, same count) between the first reading and the last snapshot -- equal snapshots, ' +
+        'not proof that no update happened: a move and a return whose entries a concurrent ' +
+        'expire removed leaves both readings identical. Nothing here observes what happens ' +
+        'after the last snapshot'
+    } else {
+        ', head equal at all 3 readings, which are SAMPLES: the reflog could not be used, so a move and a move back would not have been seen'
+    }
+
+    return "Tree: $headText in $where, $behindText$dirtyText$hiddenText$workingCopyText$movedText"
+}
+
+# ONE FORM FOR BOTH READINGS. The before and after counts are compared, so they must be taken
+# the same way; two hand-written call sites is how a comparison starts measuring two things.
+# $null on any doubt: a non-zero exit, or a count of 0, which a live checkout with commits
+# never has -- so "the reflog is off" cannot read as "nothing moved".
+function Get-HeadReflogMark {
+    param([Parameter(Mandatory)] [string] $Root)
+    # `--no-abbrev`, and the reason is a PROPERTY rather than this call: `git reflog show`
+    # abbreviates the object id in its first column by default (measured: 8 characters against
+    # 40 with the flag), and abbreviations LENGTHEN under a concurrent object write. This top
+    # line is compared with `String::Equals`, so the same entry would have read as a new one
+    # and the sweep would have reported MOVED AND RETURNED. Same defect as the `rev-parse
+    # --short` one two commits ago -- and finding it there and not here is the third one-sided
+    # sweep on this branch (J on #1024). The rule, applied to every git call in this file
+    # rather than to the one under discussion: ANY git output this tool COMPARES AS TEXT must
+    # be the full object id. The reflog MESSAGE may still contain a short sha, and that is
+    # fine: it is stored text, not a value git recomputes, so it cannot lengthen underneath us.
+    # `-c color.ui=false` on EVERY git call in this file, not on this one. A developer with
+    # `color.ui=always` gets ANSI sequences wrapped around the first column, so the oid parsed
+    # out of it is a decorated string and the shape assertion fails -- the authoritative gate red
+    # for a configuration that has nothing to do with what is measured (Codex P2 on #1024). That
+    # is the THIRD time this file inherited a developer's git config, after core.logAllRefUpdates
+    # and GIT_DEFAULT_HASH, so it is swept as a property rather than patched at the named site:
+    # a command whose OUTPUT IS PARSED must not be configurable by the person running it.
+    # AND `--no-color` ON THE COMMAND ITSELF, because the config pin is not enough. `color.diff`
+    # is more specific than `color.ui` and wins for the log family, which `reflog show` belongs
+    # to: measured here, `-c color.diff=always -c color.ui=false` still returns the oid wrapped in
+    # ESC[33m, and adding `--no-color` returns it clean (Codex P2 on #1024). So the rule is
+    # sharper than the one written above it: a blanket config pin covers the general case, and
+    # where the command HAS its own option, the option is the authority -- a subordinate setting
+    # can always override the general one.
+    $entries = @(& git -c color.ui=false -C $Root reflog show HEAD --no-abbrev --no-color 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $lines = @($entries | Where-Object { $_ })
+    if ($lines.Count -eq 0) { return $null }
+    # THE NEWEST ENTRY, not the count. `git reflog expire` prunes OLD entries, so a count can
+    # fall while HEAD moved -- another lane expiring mid-run offsets the entries an A->B->A
+    # checkout appended, and a detector built on counts reports no movement (Codex P2 on
+    # #1024). Pruning never removes the most recent entry, and every HEAD update appends one,
+    # so the top line changes if and only if HEAD was updated. The count is kept only to say
+    # HOW MANY updates, and to notice a prune.
+    # THE OID, not the whole display line. `--no-abbrev` makes the first token the full object
+    # id of what HEAD pointed at after that entry, and that is the thing that says WHERE HEAD is.
+    # The rest of the line is a message, and two operations leaving HEAD on the same commit write
+    # different messages -- comparing the line would call that a move.
+    $newest = ([string]$lines[0]).Trim()
+    $oid = @($newest -split '\s+' | Where-Object { $_ } | Select-Object -First 1)
+    if (-not $oid) { return $null }
+    return [pscustomobject]@{ Top = [string]$oid; Count = $lines.Count }
 }
 
 # The three git questions behind the line above, each with its own exit code read on the NEXT
@@ -302,10 +564,15 @@ function Get-TreeProvenance {
         # The files this run actually read. `git status` covers the whole repository, so counting it
         # unscoped made a modified README read as "SCANNED" -- a false sentence in the line that
         # exists to stop false sentences (review of #1006). Empty means "ask about nothing".
-        [string[]] $ScannedPaths = @()
+        [string[]] $ScannedPaths = @(),
+        # Read by the CALLER before the file list was taken. This function cannot take it
+        # itself: by the time it runs, the scan is over.
+        [string] $HeadBefore = '',
+        # Taken by the CALLER at the same instant as $HeadBefore, for the same reason.
+        $ReflogBefore = $null
     )
 
-    $headOutput = @(& git -C $Root rev-parse --short HEAD 2>$null)
+    $headOutput = @(& git -c color.ui=false -C $Root rev-parse HEAD 2>$null)
     $headExit = $LASTEXITCODE
     $head = ''
     if ($headExit -eq 0) {
@@ -314,7 +581,7 @@ function Get-TreeProvenance {
     }
 
     # ONE call for both, so the two paths can never come from different moments.
-    $dirsOutput = @(& git -C $Root rev-parse --path-format=absolute --git-dir --git-common-dir 2>$null)
+    $dirsOutput = @(& git -c color.ui=false -C $Root rev-parse --path-format=absolute --git-dir --git-common-dir 2>$null)
     $dirsExit = $LASTEXITCODE
     $gitDir = ''
     $commonDir = ''
@@ -333,21 +600,32 @@ function Get-TreeProvenance {
     $behind = $null
     $ahead = $null
     $reason = ''
-    $countOutput = @(& git -C $Root rev-list --left-right --count origin/main...HEAD 2>$null)
-    $countExit = $LASTEXITCODE
-    if ($countExit -ne 0) {
-        $reason = 'origin/main is not present in this checkout'
+    # AGAINST THE SHA ALREADY READ, not against `HEAD` again. Asking git for `HEAD` a second
+    # time reopens the same window one level down: a checkout between the `rev-parse` above and
+    # this call would leave the head and the distance describing different commits, inside the
+    # one line whose job is to say which commit these findings came from (J's BLOCK on #1024).
+    # The dirty and hidden counts below CANNOT be pinned this way -- they are working-tree
+    # facts with no commit to name -- which is why the line reports them as read rather than
+    # as properties of the sha.
+    if ([string]::IsNullOrWhiteSpace($head)) {
+        $reason = 'the head could not be read, so no distance can be pinned to it'
     } else {
-        $first = @($countOutput | Where-Object { $_ } | Select-Object -First 1)
-        $text = if ($first) { ([string]$first).Trim() } else { '' }
-        $parts = @($text -split '\s+' | Where-Object { $_ })
-        $leftParsed = 0
-        $rightParsed = 0
-        if ($parts.Count -ge 2 -and [int]::TryParse($parts[0], [ref] $leftParsed) -and [int]::TryParse($parts[1], [ref] $rightParsed)) {
-            $behind = $leftParsed
-            $ahead = $rightParsed
+        $countOutput = @(& git -c color.ui=false -C $Root rev-list --left-right --count "origin/main...$head" 2>$null)
+        $countExit = $LASTEXITCODE
+        if ($countExit -ne 0) {
+            $reason = 'origin/main is not present in this checkout'
         } else {
-            $reason = "rev-list --left-right --count printed '$text'"
+            $first = @($countOutput | Where-Object { $_ } | Select-Object -First 1)
+            $text = if ($first) { ([string]$first).Trim() } else { '' }
+            $parts = @($text -split '\s+' | Where-Object { $_ })
+            $leftParsed = 0
+            $rightParsed = 0
+            if ($parts.Count -ge 2 -and [int]::TryParse($parts[0], [ref] $leftParsed) -and [int]::TryParse($parts[1], [ref] $rightParsed)) {
+                $behind = $leftParsed
+                $ahead = $rightParsed
+            } else {
+                $reason = "rev-list --left-right --count printed '$text'"
+            }
         }
     }
 
@@ -357,7 +635,7 @@ function Get-TreeProvenance {
     # count would be true about the repository and false about this sweep.
     $dirty = $null
     if (@($ScannedPaths).Count -gt 0) {
-        $statusOutput = @(& git -C $Root status --porcelain --untracked-files=no -- @ScannedPaths 2>$null)
+        $statusOutput = @(& git -c color.ui=false -C $Root status --porcelain --untracked-files=no -- @ScannedPaths 2>$null)
         $statusExit = $LASTEXITCODE
         if ($statusExit -eq 0) {
             $dirty = @($statusOutput | Where-Object { $_ }).Count
@@ -375,7 +653,7 @@ function Get-TreeProvenance {
     # the count cannot be trusted, not a different number.
     $hidden = 0
     if (@($ScannedPaths).Count -gt 0) {
-        $flagOutput = @(& git -C $Root ls-files -v -- @ScannedPaths 2>$null)
+        $flagOutput = @(& git -c color.ui=false -C $Root ls-files -v -- @ScannedPaths 2>$null)
         if ($LASTEXITCODE -eq 0) {
             # ORDINAL, and the reason is this file: my first spelling used `-ceq`, which is
             # case-sensitive and still CULTURE-AWARE -- and this sweep flagged it in its own
@@ -390,7 +668,32 @@ function Get-TreeProvenance {
         }
     }
 
-    return Format-TreeProvenance -Head $head -GitDir $gitDir -GitCommonDir $commonDir -Behind $behind -Ahead $ahead -Dirty $dirty -Hidden $hidden -BehindReason $reason
+    # ORDER MATTERS HERE, and the previous version had it backwards. The reflog read used to come
+    # AFTER the final head read, which reopened the window it exists to close: a checkout landing
+    # between the two left all three head samples equal and the reflog top changed, and the line
+    # said MOVED AND RETURNED when HEAD had moved and NOT returned (Codex P2 on #1024). With the
+    # reflog first, a move in that gap shows up as the head DISAGREEING, which is the true
+    # statement. Something has to be last; the head is the reading whose disagreement is not a
+    # wrong conclusion.
+    # SOMETHING IS READ LAST, and whatever it is has an unobserved tail. Putting the reflog last
+    # made a move that did NOT return read as one that did; putting the head last leaves the
+    # interval between the reflog snapshot and the final head read covered by no detector, so an
+    # A->B->A completed inside it is invisible to every reading (Codex P2 on #1024). A further
+    # snapshot only moves the tail; it does not remove it. So the ORDER is chosen for which
+    # failure is a true sentence -- a move in the tail makes the heads disagree, which is true --
+    # and the line NAMES the interval the detector covers instead of claiming the whole run.
+    $reflogAfter = Get-HeadReflogMark -Root $Root
+
+    # THE LAST BOUNDARY, after every question above. Its own statement, its own exit code, and
+    # empty on failure so the line says UNKNOWN rather than assuming stability.
+    $endOutput = @(& git -c color.ui=false -C $Root rev-parse HEAD 2>$null)
+    $headAfterAll = ''
+    if ($LASTEXITCODE -eq 0) {
+        $endFirst = @($endOutput | Where-Object { $_ } | Select-Object -First 1)
+        if ($endFirst) { $headAfterAll = ([string]$endFirst).Trim() }
+    }
+
+    return Format-TreeProvenance -Head $head -GitDir $gitDir -GitCommonDir $commonDir -Behind $behind -Ahead $ahead -Dirty $dirty -Hidden $hidden -HeadBefore $HeadBefore -HeadAfterAll $headAfterAll -ReflogBefore $ReflogBefore -ReflogAfter $reflogAfter -BehindReason $reason
 }
 
 if ([string]::Equals($MyInvocation.InvocationName, '.', [System.StringComparison]::Ordinal)) { return }
@@ -419,12 +722,23 @@ $files = if ($Path) { @($Path) } else {
     # #835: kept for the provenance line at the end. The root is the tree this sweep READ, and the
     # summary has to be able to name it after this expression has gone out of scope.
     $script:sweepRoot = $root
+    # BEFORE the listing, which is the first thing that reads repository state. Read on its own
+    # statement with its own exit code, for the reason the whole file argues: a failed read must
+    # leave this empty so the summary says UNKNOWN, never quietly equal to the head measured at
+    # the end (Codex P2 on #1006).
+    $headBeforeOutput = @(& git -c color.ui=false -C $root rev-parse HEAD 2>$null)
+    $script:sweepHeadBefore = ''
+    if ($LASTEXITCODE -eq 0) {
+        $firstHead = @($headBeforeOutput | Where-Object { $_ } | Select-Object -First 1)
+        if ($firstHead) { $script:sweepHeadBefore = ([string]$firstHead).Trim() }
+    }
+    $script:sweepReflogBefore = Get-HeadReflogMark -Root $root
     # AND THE LISTING'S EXIT CODE IS READ TOO, which it was not: a failed `ls-files` produced an
     # empty list, the map over it produced no files, and the summary said "0 culture-aware
     # comparisons over 0 files" -- a clean answer built out of a failure. Found by the cell written
     # for the line above, in the same file, three lines away: the fix for one site swept up its
     # neighbour, which is the whole reason that cell asserts a SHAPE and not a line number.
-    $listOutput = @(& git -C $root ls-files '*.ps1')
+    $listOutput = @(& git -c color.ui=false -C $root ls-files '*.ps1')
     if ($LASTEXITCODE -ne 0) { throw "git ls-files failed in $root, so the file list is not a file list" }
     @($listOutput | Where-Object { $_ } | ForEach-Object { Join-Path $root $_ })
 }
@@ -441,7 +755,7 @@ if ($AsJson) {
     # tools/, core/ finds only this script), so there is no consumer to break -- and provenance
     # BESIDE the JSON on another stream would be the same absence one pipe along.
     [ordered]@{
-        tree  = if ($Path) { 'not asked -- an explicit -Path was given' } else { Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files }
+        tree  = if ($Path) { 'not asked -- an explicit -Path was given' } else { Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files -HeadBefore $script:sweepHeadBefore -ReflogBefore $script:sweepReflogBefore }
         sites = @($found)
     } | ConvertTo-Json -Depth 5
     return
@@ -482,7 +796,7 @@ if ([string]::Equals($Include, 'all', [System.StringComparison]::Ordinal)) {
 $provenance = if ($Path) {
     'Tree: not asked -- an explicit -Path was given, so this counts the files named on the command line and nothing else'
 } else {
-    Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files
+    Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files -HeadBefore $script:sweepHeadBefore -ReflogBefore $script:sweepReflogBefore
 }
 Write-Host $provenance
 Write-Host ("$foundCount culture-aware comparison(s) over $fileCount file(s)" +

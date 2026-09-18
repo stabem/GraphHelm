@@ -4,6 +4,7 @@ mod draft;
 mod events;
 mod execution;
 mod extension;
+mod gate;
 mod gateway;
 mod hash;
 mod init;
@@ -30,8 +31,8 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
-    ExtensionCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand, SchemaCommand,
-    SynthesizeArgs, ToolCommand, TopLevel,
+    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand,
+    SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -444,6 +445,9 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 gate,
             } => quality::run(&events, execution.as_deref(), &gate),
+        },
+        TopLevel::Gate(args) => match args.command {
+            GateCommand::ClassifyRed(args) => gate::classify_red::run(&args),
         },
     }
 }

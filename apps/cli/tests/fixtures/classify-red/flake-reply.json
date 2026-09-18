@@ -1,0 +1,54 @@
+{
+  "answers": {
+    "57d1e72706e153295f1e521d9edf4057895b40ee3e832fe471c03a5fd51814e4": {
+      "answers": {
+        "class": {
+          "choice": "known_flake",
+          "confidence": 0.92,
+          "probabilities": {
+            "environment_void": 0.01,
+            "harness_broke": 0.02,
+            "known_flake": 0.92,
+            "real_defect": 0.05
+          },
+          "type": "choice"
+        },
+        "same_as:886": {
+          "noul": 0.94,
+          "type": "noul"
+        }
+      },
+      "model": "jev-latest",
+      "usage": {
+        "input_tokens": 1800,
+        "output_tokens": 12
+      }
+    }
+  },
+  "rounds": [
+    {
+      "answers": {
+        "class": {
+          "choice": "known_flake",
+          "confidence": 0.92,
+          "probabilities": {
+            "environment_void": 0.01,
+            "harness_broke": 0.02,
+            "known_flake": 0.92,
+            "real_defect": 0.05
+          },
+          "type": "choice"
+        },
+        "same_as:886": {
+          "noul": 0.94,
+          "type": "noul"
+        }
+      },
+      "model": "jev-latest",
+      "usage": {
+        "input_tokens": 1800,
+        "output_tokens": 12
+      }
+    }
+  ]
+}

@@ -348,3 +348,58 @@ Lifting it is a small follow-up on `model_source`, not a decision this record ma
 
 What no cell proves: whether the judge's answers track what a person would say. That is Tier B
 (§6) and waits for the recipe's recorded run.
+
+### 10.10 Shadow classification of a red gate (#1138)
+
+The first gate edge the judge door may own, in SHADOW MODE: `graphhelm gate classify-red` puts a
+RED run's log to the judge and RECORDS what it said. The rule, before the mechanism:
+
+- **Never the verdict.** The gate's colour is `ci/gate.ps1`'s and stays deterministic
+  (`AGENTS.md`: deterministic policy and evidence decide gates; agent agreement is advisory). The
+  command has no handle on a manifest's `runClass`, so a red is never relabelled; its vocabulary is
+  disjoint from `ci/classify-run.ps1`'s on purpose.
+- **Never re-queues.** Nothing reads `acts` to do anything. Shadow mode exists to produce the
+  confusion table that sets this edge's threshold (Tier B calibration, the issue's precondition)
+  before any edge gets the power to re-queue a head.
+- **Output beside the manifest.** `--out <path.json>` writes the record next to the run manifest
+  it describes and refuses to overwrite; without `--out` the record is only printed.
+- **The command never exits non-zero for a classification** — `real_defect`, low confidence and
+  `unresolved` all exit 0. Only its own failures do: an unreadable log, a bad flakes file, an
+  `--out` it may not write, a judge that cannot answer (a recording without the reply names the
+  request digest on stderr).
+
+```text
+graphhelm gate classify-red --log <gate log> --known-flakes <flakes.json>     (--judge-fixture <answers.json> | --manifest <m> --judge-route <id> --broker <b> --keyring <k> --key-id <id>)     [--out <path.json>]
+```
+
+The log is read as UTF-8 or UTF-16 (BOM-detected; the runner's transcripts are UTF-16). The
+known-flake list is `[{"issue": 886, "test": "<cell name>", "summary": "<why it flakes>"}, …]`.
+The judge door is the same pair `graph synthesize` opens (§10.8): the recorded door, keyless, or a
+`direct_api` `typesafe` route leased through the broker.
+
+**State** (`core/architect/src/judgment/red.rs`, pure): a bounded excerpt — the stages the gate
+named as failed (`[gate] RED - failed stages: …` and `[gate] FAILED: <stage>`), the
+`test <name> ... FAILED` names (≤ 20), the first `panicked at` line with its location, the first
+`error:` line, and the last 40 non-blank lines, every string ≤ 400 characters — plus the
+known-flake list. **Questions:** `class`, a Choice over the closed vocabulary
+`known_flake | environment_void | real_defect | harness_broke` with one rubric each, and one
+`same_as:<issue>` Noul per known flake. **Reading:** the same named constants as every other site
+(§10.5) — `acts` is `ACT_THRESHOLD` on the class, `sameAs` is `NOUL_YES_THRESHOLD` per flake; a
+class outside the vocabulary, a missing answer, or a confidence under the threshold is
+`unresolved`, never a class acted on.
+
+**Output:** `{class, confidence, sameAs, contradicted, acts, unresolved, excerptDigest, judgeUsage}` (`out`
+added when written). `excerptDigest` is the sha256 of the excerpt, so two runs that failed the
+same way are visibly the same row of the table.
+
+`sameAs` names a known flake only when the EXCERPT names that flake's test: the judge's yes is grounded in the prompt, and the excerpt is the log's own evidence, so an answer the evidence does not support is reported under `contradicted` and counted as no match (#1140 review). A probability outside `[0, 1]` never acts and never names a flake. A `known_flake` must NAME a flake the excerpt supports, or it does not act: a contradiction is evidence against the class rather than a field beside it, and so is silence — naming none reaches the same zero evidence. The boundary is the operator's list: when no known flakes were supplied, nothing was asked and the class is not denied on that ground. The test comparison is the common suffix of the two paths — every segment both sides carry must agree — so a bare name matches a qualified one while two differently-qualified paths with the same leaf do not.
+
+| claim | test | file |
+|---|---|---|
+| The excerpt reads the three log shapes and is bounded | `a_flake_log_yields_its_stage_test_and_wrapped_panic_location`; `a_disk_full_log_yields_the_aborted_stage_and_the_first_error_line`; `a_real_defect_log_yields_every_stage_and_test_once`; `the_excerpt_is_bounded_whatever_the_log_holds` | `core/architect/src/judgment/red.rs` |
+| One `class` and one `same_as` per known flake; the reading acts only in-vocabulary and at the threshold | `the_request_asks_one_class_and_one_same_as_per_known_flake`; `an_in_class_confident_answer_acts_and_names_the_flake`; `a_low_confidence_answer_is_unresolved_and_a_no_names_no_flake`; `a_class_outside_the_vocabulary_is_unresolved_however_confident` | `core/architect/src/judgment/red.rs` |
+| The three journeys exit 0 whatever the class; UTF-16 is the same excerpt; `--out` never overwrites; a missing reply names the digest on stderr | `the_known_flake_is_classified_known_flake_and_named_same_as_886`; `the_disk_full_canary_abort_is_environment_void`; `a_low_confidence_answer_is_unresolved_and_still_exits_zero`; `a_utf16_log_is_the_same_excerpt_as_its_utf8_twin`; `out_is_written_once_and_never_overwritten`; `a_recording_without_the_reply_names_the_request_digest_on_stderr` | `apps/cli/tests/gate_classify_red.rs` |
+
+Not here, on purpose: the runner hook that calls the command after a red (`ci/gate-runner.ps1`),
+flake dedup as a count per issue (edge 2), and finding triage (edge 3). Each is its own change
+under #1138.

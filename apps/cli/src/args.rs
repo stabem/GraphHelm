@@ -43,12 +43,66 @@ pub enum TopLevel {
     WakeWait(WakeWaitArgs),
     /// Quality-gate operations: the thymus ritual and the certification stamp.
     Quality(QualityArgs),
+    /// Operations beside the CI gate's own run (`ci/gate.ps1`). Nothing here changes a verdict:
+    /// the gate stays deterministic, and these commands only read what it left behind.
+    Gate(GateArgs),
     /// First run in a project (#1062): provisions `<project>/.graphhelm/` — the events
     /// directory, the bearer token `serve` will read, the sealing key and keyring the Studio's
     /// message box needs — registers the MCP server with the chat harnesses it detects, ignores
     /// the directory in git, and prints the exact next commands. Idempotent: an existing token or
     /// key is kept, never rotated. Neither secret is ever printed.
     Init(InitArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GateArgs {
+    #[command(subcommand)]
+    pub command: GateCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GateCommand {
+    /// SHADOW classification of a RED gate run by a typed judge (#1138, edge 1): a bounded
+    /// excerpt of the log and the known-flake list are put to the judge as closed questions
+    /// (`class` over `known_flake | environment_void | real_defect | harness_broke`, one
+    /// `same_as:<issue>` per known flake) and the reading is printed and, with `--out`, written
+    /// beside the manifest. The verdict is never touched, nothing is re-queued, and a
+    /// classification never makes the command exit non-zero: only its own failures do (an
+    /// unreadable log, a bad flakes file, a judge that cannot answer).
+    ///
+    /// The judge is the recorded door (`--judge-fixture`, keyless) or a `direct_api` `typesafe`
+    /// route (`--manifest --judge-route --broker --keyring --key-id`); exactly one of the two.
+    ClassifyRed(Box<ClassifyRedArgs>),
+}
+
+/// The flags of `gate classify-red`; see the variant's doc for the two judge doors.
+#[derive(Debug, Args)]
+pub struct ClassifyRedArgs {
+    /// The gate log to classify, UTF-8 or UTF-16 (the runner's transcripts are UTF-16 with a
+    /// BOM), at most 16 MiB.
+    #[arg(long)]
+    pub log: PathBuf,
+    /// A JSON array of `{"issue": <n>, "test": "<name>", "summary": "<why it flakes>"}`.
+    #[arg(long = "known-flakes")]
+    pub known_flakes: PathBuf,
+    /// The recorded judge door: a `{"answers": {"<request sha256>": <reply>}}` recording.
+    #[arg(long = "judge-fixture", conflicts_with = "judge_route")]
+    pub judge_fixture: Option<PathBuf>,
+    #[arg(long, requires = "judge_route")]
+    pub manifest: Option<PathBuf>,
+    /// The judge door over a gateway route: a `direct_api` route whose provider is `typesafe`.
+    #[arg(long = "judge-route", requires = "manifest")]
+    pub judge_route: Option<String>,
+    #[arg(long)]
+    pub broker: Option<PathBuf>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long = "key-id")]
+    pub key_id: Option<String>,
+    /// Where the classification is written, beside the manifest. Must end in `.json` and must
+    /// not exist yet: a record is never overwritten.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

@@ -1,5 +1,23 @@
 # Specification Changelog
 
+## Shadow classification of a red gate, #1138 - 2026-09-17
+
+Edge 1 of #1138, in SHADOW MODE: `graphhelm gate classify-red` puts a bounded excerpt of a RED
+gate log and the known-flake list to the typed judge (`class` over
+`known_flake | environment_void | real_defect | harness_broke`, one `same_as:<issue>` Noul per
+known flake) and records what it said beside the manifest. It never changes a verdict, never
+re-queues a head, and never exits non-zero for a classification; the thresholds are the named
+constants of `judgment/policy.rs`. Record `docs/harness/GRAPH_ARCHITECT.md` §10.10.
+
+- **`core/architect/src/judgment/red.rs`** (pure): `excerpt` (≤ 20 failed tests, ≤ 40 tail
+  lines, ≤ 400 characters per string), `request`, `read`, `RED_CLASSES`, `excerpt_sha256`.
+- **`apps/cli/src/commands/gate/classify_red.rs`**: the `gate` group's one subcommand; reads
+  UTF-8 or UTF-16 logs (BOM-detected), opens the judge door `graph synthesize` opens, writes
+  `--out` through `create_new`.
+- **Fixtures** under `apps/cli/tests/fixtures/classify-red/`, authored from the shape of two real
+  runner transcripts and re-recorded with `ARCHITECT_RECORD=1`.
+- Not here: the runner hook (`ci/gate-runner.ps1`), flake dedup (edge 2), finding triage (edge 3).
+
 ## Typed judgments in the Graph Architect, #1109 - 2026-09-16
 
 The Graph Architect gains a SECOND model port: a typed judge (TypeSafe's Jev, System One) that

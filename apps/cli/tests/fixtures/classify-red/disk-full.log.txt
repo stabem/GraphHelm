@@ -1,0 +1,20 @@
+[gate] scope: SCOPED: 8 crate(s) selected
+[gate] target provenance: fresh -- no target directory yet, so nothing is being reused
+
+[gate] contamination canary (ci-canary)
+   Compiling cpufeatures v0.2.17
+error: failed to write to `E:\runner-targets\ssd\pr1116\debug\deps\rmetaTsUg79\full.rmeta`: There is not enough space 
+on the disk. (os error 112)
+
+error: could not compile `cpufeatures` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: failed to write to `E:\runner-targets\ssd\pr1116\debug\deps\rmeta6cp3fI\full.rmeta`: There is not enough space 
+on the disk. (os error 112)
+error: could not compile `zeroize` (lib) due to 1 previous error
+[gate] FAILED: contamination canary (ci-canary) (exit 101)
+
+[gate] ABORTING: the contamination canary failed. Every other stage below would
+[gate] run against a build environment this run cannot trust - nothing past this
+[gate] point is evidence of anything. See #152.
+[gate] run manifest committed: gate: run manifest for 3b375369bf0e535c7ee43e2f8c12baa1b2763a73 (#1116)
+[gate] manifest: D:\runner-ssd\pr1116\.factory\gate-runs\3b375369bf0e-20260916T201430.203Z-f245757c.json

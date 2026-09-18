@@ -133,3 +133,5 @@ docs/acceptance/demos/** -text
 # the test re-derives the digests from the bytes on disk, so a checkout that rewrote line
 # endings would read as a moved corpus on Windows alone.
 adapters/tool-host/tests/fixtures/context-quality/** text eol=lf
+# #1138: a UTF-16 gate transcript fixture; its BOM and NULs are the point of the file.
+apps/cli/tests/fixtures/classify-red/flake-utf16.log.txt binary

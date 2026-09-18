@@ -10,7 +10,32 @@
 # The population is DERIVED from the file, never a hand list: a hand list is born correct and rots
 # on the next site somebody adds, which is the same defect one generation later.
 
-$ExpectedAssertionCount = 21
+# 29 IS THE EXACT NUMBER THIS SUITE RUNS, and every one of the 29 can fail. There is no longer a
+# gap between the declared count and the live coverage.
+#
+# AND A CELL NOW HOLDS THIS SENTENCE TO THAT VARIABLE, because a count in prose is a claim nothing
+# checks. Four times in one day an edit changed a number and left a sentence quoting the old one --
+# twice inside the very commit that was fixing the previous instance. Grepping for every dependent
+# sentence is the right habit and a human running it by hand misses an instance roughly every time.
+#
+# The cell is deliberately NARROW. It pins THIS sentence only, not every `N/N` in the file: the
+# other eight are receipts of measurements taken at earlier heads, and they are correct as written.
+# A guard that swept them would have to tell a receipt from a claim by vocabulary, which is a
+# closed-vocabulary guard over prose -- it would age against the words it guards and redden on the
+# next honest receipt. One sentence, pinned exactly, beats a sweep that must be argued with.
+#
+# A DECLARED GAP USED TO LIVE HERE and no longer does. One assertion was a tautology that could not
+# fail, so the declared total exceeded the live coverage by one. That cell is deleted, and the
+# declaration it needed went with it rather than standing as a claim about a file that had moved.
+#
+# The total is 29 again only because the pinning cell above is itself an assertion. It is not the
+# old number returning, and the old gap is not back: every one of the 29 can fail, including that one.
+#
+# The habit it came from is worth keeping: state a limit HERE and not only in a commit message. A
+# reader of `git log` finds that one; a reader of this file -- the person about to trust the number
+# -- does not. Three reviewers went looking in the file after I claimed to have declared it, and
+# none of them found it, because I had written it somewhere they were not looking.
+$ExpectedAssertionCount = 29
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -25,6 +50,21 @@ function Assert-True {
         Write-Host "  FAIL: $Message" -ForegroundColor Red
     }
 }
+
+# THE DECLARATION AT THE TOP OF THIS FILE IS NOW HELD TO THE VARIABLE IT DESCRIBES.
+#
+# The sentence "<n> IS THE EXACT NUMBER THIS SUITE RUNS" is a claim about $ExpectedAssertionCount
+# written in prose, and prose is not checked by anything. Four times in one day an edit moved a
+# count and left a sentence quoting the old one -- twice inside the commit that was fixing the
+# previous instance, and once in a commit whose entire subject was documentation.
+#
+# The cell reads THIS FILE's own text rather than trusting the author to have kept the two in step.
+# It anchors on the sentence's distinctive phrase, so rewording the paragraph around it is free and
+# changing the number is not.
+$selfText = [System.IO.File]::ReadAllText($PSCommandPath)
+$declaredMatch = [regex]::Match($selfText, '#\s*(\d+)\s+IS THE EXACT NUMBER THIS SUITE RUNS')
+Assert-True -Condition ($declaredMatch.Success -and [int]$declaredMatch.Groups[1].Value -eq $ExpectedAssertionCount) `
+    -Message "the count declared in this file's own prose matches `$ExpectedAssertionCount (prose says '$(if ($declaredMatch.Success) { $declaredMatch.Groups[1].Value } else { 'NO DECLARATION FOUND' })', variable says $ExpectedAssertionCount)"
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $gatePath = Join-Path $PSScriptRoot 'gate.ps1'
@@ -455,6 +495,321 @@ try {
         -Message "WITH -NonInteractive the same script fails instead of prompting (exited: $($withFlag.Exited), code: $($withFlag.Code))"
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+# #902: THE OTHER WAY THE WIRE BREAKS -- an argument PowerShell 5.1 mangles before the program ever
+# sees it. `gh ... --jq '.headRefName + " " + .headRefOid'` reaches gh as TWO arguments:
+#
+#     accepts at most 1 arg(s), received 2      exit 1
+#
+# Measured on this machine. In ci/gate-runner.ps1 that made EVERY queue entry unresolvable -- the
+# runner reported "waiting: pull request not resolvable" for all of them, so the queue accepted work
+# and delivered none, and the failure looked like patience rather than a defect (X, on #928).
+#
+# THE CAUSE IS THE EMBEDDED QUOTE, NOT THE SPACE, and the first version of this banner said
+# otherwise. Passing each shape to a real native executable and printing $args on 5.1.26100.9444:
+#
+#     '[.headRefName, .headRefOid]|@tsv'   ->  ONE argument, unsplit           SAFE
+#     '.headRefName + " " + .headRefOid'   ->  the " are STRIPPED, so the two  BREAKS
+#                                              bare spaces then split it
+#
+# PowerShell quotes an argument containing spaces FOR you; it does not escape an embedded double
+# quote. The example above breaks because of its quotes, and its spaces are a consequence of losing
+# them -- which is why a whitespace predicate both refused safe filters and passed corrupting ones.
+# The corrected account and its receipts are at the predicate below.
+#
+# WHAT TO WRITE INSTEAD, since a guard is only as good as this sentence:
+#
+#   `$ENV.name`    jq reads the value from the environment, so no quote crosses the command line.
+#                  BYTE-IDENTICAL output -- the faithful escape, and the one to reach for:
+#                      $env:SEP = ' '
+#                      gh ... --jq '.headRefName + $ENV.SEP + .headRefOid'
+#
+#                  SET THE VARIABLE IN THE SAME SCOPE AS THE CALL. This is the one recommendation
+#                  here with a QUIETER failure mode than the shape the guard forbids, and that is
+#                  worth stating plainly rather than burying.
+#
+#                  With `$env:SEP` unset, jq's `$ENV.SEP` is null, `"a" + null` is `"a"`, and the
+#                  separator VANISHES. Measured at the live call site with nothing defined:
+#
+#                      issue-902-queue-deliversb6ad1616...     EXIT=0
+#
+#                  Two strings run together, no error, no non-zero exit, and THIS GUARD GREEN --
+#                  because the hazard is at runtime and the guard reads source text.
+#
+#                  (No tally here on purpose. A count in prose goes stale on the next cell added or
+#                  removed, and nothing connects the two; the outcome -- green -- is the durable
+#                  half and it is true at every count.)
+#
+#                  Compare the `\"` form this guard REJECTS, which SUCCEEDS -- measured by passing
+#                  each shape to a native executable and printing $args:
+#
+#                      '.a+\"-\"+.b'   ->  [.a+"-"+.b]   INTACT,  exit 0
+#                      '.a+"-"+.b'     ->  [.a+-+.b]     quotes stripped
+#
+#                  So the guard forbids the form that WORKS and recommends one that can corrupt
+#                  silently. That is the trade this paragraph exists to make visible, and an earlier
+#                  version of these lines said the opposite -- that `\"` failed loudly with
+#                  `accepts at most 1 arg(s), received 2`. It does not; the BARE form does, after
+#                  its quotes are stripped and the bare spaces split it. A reviewer caught the
+#                  inversion, in the commit whose whole subject was this trade.
+#   `@tsv`         passes the guard, but CHANGES THE OUTPUT: the delimiter becomes a tab, not a
+#                  space. Fine when nothing downstream parses the separator; silent data change when
+#                  something does. Named here because this file used to prescribe it without saying so.
+#   `\"` escaping  works against real gh and reaches jq byte-identical -- but THIS GUARD REJECTS
+#                  IT, measured by planting it at ci/merge-proof.ps1:633. Known limitation, not an
+#                  oversight: the scanner reads source TEXT and cannot tell an escaped quote from a
+#                  bare one.
+#
+#                  The count that receipt used to quote is deliberately gone. It quoted a tally that
+#                  went wrong the moment a cell was deleted -- and the sentence explaining that went
+#                  stale itself on the very next count change, which is the joke and also the point.
+#                  A receipt embedded in prose decays on every count change and nothing connects the
+#                  two. The line number and the outcome are the durable half;
+#                  the tally was the perishable half, and it is not worth carrying.
+#
+# The population is DERIVED, like the paths above: every static `--jq`/`-q` argument in every
+# ci/*.ps1, so the next one somebody writes is covered without anyone extending a list.
+function Add-StaticArgumentTokens {
+    param(
+        [Parameter(Mandatory)] $Node,
+        [System.Collections.Generic.List[object]] $Tokens
+    )
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        $null = $Tokens.Add([pscustomobject]@{ Known = $true; Value = [string]$Node.Value })
+    } elseif ($Node -is [System.Management.Automation.Language.CommandParameterAst]) {
+        # BARE `-q`, which is the spelling everybody actually writes. PowerShell parses a single-dash
+        # token as a CommandParameterAst, NOT as a string constant, so before this branch `gh ... -q
+        # '<filter>'` was invisible to the scanner however the matcher was spelled -- and the
+        # population silently fell by one rather than reporting a miss. `--jq` survives as a bare word
+        # only because `--` cannot begin a parameter name, which is why the long form looked fine.
+        #
+        # Emitted with its dash restored so the caller compares like with like. `-q:'<filter>'` binds
+        # the value to the parameter instead of leaving it as the next element, so that form is
+        # unpacked here too rather than losing the filter.
+        $null = $Tokens.Add([pscustomobject]@{ Known = $true; Value = "-$($Node.ParameterName)" })
+        if ($null -ne $Node.Argument) { Add-StaticArgumentTokens -Node $Node.Argument -Tokens $Tokens }
+    } elseif ($Node -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        foreach ($child in @($Node.Elements)) { Add-StaticArgumentTokens -Node $child -Tokens $Tokens }
+    } elseif ($Node -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+        foreach ($statement in @($Node.SubExpression.Statements)) {
+            foreach ($pipelineElement in @($statement.PipelineElements)) {
+                if ($pipelineElement -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    Add-StaticArgumentTokens -Node $pipelineElement.Expression -Tokens $Tokens
+                } else {
+                    $null = $Tokens.Add([pscustomobject]@{ Known = $false; Value = $null })
+                }
+            }
+        }
+    } else {
+        $null = $Tokens.Add([pscustomobject]@{ Known = $false; Value = $null })
+    }
+}
+
+function Get-StaticExternalArgumentTokens {
+    param([Parameter(Mandatory)] $Command)
+    $elements = @($Command.CommandElements)
+    $firstArgument = $null
+    if ([string]::Equals([string]$Command.GetCommandName(), 'gh', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $firstArgument = 1
+    } elseif ([string]::Equals([string]$Command.GetCommandName(), 'Invoke-External', [System.StringComparison]::OrdinalIgnoreCase) -and $elements.Count -gt 1 `
+        -and $elements[1] -is [System.Management.Automation.Language.StringConstantExpressionAst] `
+        -and [string]::Equals([string]$elements[1].Value, 'gh', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $firstArgument = 2
+    }
+    if ($null -eq $firstArgument) { return }
+    $tokens = New-Object System.Collections.Generic.List[object]
+    for ($i = $firstArgument; $i -lt $elements.Count; $i++) {
+        Add-StaticArgumentTokens -Node $elements[$i] -Tokens $tokens
+    }
+    return ,$tokens
+}
+
+function Find-StaticJqArguments {
+    # $ExcludePath is GONE, not merely unused. It had one caller, which passed $PSCommandPath to hide
+    # this file from its own guard; three arms showed that hid real offenders and prevented nothing,
+    # so the caller went. Leaving the parameter behind would leave the next author a documented way
+    # to re-open the blind spot -- a retired mechanism that still works is an invitation, not dead code.
+    param(
+        [Parameter(Mandatory)] [string] $Directory
+    )
+    $arguments = New-Object System.Collections.Generic.List[object]
+    $parseErrors = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @(Get-ChildItem -LiteralPath $Directory -Filter '*.ps1' -File)) {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+        foreach ($error in @($errors)) {
+            $parseErrors.Add("$($file.Name):$($error.Extent.StartLineNumber): $($error.Message)")
+        }
+        foreach ($command in @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+            $values = Get-StaticExternalArgumentTokens -Command $command
+            if ($null -eq $values) { continue }
+            for ($i = 0; $i -lt $values.Count; $i++) {
+                # BOTH SPELLINGS. `gh` accepts `-q` as well as `--jq`, and `.factory/MERGE-CHECKLIST.md`
+                # already writes `-q` five times with spaces and embedded quotes. Matching only the
+                # long form left the identical hazard invisible under the short one.
+                if ($values[$i].Known -and $values[$i].Value -cin @('--jq', '-q') -and $i + 1 -lt $values.Count `
+                    -and $values[$i + 1].Known) {
+                    $arguments.Add([pscustomobject]@{
+                        File = $file.Name
+                        Line = $command.Extent.StartLineNumber
+                        # THE SPELLING AS WRITTEN, so the diagnostic quotes the source. Hard-coding
+                        # `--jq` in the message sent an author of a `-q` site looking for text their
+                        # file does not contain -- a report that is true about the hazard and wrong
+                        # about where to find it.
+                        Flag = [string]$values[$i].Value
+                        Filter = [string]$values[$i + 1].Value
+                    })
+                }
+            }
+        }
+    }
+    if ($parseErrors.Count -gt 0) { $arguments.Clear() }
+    [pscustomobject]@{ Arguments = $arguments.ToArray(); ParseErrors = $parseErrors.ToArray() }
+}
+
+# THE SELF-EXEMPTION IS GONE, and it was measured out rather than argued out. `-ExcludePath
+# $PSCommandPath` hid this whole file from its own guard. Three arms settle what it bought:
+#
+#   plant a real offender INSIDE the exempted file      invisible, 29/29
+#   remove the exclusion, same plant                    CAUGHT, 28/29 EXIT=1
+#   remove the exclusion, no plant                      still 29/29, no false positive
+#
+# So it hid real offenders and prevented nothing. The mechanism is that the predicate applies to
+# `$_.Filter`, which only ever holds values the AST classifier already admitted as `gh` arguments --
+# and this file's quote-bearing literals are comments, here-strings and `Assert-True` strings, which
+# the classifier never admits. A first reading of this called the exclusion inert under the OLD
+# whitespace predicate; the concern that the new `"` predicate would make it load-bearing was
+# reasonable and was re-measured, not assumed, and it is not.
+$jqScan = Find-StaticJqArguments -Directory $PSScriptRoot
+# THE CELL THAT USED TO SIT HERE IS GONE, and removing it is the point rather than tidying.
+#
+# It asserted that a list built by filtering out $PSCommandPath contains no $PSCommandPath -- a
+# tautology that could not fail -- and its MESSAGE said "the jq population excludes this test file".
+# That message is now FALSE: the exclusion was deleted a few lines above, because three arms showed
+# it hid real offenders and bought nothing.
+#
+# So the fix for one false in-file claim created another, in the same file, within one commit. That
+# is the whole lesson of the last two rounds arriving a third time: when a claim goes stale, grep for
+# every sentence that depended on it rather than editing the one you were shown. A reviewer found
+# this one; I did not.
+#
+# $ExpectedAssertionCount drops 29 -> 28 with it, which also retires the "29 against 28 live cells"
+# declaration -- the count and the live cells are now the same number.
+Assert-True -Condition ($jqScan.ParseErrors.Count -eq 0) `
+    -Message "every production PowerShell file parsed before jq arguments were classified (errors: $($jqScan.ParseErrors -join '; '))"
+$jqTotal = $jqScan.Arguments.Count
+# THE PREDICATE MEASURED THE WRONG PROPERTY, and it was wrong in BOTH directions. Measured on
+# Windows PowerShell 5.1.26100.9444 by passing each shape to a native executable and printing $args:
+#
+#   '[.headRefName, .headRefOid]|@tsv'   arrives as ONE argument, unsplit -- SAFE, and the old
+#                                        whitespace predicate REFUSED it
+#   '.a+"-"+.b'                          arrives as  .a+-+.b  -- the quotes are STRIPPED, silently
+#                                        corrupting the filter, and the old predicate passed it GREEN
+#
+# PowerShell quotes an argument containing spaces for you; it does NOT escape an embedded double
+# quote. So whitespace is not the hazard and never was -- the guard blocked correct code and waved
+# through the shape that actually breaks, which is assurance pointing the wrong way.
+#
+# ONE PREDICATE, THREE CONSUMERS -- and that is the point of the function, not tidiness. The two
+# discriminating controls below kept their OWN private copy of the old `-match '\s'`, so the
+# shipped predicate could be replaced with `-match 'ZZZNEVERMATCHES'` and the suite still passed
+# 29/29: nothing in the file covered the thing the file exists to enforce. Both reviewing lanes
+# found that independently, by different routes.
+#
+# CALLING THIS FUNCTION WAS NOT SUFFICIENT, and the first version of this comment said it was.
+# A reviewer measured what it actually bought:
+#
+#   never-match sabotage          27/29  EXIT=1   the controls react
+#   revert this predicate to '\s' 29/29  GREEN    the controls do NOT
+#
+# Because every control fixture carried quotes AND whitespace, the old and the new predicate scored
+# IDENTICALLY on all of them. So the correction this file exists to make could be reverted with
+# nothing going red, while this comment told the next reader the opposite. That is the same defect
+# class a BLOCK was raised over on #992 three PRs ago -- a document asserting a coverage it does not
+# have -- and it does not become a smaller defect because the author of it is me.
+#
+# The discriminator is a fixture carrying QUOTES WITHOUT WHITESPACE: an offender under `"` and not
+# an offender under `\s`. With it in the population, reverting the predicate changes the count and
+# the control fails. That fixture is the `.a+"-"+.b` line below, and the counts it moves are named
+# in the assertion so a future edit cannot quietly drop it.
+function Test-JqFilterHazardous {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Filter)
+    return $Filter -match '"'
+}
+$jqOffenders = @($jqScan.Arguments | Where-Object { Test-JqFilterHazardous -Filter $_.Filter } |
+    ForEach-Object { "$($_.File):$($_.Line)  $($_.Flag) '$($_.Filter)'" })
+Assert-True -Condition ($jqTotal -gt 0) -Message "arrangement: the sweep found $jqTotal --jq/-q argument(s) to check, so a zero below is a result and not an empty search"
+Assert-True -Condition ($jqOffenders.Count -eq 0) `
+    -Message "no single-quoted --jq or -q argument contains a double quote, which PowerShell 5.1 strips from the native command line before gh sees it; write it as `$ENV.<name> to keep the output byte-identical ($($jqOffenders.Count) offender(s): $($jqOffenders -join '; '))"
+
+# Discriminating multiline control: run the same scanner against a temporary production file. It
+# covers both direct `gh` and the helper's static `Invoke-External 'gh'` array, while comments stay
+# outside the command AST.
+$multiRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-jq-$PID"
+New-Item -ItemType Directory -Path $multiRoot -Force | Out-Null
+try {
+    Set-Content -LiteralPath (Join-Path $multiRoot 'multiline.ps1') -Encoding utf8 -Value @"
+# gh --jq 'bad comment text'
+gh pr view 1 -R owner/repo @(
+    '--jq', '.headRefName + " " + .headRefOid'
+)
+Invoke-External 'gh' @(
+    'api',
+    '--jq', '.owner + " " + .repo'
+)
+gh pr view 2 -R owner/repo '--jq' '.headRefName'
+gh pr view 3 -R owner/repo '--jq' '.a+"-"+.b'
+'quoted data: gh --jq ''.fake + " " + .value'''
+"@
+    $multiScan = Find-StaticJqArguments -Directory $multiRoot
+    # THE SHIPPED PREDICATE, not a private copy of it (see Test-JqFilterHazardous). This control kept
+    # its own `-match '\s'`, which is why the production predicate could be deleted outright without
+    # the suite noticing.
+    #
+    # THE DISCRIMINATING FIXTURE IS `.a+"-"+.b`: quotes, NO whitespace. Every other fixture here
+    # carries both, so every other fixture scores identically under `"` and under `\s` -- which is
+    # why calling the shared function was not by itself enough to pin the predicate. This one is an
+    # offender under the shipped predicate and NOT an offender under the retired one, so reverting
+    # `\s` drops the offender count to 2 and this assertion fails.
+    #
+    # It is also the exact shape measured to corrupt at runtime: `.a+"-"+.b` reaches jq as `.a+-+.b`.
+    $multiOffenders = @($multiScan.Arguments | Where-Object { Test-JqFilterHazardous -Filter $_.Filter })
+    Assert-True -Condition ($multiScan.ParseErrors.Count -eq 0 -and $multiScan.Arguments.Count -eq 4 -and $multiOffenders.Count -eq 3) `
+        -Message "the production scanner observes three hazardous and one clean direct/helper argument, and the quotes-without-whitespace fixture is what makes this count depend on the shipped predicate rather than the retired one (arguments=$($multiScan.Arguments.Count), offenders=$($multiOffenders.Count), errors=$($multiScan.ParseErrors.Count))"
+    Assert-True -Condition (@($multiScan.Arguments | Where-Object { $_.Filter -eq '.fake + " " + .value' }).Count -eq 0) `
+        -Message 'quoted data containing gh --jq text is not classified as a command argument'
+} finally {
+    Remove-Item -LiteralPath $multiRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Command names are case-insensitive in PowerShell. Keep this control in the same production
+# scanner path so a case-sensitive AST guard cannot silently lose mixed-case direct/helper calls.
+$mixedRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-jq-mixed-$PID"
+New-Item -ItemType Directory -Path $mixedRoot -Force | Out-Null
+try {
+    Set-Content -LiteralPath (Join-Path $mixedRoot 'mixed.ps1') -Encoding utf8 -Value @"
+GH pr view 1 @('--jq', '.headRefName + " " + .headRefOid')
+iNvOkE-ExTeRnAl 'GH' @('--jq', '.owner + " " + .repo')
+"@
+    $mixedScan = Find-StaticJqArguments -Directory $mixedRoot
+    $mixedOffenders = @($mixedScan.Arguments | Where-Object { Test-JqFilterHazardous -Filter $_.Filter })
+    Assert-True -Condition ($mixedScan.ParseErrors.Count -eq 0 -and $mixedScan.Arguments.Count -eq 2 -and $mixedOffenders.Count -eq 2) `
+        -Message "the production scanner recognizes mixed-case direct gh and static Invoke-External gh arguments (arguments=$($mixedScan.Arguments.Count), offenders=$($mixedOffenders.Count), errors=$($mixedScan.ParseErrors.Count))"
+} finally {
+    Remove-Item -LiteralPath $mixedRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# A parse error must refuse the whole population rather than let a partial AST produce a green zero.
+$brokenRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-jq-broken-$PID"
+New-Item -ItemType Directory -Path $brokenRoot -Force | Out-Null
+try {
+    Set-Content -LiteralPath (Join-Path $brokenRoot 'broken.ps1') -Encoding utf8 -Value "gh pr view 1 @('--jq', 'unterminated"
+    $brokenScan = Find-StaticJqArguments -Directory $brokenRoot
+    Assert-True -Condition ($brokenScan.ParseErrors.Count -gt 0 -and $brokenScan.Arguments.Count -eq 0) `
+        -Message "a production parse error refuses the jq population (errors=$($brokenScan.ParseErrors.Count), arguments=$($brokenScan.Arguments.Count))"
+} finally {
+    Remove-Item -LiteralPath $brokenRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 

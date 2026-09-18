@@ -434,6 +434,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     gateway::keyring::init(&keyring, &key_id)
                 }
             },
+            GatewayCommand::Setup(args) => gateway::setup::run(&args),
         },
         TopLevel::Serve(args) => serve::run(&args),
         TopLevel::Mcp(args) => mcp::run(&args),

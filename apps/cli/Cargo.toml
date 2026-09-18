@@ -49,7 +49,9 @@ zeroize.workspace = true
 libc = "=0.2.189"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+# `Win32_System_Console`: `gateway setup`'s hidden key prompt (#1139) turns console echo off
+# through `GetConsoleMode`/`SetConsoleMode`; the Unix half uses `libc`'s termios.
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
 
 [dev-dependencies]
 graphhelm-development-benchmark = { path = "../../tools/development-benchmark" }

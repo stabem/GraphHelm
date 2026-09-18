@@ -104,7 +104,16 @@ the Runtime and grants no authority; it tells an agent how to shape a judgment q
 - a judgment is a typed signal on the classify/propose side; deterministic policy still decides;
 - the route is chosen explicitly, never as an automatic paid fallback;
 - the Runtime adapter is `adapters/model-gateway/src/systemone.rs` (`SystemOneAdapter`, judge
-  door only); a manifest route for it looks like this, the key stored with `gateway credential set` and never in a tracked file:
+  door only). Wiring it is one command in a project `graphhelm init` provisioned (#1139), the
+  key pasted at a hidden prompt or piped on stdin, never an argument and never in a tracked file:
+
+  ```sh
+  graphhelm gateway setup --provider typesafe
+  ```
+
+  It writes this route into `.graphhelm/manifest.json` (or merges it into the manifest already
+  there), stores the key in the Credential Broker under `secret_typesafe` usable by `judge`
+  alone, probes the route, and prints the `graph synthesize --judge-route judge` command:
 
   ```json
   { "id": "judge", "provider": "typesafe", "transport": "direct_api", "authentication": "api_key",

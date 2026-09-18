@@ -11,29 +11,28 @@ this table filled, the head it ran against, and the binary's build line, the way
 
 ## Prerequisites
 
-1. **A `typesafe` route in a manifest** (`m.json` below), beside the chat route the draft door
-   uses. The judge route, exactly as `core/gateway/tests/manifest_contract.rs::typesafe_is_a_legal_direct_api_provider`
-   pins it:
+1. **The judge route and its key, in one command** (#1139), in a project `graphhelm init`
+   provisioned:
 
-   ```json
-   { "id": "judge", "provider": "typesafe", "transport": "direct_api", "authentication": "api_key",
-     "billingMode": "per_token", "baseUrl": "https://api.typesafe.ai", "model": "jev-latest",
-     "credentialRef": "secret_typesafe", "profiles": ["balanced_reasoning"], "enabled": true }
+   ```sh
+   graphhelm gateway setup --provider typesafe
    ```
 
-2. **The key in the Credential Broker, never in a tracked file.** Store it under the route's
-   `credentialRef` with `graphhelm gateway credential set` (the same keyring directory and
-   passphrase `gateway probe` uses; `--broker --keyring --key-id` on the synthesize command name
-   them). The manifest, the goal files and this record carry the reference `secret_typesafe`,
-   never the key. A run whose transcript shows a key is not filed.
-3. **A library directory** (`<dir>` below) with at least one template beside its
+   It writes the `judge` route — exactly as
+   `core/gateway/tests/manifest_contract.rs::typesafe_is_a_legal_direct_api_provider` pins it —
+   into `.graphhelm/manifest.json` beside whatever chat route the draft door uses (a second
+   `setup --provider anthropic --model <name>` or a hand-written route), asks for the key once
+   (hidden prompt, or piped on stdin), stores it in the Credential Broker under `secret_typesafe`,
+   and probes the route. The manifest, the goal files and this record carry the reference
+   `secret_typesafe`, never the key. A run whose transcript shows a key is not filed.
+2. **A library directory** (`<dir>` below) with at least one template beside its
    `.template.json` sidecar (§10.7). The fixture library `core/architect/fixtures/library/` is
    test data; copy it or author templates for the goals — there is no default directory and no
    bundled catalog. A run without a library measures sites 3 and 2 only and says so.
-4. **The program allowlist per goal.** Every goal that needs a program passes it explicitly
+3. **The program allowlist per goal.** Every goal that needs a program passes it explicitly
    (`--allow-program cargo`); the allowlist has no default (D-052), and a filled template naming
    a program outside it is refused, not measured.
-5. **The goal set, pre-registered.** Write the ten goals into the table BEFORE the first call.
+4. **The goal set, pre-registered.** Write the ten goals into the table BEFORE the first call.
    Goals 1 and 2 are the two the suite already records (`core/architect/fixtures/first-compile/GOAL.txt`,
    the goal of `m11-first-compile-2026-09-11.md`, and `core/architect/fixtures/useful-change/GOAL.txt`);
    the remaining eight are the operator's, chosen to vary what the recorded ones never vary (a
@@ -47,8 +46,9 @@ this table filled, the head it ran against, and the binary's build line, the way
 graphhelm graph synthesize \
   --goal "<goal text>" \
   --allow-program cargo \
-  --manifest m.json --route <draft route> \
+  --manifest .graphhelm/manifest.json --route <draft route> \
   --judge-route judge \
+  --broker .graphhelm/broker --keyring .graphhelm/keyring --key-id studio \
   --drafts 3 \
   --library <dir> \
   --out g<N>.json

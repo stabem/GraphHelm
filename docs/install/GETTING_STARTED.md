@@ -12,9 +12,9 @@ and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../accepta
 **What needs credentials and what does not.** The clone needs a GitHub account with access to
 the private repository (section 1). Nothing after the clone needs an account, an API key, a model
 provider, a database, or the network (the Studio's `npm ci` fetches packages once). Every execution below runs on fixtures. A run that calls a real model needs a
-gateway manifest and credentials and is not covered here — see
-[`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) for what works without a
-provider and what changes when you add one.
+gateway manifest and a credential; the one command that wires both is at the end of section 2,
+and [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) says what works
+without a provider and what changes when you add one.
 
 **One port.** `graphhelm init` defaults to `127.0.0.1:8791`, and every command on this page uses
 that number. `install/install.sh` (the VPS systemd path) binds `127.0.0.1:8080` instead; if you
@@ -156,6 +156,39 @@ unchanged, `.gitignore` gains nothing, and an existing `.mcp.json` keeps every o
 Options: `--bind` (default `127.0.0.1:8791`), `--key-id` (default `studio`), `--harness
 claude-code|codex` (repeatable; overrides detection), `--project <dir>` (default: the current
 directory).
+
+### Optional: wire a model provider in one command
+
+Nothing below needs this. When you want a run that calls a real model, `gateway setup` does in
+one command what used to be four: it adds the provider's route to
+`<project>/.graphhelm/manifest.json`, asks for the API key once, stores it in the Credential
+Broker (`<project>/.graphhelm/broker`) under the keyring and `serve.key` that `init` made, probes
+the route, and prints the next commands. You fill in only the key.
+
+```powershell
+graphhelm gateway setup --provider typesafe --pretty
+```
+
+```bash
+graphhelm gateway setup --provider typesafe --pretty
+```
+
+On a terminal it prompts `Paste the typesafe API key (input hidden):` on stderr with echo off.
+In a script, pipe the key instead — it is never an argument:
+
+```bash
+printf '%s\n' "$TYPESAFE_API_KEY" | graphhelm gateway setup --provider typesafe
+```
+
+Expected: `"ok": true`, `"command": "gateway.setup"`, `data.route` naming `judge` /
+`secret_typesafe`, `data.probe.health` `available` (the probe proves the credential leases; it
+places no model call), and `data.next` with the exact `graph synthesize --judge-route judge`
+command. **The key is never printed** and is readable in no file: the broker's store is sealed.
+Providers: `typesafe` (defaults `https://api.typesafe.ai`, model `jev-latest`, route `judge`),
+`anthropic` and `openai` (route `anthropic` / `openai`; `--model` is required, setup does not
+guess one). A second run with the same route id is refused and changes nothing; `--replace`
+swaps the route. Options: `--route-id`, `--model`, `--base-url`, `--key-id` (as given to `init`),
+`--project <dir>`.
 
 ## 3. Start the Runtime
 

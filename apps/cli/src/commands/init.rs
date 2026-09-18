@@ -42,13 +42,13 @@ const SOURCE: &str = "init-cli";
 const ARGUMENT_CODE: &str = crate::error_codes::GHCLI001_ARGUMENT_INVALID;
 const REFUSED_CODE: &str = crate::error_codes::GHCLI027_INIT_REFUSED;
 
-const RUNTIME_DIRECTORY: &str = ".graphhelm";
+pub(super) const RUNTIME_DIRECTORY: &str = ".graphhelm";
 const EVENTS_DIRECTORY: &str = "events";
-const KEY_FILE: &str = "serve.key";
-const KEYRING_DIRECTORY: &str = "keyring";
+pub(super) const KEY_FILE: &str = "serve.key";
+pub(super) const KEYRING_DIRECTORY: &str = "keyring";
 const CODEX_SNIPPET_FILE: &str = "codex.config.toml";
 const CLAUDE_CODE_FILE: &str = ".mcp.json";
-const GITIGNORE_FILE: &str = ".gitignore";
+pub(super) const GITIGNORE_FILE: &str = ".gitignore";
 const MCP_SERVER_NAME: &str = "graphhelm";
 const MCP_ACTOR: &str = "agent-chat";
 /// The block appended to `.gitignore`. The comment line is what makes a second run recognize its
@@ -58,11 +58,13 @@ const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer t
 /// is refused before being read into memory (PR #1070 review: the ignore file had no bound).
 const MAX_EDITED_FILE_BYTES: u64 = 1024 * 1024;
 
-/// The per-family redaction-safe failure, same shape as `serve`'s and `gateway`'s own.
-struct Failure {
-    code: &'static str,
-    message: String,
-    pointer: &'static str,
+/// The per-family redaction-safe failure, same shape as `serve`'s and `gateway`'s own. The fields
+/// are readable by `gateway setup` (#1139), which reuses this module's provisioning and reports
+/// the same message under its own code family.
+pub(super) struct Failure {
+    pub(super) code: &'static str,
+    pub(super) message: String,
+    pub(super) pointer: &'static str,
 }
 
 impl Failure {
@@ -104,7 +106,7 @@ pub fn run(args: &InitArgs) -> Outcome {
 
 /// Where a path came from: made by this run or found already there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum State {
+pub(super) enum State {
     Created,
     Existing,
     /// `.mcp.json`: the file existed and the `graphhelm` entry was added or replaced in it.
@@ -116,7 +118,7 @@ enum State {
 }
 
 impl State {
-    const fn as_str(self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::Created => "created",
             Self::Existing => "existing",
@@ -165,25 +167,9 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
     let token_path = secret_file::token_path(&events);
 
     let key_path = root.join(KEY_FILE);
-    let (key_state, key_hex) = secret_file::ensure(&key_path, "sealing key")
-        .map_err(|error| refused(error.message(), "/key"))?;
-    let key_hex = zeroize::Zeroizing::new(key_hex.into_bytes());
-    let passphrase = gateway::decode_key(&key_hex, KEY_FILE)
-        .map_err(|failure| refused(&failure.message, "/key"))?;
-
     let keyring = root.join(KEYRING_DIRECTORY);
-    refuse_symlink(&keyring, "/keyring")?;
-    ensure_owner_only_directory(&keyring, "/keyring")?;
-    let keyring_state = match gateway::keyring::create(&keyring, &args.key_id, passphrase) {
-        Ok(()) => State::Created,
-        Err(CreateError::AlreadyHoldsKey) => State::Existing,
-        Err(CreateError::Uncreatable) => {
-            return Err(refused(
-                "the keyring could not be created, or exists and does not open with the key in serve.key under this --key-id; pass the --key-id it was created with, or move the keyring directory aside (on Unix the directory must also be owner-only, 0700)",
-                "/keyring",
-            ));
-        }
-    };
+    let sealing = ensure_sealing_keyring(&root, &args.key_id)?;
+    let (key_state, keyring_state) = (sealing.key_state, sealing.keyring_state);
 
     let gitignore_path = project.join(GITIGNORE_FILE);
     let gitignore_state = ensure_gitignore(&project, &gitignore_path)?;
@@ -239,7 +225,7 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
         "token": artifact(&under_root(&token_name), token_state.into()),
         "key": {
             "path": under_root(KEY_FILE),
-            "state": State::from(key_state).as_str(),
+            "state": key_state.as_str(),
             "environment": SEALING_KEY_ENVIRONMENT,
         },
         "keyring": {
@@ -260,10 +246,55 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
     }))
 }
 
+/// What [`ensure_sealing_keyring`] provisioned: the two states `init` reports, and the passphrase
+/// itself for a caller that goes on to open the keyring (`gateway setup` opens the Credential
+/// Broker with it). `init` drops the passphrase unused.
+pub(super) struct SealingKeyring {
+    pub(super) key_state: State,
+    pub(super) keyring_state: State,
+    pub(super) passphrase: graphhelm_events::SecretBytes,
+}
+
+/// `serve.key` and the keyring under `root`, exactly as `init` provisions them — the ONE place
+/// both `init` and `gateway setup` (#1139) go through, so the two commands cannot disagree on
+/// which file is the passphrase, which directory is the keyring, or what a second run means
+/// (`existing`, never a rotation). The key file is created only when absent (`create_new`), the
+/// keyring only when the passphrase does not already open `key_id` in it.
+pub(super) fn ensure_sealing_keyring(root: &Path, key_id: &str) -> Result<SealingKeyring, Failure> {
+    let key_path = root.join(KEY_FILE);
+    let (key_state, key_hex) = secret_file::ensure(&key_path, "sealing key")
+        .map_err(|error| refused(error.message(), "/key"))?;
+    let key_hex = zeroize::Zeroizing::new(key_hex.into_bytes());
+    let passphrase = gateway::decode_key(&key_hex, KEY_FILE)
+        .map_err(|failure| refused(&failure.message, "/key"))?;
+    // `create` consumes a passphrase; the broker needs one too. Copying it is not a widening:
+    // the plaintext is already in this process, and the copy lives no longer than the caller.
+    let for_caller = passphrase.expose(|bytes| graphhelm_events::SecretBytes::new(bytes.to_vec()));
+
+    let keyring = root.join(KEYRING_DIRECTORY);
+    refuse_symlink(&keyring, "/keyring")?;
+    ensure_owner_only_directory(&keyring, "/keyring")?;
+    let keyring_state = match gateway::keyring::create(&keyring, key_id, passphrase) {
+        Ok(()) => State::Created,
+        Err(CreateError::AlreadyHoldsKey) => State::Existing,
+        Err(CreateError::Uncreatable) => {
+            return Err(refused(
+                "the keyring could not be created, or exists and does not open with the key in serve.key under this --key-id; pass the --key-id it was created with, or move the keyring directory aside (on Unix the directory must also be owner-only, 0700)",
+                "/keyring",
+            ));
+        }
+    };
+    Ok(SealingKeyring {
+        key_state: key_state.into(),
+        keyring_state,
+        passphrase: for_caller,
+    })
+}
+
 /// `--key-id` is interpolated into the printed `next` commands, so it is restricted to a vocabulary
 /// no shell interprets (`[A-Za-z0-9._-]`, non-empty) rather than quoted per shell: `OpaqueId`
 /// would accept `$(id)` or `x;id`, and a copied command would then run them (PR #1070 review).
-fn validate_key_id(key_id: &str) -> Result<(), Failure> {
+pub(super) fn validate_key_id(key_id: &str) -> Result<(), Failure> {
     let acceptable = !key_id.is_empty()
         && key_id
             .bytes()
@@ -283,7 +314,7 @@ fn validate_key_id(key_id: &str) -> Result<(), Failure> {
 /// `set_permissions(0o700)` tightens a directory nobody asked to be touched. Refused, never
 /// followed (PR #1070 review; AGENTS.md: repository files are untrusted input). A missing path is
 /// fine — it is about to be created.
-fn refuse_symlink(path: &Path, pointer: &'static str) -> Result<(), Failure> {
+pub(super) fn refuse_symlink(path: &Path, pointer: &'static str) -> Result<(), Failure> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(refused(
             "this path is a symbolic link; init provisions only real directories and files beneath the project",
@@ -316,7 +347,7 @@ fn parse_bind(bind: &str) -> Result<SocketAddr, Failure> {
 
 /// Absolute, but not canonical: `std::path::absolute` keeps the operator's own spelling, where
 /// `canonicalize` on Windows would write `\\?\C:\...` into `.mcp.json` for a harness to choke on.
-fn resolve_project(project: Option<&Path>) -> Result<PathBuf, Failure> {
+pub(super) fn resolve_project(project: Option<&Path>) -> Result<PathBuf, Failure> {
     let path = match project {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir()
@@ -414,7 +445,7 @@ fn already_ignored(gitignore: &str) -> bool {
     ignored
 }
 
-fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Failure> {
+pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Failure> {
     if !is_git_work_tree(project) {
         return Ok(State::NotAGitWorkTree);
     }
@@ -609,13 +640,13 @@ struct NextPaths<'a> {
 /// and `!`, which an interactive shell history-expands even inside double quotes (PR #1070 review).
 /// The one character single quotes cannot hold is `'` itself, spelled as `'\''` (close, escaped
 /// quote, reopen). The result is safe as a word and inside `"$(cat ...)"`.
-fn quoted_bash(path: &Path) -> String {
+pub(super) fn quoted_bash(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 /// PowerShell: single quotes are literal — a `$` in the project path is not expanded (PR #1070
 /// review) — and the one character that needs escaping inside them is `'`, doubled.
-fn quoted_powershell(path: &Path) -> String {
+pub(super) fn quoted_powershell(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 

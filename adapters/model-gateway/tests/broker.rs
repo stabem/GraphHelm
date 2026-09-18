@@ -16,6 +16,7 @@ use std::{
     thread,
 };
 
+use graphhelm_events::KeyError;
 use graphhelm_events::SecretBytes;
 use graphhelm_model_gateway::broker::{BrokerError, CredentialBroker, SecretReference};
 
@@ -564,6 +565,47 @@ fn concurrent_store_and_revoke_from_two_broker_handles_never_resurrects_a_revoca
     }
 }
 
+/// #1139: a keyring that already holds the key (made by `graphhelm init` for the Runtime's
+/// sealer, or by `gateway keyring init`) and NO store yet. `open_or_create` must open that
+/// keyring and start an empty index over it; before the fix it reached `create`, which refused
+/// the existing keyring with `KeyError::Conflict`. The credential then round-trips through a
+/// plain `open`, proving the index was really written under that keyring.
+#[test]
+fn open_or_create_starts_a_store_over_a_keyring_that_already_holds_the_key() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        keyring_dir.path(),
+        "gateway-credentials-v1",
+        passphrase(),
+    )
+    .unwrap();
+
+    block_on(async {
+        let mut broker = CredentialBroker::open_or_create(
+            broker_dir.path(),
+            keyring_dir.path(),
+            "gateway-credentials-v1",
+            passphrase(),
+        )
+        .await
+        .unwrap();
+        broker
+            .store(anthropic_reference(), sentinel_bytes())
+            .await
+            .unwrap();
+    });
+
+    block_on(async {
+        let broker = open_broker(broker_dir.path(), keyring_dir.path()).await;
+        let leased = broker
+            .lease("secret_anthropic_primary", "anthropic_byok")
+            .await
+            .unwrap();
+        leased.expose(|bytes| assert_eq!(bytes, SENTINEL.as_bytes()));
+    });
+}
+
 /// IMPORTANT 9: `CredentialBroker::open_or_create` opens an existing store rather than
 /// re-creating it, so calling `credential set` twice against the same directories both succeeds
 /// and preserves the first entry.
@@ -668,4 +710,44 @@ fn create_never_overwrites_an_existing_index_even_with_a_fresh_keyring_dir() {
             .unwrap();
         assert_eq!(leased.expose(<[u8]>::to_vec), SENTINEL.as_bytes());
     });
+}
+
+/// #1141 re-read: the `open_or_create` fallback's preserved error was unobservable — every
+/// `KeyProvider` renders as one string, so nothing could tell the two failures apart and
+/// reverting the hunk reddened nothing. It IS observable on the variant, which is what this cell
+/// reads: with a store absent and a keyring that holds the key under a DIFFERENT passphrase,
+/// `open` fails for a real reason and `create` can only restate the collision as `Conflict`. The
+/// error returned must be the open failure, not that restatement.
+#[test]
+fn a_wrong_passphrase_over_an_existing_keyring_keeps_the_open_failure_not_the_conflict() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        keyring_dir.path(),
+        "gateway-credentials-v1",
+        passphrase(),
+    )
+    .unwrap();
+
+    let other = SecretBytes::new((0..32).map(|offset| 0xA5_u8.wrapping_add(offset)).collect());
+    let error = block_on(async {
+        CredentialBroker::open_or_create(
+            broker_dir.path(),
+            keyring_dir.path(),
+            "gateway-credentials-v1",
+            other,
+        )
+        .await
+    });
+    let Err(error) = error else {
+        panic!("a wrong passphrase must not open or create the store");
+    };
+
+    match error {
+        BrokerError::KeyProvider(KeyError::Conflict) => {
+            panic!("the conflict merely restates the collision; the open failure is what happened")
+        }
+        BrokerError::KeyProvider(_) => {}
+        other => panic!("{other:?}"),
+    }
 }

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use graphhelm_gateway::manifest::{ModelRoute, Transport};
+use graphhelm_events::SecretBytes;
+use graphhelm_gateway::manifest::{ModelRoute, RouteManifest, Transport};
 use graphhelm_model_gateway::broker::{BrokerError, CredentialBroker};
 use graphhelm_model_gateway::env;
 use serde_json::json;
@@ -33,7 +34,7 @@ struct Check {
     ok: bool,
 }
 
-struct ProbeResult {
+pub(super) struct ProbeResult {
     route: String,
     checks: Vec<Check>,
     health: &'static str,
@@ -61,6 +62,29 @@ fn execute(
     key_id: Option<&str>,
 ) -> Result<ProbeResult, Failure> {
     let manifest = load_manifest(manifest)?;
+    probe_loaded(
+        &manifest,
+        route_id,
+        broker,
+        keyring,
+        key_id,
+        passphrase_from_env,
+    )
+}
+
+/// The probe over an already-loaded manifest, with the broker passphrase supplied by `passphrase`
+/// — read from `GRAPHHELM_GATEWAY_KEY` by [`run`], handed in from `serve.key` by `gateway setup`
+/// (#1139), which has just stored the credential under that same passphrase. `passphrase` is
+/// consulted only for a `direct_api` route, exactly as before: a `native_runtime` probe needs no
+/// broker and must not fail for the lack of one.
+pub(super) fn probe_loaded(
+    manifest: &RouteManifest,
+    route_id: &str,
+    broker: Option<&Path>,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
+    passphrase: impl FnOnce() -> Result<SecretBytes, Failure>,
+) -> Result<ProbeResult, Failure> {
     let route = manifest
         .routes()
         .iter()
@@ -74,7 +98,7 @@ fn execute(
     }
 
     let (check, health) = match route.transport() {
-        Transport::DirectApi => probe_direct_api(route, broker, keyring, key_id)?,
+        Transport::DirectApi => probe_direct_api(route, broker, keyring, key_id, passphrase)?,
         Transport::NativeRuntime => {
             let check = probe_native_runtime(route);
             let health = if check.ok { "available" } else { "unavailable" };
@@ -107,6 +131,7 @@ fn probe_direct_api(
     broker: Option<&Path>,
     keyring: Option<&Path>,
     key_id: Option<&str>,
+    passphrase: impl FnOnce() -> Result<SecretBytes, Failure>,
 ) -> Result<(Check, &'static str), Failure> {
     let (broker, keyring, key_id) = match (broker, keyring, key_id) {
         (Some(broker), Some(keyring), Some(key_id)) => (broker, keyring, key_id),
@@ -118,7 +143,7 @@ fn probe_direct_api(
         }
     };
     require_keyring_directory(keyring)?;
-    let passphrase = passphrase_from_env()?;
+    let passphrase = passphrase()?;
 
     let credential_ref = route
         .credential_ref()
@@ -235,7 +260,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
     }
 }
 
-fn render(result: ProbeResult) -> serde_json::Value {
+pub(super) fn render(result: ProbeResult) -> serde_json::Value {
     json!({
         "route": result.route,
         "checks": result

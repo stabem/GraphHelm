@@ -27,6 +27,7 @@ pub(super) mod credential;
 pub(super) mod keyring;
 pub(super) mod probe;
 pub(super) mod routes;
+pub(super) mod setup;
 
 use std::io::Read;
 use std::path::Path;

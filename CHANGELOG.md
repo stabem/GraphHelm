@@ -1,5 +1,55 @@
 # Specification Changelog
 
+## graphhelm gateway setup, #1139 - 2026-09-17
+
+`graphhelm gateway setup --provider <typesafe|anthropic|openai> [--project <dir>] [--route-id <id>]
+[--model <name>] [--base-url <url>] [--replace] [--key-id <id>]`: one command that provisions a
+provider route and stores its key, where the operator fills in only the key. Before it, wiring a
+provider after `graphhelm init` (#1062) was four hand steps across three documents.
+
+- **Reuses what `init` made.** `<project>/.graphhelm/serve.key` is the passphrase and
+  `<project>/.graphhelm/keyring` the keyring, through `init`'s own provisioning function
+  (`ensure_sealing_keyring`, `apps/cli/src/commands/init.rs`): created when absent, reported
+  `existing` otherwise, never rotated. `init` after `setup` finds both `existing`.
+- **Writes or merges the route** into `<project>/.graphhelm/manifest.json` (typesafe →
+  `https://api.typesafe.ai`, `jev-latest`, route `judge`; anthropic → `https://api.anthropic.com`,
+  route `anthropic`; openai → `https://api.openai.com`, route `openai`; `--model` is required for
+  the last two, setup does not guess a model; `credentialRef` = `secret_<provider>`). The whole
+  document passes `RouteManifest::from_json` before a byte is written; the write is a temporary
+  file renamed into place, LF, no BOM. A same-id route is refused before the key is asked for and
+  leaves the file byte-identical; `--replace` swaps it.
+- **Asks for the key once.** Terminal: `Paste the <provider> API key (input hidden):` on stderr
+  with echo off (termios on Unix, `SetConsoleMode` on Windows, through the `libc`/`windows-sys`
+  dependencies the crate already had; a terminal that refuses the mode change is warned, not
+  refused). Pipe: one trimmed line. Never an argument, never printed, never logged; stored only in
+  the Credential Broker (`.graphhelm/broker`) through the same `CredentialBroker::store` path
+  `gateway credential set` uses, usable by that route alone. An empty key is refused
+  (`GHCLI009_GATEWAY_INVALID`, `/stdin`).
+- **Probes and prints the next commands.** `gateway probe`'s own function (`probe_loaded`) runs on
+  the route with the passphrase from `serve.key`; `data.probe` carries its reply verbatim, and
+  `data.next` the `gateway probe` and `graph synthesize` commands with the paths filled in —
+  `--judge-route judge` for typesafe, `--route <id>` for a chat provider. Setup wires a route and
+  never selects one.
+- **`.gitignore`** gains `.graphhelm/` when missing, through `init`'s helper.
+- **Broker fix on the way.** `CredentialBroker::open_or_create`
+  (`adapters/model-gateway/src/broker.rs`) reached `create` whenever the store did not exist yet,
+  and `SealedKeyProvider::create` refuses a keyring that already holds the key — so the first
+  credential stored against an `init`-made keyring failed with "the sealed keyring could not be
+  used". It now opens the existing keyring and starts the empty index over it
+  (`open_or_create_starts_a_store_over_a_keyring_that_already_holds_the_key`,
+  `adapters/model-gateway/tests/broker.rs`).
+- **Cells.** `apps/cli/tests/gateway_setup.rs`: the typesafe route after `init` with a piped
+  sentinel key against a silent loopback provider (the probe is quota-free and dials nothing),
+  the sentinel in no output and readable in no file under the project; refusal without
+  `--replace` with a byte-identical manifest and an untouched store; `--replace`; the empty key;
+  the anthropic provider (`--model` required, `--route anthropic` in `next`); setup before
+  `init`; a manifest whose other routes survive the merge. Unit cells on the prompt/reader split
+  with a fake reader (`apps/cli/src/commands/gateway/setup.rs`).
+- **Docs.** `docs/install/GETTING_STARTED.md` (the one-command path at the end of §2),
+  `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` (the TypeSafe section's four manual steps
+  replaced), `docs/acceptance/architect-judgments-recipe.md` (prerequisites 1-2 become the one
+  command).
+
 ## Shadow classification of a red gate, #1138 - 2026-09-17
 
 Edge 1 of #1138, in SHADOW MODE: `graphhelm gate classify-red` puts a bounded excerpt of a RED

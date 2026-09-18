@@ -838,6 +838,50 @@ pub enum GatewayCommand {
     Credential(CredentialArgs),
     /// Manages the sealing keyring itself, independently of any credential.
     Keyring(KeyringArgs),
+    /// One command that wires a model provider into a project `init` provisioned (#1139): adds
+    /// the provider's `direct_api` route to `<project>/.graphhelm/manifest.json`, reads the API
+    /// key ONCE (hidden prompt on a terminal, one line on a pipe; never an argument), stores it in
+    /// the Credential Broker under the keyring `init` made, probes the route, and prints the next
+    /// commands. The key never appears in output, logs, or any file outside the sealed broker.
+    Setup(SetupArgs),
+}
+
+/// The providers `gateway setup` knows how to wire; each pins the defaults `--route-id`,
+/// `--model` and `--base-url` may override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SetupProvider {
+    /// TypeSafe's System One judge (`https://api.typesafe.ai`, model `jev-latest`, route `judge`).
+    Typesafe,
+    /// Anthropic's Messages API (`https://api.anthropic.com`, route `anthropic`; `--model` required).
+    Anthropic,
+    /// OpenAI's API (`https://api.openai.com`, route `openai`; `--model` required).
+    Openai,
+}
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    #[arg(long, value_enum)]
+    pub provider: SetupProvider,
+    /// The project `init` provisioned. Defaults to the current directory; must exist.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The route id written into the manifest; the provider's default when absent.
+    #[arg(long = "route-id")]
+    pub route_id: Option<String>,
+    /// The model the route names. Defaulted for `typesafe` only; the other providers publish no
+    /// single model this command could pin, so it must be given.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// The route's `baseUrl` (`https://…`, or `http://` to loopback); the provider's when absent.
+    #[arg(long = "base-url")]
+    pub base_url: Option<String>,
+    /// Replace an existing route with the same id. Without it a second run is refused and the
+    /// manifest is left untouched.
+    #[arg(long)]
+    pub replace: bool,
+    /// The sealing key's id inside the keyring, as given to `init`.
+    #[arg(long = "key-id", default_value = "studio")]
+    pub key_id: String,
 }
 
 #[derive(Debug, Args)]

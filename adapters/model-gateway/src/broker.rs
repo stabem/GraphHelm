@@ -252,6 +252,13 @@ impl CredentialBroker {
     /// `BrokerError::KeyProvider(KeyError::Conflict)`); this method removes the need for callers
     /// to hit that path at all in the common sequential case, by checking for an existing index
     /// first and calling [`Self::open`] instead.
+    ///
+    /// A store that does not exist yet over a keyring that ALREADY holds `key_id` (#1139: the
+    /// keyring `graphhelm init` provisions for the Runtime's sealer, which `gateway setup` then
+    /// shares with the broker) is opened, not created: `SealedKeyProvider::create` refuses an
+    /// existing keyring with `KeyError::Conflict`, so the first `store` against an `init`-made
+    /// keyring used to fail with "the sealed keyring could not be used". The empty index is still
+    /// written with [`persist_new`]'s `create_new` semantics.
     pub async fn open_or_create(
         broker_dir: &Path,
         keyring_dir: &Path,
@@ -259,9 +266,38 @@ impl CredentialBroker {
         passphrase: SecretBytes,
     ) -> Result<Self, BrokerError> {
         if broker_dir.join(STORE_FILE).is_file() {
-            Self::open(broker_dir, keyring_dir, key_id, passphrase).await
-        } else {
-            Self::create(broker_dir, keyring_dir, key_id, passphrase).await
+            return Self::open(broker_dir, keyring_dir, key_id, passphrase).await;
+        }
+        // `open` and `create` each consume a passphrase; the copy lives no longer than this call.
+        let for_open = passphrase.expose(|bytes| SecretBytes::new(bytes.to_vec()));
+        match SealedKeyProvider::open(keyring_dir, key_id, for_open) {
+            Ok(provider) => {
+                std::fs::create_dir_all(broker_dir).map_err(|_| BrokerError::Storage {
+                    operation: "create the broker directory",
+                })?;
+                let entries = BTreeMap::new();
+                persist_new(broker_dir, &entries)?;
+                Ok(Self {
+                    broker_dir: broker_dir.to_path_buf(),
+                    protector: EvidenceProtector::new(provider),
+                    entries,
+                })
+            }
+            // THE REASON SURVIVES (#1141 review, LOW). `open` fails for two different reasons:
+            // the keyring does not hold this key id yet, or it holds it and the passphrase or the
+            // file is wrong. `KeyError` does not separate those two cases in a way this layer may
+            // assert, so the fallback stands — but when `create` then reports its OWN conflict
+            // (the keyring does hold the key, so the open failure was the real one), the original
+            // error is returned instead of the conflict that merely restates the collision.
+            Err(open_error) => {
+                match Self::create(broker_dir, keyring_dir, key_id, passphrase).await {
+                    Ok(broker) => Ok(broker),
+                    Err(BrokerError::KeyProvider(KeyError::Conflict)) => {
+                        Err(BrokerError::KeyProvider(open_error))
+                    }
+                    Err(other) => Err(other),
+                }
+            }
         }
     }
 

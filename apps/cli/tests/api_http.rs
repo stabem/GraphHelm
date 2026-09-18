@@ -800,6 +800,45 @@ fn read_within_deadline(
     total_deadline: Duration,
     per_read_guard: Duration,
 ) -> std::io::Result<Vec<u8>> {
+    read_within_deadline_clocked(
+        stream,
+        what,
+        started,
+        total_deadline,
+        per_read_guard,
+        &mut Instant::now,
+    )
+}
+
+/// The body of `read_within_deadline`, with its ONE source of "what time is it" made a parameter
+/// (#1129). Every caller in this suite goes through `read_within_deadline`, which passes
+/// `Instant::now` -- so this seam changes no behaviour anywhere; it exists so ONE cell
+/// (`eof_arriving_after_the_deadline_is_not_silently_accepted`) can decide its property without
+/// racing the real clock.
+///
+/// **Why a clock seam is legitimate HERE and was rightly refused one function over.** `:5715`
+/// records that `a_read_that_starts_before_any_byte_exists_still_times_out_at_the_shrunk_budget`
+/// must NOT use an injected clock: that cell's whole subject is the socket's own
+/// `set_read_timeout`, which the OS enforces against wall-clock time, so a clock the test controls
+/// and the clock the socket obeys would disagree and the cell would stop measuring its own axis.
+/// The EOF re-check is the opposite case. Its subject is not a socket timeout at all -- it is
+/// `read_within_deadline`'s OWN bookkeeping: whether, having received a real EOF from a real
+/// socket, the function compares its own notion of now against its own deadline before calling
+/// that success (`:707`). Nothing about that comparison is OS-enforced, so nothing about it needs
+/// the real clock, and the socket is left doing its real job either way: the EOF this cell reads
+/// is a genuine close of a genuine loopback connection.
+///
+/// `&mut dyn FnMut() -> Instant` rather than a generic parameter: this is called from exactly two
+/// places, one of which wants a stateful closure, and a trait object keeps the function from being
+/// monomorphised across a suite that already compiles slowly.
+fn read_within_deadline_clocked(
+    stream: &mut TcpStream,
+    what: &str,
+    started: Instant,
+    total_deadline: Duration,
+    per_read_guard: Duration,
+    now: &mut dyn FnMut() -> Instant,
+) -> std::io::Result<Vec<u8>> {
     let deadline = started + total_deadline;
     let mut raw = Vec::new();
     let mut buf = [0u8; 8192];
@@ -812,7 +851,7 @@ fn read_within_deadline(
     // the transport happened to batch that progress into syscalls.
     let mut bytes_received: usize = 0;
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(now());
         if remaining.is_zero() {
             return Err(total_deadline_error(
                 what,
@@ -842,7 +881,7 @@ fn read_within_deadline(
                 // deadline before reporting anything (the next iteration's own top-of-loop check
                 // for `Ok(n)`, the error arm's own diagnosis for a timeout) -- EOF was the one
                 // path that returned straight through without it.
-                if Instant::now() >= deadline {
+                if now() >= deadline {
                     return Err(total_deadline_error(
                         what,
                         started,
@@ -5769,108 +5808,121 @@ fn a_read_that_starts_before_any_byte_exists_still_times_out_at_the_shrunk_budge
 /// `:707` (Codex, #740 review, sixth round): `Ok(0) => return Ok(raw)` reported success without
 /// re-checking `total_deadline`, and the 1ms floor on `this_read_budget` opens that window with
 /// NO scheduling delay needed at all -- purely from `remaining` landing sub-millisecond at the
-/// moment a read is attempted. `started` is deliberately backdated here rather than relying on
-/// live timing to land in that sub-ms window (which would be genuinely racy): backdating by
-/// `total_deadline` minus a small, fixed margin makes `remaining` land deterministically inside
-/// the floor's own window on entry, independent of how long connecting and writing the request
-/// actually took on this run. A server that closes with no bytes and no delay (`drip_server(_,
-/// b"")`, the `bytes` loop never executing) delivers EOF on the very first read, comfortably
-/// inside the floor-widened budget on a loopback connection.
+/// moment a read is attempted. This cell proves the re-check that closed it: given a real EOF from
+/// a real socket, delivered at a moment when the deadline has already passed, the function must
+/// report a bounded failure rather than success.
+///
+/// **The seam the old note asked for (#1129), not a bigger number.** Until now the arrangement
+/// backdated `started` by `total_deadline - 15us`, so `remaining` would land inside the 1ms floor
+/// on entry and the EOF would then arrive after the deadline. That is a race on a window tens of
+/// microseconds wide, and it could not be tuned out: widening the margin was measured to miss
+/// 30/30 in the opposite direction (the deadline genuinely not expiring, EOF accepted as a correct
+/// success), narrowing it caught the top-of-loop check instead. #785 added twenty-four retries and
+/// a `HARNESS-BROKE` exhaustion panic, which reduced but did not remove the exposure, and the cell
+/// then reddened five full gate runs across four branches (#1038, #1030, #1018 x3), none of which
+/// changed any Rust. Measured here on this machine, the OLD cell against the NEW one, run
+/// alternately in the same loop so both see the same load: 30/30 green for the old cell at ~87%
+/// CPU, then **29/40 under two saturating cargo builds**, and 143/150 across three further
+/// interleaved batches at 69%, 89% and 98% mean CPU -- against 150/150 for the new cell in those
+/// same batches. The reds are all one mode, and it is one the retry loop cannot absorb because it
+/// is not a "miss". With `remaining` below the 1ms floor, the socket is armed
+/// for 1ms; on a saturated host the loopback EOF does not arrive inside 1ms, the read times out,
+/// and the phase is `checked once a read timed out` -- neither branch the retry loop knows, so it
+/// trips the phase assertion and fails the binary on the FIRST attempt. That is the "attempt 1 of
+/// 24" red on #1018 and the 32.5ms elapsed quoted on #1129.
+///
+/// Neither shape offered on #1129 is taken. Deriving the budget from a baseline measured in the
+/// same run keeps the same race, only with a number chosen later; downgrading the `HARNESS-BROKE`
+/// branch to a skip would silence the ONE red this cell actually produced least often and would
+/// leave a cell whose verdict is still undecidable under load -- and a cell that skips under load
+/// stops guarding anything precisely when the suite is busiest.
+///
+/// What is taken instead is the third option the exhaustion panic itself named: a seam. The two
+/// `Instant::now()` calls that decide this branch -- the top-of-loop check and the EOF arm's own
+/// re-check -- are now read through `read_within_deadline_clocked`'s `now` parameter, and this
+/// cell scripts them: the first reading says the whole budget is left, the second says the
+/// deadline has arrived. No wall clock is on either axis, so no amount of load changes the
+/// verdict. The socket keeps doing its real work: a real loopback connection is really closed and
+/// the `Ok(0)` arm is really reached, and because the first reading leaves the full budget, the
+/// read is armed for the full `per_read_guard` -- the 1ms window that a loaded host could not
+/// deliver an EOF inside is simply gone. See `read_within_deadline_clocked`'s own note for why a
+/// clock seam is right here and was rightly refused for the socket-timeout cell at `:5715`.
 #[test]
 fn eof_arriving_after_the_deadline_is_not_silently_accepted() {
-    // The arrangement is a race and CANNOT be made not to be one, so a miss is retried instead of
-    // being scored as a verdict (#785). Twenty-four attempts against a per-attempt miss rate the
-    // author measured at 0/50 and 1/50 puts an exhausted run far below anything this suite's own
-    // scheduling noise produces, and each attempt costs one loopback connection and an immediate
-    // close -- the whole cell still finishes in milliseconds.
-    const ATTEMPTS: u32 = 24;
-    let total_deadline = Duration::from_millis(20);
+    // Generous on purpose, and the opposite of the old 20ms: with the first clock reading placed
+    // at `started`, `remaining` is the WHOLE budget, so `this_read_budget` is the full guard and
+    // the close has as long as a loaded machine needs to arrive. Nothing waits for this budget --
+    // the server closes with no bytes and no delay (`drip_server(_, b"")`, the `bytes` loop never
+    // executing), so the cell still finishes in milliseconds.
+    let total_deadline = CLIENT_IO_HANG_GUARD;
     let per_read_guard = CLIENT_IO_HANG_GUARD;
-    let mut misses = 0_u32;
+    let base = drip_server(Duration::from_millis(0), b"");
+    let mut stream = connect_to(&base);
+    stream.write_all(b"x").unwrap();
+    let started = Instant::now();
+    let deadline = started + total_deadline;
 
-    for attempt in 1..=ATTEMPTS {
-        let base = drip_server(Duration::from_millis(0), b"");
-        let mut stream = connect_to(&base);
-        stream.write_all(b"x").unwrap();
-        // Backdated so `remaining` is ~15us when `read_within_deadline` computes it -- below the
-        // 1ms floor, so `this_read_budget` widens to 1ms regardless of how little time is actually
-        // left. Tuned empirically by sweeping the margin in batches of 50 runs each, watching for
-        // the TWO opposite failure modes this same race can produce: 100us measured too generous
-        // under a warm cache/branch-predictor state (round trip repeatedly finished faster than
-        // that, so the deadline genuinely hadn't passed -- correct, but not exercising this cell's
-        // own axis; 30/30 misses at the first sweep, worse at 50us: 20/50); 5us measured too tight
-        // (the handful of function calls before the FIRST `remaining` computation themselves
-        // sometimes exceeded it, catching the top-of-loop check instead of the EOF arm: 12/50
-        // wrong-phase). 15us sits in the gap between those two failure modes (0/50, then 1/50 on a
-        // repeat batch).
-        //
-        // **The margin is NOT the thing to widen when this misses**, and that is why the sweep is
-        // still recorded here: widening it was already measured to fail in the OTHER direction,
-        // 30/30, by making the deadline not actually expire. The retry above is the remedy; this
-        // number is already at its measured optimum.
-        let started = Instant::now() - (total_deadline - Duration::from_micros(15));
-        let outcome = read_within_deadline(
-            &mut stream,
-            "reading an immediate close",
-            started,
-            total_deadline,
-            per_read_guard,
-        );
-        let error = match outcome {
-            // A REGRESSION, and it needs no race to catch: EOF was accepted as success with the
-            // deadline already expired, which is exactly what `:707` added the re-check to stop.
-            // Never retried -- retrying a real failure until it passes is how a guard becomes
-            // decoration.
-            Ok(raw) => panic!(
-                "expected the deadline, already effectively expired, to be re-checked before EOF \
-                 was accepted as success -- got {} bytes instead of a bounded failure (attempt \
-                 {attempt} of {ATTEMPTS})",
-                raw.len()
-            ),
-            Err(error) => error,
-        };
-        let message = error.to_string();
-        assert!(
-            message.contains("TOTAL request deadline"),
-            "expected the total-deadline diagnostic specifically, not a generic HARNESS-BROKE \
-             (e.g. a connection-reset race): {message}"
-        );
+    // The whole arrangement, in two values. Reading 1 is the top-of-loop check: `started`, so
+    // `remaining == total_deadline` and the loop proceeds to a real read. Reading 2 is the EOF
+    // arm's re-check: exactly `deadline`, which `>= deadline` accepts -- the smallest expiry that
+    // still is one, so the cell cannot pass by overshooting. Any further reading (which would mean
+    // a second iteration, i.e. the read returned bytes this server never sends) also reports the
+    // deadline, and the phase assertion below then names the unexpected path.
+    let mut readings = 0_u32;
+    let mut clock = || {
+        readings += 1;
+        if readings == 1 { started } else { deadline }
+    };
 
-        // The phase witness (Codex, #740 review, eighth round, `:5415`): `bytes_received == 0` is
-        // consistent with EITHER the top-of-loop check catching an already-expired deadline before
-        // attempting a read, OR the EOF arm's own re-check catching it after a real read -- this
-        // cell's whole reason to exist is proving the SECOND path specifically, and without this
-        // distinction it could pass "vacuously" on a run where the backdated margin missed and the
-        // top check fired instead, silently not exercising `:707`'s own fix at all.
-        //
-        // What #785 changed is only what a wrong phase MEANS. It is still not a pass -- it is not
-        // a verdict at all. The cell measured nothing on this attempt, and a run that measures
-        // nothing must not report on the branch it was measuring.
-        if message.contains("checked at end-of-stream") {
-            if misses > 0 {
-                eprintln!(
-                    "the backdated margin landed on attempt {attempt} after {misses} miss(es); \
-                     the window is tens of microseconds wide and this is expected under load"
-                );
-            }
-            return;
-        }
-        assert!(
-            message.contains("checked before starting a read"),
-            "neither the EOF arm nor the top-of-loop check produced this; an unexpected phase \
-             means the loop took a path this cell does not know about: {message}"
-        );
-        misses += 1;
-    }
+    let outcome = read_within_deadline_clocked(
+        &mut stream,
+        "reading an immediate close",
+        started,
+        total_deadline,
+        per_read_guard,
+        &mut clock,
+    );
+    let error = match outcome {
+        // The regression this cell exists for: EOF accepted as success with the deadline already
+        // expired, which is exactly what `:707` added the re-check to stop.
+        Ok(raw) => panic!(
+            "expected the deadline, reported expired by this cell's own clock at the moment EOF \
+             arrived, to be re-checked before EOF was accepted as success -- got {} bytes instead \
+             of a bounded failure",
+            raw.len()
+        ),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("TOTAL request deadline"),
+        "expected the total-deadline diagnostic specifically, not a generic HARNESS-BROKE (e.g. a \
+         connection-reset race): {message}"
+    );
 
-    panic!(
-        "HARNESS-BROKE: the backdated margin missed its target on all {ATTEMPTS} attempts \
-         ({misses} top-of-loop hits, 0 end-of-stream), so no attempt exercised the EOF arm's own \
-         re-check and this run decides NOTHING about it. Not a verdict on the branch. The margin \
-         is already at its measured optimum -- widening it was measured to miss 30/30 in the \
-         opposite direction -- so an exhausted run means the host is slower between two \
-         `Instant::now()` calls than this technique can accommodate, and the cell needs a seam \
-         rather than a bigger number (#785)."
+    // The phase witness (Codex, #740 review, eighth round, `:5415`): `bytes_received == 0` is
+    // consistent with EITHER the top-of-loop check catching an already-expired deadline before
+    // attempting a read, OR the EOF arm's own re-check catching it after a real read -- this
+    // cell's whole reason to exist is proving the SECOND path specifically, and without this
+    // distinction it could pass "vacuously" on a run that never exercised `:707`'s own fix at all.
+    //
+    // What #1129 changed is that a wrong phase here is no longer a thing load can cause, so it is
+    // an assertion again rather than a retry-or-skip: the scripted clock cannot report the
+    // deadline expired on reading 1, so `checked before starting a read` is unreachable, and the
+    // read is armed for the full guard, so `checked once a read timed out` is too.
+    assert!(
+        message.contains("checked at end-of-stream"),
+        "expected the EOF arm's own re-check to be the phase that produced this -- any other \
+         phase means the loop took a path this cell does not know about, and the run decided \
+         nothing about `:707`'s branch: {message}"
+    );
+    // `clock` is dead from here, so `readings` is readable again. Two readings is the arrangement
+    // working exactly as scripted: one top-of-loop check, one EOF re-check, one real read between
+    // them. More would mean the read returned bytes and the loop went round again.
+    assert_eq!(
+        readings, 2,
+        "expected exactly one top-of-loop check and one end-of-stream re-check; a different count \
+         means the read loop iterated in a way this cell's two-value script does not describe"
     );
 }
 

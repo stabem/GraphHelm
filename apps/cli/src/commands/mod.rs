@@ -236,7 +236,13 @@ pub fn run(command: TopLevel) -> Outcome {
                 events,
                 execution,
                 html,
-            } => execution::status::run(&events, execution.as_deref(), html.as_deref()),
+                file,
+            } => execution::status::run(
+                &events,
+                execution.as_deref(),
+                html.as_deref(),
+                file.as_deref(),
+            ),
             ExecutionCommand::Briefing { events, execution } => {
                 execution::briefing::run(&events, execution.as_deref())
             }

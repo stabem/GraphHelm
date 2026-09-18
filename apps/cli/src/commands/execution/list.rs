@@ -104,7 +104,13 @@ pub(crate) fn execute(
                     silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
                     at_sequence: head,
                 };
-                let full = render(&projection, &inputs, &super::Liveness::measured(&history));
+                let full = render(
+                    &projection,
+                    &inputs,
+                    &super::Liveness::measured(&history),
+                    // #134: `list` holds no graph, so no dispatch gate is published here.
+                    None,
+                );
                 let objective = projection
                     .declared_form
                     .as_ref()

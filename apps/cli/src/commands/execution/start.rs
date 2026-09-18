@@ -145,6 +145,7 @@ pub(crate) fn execute(
         // The instants ARE measured here: this command just wrote to the store, so when the
         // log last moved is a fact it can read back. Only the silence BUDGET stays absent.
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
+        Some(&prepared.spec),
     ))
 }
 
@@ -193,6 +194,8 @@ pub(crate) fn execute_held(
         &projection,
         &graphhelm_execution::AttentionInputs::default(),
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
+        // #134: this door holds no graph, so no dispatch gate is published from it.
+        None,
     ))
 }
 

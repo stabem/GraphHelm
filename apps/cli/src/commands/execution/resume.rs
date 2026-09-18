@@ -119,6 +119,7 @@ pub(crate) fn execute(
         // reported `lastEventAt: null` and an empty `nodeLastEventAt` immediately after
         // re-dispatching four nodes, while `status` read the same store correctly.
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
+        Some(&prepared.spec),
     );
 
     // #123's REQUIRED MITIGATION, and it is what pays for overloading `Paused` with a second

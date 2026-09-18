@@ -165,6 +165,8 @@ pub(crate) fn execute(
         // not a liveness reading (the same posture as every other mutation reply).
         &graphhelm_execution::AttentionInputs::default(),
         &super::Liveness::from_store(&store, &scope, &stream),
+        // #134: this door holds no graph, so no dispatch gate is published from it.
+        None,
     );
     value["claim"] = match outcome {
         ClaimOutcome::Claimed {

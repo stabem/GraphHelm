@@ -198,9 +198,270 @@ pub fn dispatch_candidates(
     Ok(candidates)
 }
 
+/// #134: why a dispatch view could not be derived. Each variant is a fact about the execution or
+/// the caller, never about the tree, and each has one sentence for the wire so no surface invents
+/// its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchUnavailable {
+    /// The caller did not hold the graph; without edges there is no gate to read.
+    NoGraph,
+    /// The execution is paused: both drivers suppress every dispatch until resume, so a count of
+    /// "ready to dispatch" above zero would over-promise exactly the way `nodeStateCounts.ready`
+    /// did.
+    Paused,
+    /// More nodes are dispatchable at once than the execution may dispatch; the driver blocks for
+    /// an owner decision there, and so does this view.
+    ReadySetTooLarge,
+}
+
+impl DispatchUnavailable {
+    /// The wire sentence, owned here so the CLI and any other consumer say the same thing.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::NoGraph => {
+                "this command did not have the graph; `execution status --file <graph>` derives it"
+            }
+            Self::Paused => "the execution is paused; the driver dispatches nothing until resume",
+            Self::ReadySetTooLarge => {
+                "the ready set exceeds the dispatch bound; the driver blocks for an owner decision before any of it moves"
+            }
+        }
+    }
+}
+
+/// #134: the dispatch gate beside the state. `ready` is the Ready half of the driver's candidate
+/// set -- Ready nodes whose predecessors are satisfied, by the same `ready_set` the driver
+/// consults -- and `gated` names the Ready nodes of the ACTIVE graph that are not. The driver's
+/// full answer is `dispatch_candidates`, which adds the retry-pending `Queued` nodes; those are
+/// not this view's subject, which is `Ready`, the state the vocabulary over-promised.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DispatchView {
+    /// Nodes the driver would dispatch NOW: Ready, predecessors satisfied, and inside the
+    /// capacity `dispatch_plan` leaves after the in-flight nodes are counted.
+    ///
+    /// THE LIMIT, stated once (Codex on #1014): this view is a function of PERSISTED state -- the
+    /// spec, the folded node states, the attempts, the aggregate status. The Runtime driver also
+    /// keeps a private `refused` set for nodes `build_work` would not dispatch (an unsupported node
+    /// type, a gate whose certification is missing or stale) and leaves such a node `Ready`; that
+    /// set lives in the driver's memory and reaches no event, so no reader of the stream -- this
+    /// view, `status`, the monitor -- can see it. A node the Runtime has refused is therefore
+    /// counted here as ready. The remedy is a persisted refusal, a Runtime change outside this
+    /// crate; until then "ready" means "the stream says nothing stops it".
+    pub ready: usize,
+    /// Ready nodes of the active graph whose predecessors are not satisfied.
+    pub gated: Vec<String>,
+    /// Ready nodes whose predecessors ARE satisfied but which `max_parallel` holds back behind
+    /// the in-flight ones (Codex on #1014): eligible, not dispatchable now. Named rather than
+    /// folded into `ready`, because "ready to dispatch" on the wire means what it means to the
+    /// driver, and the driver's answer is the plan, not the edge predicate alone.
+    pub waiting_capacity: Vec<String>,
+}
+
+/// Derives the dispatch view, with the policy that used to live in the CLI (Codex on #1014):
+/// a paused execution has no view; an absent graph has no view; the bound is the driver's bound;
+/// `gated` is intersected with the active spec's node set, because `node_states` is folded from
+/// the whole history and a node a later publication removed keeps its historical `Ready` there.
+///
+/// Pure over its arguments, like everything else in this module, so a replayed execution reads
+/// the same view the original did.
+pub fn dispatch_view(
+    spec: Option<&GraphSpec>,
+    states: &BTreeMap<String, NodeState>,
+    attempts: &BTreeMap<String, u32>,
+    status: Option<&graphhelm_protocols::SimulationStatus>,
+) -> Result<DispatchView, DispatchUnavailable> {
+    if matches!(status, Some(graphhelm_protocols::SimulationStatus::Paused)) {
+        return Err(DispatchUnavailable::Paused);
+    }
+    let Some(spec) = spec else {
+        return Err(DispatchUnavailable::NoGraph);
+    };
+    // THE READY HALF, which is this view's SUBJECT (see `DispatchView`) -- reported, not planned.
+    let dispatchable = match ready_set(spec, states) {
+        Ok(set) => set,
+        Err(ScheduleError::ReadySetTooLarge) => return Err(DispatchUnavailable::ReadySetTooLarge),
+    };
+    // THE WHOLE CANDIDATE SET, which is what CAPACITY is spent on (Codex on #1014). Both drivers
+    // plan over `dispatch_candidates`, so an edge-ready `Queued` retry competes for the same slots.
+    // Planning over the Ready half alone over-reported `ready`: with capacity one and a queued
+    // candidate sorting first, the driver gives the slot to the retry while this view still counted
+    // the Ready node as dispatching now.
+    //
+    // The view's SUBJECT does not widen -- `Queued` nodes are still absent from every field. Only
+    // the plan they are weighed against does, which is the difference between "what is Ready" and
+    // "what will actually move".
+    let candidates = match dispatch_candidates(spec, states) {
+        Ok(set) => set,
+        Err(ScheduleError::ReadySetTooLarge) => return Err(DispatchUnavailable::ReadySetTooLarge),
+    };
+    let gated: Vec<String> = states
+        .iter()
+        .filter(|(node, state)| {
+            **state == NodeState::Ready
+                && spec.nodes.contains_key(node.as_str())
+                && !dispatchable.contains(node.as_str())
+        })
+        .map(|(node, _)| node.clone())
+        .collect();
+    // CAPACITY, the way both drivers apply it: the in-flight count is the `Running` nodes, the
+    // limit is `parallel_limit(&spec.budgets)`, and `dispatch_plan` takes the attempt-fair prefix
+    // that fits. A zero limit cannot progress and the driver refuses it; here it reads as the
+    // bound, since the operator's question is "what moves now" and the answer is nothing.
+    let in_flight = states
+        .values()
+        .filter(|state| **state == NodeState::Running)
+        .count();
+    let max_parallel = crate::parallel_limit(&spec.budgets);
+    // A zero limit is `ZeroParallelism`, the one error the planner has: nothing moves, and the
+    // driver refuses the execution; here the empty plan says the same.
+    let planned =
+        crate::dispatch_plan(&candidates, attempts, in_flight, max_parallel).unwrap_or_default();
+    // Classified back down to the Ready half AFTER the plan, exactly as the thread asked: the plan
+    // decides who moves, and this view reports the Ready members of that real answer.
+    let ready = planned
+        .iter()
+        .filter(|node| dispatchable.contains(node.as_str()))
+        .count();
+    let waiting_capacity: Vec<String> = dispatchable
+        .iter()
+        .filter(|node| !planned.contains(node))
+        .cloned()
+        .collect();
+    Ok(DispatchView {
+        ready,
+        gated,
+        waiting_capacity,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #134: a node a later publication removed keeps its historical `Ready` in the folded
+    /// states; it is neither dispatchable nor gated, because it is not in the graph. The premise
+    /// lives in `core/events/src/projection.rs`: the fold only ever INSERTS into `node_states`
+    /// (two sites) and `GraphVersionPublished` touches it not at all -- measured 2026-09-08, two
+    /// inserts, zero removals. If a later fold prunes on publication, this synthesised state
+    /// becomes unreachable and the cell should say so rather than keep passing.
+    #[test]
+    fn dispatch_view_ignores_a_node_the_active_graph_no_longer_has() {
+        let spec = spec(&["a", "b"], &[("a", "b")]);
+        let states = states(&[
+            ("a", NodeState::Ready),
+            ("b", NodeState::Ready),
+            ("removed-by-a-later-publication", NodeState::Ready),
+        ]);
+        let view = dispatch_view(Some(&spec), &states, &BTreeMap::new(), None).unwrap();
+        assert_eq!(view.ready, 1, "a has no predecessor");
+        assert_eq!(
+            view.gated,
+            vec!["b".to_owned()],
+            "b waits on a; the removed node is in neither"
+        );
+    }
+
+    /// #134: capacity is the driver's, not the edge predicate's (Codex on #1014). With
+    /// `max_parallel_model_calls: 1` and one node Running, an independent Ready node is
+    /// edge-ready and still goes nowhere until capacity frees: `ready` is 0 and the node is named
+    /// under `waiting_capacity`, never counted as dispatchable.
+    #[test]
+    fn dispatch_view_holds_an_edge_ready_node_behind_a_full_capacity() {
+        let mut spec = spec(&["a", "b"], &[]);
+        spec.budgets.max_parallel_model_calls = Some(1);
+        let held = states(&[("a", NodeState::Running), ("b", NodeState::Ready)]);
+        let view = dispatch_view(Some(&spec), &held, &BTreeMap::new(), None).unwrap();
+        assert_eq!(view.ready, 0, "capacity 1 is spent on a: {view:?}");
+        assert_eq!(view.waiting_capacity, vec!["b".to_owned()]);
+        assert!(view.gated.is_empty());
+
+        // CONTROL: the same graph with a finished a -- capacity is free and b is dispatchable.
+        let freed = states(&[("a", NodeState::Succeeded), ("b", NodeState::Ready)]);
+        let view = dispatch_view(Some(&spec), &freed, &BTreeMap::new(), None).unwrap();
+        assert_eq!(view.ready, 1);
+        assert!(view.waiting_capacity.is_empty());
+    }
+
+    /// #1014: capacity is spent by the DRIVER'S candidate set, which is `dispatch_candidates` --
+    /// the Ready nodes plus the edge-ready `Queued` retries -- not by the Ready half alone.
+    ///
+    /// Both drivers plan over that union. This view planned over `ready_set`, so with capacity one
+    /// and a queued retry sorting first, the driver handed its only slot to the retry while this
+    /// view still reported the Ready node as dispatching now. `a` is a `Queued` root, always a
+    /// candidate; equal attempts make `dispatch_plan` order by name, so `a` takes the slot.
+    ///
+    /// The view's subject does not widen: `a` appears in no field. What changed is that `b` is
+    /// weighed against the plan that will really run.
+    #[test]
+    fn dispatch_view_spends_capacity_on_the_queued_retries_the_driver_also_plans() {
+        let mut spec = spec(&["a", "b"], &[]);
+        spec.budgets.max_parallel_model_calls = Some(1);
+        let contended = states(&[("a", NodeState::Queued), ("b", NodeState::Ready)]);
+        let view = dispatch_view(Some(&spec), &contended, &BTreeMap::new(), None).unwrap();
+        assert_eq!(
+            view.ready, 0,
+            "the queued retry a takes the only slot, so no Ready node dispatches now: {view:?}"
+        );
+        assert_eq!(
+            view.waiting_capacity,
+            vec!["b".to_owned()],
+            "b is eligible and held, and it is the Ready half that is reported"
+        );
+        assert!(
+            !view.gated.contains(&"a".to_owned()),
+            "a is Queued, not a Ready node of the active graph, so it is in no field of this view"
+        );
+
+        // CONTROL: the same graph with a finished a -- nothing competes, and b dispatches. Without
+        // this arm the assertion above would also pass for a view that simply never counts anyone.
+        let freed = states(&[("a", NodeState::Succeeded), ("b", NodeState::Ready)]);
+        let view = dispatch_view(Some(&spec), &freed, &BTreeMap::new(), None).unwrap();
+        assert_eq!(view.ready, 1);
+        assert!(view.waiting_capacity.is_empty());
+    }
+
+    /// #134: a paused execution dispatches nothing, however Ready its nodes are -- and an
+    /// execution started held (an `ExecutionPaused` in the same request as the start) has no node
+    /// states at all; both are `Paused`, never a zero-of-zero that reads as live authority.
+    #[test]
+    fn dispatch_view_has_no_answer_for_a_paused_execution() {
+        use graphhelm_protocols::SimulationStatus;
+        let spec = spec(&["a"], &[]);
+        let states = states(&[("a", NodeState::Ready)]);
+        let running = dispatch_view(
+            Some(&spec),
+            &states,
+            &BTreeMap::new(),
+            Some(&SimulationStatus::Running),
+        )
+        .unwrap();
+        assert_eq!(running.ready, 1, "CONTROL: running, a is dispatchable");
+        assert_eq!(
+            dispatch_view(
+                Some(&spec),
+                &states,
+                &BTreeMap::new(),
+                Some(&SimulationStatus::Paused)
+            ),
+            Err(DispatchUnavailable::Paused)
+        );
+        assert_eq!(
+            dispatch_view(
+                Some(&spec),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                Some(&SimulationStatus::Paused)
+            ),
+            Err(DispatchUnavailable::Paused),
+            "paused with no node states is not zero-of-zero"
+        );
+        assert_eq!(
+            dispatch_view(None, &states, &BTreeMap::new(), None),
+            Err(DispatchUnavailable::NoGraph)
+        );
+        assert!(DispatchUnavailable::Paused.reason().contains("paused"));
+    }
     use graphhelm_protocols::{EdgeType, GraphEdge, GraphNode, NodeState, NodeType, Optionality};
     use std::collections::BTreeMap;
 

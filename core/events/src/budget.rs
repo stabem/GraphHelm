@@ -119,6 +119,27 @@ impl ReadBudget {
     }
 }
 
+impl ReadBudget {
+    /// Reads the clock NOW, regardless of progress. For work that follows the fold and is not
+    /// counted in events -- a derivation over the active graph after `replay_within` made its
+    /// last interval check (#134): a status that finished its fold just inside the deadline and
+    /// then spent the rest of it rendering must still say so, or the advertised bound is only a
+    /// bound on the fold. `walked` is carried for the same reason `check_progress` carries it: the
+    /// operator reading the diagnostic needs the size beside the limit.
+    pub fn check_now(&self, walked: u64) -> Result<(), ReadBudgetExceeded> {
+        let Some(bound) = &self.bound else {
+            return Ok(());
+        };
+        if bound.clock.now() <= bound.deadline {
+            return Ok(());
+        }
+        Err(ReadBudgetExceeded {
+            walked,
+            limit_millis: bound.limit_millis,
+        })
+    }
+}
+
 impl std::fmt::Debug for ReadBudget {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.bound {

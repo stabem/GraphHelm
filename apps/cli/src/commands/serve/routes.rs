@@ -716,7 +716,7 @@ pub(super) async fn status(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
-    match execution::status::budgeted(&state.events, Some(&execution_id)) {
+    match execution::status::budgeted(&state.events, Some(&execution_id), None) {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(STATUS_COMMAND, value).output,
@@ -2624,6 +2624,10 @@ async fn drive(
             // nothing instead of implying calm.
             &graphhelm_execution::AttentionInputs::default(),
             &execution::Liveness::default(),
+            // #134: no graph on this path either -- `ServeState` holds one, but publishing the
+            // dispatch view here and not from the CLI command would split the two surfaces'
+            // replies; the follow-up adds it to both from the same source.
+            None,
             context.as_ref(),
         )),
         Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),

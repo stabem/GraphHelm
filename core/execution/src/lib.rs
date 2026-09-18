@@ -30,7 +30,10 @@ pub use customs::{CustomsView, NodeCustomsView, OpenClaimView, customs_view};
 pub use dispatch::{DispatchError, dispatch_plan, parallel_limit};
 pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use progress::{Progress, classify_progress};
-pub use ready::{ScheduleError, dispatch_candidates, edges_satisfied, ready_set};
+pub use ready::{
+    DispatchUnavailable, DispatchView, ScheduleError, dispatch_candidates, dispatch_view,
+    edges_satisfied, ready_set,
+};
 pub use recovery::{ResumeError, recovery_plan, resume_preconditions};
 pub use signal::{SignalError, SignalKind, SignalSource, TypedSignal};
 pub use transition::{

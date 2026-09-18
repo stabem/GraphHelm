@@ -497,6 +497,14 @@ pub enum ExecutionCommand {
         /// renderer. The JSON envelope still prints to stdout.
         #[arg(long)]
         html: Option<PathBuf>,
+        /// #134: the execution's ACTIVE graph -- the latest version published on its stream, or
+        /// the graph it started from when nothing was published (the CLI's own streams). With it,
+        /// the reply carries `dispatch` (`ready` to dispatch, `gated` behind unmet predecessors,
+        /// `gatedNodes`) derived from the same predicate the driver uses; without it `dispatch` is
+        /// null and `dispatchUnavailable` says why. Any other graph, the start graph included once
+        /// a newer one was published, is refused.
+        #[arg(long)]
+        file: Option<PathBuf>,
     },
     /// Replays a stream and reports the resume briefing: what the execution is for, every
     /// decision with its actor in order, the work done, what is pending, and the next step.

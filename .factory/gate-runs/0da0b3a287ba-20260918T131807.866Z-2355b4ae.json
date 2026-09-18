@@ -1,0 +1,125 @@
+{
+    "status":  "HARNESS-BROKE",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "0da0b3a287baf8a403de4cc9a3df2c3c7f151d3c",
+    "pullRequest":  1014,
+    "pullRequestReason":  null,
+    "pushed":  true,
+    "pushedReason":  "the tip of issue-134-dispatch-gate-beside-the-state on origin IS this commit, read from the server",
+    "upstreamSha":  "0da0b3a287baf8a403de4cc9a3df2c3c7f151d3c",
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "included",
+                     "complete":  true,
+                     "build":  "unknown"
+                 },
+    "requiredFeaturesExcluded":  null,
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "E:\\orch-runner-targets\\pr1014",
+    "queuedUtc":  "2026-09-18T13:18:01.3203090Z",
+    "runStartUtc":  "2026-09-18T13:18:01.3524168Z",
+    "slotWaitSecs":  0.032,
+    "runEndUtc":  "2026-09-18T13:18:07.8114272Z",
+    "canaryPassed":  false,
+    "psSuitesStartedEarly":  false,
+    "psSuitesOverlapped":  false,
+    "studioScopeIncluded":  false,
+    "studioNodePresent":  false,
+    "studioStartedEarly":  false,
+    "studioOverlapped":  false,
+    "pgMatricesStartedEarly":  false,
+    "pgMatricesOverlapped":  false,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  false,
+                       "exitCode":  101,
+                       "wallTimeSecs":  0.325,
+                       "startedUtc":  "2026-09-18T13:18:01.4666876Z",
+                       "endedUtc":  "2026-09-18T13:18:01.7992664Z",
+                       "outputTail":  [
+                                          "error: couldn\u0027t prepare build directories",
+                                          "System.Management.Automation.RemoteException",
+                                          "Caused by:",
+                                          "  failed to create directory `E:\\orch-runner-targets\\pr1014\\debug\\examples`",
+                                          "System.Management.Automation.RemoteException",
+                                          "Caused by:",
+                                          "  There is not enough space on the disk. (os error 112)"
+                                      ]
+                   }
+               ],
+    "artifactBuildExit":  null,
+    "testArtifacts":  [
+
+                      ],
+    "staleArtifactCount":  0,
+    "artifactsRebuilt":  null,
+    "artifactsProvenReuse":  null,
+    "artifactsUnprovenReuse":  null,
+    "artifactsContaminated":  null,
+    "buildMode":  "unknown",
+    "buildPassSecs":  null,
+    "crateInputHashSecs":  null,
+    "embeddedInputProblems":  null,
+    "toolchainId":  null,
+    "lockfileSha256":  null,
+    "crateInputHashError":  null,
+    "postgresExecution":  {
+
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "E:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-18T13:18:01Z | gate cwd=D:\\orch-runner-benches-ssd\\pr1014 head=0da0b3a287baf8a403de4cc9a3df2c3c7f151d3c | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=69424 start=2026-09-18T13:18:00.2921492Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-18T13:18:01.4334806Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "present",
+                          "path":  "E:/graphhelm-slot/SLOT.lock",
+                          "content":  "HELD by gate | 2026-09-18T13:18:01Z | gate cwd=D:\\orch-runner-benches-ssd\\pr1014 head=0da0b3a287baf8a403de4cc9a3df2c3c7f151d3c | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=69424 start=2026-09-18T13:18:00.2921492Z\n",
+                          "holderVerdict":  "live",
+                          "observedAtUtc":  "2026-09-18T13:18:01.8528999Z"
+                      },
+    "slotLockStartEndIdentical":  true,
+    "scope":  {
+                  "full":  false,
+                  "reason":  "SCOPED: 14 crate(s) selected",
+                  "crates":  [
+                                 "acceptance-map",
+                                 "graphhelm-architect",
+                                 "graphhelm-cli",
+                                 "graphhelm-codebase-memory-mcp",
+                                 "graphhelm-development-benchmark",
+                                 "graphhelm-events",
+                                 "graphhelm-execution",
+                                 "graphhelm-governor",
+                                 "graphhelm-model-gateway",
+                                 "graphhelm-postgres-event-store",
+                                 "graphhelm-runtime",
+                                 "graphhelm-sealed-key-provider",
+                                 "graphhelm-simulation",
+                                 "graphhelm-tool-host"
+                             ],
+                  "matrix":  true,
+                  "matrixReason":  "ran: graphhelm-postgres-event-store is in the selection"
+              },
+    "instrumentSuspect":  true,
+    "targetBuildState":  {
+                             "contaminated":  false,
+                             "suspect":  false,
+                             "state":  "fresh",
+                             "reason":  "no target directory yet, so nothing is being reused"
+                         },
+    "overallPassed":  false
+}

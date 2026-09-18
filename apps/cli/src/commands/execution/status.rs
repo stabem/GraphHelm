@@ -1,7 +1,13 @@
 use std::path::Path;
 
-use super::{Failure, finish, render, replay_failure, repository_failure, resolve_stream};
+use graphhelm_graph::GraphVersion;
+use graphhelm_protocols::{EventKind, GraphSpec};
+
+use super::{
+    Failure, execution_state, finish, render, replay_failure, repository_failure, resolve_stream,
+};
 use crate::commands::event_store;
+use crate::commands::{owner, publish_loaded};
 use crate::output::Outcome;
 
 const COMMAND: &str = "execution.status";
@@ -24,7 +30,7 @@ pub(crate) fn execute(
     // The unbounded render describes work a mutation ALREADY committed (see `budgeted`), so it
     // reads without the unknown-id refusal: the operator-facing read is the one that owes it.
     let read = read_within(events, execution, graphhelm_events::ReadBudget::unbounded())?;
-    Ok(render_read(&read))
+    Ok(render_read(&read, None))
 }
 
 /// [`execute`] under the wall-clock budget an OPERATOR-FACING read declares (#750).
@@ -41,8 +47,14 @@ pub(crate) fn execute(
 pub(crate) fn budgeted(
     events: &Path,
     execution: Option<&str>,
+    graph: Option<&GraphVersion>,
 ) -> Result<serde_json::Value, Failure> {
-    execute_within(events, execution, crate::commands::status_read_budget())
+    execute_within(
+        events,
+        execution,
+        crate::commands::status_read_budget(),
+        graph,
+    )
 }
 
 /// One operator-facing read: the folded projection, the raw history it was folded from, and the
@@ -66,16 +78,87 @@ pub(crate) fn execute_within(
     events: &Path,
     execution: Option<&str>,
     budget: graphhelm_events::ReadBudget,
+    graph: Option<&GraphVersion>,
 ) -> Result<serde_json::Value, Failure> {
-    let read = read_known_within(events, execution, budget)?;
-    Ok(render_read(&read))
+    let read = read_known_within(events, execution, budget.clone())?;
+    // #134 TAKEOVER PLACEMENT: this resolution lived in `read_within` on the branch, but main
+    // split that function and `graph` is a parameter of THIS one. Moved rather than duplicated:
+    // `read_within` stays graph-free and every caller that holds a graph passes through here.
+    // #134: the dispatch view needs the graph, which `status` does not hold -- the CLI's own
+    // `execution start` appends no publication event, so `current_graph` is empty on these
+    // streams (the same discrepancy `resume` records). `--file` supplies it, and it must be the
+    // graph this execution started from: the hash the `execution_started` payload recorded is
+    // compared, exactly as `resume` compares before it redispatches. A different graph would
+    // produce a gate for edges this execution never had, so it is refused rather than rendered.
+    let spec = match graph {
+        None => None,
+        Some(version) => {
+            // THE ACTIVE GRAPH FIRST, exactly as `resume` reads it: a stream that published a newer
+            // `GraphVersionPublished` after its start has `current_graph` set, and that version is
+            // the one the edges belong to; the start hash is the fallback for the CLI's own streams,
+            // which publish nothing (Codex on #1014).
+            let recorded = read
+                .projection
+                .current_graph
+                .as_ref()
+                .map(|published| published.semantic_hash().clone())
+                .or_else(|| {
+                    read.history
+                        .iter()
+                        .rev()
+                        .find_map(|event| match &event.kind {
+                            EventKind::ExecutionStarted(payload) => {
+                                Some(payload.graph_hash.clone())
+                            }
+                            _ => None,
+                        })
+                });
+            // The same derivation `resume` uses for its file-trust seam: the supplied graph's
+            // content hash, parsed to the wire form the start payload recorded.
+            let supplied = graphhelm_protocols::WireHash::parse(version.content_hash().as_str())
+                .map_err(|_| {
+                    execution_state("the supplied graph's hash is not wire-safe", "/file")
+                })?;
+            match recorded {
+                Some(hash) if hash == supplied => Some(&version.graph().spec),
+                Some(_) => {
+                    return Err(execution_state(
+                        "--file names a graph other than this execution's active one (semantic hash differs)",
+                        "/file",
+                    ));
+                }
+                None => {
+                    return Err(execution_state(
+                        "this stream records no execution start, so --file cannot be checked against it",
+                        "/file",
+                    ));
+                }
+            }
+        }
+    };
+    let value = render_read(&read, spec);
+    // THE SAME BUDGET, READ AGAIN after the render (Codex on #1014). `replay_within` checks the
+    // clock as the fold crosses event intervals; the dispatch derivation that follows walks the
+    // active graph and is counted in no events, so a fold that ended just inside the deadline
+    // could return a success minutes after it. The refusal is the fold's own, so the operator
+    // sees one code for "this read ran out of time" whichever half spent it.
+    budget
+        .check_now(read.history.len() as u64)
+        .map_err(|exceeded| {
+            replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
+                walked: exceeded.walked,
+                limit_millis: exceeded.limit_millis,
+            })
+        })?;
+    Ok(value)
 }
 
-fn render_read(read: &Read) -> serde_json::Value {
+fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
     let mut value = render(
         &read.projection,
         &read.inputs,
         &super::Liveness::measured(&read.history),
+        spec,
     );
     // The WIRE field keeps its existing shape on purpose, zero and all: `headSequence` is a
     // different contract from `at_sequence`, read by clients that already treat 0 as "nothing
@@ -148,24 +231,85 @@ pub(crate) fn read_within(
     })
 }
 
-pub fn run(events: &Path, execution: Option<&str>, html: Option<&Path>) -> Outcome {
-    if let Some(html) = html
-        && let Err(failure) = write_snapshot(events, execution, html)
-    {
-        return finish::<serde_json::Value>(COMMAND, Err(failure), |value| value);
-    }
+pub fn run(
+    events: &Path,
+    execution: Option<&str>,
+    html: Option<&Path>,
+    file: Option<&Path>,
+) -> Outcome {
+    // #134: `--file` is loaded, linted and published the way `resume` does it, so the version
+    // whose hash is compared below is the same object `resume` would redispatch from.
+    //
+    // THE CONTRACT OF THE STATUS BUDGET, stated once (Codex on #1014, third thread of one family):
+    // the five-second budget (#750) bounds the READ OF THE STORE -- journal verification, the fold,
+    // and everything derived from the projection, the dispatch view included. It starts when
+    // `budgeted` reads the clock and it ends at the `check_now` after `render`. It EXCLUDES this
+    // block -- `--file` preparation: load, lint, publish -- and excludes it on purpose. The budget
+    // exists to bound a walk over a history that grows with the execution, the one input the
+    // operator cannot shrink; a graph file is an input the operator named and can see, its cost is
+    // the schema crate's (`graphhelm_schema::load_graph`) and does not grow with the stream, and
+    // `start` and `resume` prepare the same file unbudgeted. A bound on preparation, if one is
+    // ever wanted, is a separate budget with its own name and its own deadline -- not this one
+    // stretched to cover a segment it was never a promise about. Every segment of this command is
+    // therefore inside the budget or named here as outside it; there is no third kind.
+    // #192, here too: a warning-only lint pass reaches every exit past this point, as it does in
+    // `start` and `resume` -- a status that computed the warnings and then dropped them would
+    // hide diagnostics the operator asked for by naming the file (Codex on #1014).
+    let mut warnings = Vec::new();
+    let version = match file {
+        None => None,
+        Some(file) => {
+            let loaded = match graphhelm_schema::load_graph(file) {
+                Ok(loaded) => loaded,
+                Err(diagnostics) => return Outcome::domain(COMMAND, diagnostics),
+            };
+            let report = graphhelm_graph::lint(&loaded.graph, &loaded.source);
+            if !report.errors.is_empty() {
+                let mut diagnostics = report.errors;
+                diagnostics.extend(report.warnings);
+                return Outcome::domain(COMMAND, diagnostics);
+            }
+            warnings = report.warnings;
+            match publish_loaded(&loaded, owner("owner-local")) {
+                Ok(version) => Some(version),
+                Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
+            }
+        }
+    };
     // The operator is waiting on this one, so it is the call that declares the budget (#750).
-    finish(COMMAND, budgeted(events, execution), |value| value)
+    //
+    // ONE budget, not one per read (Codex on #1014). `--html` replays the store a SECOND time in
+    // `write_snapshot`, and a budget built inside that call would start its own five seconds --
+    // so the command could spend the declared budget twice and still report success. Built here
+    // and handed to both, the five seconds bound the command rather than each half of it.
+    let budget = crate::commands::status_read_budget();
+    let value = execute_within(events, execution, budget.clone(), version.as_ref());
+    // `--html` AFTER the status derived, never before (Codex on #1014): the snapshot used to be
+    // written first, so a refused `--file` -- missing, lint-invalid, or a graph other than the
+    // active one -- left an apparently successful artefact behind a command that exited 2. A
+    // write failure is still the command's failure, not a silent skip.
+    if let (Some(html), Ok(_)) = (html, &value)
+        && let Err(failure) = write_snapshot(events, execution, html, budget)
+    {
+        return finish::<serde_json::Value>(COMMAND, Err(failure), |value| value)
+            .with_warnings(warnings);
+    }
+    finish(COMMAND, value, |value| value).with_warnings(warnings)
 }
 
 /// `--html`: the monitor page as a frozen incident snapshot — the SAME `render_snapshot`
 /// the serve layer's live page is built from (05f Task 5), written before the envelope so
 /// a write failure is the command's failure, not a silent skip.
-fn write_snapshot(events: &Path, execution: Option<&str>, html: &Path) -> Result<(), Failure> {
+fn write_snapshot(
+    events: &Path,
+    execution: Option<&str>,
+    html: &Path,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<(), Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
     // #1083 (Codex on PR #1091): the unknown-id refusal must come BEFORE the write. `run` calls
-    // this ahead of `budgeted`, so without this check a refused `status --execution <typo>
+    // this after the status read, so without this check a refused `status --execution <typo>
     // --html <path>` folded nothing, rendered it, and overwrote whatever snapshot already stood
     // at `<path>` - a refused command with a destructive side effect. Same rule, same refusal as
     // `read_known_within`.
@@ -180,6 +324,16 @@ fn write_snapshot(events: &Path, execution: Option<&str>, html: &Path) -> Result
         chrono::Utc::now(),
         events,
     );
+    // THE SAME BUDGET AS THE STATUS READ, spent down by this second replay (Codex on #1014).
+    // Placed after the render and before the write, mirroring the post-render check in
+    // `execute_within`: the whole of the second operator-facing read is inside the bound, and a
+    // command that overran cannot report success -- or leave a snapshot behind implying it did.
+    budget.check_now(history.len() as u64).map_err(|exceeded| {
+        replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
+            walked: exceeded.walked,
+            limit_millis: exceeded.limit_millis,
+        })
+    })?;
     std::fs::write(html, page)
         .map_err(|_| super::argument("--html does not name a writable file path", "/html"))
 }
@@ -311,8 +465,9 @@ mod tests {
             Arc::new(LapsingClock(AtomicU64::new(0))),
             chrono::Duration::seconds(5),
         );
-        let failure = super::execute_within(directory.path(), Some("execution-budget"), lapsed)
-            .expect_err("a lapsed budget must refuse the read");
+        let failure =
+            super::execute_within(directory.path(), Some("execution-budget"), lapsed, None)
+                .expect_err("a lapsed budget must refuse the read");
 
         assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
         assert_eq!(
@@ -330,6 +485,23 @@ mod tests {
     /// The control. The same store, the same entry point, a budget that has NOT lapsed: the
     /// read answers, and it answers the whole history. Without this, a status read that refused
     /// every store would pass the cell above.
+    /// #134: the budget is read AFTER the render too. A stream this short never crosses an
+    /// interval, so the fold reads the clock zero times and would return success under a clock
+    /// that lapsed the instant after the deadline was set; the post-render check is what refuses.
+    #[test]
+    fn a_lapsed_budget_is_refused_after_the_render_even_when_the_fold_never_read_the_clock() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 3);
+        let lapsed = ReadBudget::starting_now(
+            Arc::new(LapsingClock(AtomicU64::new(0))),
+            chrono::Duration::seconds(5),
+        );
+        let failure =
+            super::execute_within(directory.path(), Some("execution-budget"), lapsed, None)
+                .expect_err("a lapsed budget must refuse the read even after a short fold");
+        assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
+    }
+
     #[test]
     fn a_status_read_within_its_budget_answers_the_whole_history() {
         let directory = tempfile::tempdir().unwrap();
@@ -337,12 +509,53 @@ mod tests {
 
         let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
         // `Failure` carries no `Debug`, so the error arm names itself rather than being unwrapped.
-        let Ok(value) = super::execute_within(directory.path(), Some("execution-budget"), ample)
+        let Ok(value) =
+            super::execute_within(directory.path(), Some("execution-budget"), ample, None)
         else {
             panic!("a budget that has not lapsed refuses nothing");
         };
 
         assert_eq!(value["headSequence"], serde_json::json!(400));
         assert_eq!(value["signalsRecorded"], serde_json::json!(399));
+    }
+
+    /// #1014: `--html` replays the store a SECOND time, in `write_snapshot`, AFTER the status
+    /// read's final deadline check has already passed. That read used to carry no budget at all,
+    /// so `execution status --html` against a large journal could return success -- and leave a
+    /// snapshot behind implying it -- long after the declared five-second budget had gone.
+    ///
+    /// The refusal arm alone would not distinguish "refused because the budget lapsed" from
+    /// "refused for any reason at all", so the ample-budget arm is the half that gives it meaning:
+    /// the same call, the same stream, the same path, and the file MUST appear.
+    #[test]
+    fn the_html_snapshot_spends_the_status_budget_and_leaves_no_file_when_it_lapses() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 3);
+        let html = directory.path().join("snapshot.html");
+
+        let lapsed = ReadBudget::starting_now(
+            Arc::new(LapsingClock(AtomicU64::new(0))),
+            chrono::Duration::seconds(5),
+        );
+        let failure =
+            super::write_snapshot(directory.path(), Some("execution-budget"), &html, lapsed)
+                .expect_err("a lapsed budget must refuse the second read the snapshot performs");
+        assert_eq!(failure.code, "GHE013_READ_BUDGET_EXCEEDED");
+        assert!(
+            !html.exists(),
+            "a refused snapshot must leave no file behind: the write is gated on the check"
+        );
+
+        let ample = ReadBudget::starting_now(Arc::new(FrozenClock), chrono::Duration::seconds(5));
+        // `Failure` carries no `Debug`, so the error arm names itself rather than being unwrapped.
+        let Ok(()) =
+            super::write_snapshot(directory.path(), Some("execution-budget"), &html, ample)
+        else {
+            panic!("a budget that has not lapsed refuses no snapshot");
+        };
+        assert!(
+            html.exists(),
+            "control: without this the refusal arm proves nothing about the budget"
+        );
     }
 }

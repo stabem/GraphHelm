@@ -146,6 +146,7 @@ pub(crate) fn execute(
         // Same posture for the instants: a mutation reply publishes null rather than a
         // stillness it never looked for.
         &super::Liveness::default(),
+        None,
     );
     if let serde_json::Value::Object(ref mut map) = data {
         map.insert("heldNodes".to_owned(), serde_json::json!(held));

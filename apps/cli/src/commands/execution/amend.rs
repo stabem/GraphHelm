@@ -193,5 +193,6 @@ pub(crate) fn execute(
         &projection,
         &inputs,
         &super::Liveness::measured(&history),
+        None,
     ))
 }

@@ -886,12 +886,45 @@ pub(in crate::commands) fn declared_executor(
 /// status, per-state node counts, signal/mutation counters, and the untriaged-interruption triage
 /// list. `signal` reports its own governance-verdict shape instead, and `pause` extends this one
 /// with `heldNodes`.
+/// #134: the dispatch gate, beside the state -- SERIALISATION ONLY. The derivation and its
+/// policy (a paused execution has no view, the active graph's nodes only, the driver's bound)
+/// live in `graphhelm_execution::dispatch_view`, next to the `ready_set` they are built on, so a
+/// Runtime or MCP consumer reads the same answer and the two paths cannot drift (Codex on #1014).
+/// An absence is published as `null` with the reason the seam owns, never a zero that would read
+/// as "nothing gated".
+fn dispatch_json(
+    spec: Option<&GraphSpec>,
+    node_states: &BTreeMap<String, NodeState>,
+    attempts: &BTreeMap<String, u32>,
+    status: Option<&SimulationStatus>,
+) -> (serde_json::Value, Option<&'static str>) {
+    match graphhelm_execution::dispatch_view(spec, node_states, attempts, status) {
+        Ok(view) => (
+            serde_json::json!({
+                "ready": view.ready,
+                "gated": view.gated.len(),
+                "gatedNodes": view.gated,
+                // Edge-ready nodes `max_parallel` holds behind the in-flight ones: eligible, not
+                // dispatchable now. Named so a full capacity never reads as "nothing to do".
+                "waitingCapacity": view.waiting_capacity,
+            }),
+            None,
+        ),
+        Err(unavailable) => (serde_json::Value::Null, Some(unavailable.reason())),
+    }
+}
+
 pub(super) fn render(
     projection: &ExecutionProjection,
     inputs: &AttentionInputs,
     liveness: &Liveness,
+    spec: Option<&GraphSpec>,
 ) -> serde_json::Value {
-    render_with_context(projection, inputs, liveness, None)
+    // #134 + #1065 TAKEOVER MERGE: both sides added a fourth argument to this seam and they are
+    // different arguments. #134 passes a `spec` so the dispatch gate can be published beside the
+    // state; #1065 passes the `context` summaries a drive just compiled. Neither replaces the
+    // other, so the seam takes BOTH and `render` forwards `spec` while defaulting `context`.
+    render_with_context(projection, inputs, liveness, spec, None)
 }
 
 /// Why `context.nodes` is null on every door that holds only the projection (#1065).
@@ -911,8 +944,15 @@ pub(in crate::commands) fn render_with_context(
     projection: &ExecutionProjection,
     inputs: &AttentionInputs,
     liveness: &Liveness,
+    spec: Option<&GraphSpec>,
     context: Option<&BTreeMap<String, graphhelm_runtime::context::NodeContextSummary>>,
 ) -> serde_json::Value {
+    let dispatch = dispatch_json(
+        spec,
+        &projection.node_states,
+        &projection.node_attempts,
+        projection.simulation_status.as_ref(),
+    );
     // F1: the sleep question, answered ONCE and shared. `attentionRequired` is derived
     // from the reasons inside `attention`, and the triage list below is a FILTER over the
     // same value — no surface in the system recomputes this predicate.
@@ -944,6 +984,10 @@ pub(in crate::commands) fn render_with_context(
         // boolean. An unknown now spends its reasons here too, saying which node and why.
         "attentionReasons": wire_reasons(&answer),
         "nodeStateCounts": state_counts(&projection.node_states),
+        // #134: how many `Ready` nodes the driver could dispatch right now, how many are gated
+        // behind unmet predecessors, and which -- beside the state counts, never instead of them.
+        "dispatch": dispatch.0,
+        "dispatchUnavailable": dispatch.1,
         // #133: the per-node map beside the counts. The counts answer "how many are blocked";
         // an operator with one wedged node needs "WHICH one", and the projection has held that
         // map all along -- only the aggregate was rendered. Same labels as the counts, so the
@@ -1026,6 +1070,7 @@ fn context_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use chrono::{TimeZone, Utc};
     use graphhelm_protocols::{
         ActorId, EventHash, EventKind, ExecutionId, NewEvent, NodeOutcome, NodeOutcomeRecorded,
@@ -1117,6 +1162,8 @@ mod tests {
             &projection,
             &AttentionInputs::default(),
             &Liveness::measured(&[]),
+            // #134: this test renders without a graph, so no dispatch gate is expected.
+            None,
         );
 
         let customs = value["customs"]

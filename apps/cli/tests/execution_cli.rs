@@ -148,6 +148,18 @@ fn without_head_sequence(mut data: Value) -> Value {
     data
 }
 
+/// #134: `dispatch` and `dispatchUnavailable` depend on the graph the COMMAND holds, not on the
+/// stream -- `start` has it and publishes the view, bare `status` does not and says so -- so a
+/// start-versus-status equality strips both before comparing what the stream alone determines.
+/// Each command's own value is pinned where it is produced, never through this helper.
+fn without_graph_derived(mut data: Value) -> Value {
+    if let Some(object) = data.as_object_mut() {
+        object.remove("dispatch");
+        object.remove("dispatchUnavailable");
+    }
+    data
+}
+
 /// Both nodes of the two-node fixture graph succeed, so the driver runs it to completion in one
 /// pass over `implementation` and one over `deploy`.
 fn all_success_fixtures(directory: &Path) -> PathBuf {
@@ -460,9 +472,9 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
         "a finished execution's stream must have a positive head: {status_value}"
     );
     assert_eq!(
-        without_head_sequence(status_value["data"].clone()),
-        start_value["data"],
-        "status must independently replay to the same data start reported"
+        without_graph_derived(without_head_sequence(status_value["data"].clone())),
+        without_graph_derived(start_value["data"].clone()),
+        "status must independently replay to the same data start reported (the graph-derived dispatch view aside: start holds the graph, bare status does not)"
     );
 }
 
@@ -552,6 +564,25 @@ fn start_blocks_a_no_progress_node_and_leaves_its_dependent_ready() {
     assert_eq!(start_value["data"]["status"], "running");
     assert_eq!(start_value["data"]["nodeStateCounts"]["blocked"], 1);
     assert_eq!(start_value["data"]["nodeStateCounts"]["ready"], 1);
+    // #134: `ready: 1` was the over-promise -- `deploy` is Ready and the driver would never
+    // dispatch it, because `implementation` is blocked. The dispatch gate now sits beside the
+    // state: zero ready to dispatch, one gated, and it is named. `start` holds the graph, so the
+    // view is present and `dispatchUnavailable` is null.
+    assert_eq!(start_value["data"]["dispatch"]["ready"], 0);
+    assert_eq!(start_value["data"]["dispatch"]["gated"], 1);
+    assert_eq!(
+        start_value["data"]["dispatch"]["waitingCapacity"],
+        serde_json::json!([]),
+        "nothing is edge-ready here, so nothing waits on capacity either"
+    );
+    assert_eq!(
+        start_value["data"]["dispatch"]["gatedNodes"],
+        serde_json::json!(["deploy"])
+    );
+    assert_eq!(
+        start_value["data"]["dispatchUnavailable"],
+        serde_json::Value::Null
+    );
     assert_eq!(
         start_value["data"]["untriagedInterruptions"],
         serde_json::json!([]),
@@ -575,12 +606,185 @@ fn start_blocks_a_no_progress_node_and_leaves_its_dependent_ready() {
         status_data["headSequence"].as_u64().unwrap() > 0,
         "an open execution's stream must still have a positive head: {status_data}"
     );
-    assert_eq!(without_head_sequence(status_data), start_value["data"]);
+    assert_eq!(
+        without_graph_derived(without_head_sequence(status_data)),
+        without_graph_derived(start_value["data"].clone())
+    );
 }
 
 // ---------------------------------------------------------------------------
 // Shared helpers for `signal`, `approve`, `pause`, `resume`, `cancel`
 // ---------------------------------------------------------------------------
+
+/// #134: `status` holds no graph, so it cannot tell a gated `Ready` from a dispatchable one --
+/// and says so, rather than publishing a zero that reads as "nothing gated". With `--file` naming
+/// the graph the execution started from, it derives the same view `start` published; with a
+/// different graph it refuses, because a gate computed over edges this execution never had would
+/// be a fabrication wearing the field's name.
+#[test]
+fn status_derives_the_dispatch_gate_only_with_the_recorded_graph() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures_path = directory.path().join("fixtures.json");
+    std::fs::write(
+        &fixtures_path,
+        serde_json::to_vec(&serde_json::json!({
+            "nodeOutcomes": { "implementation": "failure" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let start_data = start(&events, &fixtures_path, "autopilot", "exec_134_gate");
+    assert_eq!(
+        start_data["nodeStateCounts"]["ready"], 1,
+        "ARRANGEMENT: the dependent must be Ready-but-gated, or this cell measures nothing: {start_data}"
+    );
+    assert_eq!(start_data["dispatch"]["gated"], 1);
+
+    // Without the graph: null, and the reason named. Not zero.
+    let bare = status(&events, "exec_134_gate");
+    assert_eq!(bare["dispatch"], serde_json::Value::Null);
+    assert!(
+        bare["dispatchUnavailable"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("--file")),
+        "the absence must say how to get the view: {bare}"
+    );
+
+    // With the recorded graph: the same view `start` published.
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let with_graph = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_134_gate",
+            "--file",
+            graph.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        with_graph.status.success(),
+        "{}",
+        String::from_utf8_lossy(&with_graph.stdout)
+    );
+    let with_graph_envelope = json(&with_graph.stdout);
+    // The lint warnings the file produces (#192: GHG101 on both nodes' missing timeoutSeconds)
+    // reach the status envelope exactly as they reach `start`'s -- computed diagnostics are not
+    // dropped on the way to a successful reply (Codex on #1014). Bare status computed none.
+    assert!(
+        with_graph_envelope["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| !diagnostics.is_empty()),
+        "status --file must carry the graph's lint warnings: {with_graph_envelope}"
+    );
+    // Measured, not assumed: this graph lints to FOUR warnings today (the first draft of this
+    // cell said two and was wrong). The count is the linter's to change; the cell pins that every
+    // one of them is a lint code and none is an error, which is the property `status --file`
+    // promises -- computed diagnostics reach the envelope, and a warning never turns into a refusal.
+    assert!(
+        with_graph_envelope["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().all(|diagnostic| {
+                diagnostic["code"]
+                    .as_str()
+                    .is_some_and(|code| code.starts_with("GHG"))
+                    && diagnostic["severity"] != "error"
+            })),
+        "every diagnostic on a successful status --file is a lint warning: {with_graph_envelope}"
+    );
+    let with_graph = with_graph_envelope["data"].clone();
+    assert_eq!(with_graph["dispatch"]["ready"], 0);
+    assert_eq!(with_graph["dispatch"]["gated"], 1);
+    assert_eq!(
+        with_graph["dispatch"]["gatedNodes"],
+        serde_json::json!(["deploy"])
+    );
+    assert_eq!(with_graph["dispatchUnavailable"], serde_json::Value::Null);
+
+    // Paused: nothing dispatches until resume, however Ready the nodes are -- the view says so
+    // instead of counting them (Codex on #1014).
+    let paused = pause(&events, "exec_134_gate");
+    assert_eq!(
+        paused["status"], "paused",
+        "ARRANGEMENT: the pause took: {paused}"
+    );
+    let while_paused = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_134_gate",
+            "--file",
+            graph.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        while_paused.status.success(),
+        "{}",
+        String::from_utf8_lossy(&while_paused.stdout)
+    );
+    let while_paused = json(&while_paused.stdout)["data"].clone();
+    assert_eq!(while_paused["dispatch"], serde_json::Value::Null);
+    assert!(
+        while_paused["dispatchUnavailable"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("paused")),
+        "a paused execution publishes no readiness and says why: {while_paused}"
+    );
+
+    // With another graph: refused, not rendered.
+    let other = root().join("examples/graphs/software-feature.yaml");
+    let refused = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_134_gate",
+            "--file",
+            other.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2));
+    let value = json(&refused.stdout);
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["diagnostics"][0]["code"], "GHCLI005_EXECUTION_STATE");
+
+    // And with `--html` beside the refused `--file`: exit 2 AND no artefact (Codex on #1014) --
+    // the snapshot used to be written before the graph was checked, leaving a page that looked
+    // like a success behind a command that refused.
+    let snapshot = directory.path().join("refused-snapshot.html");
+    let refused_with_html = command()
+        .args([
+            "execution",
+            "status",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_134_gate",
+            "--file",
+            other.to_str().unwrap(),
+            "--html",
+            snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(refused_with_html.status.code(), Some(2));
+    assert!(
+        !snapshot.exists(),
+        "a refused status must not leave a snapshot behind: {}",
+        String::from_utf8_lossy(&refused_with_html.stdout)
+    );
+}
 
 fn write_json(directory: &Path, name: &str, value: &serde_json::Value) -> PathBuf {
     let path = directory.join(name);

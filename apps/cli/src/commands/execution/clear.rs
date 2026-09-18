@@ -242,6 +242,8 @@ pub(crate) fn execute(
         &projection,
         &graphhelm_execution::AttentionInputs::default(),
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
+        // #134: this door holds no graph, so no dispatch gate is published from it.
+        None,
     );
     annotate(&mut value, &outcome, claim_seq);
     Ok(value)

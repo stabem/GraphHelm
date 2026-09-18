@@ -1,5 +1,31 @@
 # Specification Changelog
 
+## A human summary on stderr, #1150 - 2026-09-18
+
+`graphhelm init`, `graphhelm gateway setup` and `graphhelm gateway probe` now write a short human
+summary to STDERR when stdout is a terminal. Before it, the one-command setup answered a person who
+had just pasted a secret with 1.5 KB of single-line JSON.
+
+- **Stdout is unchanged, byte for byte.** `AGENTS.md` keeps `apps/cli` at JSON presentation only,
+  and the summary goes to a different stream behind `std::io::stdout().is_terminal()`. A pipe, a
+  test harness, the MCP tool and every other reader see exactly what they saw before:
+  `apps/cli/tests/human_output.rs` asserts on the raw bytes that piped stdout is one compact JSON
+  document with exactly one trailing newline, and that no summary phrase reaches either stream.
+- **There is no flag.** The person who needs this is the one who has not read the documentation
+  yet, so the terminal check is the whole gate.
+- **Every renderer reads only from `output.data`, and only fields it names.** Nothing is
+  re-derived and nothing is dumped: the setup envelope stands next to a secret, and
+  `a_field_the_renderer_does_not_name_is_not_printed` plants an unnamed field that must not appear
+  while a named one must. A sentinel key on stdin reaches neither stream, on the success path and
+  on the rotation path, swept over raw bytes with a control string that IS found.
+- **It says what the JSON only implies**: what is now true (route, provider, where the key was
+  sealed, manifest state), what to run next in the shell this binary was built for (the `next`
+  array already carried a `bash` and a `powershell` spelling and buried both), and what the command
+  did NOT do - `gateway probe` places no model call, which is the thing a person otherwise assumes
+  was tested.
+- **A refusal renders its diagnostics** as plain lines with code and pointer, not the success
+  shape.
+
 ## graphhelm gateway setup, #1139 - 2026-09-17
 
 `graphhelm gateway setup --provider <typesafe|anthropic|openai> [--project <dir>] [--route-id <id>]

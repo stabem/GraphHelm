@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 173
+$ExpectedAssertionCount = 183
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -73,9 +73,11 @@ function New-Repo {
         & git init --quiet 2>&1 | Out-Null
         & git config user.email 'fixture@example.invalid' 2>&1 | Out-Null
         & git config user.name 'fixture' 2>&1 | Out-Null
-        # Declared, not inherited: a developer with commit.gpgSign and no key would otherwise get an
-        # empty repository here and every cell below would fail on a subject that never existed.
+        # Declared, not inherited: a developer with commit.gpgSign and no key, or a global hook that
+        # refuses, would otherwise get an empty repository here and every cell below would fail on a
+        # subject that never existed. Keep both controls inside the fixture.
         & git config commit.gpgSign false 2>&1 | Out-Null
+        & git config core.hooksPath (Join-Path $repo '.no-hooks') 2>&1 | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $repo 'a.txt'), "one`n", $utf8NoBom)
         & git add -A 2>&1 | Out-Null
         & git commit -m 'fixture' --quiet 2>&1 | Out-Null
@@ -627,17 +629,29 @@ try {
     # asserted that the local ref was stale, which its own arrangement had just repaired. Staleness
     # is what happens when somebody ELSE moves the branch.
     $other = Join-Path $fixtureRoot 'forced-other'
-    & git clone --quiet $bare $other 2>&1 | Out-Null
-    Push-Location $other
-    try {
-        & git config user.email 'fixture@example.invalid' 2>&1 | Out-Null
-        & git config user.name 'Fixture' 2>&1 | Out-Null
-        & git checkout --quiet -B fixture origin/fixture 2>&1 | Out-Null
-        [System.IO.File]::WriteAllText((Join-Path $other 'a.txt'), "forced`n", $utf8NoBom)
-        & git commit -am 'forced' --quiet 2>&1 | Out-Null
-        $forcedSha = (& git rev-parse HEAD).Trim()
-        & git push --force origin HEAD:refs/heads/fixture --quiet 2>&1 | Out-Null
-    } finally { Pop-Location }
+    $inertHooks = Join-Path $fixtureRoot 'inert-clone-hooks'
+    [System.IO.Directory]::CreateDirectory($inertHooks) | Out-Null
+    $cloneOutput = @(& git -c "core.hooksPath=$inertHooks" clone --quiet $bare $other 2>&1)
+    $cloneCode = $LASTEXITCODE
+    $cloneReady = ($cloneCode -eq 0 -and (Test-Path -LiteralPath $other -PathType Container))
+    Assert-True -Condition ($cloneCode -eq 0) `
+        -Message "the fixture clone succeeds with its inert hooks path (rc=$cloneCode; output: $($cloneOutput -join ' '))"
+    Assert-True -Condition $cloneReady `
+        -Message 'the clone destination exists before the fixture enters it'
+    if ($cloneReady) {
+        Push-Location -LiteralPath $other -ErrorAction Stop
+        try {
+            & git config user.email 'fixture@example.invalid' 2>&1 | Out-Null
+            & git config user.name 'Fixture' 2>&1 | Out-Null
+            & git config commit.gpgSign false 2>&1 | Out-Null
+            & git config core.hooksPath (Join-Path $other '.no-hooks') 2>&1 | Out-Null
+            & git checkout --quiet -B fixture origin/fixture 2>&1 | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $other 'a.txt'), "forced`n", $utf8NoBom)
+            & git commit -am 'forced' --quiet 2>&1 | Out-Null
+            $forcedSha = (& git rev-parse HEAD).Trim()
+            & git push --force origin HEAD:refs/heads/fixture --quiet 2>&1 | Out-Null
+        } finally { Pop-Location }
+    }
     $localRef = (& git -C $repo rev-parse refs/remotes/origin/fixture 2>$null | Select-Object -First 1)
     $serverTip = @(& git ls-remote $bare refs/heads/fixture 2>$null | Where-Object { $_ })
     Assert-UpstreamArranged -Repo $repo -What 'a force-pushed upstream'
@@ -650,6 +664,52 @@ try {
         -Message "a force-pushed upstream does not certify a push ($(Format-ProvenanceForFailure -Result $result))"
     Assert-True -Condition ($result.pushedReason.Contains($forcedSha)) `
         -Message 'and the reason names the tip the server actually reported, so the two can be compared'
+
+    # A GLOBAL reference-transaction hook can reject the clone's initial ref update. The clone
+    # command must be judged by its own exit code and destination before any Push-Location: when it
+    # fails, the old sequence continued in the caller's repository and ran its fixture config writes
+    # there. This hostile configuration is isolated to the throwaway child command and is restored
+    # before the normal force-push clone below.
+    $hostileHooks = Join-Path $fixtureRoot 'forced-global-hooks'
+    $hostileGlobal = Join-Path $fixtureRoot 'forced-global.config'
+    [System.IO.Directory]::CreateDirectory($hostileHooks) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $hostileHooks 'reference-transaction'), "#!/bin/sh`nexit 1`n", $utf8NoBom)
+    $hostileHooksConfig = $hostileHooks -replace '\\', '/'
+    [System.IO.File]::WriteAllText($hostileGlobal, "[core]`n    hooksPath = $hostileHooksConfig`n", $utf8NoBom)
+    $hostileOther = Join-Path $fixtureRoot 'forced-hostile-other'
+    $callerConfigBefore = [string]((& git -C $repo config --local --list 2>$null) -join "`n")
+    $previousGlobalConfig = $env:GIT_CONFIG_GLOBAL
+    try {
+        $env:GIT_CONFIG_GLOBAL = $hostileGlobal
+        $hostileCloneOutput = @(& git clone --quiet $bare $hostileOther 2>&1)
+        $hostileCloneCode = $LASTEXITCODE
+        $callerConfigAfter = [string]((& git -C $repo config --local --list 2>$null) -join "`n")
+    } finally {
+        if ($null -eq $previousGlobalConfig) { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue }
+        else { $env:GIT_CONFIG_GLOBAL = $previousGlobalConfig }
+    }
+    Assert-True -Condition (Test-Path -LiteralPath (Join-Path $hostileHooks 'reference-transaction')) `
+        -Message 'ARRANGEMENT: the hostile global reference-transaction hook exists'
+    Assert-True -Condition (Test-Path -LiteralPath $hostileGlobal) `
+        -Message 'ARRANGEMENT: the hostile global config is the one supplied to clone'
+    Assert-True -Condition ($hostileCloneCode -ne 0) `
+        -Message "a rejecting global reference-transaction hook makes clone fail (rc=$hostileCloneCode; output: $($hostileCloneOutput -join ' '))"
+    Assert-True -Condition (-not (Test-Path -LiteralPath $hostileOther)) `
+        -Message 'a failed clone leaves no destination for a later Push-Location'
+    Assert-True -Condition ($callerConfigAfter -ceq $callerConfigBefore) `
+        -Message 'a failed clone does not change the caller repository config'
+    $testSource = [System.IO.File]::ReadAllText($PSCommandPath)
+    $cloneBlockStart = $testSource.IndexOf("`$other = Join-Path `$fixtureRoot 'forced-other'")
+    $cloneBlockEnd = $testSource.IndexOf("`n        try {", $cloneBlockStart)
+    $cloneBlock = if ($cloneBlockStart -ge 0 -and $cloneBlockEnd -gt $cloneBlockStart) {
+        $testSource.Substring($cloneBlockStart, $cloneBlockEnd - $cloneBlockStart)
+    } else { '' }
+    Assert-True -Condition ($cloneBlock -match 'git -c .*core\.hooksPath=.* clone') `
+        -Message 'the production-shaped fixture clone overrides hostile global hooks with an inert hooks path'
+    Assert-True -Condition ($cloneBlock -match '\$cloneCode\s*=\s*\$LASTEXITCODE[\s\S]*Test-Path -LiteralPath \$other') `
+        -Message 'the fixture checks clone exit and destination before Push-Location can edit the caller'
+    Assert-True -Condition ($cloneBlock -match 'Push-Location -LiteralPath \$other -ErrorAction Stop') `
+        -Message 'the fixture enters the verified clone destination with a literal, terminating location change'
 
     Write-Host ''
     Write-Host '-- a server that cannot be reached is not an answer --' -ForegroundColor Cyan

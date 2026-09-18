@@ -271,6 +271,19 @@ try {
     & $git @('init', '--quiet') | Out-Null
     & $git @('config', 'user.email', 'tests@example.invalid') | Out-Null
     & $git @('config', 'user.name', 'crate-input-hash tests') | Out-Null
+    # DECLARED, NOT INHERITED (#981). `git config` reads the user and system files too, so a host
+    # with `commit.gpgSign = true` and no reachable key -- or a global `core.hooksPath` whose
+    # pre-commit hook fails -- cannot make the seven commits below, and this suite would report
+    # whatever the missing commit broke. The same two lines, for the same reason, are in
+    # ci/normalize-script-eol.tests.ps1 and ci/gate-manifest-provenance.tests.ps1.
+    #
+    # The hooks path points INSIDE the fixture at a directory that is never created: git treats a
+    # missing hooks directory as no hooks, and a path under $repo cannot collide with anything the
+    # host has. `--quiet` and `| Out-Null` swallow stdout only, and this suite's `$git` wrapper
+    # throws with the captured `2>&1` output, so a signing failure would still name itself -- the
+    # point of these two lines is that it does not happen at all.
+    & $git @('config', 'commit.gpgSign', 'false') | Out-Null
+    & $git @('config', 'core.hooksPath', (Join-Path $repo '.no-hooks')) | Out-Null
     & $git @('add', '-A') | Out-Null
     & $git @('commit', '--quiet', '-m', 'base') | Out-Null
     $base = ([string](& $git @('rev-parse', 'HEAD'))).Trim()

@@ -834,13 +834,17 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         // signals, so it cannot be the completion predicate. Enumerate first, then wait on what was
         // enumerated.
         //
-        // AND THE LIST IS OLDER THAN THE KILL, which is a window this code does not close (#846). A
-        // process a listed member spawns between the enumeration and `TerminateJobObject` is in the
-        // job -- the kernel kills it -- but is not in `members`, so the drain below never waits for it.
-        // Microseconds wide, and strictly better than waiting for nothing; declared here so that
-        // `Complete` on this arm is read as "every member enumerated before the kill was observed
-        // to go", not as "a final pass found nothing new". (Found in review of #826 by the GraphHelm
-        // ISSUES lane; the mechanical closure -- re-read membership after the wait -- is #846.)
+        // AND THE LIST IS OLDER THAN THE KILL. A process a listed member spawns between the
+        // enumeration and `TerminateJobObject` is in the job -- the kernel kills it -- but is not in
+        // `members`, and THIS is not closed (#846, found in review of #826 by the GraphHelm ISSUES
+        // lane). A re-read after the kill was tried and removed: measured 2026-09-08, a
+        // `job_member_ids` query taken immediately, at 5ms and at 55ms after `TerminateJobObject`
+        // against a real job holding two real members all answered an empty list -- the job's own
+        // accounting empties before or with the kill, the same way `ActiveProcesses` does (#824), so a
+        // post-kill re-read cannot observe the thing it would exist to catch. `Complete` on this arm
+        // means "every member THIS enumeration named has been observed gone", not "the whole job is
+        // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
+        // #846 for the measurement.
         let members = job_member_ids(group);
         unsafe { TerminateJobObject(group.0 as _, 1) };
         // `passes: 0` IS THE SIGNATURE of "membership could not be read", and it is distinguishable
@@ -945,40 +949,350 @@ fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
 
 /// Wait for the processes that were in a job when it was terminated to actually be gone.
 ///
-/// **The predicate is the one the CALLER uses**, and that is the correction this function exists to
-/// carry.
+/// Waits only on the membership `terminate` enumerated BEFORE calling `TerminateJobObject` --
+/// nothing here re-reads the job afterward. A member assigned to the job between that enumeration
+/// and the kill is terminated by the job -- containment is real -- but is not named by `members`,
+/// and this function has no way to learn about it: `job_member_ids`'s own doc already says the list
+/// empties as fast as the accounting does, and measuring it directly (2026-09-08, #846) confirmed
+/// there is no post-kill instant where a re-read still names a genuinely-late member -- immediately,
+/// at 5ms and at 55ms after `TerminateJobObject`, against a real job holding two real assigned
+/// members, the answer was an empty list every time. A re-read branch lived here briefly to try to
+/// close that window and was removed for this reason: code that cannot observe what it exists to
+/// catch is not a fix, it is a claim with no consumer. The window stays open and is named here
+/// instead of hidden behind a branch that never fires. See issue #846 for the measurement and a
+/// candidate mechanism (pre-kill fixpoint enumeration) that would narrow it, left for a later PR.
 ///
-/// **WHAT `Complete` MEANS HERE, exactly:** every member enumerated BEFORE the kill has been observed
-/// gone. A member spawned after that enumeration is killed by the job and not waited for (#846), so
-/// this arm's `Complete` is narrower than the variant's doc -- "a final pass found nothing new" -- and
-/// says so rather than letting a reader infer the wider claim. The first version polled the job's `ActiveProcesses` and returned `Complete` on pass 1,
-/// every run, while `process_is_running` still answered true for the descendant -- so the flake was
-/// unchanged and the fix looked applied. Two instruments disagreeing about the same instant; the one
-/// that decides is the one a caller can observe.
+/// **The predicate is the one the CALLER uses**, and that is the correction this function exists to
+/// carry (#824): `Complete` means every member THIS enumeration named was observed gone, checked by
+/// `process_is_running` rather than by polling job accounting, which stops counting a member before
+/// its handle signals. The first version polled the job's `ActiveProcesses` and returned `Complete`
+/// on pass 1, every run, while `process_is_running` still answered true for the descendant -- so the
+/// flake was unchanged and the fix looked applied. Two instruments disagreeing about the same
+/// instant; the one that decides is the one a caller can observe.
 #[cfg(windows)]
 fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
-    let (ids, unlisted) = members;
+    let mut ids = members.0.clone();
+    let unlisted = members.1;
     let started = std::time::Instant::now();
     let mut passes: u32 = 0;
     loop {
         passes = passes.saturating_add(1);
-        let remaining = ids.iter().filter(|id| process_is_running(**id)).count();
-        if remaining == 0 {
-            if *unlisted == 0 {
+        ids.retain(|id| process_is_running(*id));
+        if ids.is_empty() {
+            if unlisted == 0 {
                 return TerminationOutcome::Complete;
             }
             return TerminationOutcome::BoundReached {
                 passes,
-                remaining: *unlisted,
+                remaining: unlisted,
             };
         }
         if started.elapsed() >= JOB_DRAIN_CEILING {
             return TerminationOutcome::BoundReached {
                 passes,
-                remaining: remaining + unlisted,
+                remaining: ids.len() + unlisted,
             };
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod post_enumeration_join_window {
+    use super::{
+        ProcessGroup, ProcessIdentity, TerminationOutcome, drain_terminated_job, job_member_ids,
+        process_is_running,
+    };
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CREATE_SUSPENDED, OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE, TerminateProcess,
+    };
+
+    /// A process that never runs is still a process: `CREATE_SUSPENDED` leaves it alive
+    /// (`process_is_running` checks the process handle's signal state, not its threads), so this is a
+    /// real, assignable job member without needing it to execute any code. The arguments name a test
+    /// that does not exist; they are never read, because this is never resumed.
+    fn spawn_suspended_member() -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_tree::post_enumeration_join_window::never_run",
+                "--nocapture",
+            ])
+            .creation_flags(CREATE_SUSPENDED)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("ARRANGEMENT: suspended fixture process spawns")
+    }
+
+    // `Child::wait()` has no independent timeout. A successful termination request makes the
+    // process handle expected to signal, but a request that failed is not a reason to block here:
+    // the test has no per-test timeout that could turn such a wait into a useful red. Cleanup below
+    // therefore waits only after a confirmed request and otherwise makes one non-blocking `try_wait`
+    // observation.
+
+    /// Owns the raw test job and gives it the same kill-on-close policy as production `create`.
+    ///
+    /// The fixture deliberately creates this job by hand so it can arrange a member that joins
+    /// after the stale membership read. Keeping the handle in an owner makes the panic path safe:
+    /// dropping it kills every fixture process that was successfully assigned, including one left
+    /// behind by a failed assertion before the normal cleanup reaches it.
+    struct OwnedKillOnCloseJob(ProcessGroup);
+
+    impl OwnedKillOnCloseJob {
+        fn new() -> Self {
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            assert!(!handle.is_null(), "ARRANGEMENT: CreateJobObjectW failed");
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    std::ptr::from_ref(&limits).cast(),
+                    u32::try_from(std::mem::size_of_val(&limits)).unwrap(),
+                )
+            } != 0;
+            if !configured {
+                unsafe { CloseHandle(handle) };
+                panic!("ARRANGEMENT: could not configure kill-on-close for the fixture job");
+            }
+            Self(ProcessGroup(handle as usize))
+        }
+
+        fn group(&self) -> ProcessGroup {
+            self.0
+        }
+    }
+
+    impl Drop for OwnedKillOnCloseJob {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0.0 as _) };
+        }
+    }
+
+    fn terminate_directly(process_id: u32) {
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+        assert!(
+            !handle.is_null(),
+            "ARRANGEMENT: could not open the fixture process to end it"
+        );
+        let requested = unsafe { TerminateProcess(handle, 1) };
+        unsafe { CloseHandle(handle) };
+        assert_ne!(
+            requested, 0,
+            "ARRANGEMENT: could not terminate the fixture process"
+        );
+    }
+
+    /// End a retained fixture child using its owned handle, then reap only after the request was
+    /// accepted. A child that already exited needs only the non-blocking observation; a failed kill
+    /// must never turn cleanup into an unbounded wait. The job owner is the second line of defense
+    /// for children that were assigned before an assertion failed.
+    fn cleanup_child(child: &mut Option<std::process::Child>) {
+        let Some(mut child) = child.take() else {
+            return;
+        };
+        if child.kill().is_ok() {
+            let _ = child.wait();
+        } else {
+            let _ = child.try_wait();
+        }
+    }
+
+    fn assign_to_job(job: super::ProcessGroup, process_id: u32) {
+        let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, process_id) };
+        assert!(
+            !process.is_null(),
+            "ARRANGEMENT: could not open the fixture process to assign it"
+        );
+        let assigned = unsafe { AssignProcessToJobObject(job.0 as _, process) };
+        unsafe { CloseHandle(process) };
+        assert_ne!(
+            assigned, 0,
+            "ARRANGEMENT: could not assign the fixture process to the job"
+        );
+    }
+
+    /// #846 (redesigned 2026-09-08): a member the FIRST enumeration missed -- because it joined the
+    /// job after that read, in the window `terminate` does not control -- is genuinely killed by the
+    /// job, but the drain has no way to learn about it and does not claim to have waited for it.
+    /// `drain_terminated_job`'s own doc names why: a post-kill re-read was measured against a real
+    /// terminated job and always came back empty, so there is nothing to re-read.
+    ///
+    /// **Deterministic by construction, not by racing a live spawn against a live kill.** `late` joins
+    /// the SAME real job `stale` was read from, so the job genuinely holds a member the snapshot does
+    /// not name -- exactly #846's shape -- but `late`'s liveness for the rest of this test is left
+    /// alone, not raced against anything. Nothing here depends on how fast Windows happens to tear a
+    /// process down.
+    ///
+    /// **Cleanup runs even when an assertion panics.** A first draft of this cell left a suspended
+    /// fixture process running on a panic path -- it holds no lock on anything of ITS OWN, but it is a
+    /// live copy of THIS CRATE'S OWN TEST BINARY, and that file being open is exactly what made the
+    /// next `cargo test` fail to link (measured while writing this test: `LNK1104`, the previous
+    /// process still holding `graphhelm_process_tree-*.exe`). So the arrangement below happens before
+    /// any assertion that can fail, and everything that can panic is wrapped so the two fixture
+    /// processes and the job handle are always ended, panic or not.
+    #[test]
+    fn a_member_assigned_after_enumeration_is_not_waited_for() {
+        // EVERY FIXTURE LIVES BEHIND THIS GUARD FROM THE MOMENT IT EXISTS (Codex, second pass): the
+        // first draft created `enumerated` (and assigned it to the job) and `late` BEFORE
+        // `catch_unwind` began, so a panic in that first `assign_to_job`'s own assertion, or in the
+        // second `spawn_suspended_member()`, skipped the unconditional cleanup below entirely --
+        // `enumerated` was created suspended and `Child` does not terminate on drop, so a panic there
+        // leaked a live copy of this crate's own test binary, exactly the `LNK1104` failure the
+        // comment on this test already names. Nothing is created outside the closure now; each
+        // `Option` starts empty and the unconditional cleanup after `catch_unwind` acts only on
+        // whatever actually got made before the panic (if any).
+        let mut job = None;
+        let mut enumerated: Option<std::process::Child> = None;
+        let mut late: Option<std::process::Child> = None;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let owned_job = OwnedKillOnCloseJob::new();
+            let group = owned_job.group();
+            job = Some(owned_job);
+
+            let enumerated_child = spawn_suspended_member();
+            let enumerated_id = enumerated_child.id();
+            enumerated = Some(enumerated_child);
+            assign_to_job(group, enumerated_id);
+
+            let late_child = spawn_suspended_member();
+            let late_id = late_child.id();
+            late = Some(late_child);
+
+            let stale =
+                job_member_ids(group).expect("ARRANGEMENT: the job's membership could be read");
+            assert_eq!(
+                stale.0,
+                vec![enumerated_id],
+                "ARRANGEMENT: the stale snapshot names only the first member, or this cell tests \
+                 nothing -- `late` must not be assigned to the job before this read"
+            );
+
+            // JOINS AFTER THE SNAPSHOT, exactly like a member's grandchild would (#846). Real job
+            // membership, real liveness -- `stale` simply never heard about it, and nothing from here
+            // on re-reads the job to find out.
+            assign_to_job(group, late_id);
+
+            // Only the TRACKED member dies. `late` is left alive and untouched -- the drain must not
+            // wait for it.
+            terminate_directly(enumerated_id);
+
+            let drain = std::thread::spawn(move || drain_terminated_job(&stale));
+
+            // EXPLICIT SYNCHRONIZATION, NOT A WALL-CLOCK RACE (Codex, second pass): a bounded poll
+            // here would compare THIS thread's elapsed time against a margin over
+            // `JOB_DRAIN_CEILING`, but that margin describes this thread's own scheduling, not the
+            // drain thread's -- under the documented 48x gate-load stretch (#750) the two can drift
+            // far enough apart for the poll to expire before the drain thread was ever scheduled,
+            // reddening a correct implementation. `drain_terminated_job` already carries its own
+            // bound, measured from INSIDE that thread with a roughly 4000x margin over the idle case
+            // (#824) -- so this joins and trusts it, rather than laying a second, weaker bound on top
+            // from a different thread's clock.
+            let outcome = drain.join().expect("the drain thread did not panic");
+            assert_eq!(
+                outcome,
+                TerminationOutcome::Complete,
+                "the drain only waits on the pre-kill enumeration, so it must report Complete once \
+                 `enumerated` is gone -- regardless of `late`"
+            );
+
+            // THE HONEST CLAIM, MADE OBSERVABLE: `late` is still alive. `Complete` above did not mean
+            // "the whole job emptied" -- it means "everything this drain was told to wait for is
+            // gone" -- and this is what tells the two apart. If this ever fails, the window this test
+            // exists to document has closed and both this cell and the doc above need revisiting.
+            assert!(
+                process_is_running(late_id),
+                "HARNESS-BROKE (or the documented gap closed): `late` should still be alive here, or \
+                 the Complete assertion above proves nothing about the window"
+            );
+
+            terminate_directly(late_id);
+
+            // `.wait()`, NOT A FIXED-DEADLINE POLL (Codex, third pass): `Child::wait` has no timeout
+            // of its own. The direct termination calls above assert that the OS accepted both
+            // requests, so these waits reap the two known-terminated children; cleanup below never
+            // waits after an unconfirmed request.
+            if let Some(child) = enumerated.as_mut() {
+                child
+                    .wait()
+                    .expect("the terminated `enumerated` fixture process could be waited on");
+            }
+            if let Some(child) = late.as_mut() {
+                child
+                    .wait()
+                    .expect("the terminated `late` fixture process could be waited on");
+            }
+        }));
+
+        // ALWAYS: drop the owned job first so its kill-on-close policy reaches every assigned
+        // member, even when setup panicked before the normal termination calls. Then use each
+        // retained `Child` handle for an unassigned fixture; opening a fresh handle by PID was the
+        // bug because a failed open skipped both kill and wait while `Child` itself does not kill
+        // on drop. `cleanup_child` never performs an unbounded wait after a failed request.
+        drop(job);
+        cleanup_child(&mut enumerated);
+        cleanup_child(&mut late);
+
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// The cleanup boundary itself: a child created before an assignment failure is not in the
+    /// job, so kill-on-close cannot reach it. The retained `Child` handle must still end and reap
+    /// that child after the assignment assertion panics.
+    #[test]
+    fn failed_assignment_cleanup_reaps_the_retained_child() {
+        let mut job = None;
+        let mut child: Option<std::process::Child> = None;
+        let mut child_identity = None;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let owned_job = OwnedKillOnCloseJob::new();
+            job = Some(owned_job);
+            let child_process = spawn_suspended_member();
+            let id = child_process.id();
+            child = Some(child_process);
+            // Bind the identity before cleanup consumes and reaps the Child. The bare PID can be
+            // reassigned after that reap, so it is not an adequate observation target.
+            child_identity =
+                Some(ProcessIdentity::capture(id).expect(
+                    "ARRANGEMENT: the live failed-assignment child must bind to an identity",
+                ));
+
+            // An impossible process id makes the assignment fail before the child joins the job.
+            // This is the path the job guard cannot cover, and the retained handle must cover.
+            assign_to_job(
+                job.as_ref().expect("the fixture job exists").group(),
+                u32::MAX,
+            );
+        }));
+
+        drop(job);
+        cleanup_child(&mut child);
+        assert!(
+            result.is_err(),
+            "ARRANGEMENT: the forced assignment must panic"
+        );
+        assert!(
+            !child_identity
+                .as_ref()
+                .expect("the child identity must survive cleanup")
+                .is_running()
+                .expect("the retained identity must remain observable after cleanup"),
+            "a child retained across failed assignment cleanup must not survive the test"
+        );
     }
 }
 

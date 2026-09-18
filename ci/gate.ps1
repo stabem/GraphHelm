@@ -4764,6 +4764,52 @@ try {
     # exactly like a complete run. Coverage becomes visible in the LOG here; it becomes visible in
     # the RECORD only with #238's executed-vs-discovered field. (Caught reviewing #239: a PR body
     # is read once at merge, this line is read by whoever touches it next.)
+    # #956 step 2c: THE MATRICES START HERE, one stage earlier than they used to.
+    #
+    # THE BUILD THAT MADE THEIR BINARIES IS `Get-TestArtifactManifest`, NOT `workspace tests`. Step 2b
+    # placed this block after the `workspace tests` stage and said that stage had compiled every test
+    # target. It had, but it was not the first to: `Get-TestArtifactManifest` runs
+    # `cargo test --workspace --all-features --locked --no-run` far above, and its own comment calls
+    # itself "one build pass ... ahead of the human-facing stages that reuse it". So the matrices were
+    # waiting on a stage that only RE-proved what was already built, and the wait cost the whole of
+    # `workspace tests` -- 409.9 s of it on the run that first measured step 2b (#1007, c0190949).
+    #
+    # BEFORE `workspace tests`, NOT BEFORE `clippy`, and the distinction is the reason this is safe.
+    # `cargo clippy` COMPILES: it drives a compiler over the workspace into the same target directory
+    # and holds the build lock while it does. `cargo test` on an already-built tree does not -- two
+    # concurrent invocations were measured finishing in the time of one (8.7 s against an 8.5 s solo
+    # baseline, three warm rounds each), because the lock is taken for a freshness check and released
+    # before the binaries run. Starting the matrices above clippy would put two compilers on one lock
+    # for the sake of clippy's 27.5 s; starting them here contends with nothing that compiles.
+    #
+    # WHAT IT ACTUALLY BUYS IS 77.3 s, NOT THE MATRICES' 254.9 s, AND THE GAP IS THE POINT. An earlier
+    # draft of this comment claimed the full 254.9 s. The run that proved the placement refuted it in
+    # the same breath and I had already read the number:
+    #
+    #     before  c0190949 (#1007)   1125.9 s     matrices after `workspace tests`
+    #     after   8fa1a3d2 (#1052)   1048.6 s     matrices inside it
+    #     workspace tests            409.9 s -> 450.6 s   (+40.7 s, +10 %)
+    #
+    # REMOVING A STAGE FROM THE CRITICAL PATH DOES NOT REMOVE ITS WORK FROM THE MACHINE. `workspace
+    # tests` absorbed part of the matrices' cost by running slower beside them, and the rest went to
+    # smaller growth across the `cli:` stages. On 32 cores the hidden work still cost a tenth of the
+    # stage hiding it. Overlap is cheaper than serial; it is not free, and a comment that says "buys
+    # the full N" is a claim this file's own manifests can falsify.
+    #
+    # THE COVER IS MEASURED, NOT ASSUMED: `workspace tests` ran 409.9 s and the two matrices together
+    # ran 254.9 s on that same run, so the matrices finish inside it with room -- and on the run after
+    # the move they did, t+291.5 -> t+505.2 against the stage's t+291.5 -> t+742.1. If that ever
+    # inverts, the run is correct and merely serial again -- `Test-StageOverlapped` reports it as a
+    # NOTE, and the manifest keeps both intervals so the decay is visible rather than silent.
+    #
+    # The join is unmoved, under the old names, after the PowerShell suites' join. Skipped matrices
+    # are not started.
+    if (-not $script:matrixSkipped) {
+        if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
+        $script:pgIgnoredEarly = Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'
+        $script:pgCollationEarly = Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale (Get-NonCLocale)
+    }
+
     Invoke-Stage 'workspace tests' {
         # #903: `--workspace` when the run is FULL, `-p <crate>` per selected crate when it is not.
         # `--all-features` is UNCHANGED in both: the selection narrows WHAT is compiled, never which
@@ -4775,17 +4821,6 @@ try {
             cargo $toolchain test @scopeArgs --all-features --locked --no-fail-fast
         }
     } | Out-Null
-
-    # #956 step 2b: THE MATRICES START HERE, behind the one build that made their binaries. The
-    # `workspace tests --all-features` stage above compiled every test target, so each postgres.ps1
-    # child finds the cargo lock held only for a freshness check and then runs beside the `cli:`
-    # suites below. The records keep their old names and positions: the join is where the matrices
-    # used to run in line, after the PowerShell suites' join. Skipped matrices are not started.
-    if (-not $script:matrixSkipped) {
-        if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
-        $script:pgIgnoredEarly = Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'
-        $script:pgCollationEarly = Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale (Get-NonCLocale)
-    }
 
     # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by
     # DEFAULT and silently - a new tests/*.rs file still runs inside `workspace tests` above, but

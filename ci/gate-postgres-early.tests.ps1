@@ -11,7 +11,7 @@
 # they were handed, rather than read.
 
 param([switch] $ObservePostgresAbort, [string] $PostgresBin = 'C:/Users/gabri/tools/pgsql/bin')
-$ExpectedAssertionCount = 27
+$ExpectedAssertionCount = 29
 if ($ObservePostgresAbort) { $ExpectedAssertionCount += 2 }
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -143,11 +143,52 @@ try {
     Assert-True ($script:joins[0].Name -eq 'childA' -and $script:joins[1].Name -eq 'childB') `
         'and each join receives ITS OWN child: a single shared slot read after both writes would hand childB to both'
 
-    # PLACEMENT, BY CONTAINMENT. The start calls sit between the workspace-tests stage and the cli
-    # suites; the joins sit inside the matrix block at the old position.
-    $startSlice = Get-GateSlice -Start "Invoke-Stage 'workspace tests' {" -End '$excludedSuites = @{'
+    # PLACEMENT, BY CONTAINMENT -- AND THE ANCHOR IS THE BUILD, NOT A NEIGHBOUR.
+    #
+    # This cell used to slice from `Invoke-Stage 'workspace tests' {` while its message said "after
+    # the workspace build". Those are different claims and the gate proved it: the build that makes
+    # the matrices' binaries is `Get-TestArtifactManifest`, which runs
+    # `cargo test --workspace --all-features --locked --no-run` far above, and `workspace tests` only
+    # re-proves what that already built. So the old slice pinned a NEIGHBOUR and the message named a
+    # PROPERTY, and moving the starts one stage earlier -- strictly still after the build -- reddened
+    # a cell whose sentence had just become MORE true.
+    #
+    # The anchor is now the build itself. The slice runs from `Get-TestArtifactManifest` to the
+    # `workspace tests` stage, so the cell fails if the starts move ABOVE the build (their binaries
+    # would not exist) and fails if they slide BELOW `workspace tests` (the 409.9s of cover this
+    # placement buys would be gone). Being before the cli suites follows from being before
+    # `workspace tests`, which precedes them; it is no longer asserted separately because an
+    # assertion that restates a consequence adds a second thing to keep true, not a second check.
+    $startSlice = Get-GateSlice -Start '$artifactManifest = Get-TestArtifactManifest' -End "Invoke-Stage 'workspace tests' {"
     Assert-True ($startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'") -and $startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale") -and $startSlice.Contains('if (-not $script:matrixSkipped)')) `
-        'both matrices are started after the workspace build and before the first cli suite, and not when the scope skipped them'
+        'both matrices are started after the build that makes their binaries and before the workspace-tests stage they run beside, and not when the scope skipped them'
+
+# #1052 SECOND-PASS FINDING: THE BUILD ANCHOR ALONE LEAVES CLIPPY INSIDE THE SLICE.
+# The cell above runs from `Get-TestArtifactManifest` to the `workspace tests` stage, and `clippy`
+# sits between them -- so hoisting the starts ABOVE clippy, or INTO its block, stays green while
+# breaking the one constraint the commit body argues the placement on. `cargo clippy` COMPILES: it
+# drives a compiler over the workspace into the same target directory and holds the build lock
+# while it does, so two matrix `cargo test` processes beside it reintroduce exactly the build-lock
+# contention this placement exists to avoid. The cell above cannot see that, because a start
+# hoisted above clippy is still after the build.
+#
+# This is a SEPARATE check rather than a narrowed anchor: the build-before-start property and the
+# clippy-before-start property fail for different reasons and want different messages. Narrowing
+# the slice's start to clippy would have silently retired the "their binaries would not exist"
+# arm.
+#
+# Ordering is asserted on OFFSETS, not on containment: a start placed INSIDE clippy's block is
+# still textually after `Invoke-Stage 'clippy ...' {`, so containment cannot tell the two apart.
+# The close of clippy's own block is the reference point, and the starts must follow it.
+$clippyOpen = $gateText.IndexOf("Invoke-Stage 'clippy (deny warnings)' {", [System.StringComparison]::Ordinal)
+$clippyClose = if ($clippyOpen -ge 0) { $gateText.IndexOf('} | Out-Null', $clippyOpen, [System.StringComparison]::Ordinal) } else { -1 }
+$firstStart = $gateText.IndexOf("Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'", [System.StringComparison]::Ordinal)
+$secondStart = $gateText.IndexOf("Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation'", [System.StringComparison]::Ordinal)
+# A DECOY FOR EACH ANCHOR: a non-unique anchor would fake a green by matching an earlier copy.
+Assert-True (([regex]::Matches($gateText, [regex]::Escape("Invoke-Stage 'clippy (deny warnings)' {"))).Count -eq 1) `
+'the clippy stage opening is a unique anchor in ci/gate.ps1, so the ordering cell below cannot be satisfied by a second copy'
+Assert-True ($clippyOpen -ge 0 -and $clippyClose -gt $clippyOpen -and $firstStart -gt $clippyClose -and $secondStart -gt $clippyClose) `
+'both matrices are started AFTER the clippy stage has closed, not above it and not inside it -- clippy compiles into the shared target directory and holds the build lock, so overlapping it with two matrix cargo processes is the contention this placement avoids'
     $joinSlice = Get-GateSlice -Start 'if ($script:matrixSkipped) {' -End '# #207:'
     Assert-True ($joinSlice.Contains("Complete-PostgresStage -Name 'PostgreSQL ignored matrix' -Early") -and $joinSlice.Contains("Complete-PostgresStage -Name 'PostgreSQL matrix under a non-C collation' -Early") -and -not $joinSlice.Contains("Invoke-PostgresStage -Name 'PostgreSQL")) `
         'both matrices are JOINED at their old position under their old names, and the in-line call is gone from there'

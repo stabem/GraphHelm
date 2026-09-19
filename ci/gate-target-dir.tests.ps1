@@ -2,8 +2,35 @@
 # precondition slice for accepted values, so proving SET-ONLY semantics never starts cargo or
 # consumes the global gate slot. It also invokes the real gate once with the variable unset to
 # prove refusal happens before any stage banner.
+#
+# WHICH SHAPE THIS IS, AND WHAT THE SHAPE CANNOT CATCH (#191). Two arms, and they fail differently:
+#
+#   REFUSING values (blank/empty/unset) run the REAL `ci/gate.ps1` through a wrapper. This is the
+#   arm of this suite that executes the real gate rather than a slice or fixture, and it stays
+#   cheap because the door exits before cargo. It therefore covers the door's WIRING --
+#   that `gate.ps1` actually reaches this check first -- not merely the predicate's logic.
+#
+#   ACCEPTED values run a SLICE of the precondition block, not the gate. A slice proves the
+#   predicate says yes; it does not execute the gate's accepted-value continuation. The source
+#   contract below also checks the extracted guard, so deleting that guard is detected. The
+#   accepted arm is not exercised against the real gate for a structural reason, not an oversight:
+#   an accepted value means the gate proceeds, so the assertion would cost a full gate run and the
+#   global slot.
+#
+#   Nothing in this suite executes the real gate past the door. The production runner does;
+#   its invocation is not a test assertion. This suite's extracted functions and fixtures do not
+#   establish that the real gate enforces later-stage behavior (the stage list, the contamination
+#   canary's abort, or the manifest rule). Proving that wiring needs an observer at those decision
+#   points without running the full stages. This is a limit of this suite, not a census of all CI.
+#
+# Sabotage receipt for the assertions below (2026-09-07, `95a7ad9d`): replacing the refusal line
+# `[gate] REFUSED: CARGO_TARGET_DIR is unset or blank.` with an unnamed `[gate] Configuration
+# problem.` -- keeping `exit 1` -- takes this suite from 29/29 to 26/29, and the three that fall are
+# exactly the "named and legible" assertions while every exit-code assertion stays green. That is
+# the reason these assert on the refusal TEXT: an exit code cannot separate "refused at the door"
+# from "ran and failed", so a code-only guard passes a gate that has stopped saying why.
 
-$ExpectedAssertionCount = 29
+$ExpectedAssertionCount = 31
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -132,6 +159,21 @@ try {
 
     Write-Host "`n=== Source contract ==="
     Assert-True -Condition ($precondition -like '*IsNullOrWhiteSpace*') -Message 'precondition treats unset, empty, and whitespace as one invalid class'
+# #191 REVIEW: THE LINE ABOVE DOES NOT DETECT THE GUARD'S DELETION, AND THE HEADER SAID IT DID.
+# `IsNullOrWhiteSpace` occurs THREE times in the 96..332 slice -- the guard at :103 and two
+# unrelated helpers at :187 and :227 -- so the wildcard is satisfied by either of the others.
+# A reader deleted ci/gate.ps1:102-108 entire, REFUSED string and all, and all five source-contract
+# assertions stayed green. The sentence in this file's header claimed coverage the cell did not have,
+# in a paragraph whose whole subject is that guard's blind spot.
+#
+# ANCHORED ON THE GUARD'S OWN TEXT INSTEAD. The refusal message belongs to this guard and to nothing
+# else, so its absence is the guard's absence. The line above is KEPT rather than replaced: it asserts
+# a different property -- that unset, empty and whitespace are one invalid class -- and narrowing it
+# would retire that claim to fix a coverage gap it never made.
+#
+# A DECOY FOR THE ANCHOR, because a second copy anywhere in the file would fake this green.
+Assert-True -Condition ((([regex]::Matches($gateLines -join "`n", [regex]::Escape('REFUSED: CARGO_TARGET_DIR is unset or blank'))).Count) -eq 1) -Message 'the refusal message is unique in ci/gate.ps1, so the deletion check below cannot be satisfied by a copy'
+Assert-True -Condition ($precondition -like '*REFUSED: CARGO_TARGET_DIR is unset or blank*') -Message 'deleting the target-dir guard IS detected: its own refusal message is asserted, not a predicate three unrelated helpers also use'
     Assert-True -Condition ($precondition -notlike '*targetDirPattern*') -Message 'precondition does not impose a path pattern'
     Assert-True -Condition ($precondition -notlike '*graphhelm-target-m10*') -Message 'precondition does not special-case retired paths'
     $gateText = $gateLines -join "`n"

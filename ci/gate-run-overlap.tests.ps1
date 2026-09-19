@@ -154,7 +154,7 @@ try {
     Assert-Equal 'unknown-no-target-dir' $found[0].Sharing 'a missing cargoTargetDir is its own unknown, never folded into an answer'
 
     # ---- the two spellings the repo's OWN test accepts are not two directories -------------
-    # ci/gate-target-dir.tests.ps1:81-88 deliberately accepts `C:/explicit-isolated-target` AND
+    # ci/gate-target-dir.tests.ps1:108-115 deliberately accepts `C:/explicit-isolated-target` AND
     # `C:\explicit-isolated-target`, and gate.ps1 records the raw environment value, so the
     # producer is documented to emit aliases of one path. Reading them as separate would be the
     # mirror of the shared-target overclaim this file already removed.
@@ -212,7 +212,7 @@ try {
     Assert-True -Condition $threw -Label 'an over-limit population refuses out loud instead of half-reporting'
 
     # ---- a forged log line in a target dir is neutralised before printing ------------------
-    # ci/gate-target-dir.tests.ps1:97-110 proves a CRLF payload PASSES validation and is persisted
+    # ci/gate-target-dir.tests.ps1:124-137 proves a CRLF payload PASSES validation and is persisted
     # exactly, so this reaches the report as ordinary data. Printing it raw would let a manifest
     # write its own lines into the output someone reads to judge a run.
     $forged = "D:\safe`r`n2026-01-01 | gate | FORGED | payload"

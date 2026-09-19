@@ -25,7 +25,7 @@ $script:MaxRunsForPairwise = 2000
 function Format-UntrustedValue {
     <#
       A manifest is untrusted input, and `cargoTargetDir` is the RAW environment value the gate
-      recorded. ci/gate-target-dir.tests.ps1:97-110 deliberately proves that a target dir carrying
+      recorded. ci/gate-target-dir.tests.ps1:124-137 deliberately proves that a target dir carrying
       a CRLF followed by `2026-01-01 | gate | FORGED | payload` PASSES validation and is persisted
       EXACTLY -- the repository already treats that as an attack and base64-encodes it for slot
       events. Printing it raw here would let a manifest forge lines in, or emit terminal control
@@ -229,7 +229,7 @@ function Find-OverlappingRuns {
                 # the same weakness mirrored: `C:/target` and `C:	arget` are one directory spelt
                 # two ways, and so are a trailing separator, a `..`, a symlink, or two mounts of
                 # one share. This is not hypothetical here -- gate.ps1 records the RAW environment
-                # value (`:483`), and ci/gate-target-dir.tests.ps1:81-88 deliberately ACCEPTS
+                # value (`:483`), and ci/gate-target-dir.tests.ps1:108-115 deliberately ACCEPTS
                 # `C:/explicit-isolated-target` and `C:\explicit-isolated-target` as valid, so the
                 # producer is documented to emit aliases of one path.
                 #

@@ -1368,6 +1368,74 @@ impl Drop for HeldRendezvous {
     }
 }
 
+/// How many scans of the pipe namespace the positive control may take before it is a red.
+#[cfg(windows)]
+const PIPE_ENUMERATION_ATTEMPTS: usize = 20;
+
+/// Scan the named-pipe namespace until a snapshot contains `expected`, at most `attempts`
+/// times. A single directory scan of `//./pipe` is not an atomic listing: under a loaded
+/// suite it can miss a pipe that is held open for the whole scan (#955). The bound is
+/// declared, and exhausting it is a red that names every attempt it made.
+fn pipe_snapshot_containing(
+    expected: &str,
+    attempts: usize,
+    mut enumerate: impl FnMut() -> std::io::Result<Vec<String>>,
+) -> Result<Vec<String>, String> {
+    let mut seen = Vec::new();
+    for attempt in 0..attempts {
+        match enumerate() {
+            Ok(names) => {
+                if names.iter().any(|name| name.eq_ignore_ascii_case(expected)) {
+                    return Ok(names);
+                }
+                seen.push(format!(
+                    "attempt {attempt}: {} entries, target absent",
+                    names.len()
+                ));
+            }
+            Err(error) => seen.push(format!("attempt {attempt}: enumeration failed: {error}")),
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Err(format!(
+        "{expected} not seen in {attempts} scans: [{}]",
+        seen.join("; ")
+    ))
+}
+
+#[test]
+fn a_pipe_scan_that_misses_a_held_pipe_is_retried_not_believed() {
+    let mut script = vec![
+        Ok(vec!["foreign".to_owned()]),
+        Err(std::io::Error::other("scan interrupted")),
+        Ok(vec!["foreign".to_owned(), "GraphHelm-Wake-Held".to_owned()]),
+    ]
+    .into_iter();
+    let mut calls = 0;
+    let snapshot = pipe_snapshot_containing("graphhelm-wake-held", 5, || {
+        calls += 1;
+        script
+            .next()
+            .expect("the scan stops once the target is seen")
+    });
+    assert_eq!(
+        snapshot.as_deref().map(<[String]>::len),
+        Ok(2),
+        "a scan that missed the held pipe once must be retried, not believed: {snapshot:?}"
+    );
+    assert_eq!(
+        calls, 3,
+        "the scan stops at the first snapshot that sees the target"
+    );
+
+    let exhausted = pipe_snapshot_containing("graphhelm-wake-held", 3, || Ok(Vec::new()));
+    let diagnosis = exhausted.expect_err("an absent target stays a red after the bound");
+    assert!(
+        diagnosis.contains("not seen in 3 scans") && diagnosis.contains("attempt 2"),
+        "exhausting the bound names every attempt: {diagnosis}"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn an_old_fixture_pipe_cannot_satisfy_a_new_wake_wait_observer() {
@@ -1378,23 +1446,25 @@ fn an_old_fixture_pipe_cannot_satisfy_a_new_wake_wait_observer() {
     let new_id = wake_wait_fixture_rendezvous_id(logical_id, &new_directory.path().join("events"));
     let _old_generation = HeldRendezvous::new(&old_id);
 
-    let names = std::fs::read_dir("//./pipe")
-        .expect("the named-pipe observer is available")
-        // The namespace is global and volatile: an unrelated entry may disappear between
-        // enumeration and inspection. The held old pipe below is the fail-closed positive
-        // control for this fixture; a racing foreign entry is not evidence about either id.
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
     let old_expected = format!("graphhelm-wake-{old_id}");
     let new_expected = format!("graphhelm-wake-{new_id}");
-
-    assert!(
-        names
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&old_expected)),
-        "positive control: the observer must see the old generation's held pipe"
-    );
+    let names = pipe_snapshot_containing(&old_expected, PIPE_ENUMERATION_ATTEMPTS, || {
+        // The namespace is global and volatile: an unrelated entry may disappear between
+        // enumeration and inspection, and a directory scan of the pipe namespace can miss
+        // a live entry while other tests create and drop pipes. The held old pipe is the
+        // fail-closed positive control; only a snapshot that saw it is evidence about ids.
+        std::fs::read_dir("//./pipe").map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+    })
+    .unwrap_or_else(|diagnosis| {
+        panic!(
+            "positive control: the observer must see the old generation's held pipe; {diagnosis}"
+        )
+    });
 
     assert!(
         !names

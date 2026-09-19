@@ -1226,6 +1226,56 @@ fn a_gap_does_not_backfill_across_a_different_path_at_the_same_line() {
     );
 }
 
+/// #827: a citation whose path CANNOT RESOLVE must make the two counts disagree.
+///
+/// `resolved_path` requires the cited file to exist on disk, so a rename anywhere in the tree
+/// takes a donor out of the extractor's population. That used to be silent, because the counter
+/// shared the same existence filter: both instruments dropped the citation and reported agreement.
+///
+/// The counter no longer resolves anything, and **this cell is what pins that**. Measured on the
+/// real tree while writing #827: renaming `core/governor/src/memory.rs` -- a fixture donor -- and
+/// repairing only the module declaration so the build survives made three cells red, the headline
+/// one reconciling 20 consumed coordinates against 31 spelled.
+///
+/// **That protection is emergent, not asserted.** It lives in the interaction between a counter
+/// that reads syntax and an extractor that reads the disk. Put the existence filter back into
+/// `count_coordinates_in_line` "to avoid false positives" and the divergence disappears, the
+/// corpus becomes quietly hollow-able again, and nothing fails. This cell fails.
+///
+/// Both paths here are deliberately unresolvable, so the cell asserts a property OF THE TWO
+/// INSTRUMENTS rather than borrowing the existence of a live file -- which is the coupling #827 is
+/// about. A cell that needed a real path in order to prove the disk-coupling is a defect would be
+/// carrying the defect.
+#[test]
+fn a_citation_whose_path_cannot_resolve_diverges_the_two_counts() {
+    let text = "core/governor/src/no-such-file-827-a.rs:296 fn donor_token -> bool\n\
+                core/graph/src/no-such-file-827-b.rs:12 fn other_token -> bool\n";
+    let present = count_citation_sites(text);
+    assert_eq!(
+        present, 2,
+        "ARRANGEMENT: the text must SPELL two coordinates, or this cell proves nothing about what \
+         the extractor then drops. If this fires after you changed the counter, the subject is \
+         the counter, not the fixture: `count_citation_sites` sums `count_coordinates_in_line`, \
+         so an existence filter restored THERE drops `present` to 0 before the property below can \
+         speak (#827, H's pass)"
+    );
+    let (citations, _, consumed) = doc_citations(text, &never_verifies);
+    assert_eq!(
+        consumed, 0,
+        "the extractor must drop both, because neither path resolves on disk"
+    );
+    assert!(
+        citations.is_empty(),
+        "a citation nobody can follow must not enter the population: {citations:?}"
+    );
+    assert!(
+        consumed < present,
+        "the counts MUST disagree. If they agree, the counter is filtering by existence again and \
+         a rename can hollow the corpus in silence (#827, the same shape as the :L249 defect one \
+         layer up)"
+    );
+}
+
 /// One `path.rs:COORDINATES` occurrence, located in the raw line.
 struct CitationSite {
     /// Byte index just past `.rs`, where the path ends.

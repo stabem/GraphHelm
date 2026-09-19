@@ -29,6 +29,43 @@ the cell could ever have been red.
 | `apps/cli/tests/development_journey.rs` | holds the graph and its fixtures against each other |
 | `apps/cli/tests/development_sabotage.rs` | holds the corpus against the schemas it attacks |
 
+### What the corpus digest binds, and what it does not (#827)
+
+Eleven contributions in the package's `extension.json` name paths under `fixtures/sabotage/`, so
+`GHEX005` binds those fixtures' **raw bytes**. That is worth stating precisely, because it is
+narrower than "the corpus is frozen":
+
+**The digest binds the bytes. It does not bind the meaning.** A fixture's donor is cited as a
+repository path, and `resolved_path` in `development_sabotage.rs` admits a citation only when that
+file exists on disk. So a fixture's population depends on a tree the fixture does not own: the
+bytes cannot change without the digest noticing, and the subject they describe can move without
+the digest having anything to say.
+
+Measured while closing #827, and reported in full because the answer is "all of them":
+
+| | |
+|---|---|
+| distinct `.rs` paths cited across the doc and the corpus | 7 |
+| resolving against the live tree | 7 |
+| cited by a fixture rather than only by this document | 3 (`core/governor/src/memory.rs`, `core/graph/src/persistence.rs`, `core/runtime/src/retrieval.rs`) |
+
+**A rename does not thin the corpus silently, and this was measured rather than assumed.** Moving
+`core/governor/src/memory.rs` aside — repairing only the module declaration, so the build survives
+and the red cannot come from the compiler — turns three cells red. The one that names the cause
+reconciles the coordinates the extractor consumed against the coordinates the text spells, because
+`count_coordinates_in_line` reads syntax while the extractor reads the disk. Two instruments, one
+of which does not consult the filesystem, is what makes the loss visible.
+
+That divergence is an interaction rather than a decision, so
+`a_citation_whose_path_cannot_resolve_diverges_the_two_counts` pins it: put the existence filter
+back into the counter and the corpus becomes quietly hollow-able again, with every other test
+still green.
+
+**A fixture-local donor tree was considered and declined.** It would make existence a property of
+the fixture, which is the honest shape for something called frozen. It was proposed to stop a
+*silent* emptying, and the emptying is not silent — what remains is conceptual coupling with a loud
+failure. Reopen it if the coupling starts costing something the count reconciliation cannot show.
+
 The journey runs `declare_scope → bind_snapshots → retrieve → capture_gate → { evidence_with_capture
 → admit_memory | evidence_without_capture } → certify`.
 

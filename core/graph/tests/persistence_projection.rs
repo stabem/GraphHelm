@@ -1071,8 +1071,8 @@ fn canonical_content_rejects_values_over_each_shared_preflight_bound() {
 
 /// The other half of the documented divergence, owned by the crate that implements it (#691).
 ///
-/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:542` says this crate requires a prefix **and** a
-/// tail minimum, and `:562` states the consequence: a bare `ghp_` is refused by
+/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:579` says this crate requires a prefix **and** a
+/// tail minimum, and `:599` states the consequence: a bare `ghp_` is refused by
 /// `core/governor` and NOT here. `core/governor/tests/memory.rs` asserts its side; this asserts
 /// this one. Neither crate is made to know the other's rule -- each pins the behaviour the doc
 /// attributes to IT, which is what keeps this a behaviour test rather than a second copy of the
@@ -1108,7 +1108,7 @@ fn a_tail_shorter_than_the_documented_minimum_is_not_refused_here() {
         value["topology"]["labels"]["release"] = serde_json::json!("ghp_");
     });
     validate_persisted_projection(&bare).expect(
-        "a bare `ghp_` carries no tail, and this crate requires prefix + 16 (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:562)",
+        "a bare `ghp_` carries no tail, and this crate requires prefix + 16 (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:599)",
     );
 
     let one_short = mutated_fixture(|value| {

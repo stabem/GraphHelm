@@ -1536,8 +1536,8 @@ fn the_schema_the_enum_and_the_hand_written_list_are_one_lifecycle_vocabulary() 
 
 /// The harness doc's BEHAVIOURAL claim about this crate's screen, measured instead of cited (#691).
 ///
-/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:541` says the admission screen here is
-/// `content.contains("ghp_")` -- ONE prefix and NO tail requirement -- and `:562` records the
+/// `docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:578` says the admission screen here is
+/// `content.contains("ghp_")` -- ONE prefix and NO tail requirement -- and `:599` records the
 /// divergence that follows: a bare `ghp_` is refused by this crate and NOT by `core/graph`, which
 /// needs a tail of at least 16.
 ///
@@ -1584,7 +1584,7 @@ fn a_bare_prefix_with_no_tail_is_refused_here_as_the_harness_doc_claims() {
     let bare = MemoryCandidate::draft(scope(), "a token prefix with no tail: ghp_".to_owned());
     let admitting_into = bare.scope().clone();
     let refusal = admit_memory_candidate(&bare, &admitting_into).expect_err(
-        "a bare `ghp_` with no tail must be refused HERE (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:562)",
+        "a bare `ghp_` with no tail must be refused HERE (docs/harness/NATIVE_DEVELOPMENT_CONTRACTS.md:599)",
     );
 
     assert_eq!(refusal.code(), MemoryRefusalCode::SecretDetected);

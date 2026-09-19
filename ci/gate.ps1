@@ -363,6 +363,7 @@ $failed = @()
 # statement that the stage did not measure it. Populated from the count file postgres.ps1 writes;
 # empty means no PostgreSQL stage ran at all, which is a legal run (-SkipPostgres) and not a zero.
 $script:postgresExecution = [ordered]@{}
+$script:postgresMatrixUnavailable = $false
 # #956 step 2b: the two PostgreSQL matrices, started right after the workspace build and joined at
 # their old positions under their old names. $null means "not started early": the join then runs
 # the matrix in line, exactly as before. The two flags are a measurement of the optimisation's
@@ -4300,7 +4301,7 @@ function Write-RunManifest {
             if ([string]::Equals($recordedMode, $candidate, [System.StringComparison]::Ordinal)) { $buildMode = $candidate }
         }
     }
-    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath))
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]($script:matrixSkipped -or $script:postgresMatrixUnavailable)) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath))
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
     # #904: THE POPULATION THAT DECIDES, beside the one that used to. `$staleArtifacts` is every
@@ -5028,6 +5029,9 @@ try {
 
     # One build pass, enumerated and fingerprinted, ahead of the human-facing stages that reuse it.
     $artifactManifest = Get-TestArtifactManifest
+    # The manifest records native `$LASTEXITCODE` as Int32. Only that exact successful shape is
+    # usable; zero-like strings, booleans, floating point values, and wider integers are unknown.
+    $script:postgresMatrixUnavailable = -not (($artifactManifest.buildExitCode -is [int]) -and ($artifactManifest.buildExitCode -eq 0))
 
     Invoke-Stage 'rustfmt' {
         $fmtTargets = Get-WorkspaceFmtTargets
@@ -5142,7 +5146,7 @@ try {
     #
     # The join is unmoved, under the old names, after the PowerShell suites' join. Skipped matrices
     # are not started.
-    if (-not $script:matrixSkipped) {
+    if (-not $script:matrixSkipped -and -not $script:postgresMatrixUnavailable) {
         if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
         $script:pgIgnoredEarly = Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'
         $script:pgCollationEarly = Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale (Get-NonCLocale)
@@ -5299,6 +5303,8 @@ try {
             Write-Host "[gate] PostgreSQL matrix SKIPPED by scope - $([string]$script:gateScope.matrixReason)" -ForegroundColor Yellow
             Write-Host '[gate] this run does NOT cover persistence: coverage.complete is false.' -ForegroundColor Yellow
         }
+    } elseif ($script:postgresMatrixUnavailable) {
+        Write-Host '[gate] PostgreSQL matrix NOT RUN: the artifact build did not succeed; persistence coverage is incomplete.' -ForegroundColor Red
     } else {
         if ($PostgresBin) { $env:GRAPHHELM_PG_BIN = $PostgresBin }
         # postgres.ps1 ends in `exit`, which terminates the *calling* script in PowerShell, so it

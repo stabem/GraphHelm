@@ -11,7 +11,7 @@
 # they were handed, rather than read.
 
 param([switch] $ObservePostgresAbort, [string] $PostgresBin = 'C:/Users/gabri/tools/pgsql/bin')
-$ExpectedAssertionCount = 29
+$ExpectedAssertionCount = 37
 if ($ObservePostgresAbort) { $ExpectedAssertionCount += 2 }
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -160,8 +160,8 @@ try {
     # `workspace tests`, which precedes them; it is no longer asserted separately because an
     # assertion that restates a consequence adds a second thing to keep true, not a second check.
     $startSlice = Get-GateSlice -Start '$artifactManifest = Get-TestArtifactManifest' -End "Invoke-Stage 'workspace tests' {"
-    Assert-True ($startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'") -and $startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale") -and $startSlice.Contains('if (-not $script:matrixSkipped)')) `
-        'both matrices are started after the build that makes their binaries and before the workspace-tests stage they run beside, and not when the scope skipped them'
+    Assert-True ($startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL ignored matrix'") -and $startSlice.Contains("Start-PostgresStageEarly -Name 'PostgreSQL matrix under a non-C collation' -Locale") -and $startSlice.Contains('if (-not $script:matrixSkipped -and -not $script:postgresMatrixUnavailable)')) `
+        'both matrices are started after a successful build that makes their binaries and before the workspace-tests stage they run beside, and not when the scope skipped them or the build failed'
 
 # #1052 SECOND-PASS FINDING: THE BUILD ANCHOR ALONE LEAVES CLIPPY INSIDE THE SLICE.
 # The cell above runs from `Get-TestArtifactManifest` to the `workspace tests` stage, and `clippy`
@@ -189,6 +189,7 @@ Assert-True (([regex]::Matches($gateText, [regex]::Escape("Invoke-Stage 'clippy 
 'the clippy stage opening is a unique anchor in ci/gate.ps1, so the ordering cell below cannot be satisfied by a second copy'
 Assert-True ($clippyOpen -ge 0 -and $clippyClose -gt $clippyOpen -and $firstStart -gt $clippyClose -and $secondStart -gt $clippyClose) `
 'both matrices are started AFTER the clippy stage has closed, not above it and not inside it -- clippy compiles into the shared target directory and holds the build lock, so overlapping it with two matrix cargo processes is the contention this placement avoids'
+
     $joinSlice = Get-GateSlice -Start 'if ($script:matrixSkipped) {' -End '# #207:'
     Assert-True ($joinSlice.Contains("Complete-PostgresStage -Name 'PostgreSQL ignored matrix' -Early") -and $joinSlice.Contains("Complete-PostgresStage -Name 'PostgreSQL matrix under a non-C collation' -Early") -and -not $joinSlice.Contains("Invoke-PostgresStage -Name 'PostgreSQL")) `
         'both matrices are JOINED at their old position under their old names, and the in-line call is gone from there'
@@ -357,6 +358,98 @@ Assert-True ($clippyOpen -ge 0 -and $clippyClose -gt $clippyOpen -and $firstStar
         Remove-Item -LiteralPath $fixturePath, $fixtureOutput -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $fixtureRoot -Force -ErrorAction SilentlyContinue
     }
+
+    # #1145: a failed artifact build must prevent PostgreSQL clusters from starting. The placement
+    # checks above cannot observe whether the calls fire, so drive the main slice with a builder
+    # stub and count starts. A successful build is the control; failed and unknown builds fail closed.
+    $startedMarker = Join-Path ([IO.Path]::GetTempPath()) ('pg-1145-' + [guid]::NewGuid().ToString('N'))
+    $stubbed = @('Start-PostgresStageEarly','Get-TestArtifactManifest','Invoke-Stage','Get-NonCLocale',
+                 'Get-WorkspaceFmtTargets','Get-RustfmtPlan','Get-RustfmtStageExit','Get-RustfmtHarnessNote',
+                 'Test-StageOverlapped','Invoke-PostgresStage')
+    $savedFunctions = @{}
+    foreach ($name in $stubbed) { $savedFunctions[$name] = (Get-Item ("Function:" + $name) -ErrorAction SilentlyContinue) }
+    try {
+        function Start-PostgresStageEarly { param($Name, $Locale, $ScriptPath, $SupportScriptPath) [IO.File]::AppendAllText($startedMarker, "early`n"); return $null }
+        function Get-TestArtifactManifest { return @{ buildExitCode = $script:builderExitCode } }
+        function Invoke-Stage { param($Name, $Body) }
+        function Get-NonCLocale { 'English_United States.1252' }
+        function Get-WorkspaceFmtTargets { @() }
+        function Get-RustfmtPlan { param($Targets) @() }
+        function Get-RustfmtStageExit { param($Codes) 0 }
+        function Get-RustfmtHarnessNote { param($Lines) $null }
+        function Test-StageOverlapped { param($Records, $Name) $false }
+        function Invoke-PostgresStage { param($Name, $CountFile = '', $Body = $null) [IO.File]::AppendAllText($startedMarker, "inline`n") }
+        $script:matrixSkipped = $false
+        $PostgresBin = $null
+        $repositoryRoot = [IO.Path]::GetTempPath()
+        $toolchain = '+1.97.1'
+
+        $script:builderExitCode = 0
+        Invoke-Expression $startSlice
+        Invoke-Expression $joinSlice
+        $startedOnSuccess = @(Get-Content -LiteralPath $startedMarker -ErrorAction SilentlyContinue)
+        Remove-Item -LiteralPath $startedMarker -Force -ErrorAction SilentlyContinue
+
+        $script:builderExitCode = 2
+        Invoke-Expression $startSlice
+        Invoke-Expression $joinSlice
+        $startedOnFailure = @(Get-Content -LiteralPath $startedMarker -ErrorAction SilentlyContinue)
+        Remove-Item -LiteralPath $startedMarker -Force -ErrorAction SilentlyContinue
+
+    $script:builderExitCode = $null
+    Invoke-Expression $startSlice
+    Invoke-Expression $joinSlice
+    $startedOnUnknown = @(Get-Content -LiteralPath $startedMarker -ErrorAction SilentlyContinue)
+    Remove-Item -LiteralPath $startedMarker -Force -ErrorAction SilentlyContinue
+
+    # The manifest receives the native `$LASTEXITCODE`, an Int32. Other zero-like values are not a
+    # successful artifact result: accepting them would make the start predicate and the strict
+    # availability decision disagree. Int64 zero is included deliberately as an unknown shape.
+    $zeroLikeCases = @(
+        [pscustomobject]@{ Name = 'string zero'; Value = '0' }
+        [pscustomobject]@{ Name = 'Boolean false'; Value = [bool]$false }
+        [pscustomobject]@{ Name = 'Double zero'; Value = [double]0 }
+        [pscustomobject]@{ Name = 'Int64 zero'; Value = [int64]0 }
+    )
+    $zeroLikeCounts = @{}
+    foreach ($case in $zeroLikeCases) {
+        $script:builderExitCode = $case.Value
+        Invoke-Expression $startSlice
+        Invoke-Expression $joinSlice
+        $zeroLikeCounts[$case.Name] = @((Get-Content -LiteralPath $startedMarker -ErrorAction SilentlyContinue)).Count
+        Remove-Item -LiteralPath $startedMarker -Force -ErrorAction SilentlyContinue
+    }
+    } finally {
+        foreach ($name in $stubbed) {
+            $saved = $savedFunctions[$name]
+            if ($null -eq $saved) { Remove-Item ("Function:" + $name) -ErrorAction SilentlyContinue }
+            else { Set-Item ("Function:" + $name) $saved.ScriptBlock }
+        }
+        Remove-Item -LiteralPath $startedMarker -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True (@($startedOnSuccess | Where-Object { $_ -eq 'early' }).Count -eq 2 -and @($startedOnSuccess | Where-Object { $_ -eq 'inline' }).Count -eq 2) `
+        'CONTROL: a successful artifact build with early-start failure falls back inline for both matrices'
+    Assert-True (@($startedOnFailure).Count -eq 0) 'a failed artifact build starts no PostgreSQL cluster, including at the inline join'
+    Assert-True (@($startedOnUnknown).Count -eq 0) 'an artifact manifest with no build result starts no PostgreSQL cluster, including at the inline join'
+    Assert-True ($zeroLikeCounts['string zero'] -eq 0) 'a string zero build result starts no PostgreSQL cluster'
+    Assert-True ($zeroLikeCounts['Boolean false'] -eq 0) 'a Boolean false build result starts no PostgreSQL cluster'
+    Assert-True ($zeroLikeCounts['Double zero'] -eq 0) 'a Double zero build result starts no PostgreSQL cluster'
+    Assert-True ($zeroLikeCounts['Int64 zero'] -eq 0) 'an Int64 zero build result is unknown and starts no PostgreSQL cluster'
+
+    # Coverage is part of the same promise: an unavailable matrix must be recorded as skipped, not
+    # merely avoided. Execute the real Get-RunCoverage function through the real manifest call
+    # expression so removing postgresMatrixUnavailable from that composition turns this cell RED.
+    $coverageFunction = [regex]::Match($gateText, '(?ms)^function Get-RunCoverage \{.*?^\}').Value
+    Invoke-Expression $coverageFunction
+    $coverageCall = [regex]::Match($gateText, '(?m)^\s*\$coverage = Get-RunCoverage .*?$').Value.Trim()
+    $script:matrixSkipped = $false
+    $script:postgresMatrixUnavailable = $true
+    $buildMode = 'unknown'
+    $NonPullRequest = $false
+    $LandingSnapshotPath = $null
+    Invoke-Expression $coverageCall
+    Assert-True ($coverage.postgres -eq 'skipped' -and -not $coverage.complete) `
+        'an unavailable PostgreSQL matrix is recorded as skipped and makes coverage incomplete'
 } catch {
     Write-Host $_
     Write-Host $_.ScriptStackTrace

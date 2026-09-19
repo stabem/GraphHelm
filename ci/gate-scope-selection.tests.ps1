@@ -243,8 +243,8 @@ try {
     # A SKIPPED MATRIX IS NOT A GREEN MATRIX. `Get-RunCoverage` must be fed the EFFECTIVE skip, or a
     # scoped run records `coverage.complete = true` while never having touched persistence -- a
     # completeness claim nobody measured, in the field a later reader trusts most.
-    Assert-True ($gateText.IndexOf('Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped)', [System.StringComparison]::Ordinal) -ge 0) `
-        'coverage is computed from the EFFECTIVE skip, so a scope-skipped run reports complete=false'
+    Assert-True ($gateText.IndexOf('Get-RunCoverage -SkipPostgres ([bool]($script:matrixSkipped -or $script:postgresMatrixUnavailable))', [System.StringComparison]::Ordinal) -ge 0) `
+        'coverage is computed from the EFFECTIVE skip, including an unavailable artifact build, so a scope-skipped run reports complete=false'
 
     # And the console says WHICH reason: a reader who cannot tell a scoped skip from a broken one
     # cannot act on either, and both leave the same hole in the record.

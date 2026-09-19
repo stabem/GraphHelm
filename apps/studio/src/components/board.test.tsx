@@ -18,6 +18,7 @@ import userEvent from "@testing-library/user-event";
 import { Board } from "./board";
 import { defaultPosition, emptyBoard, type BoardState } from "../graph/board";
 import type { GraphModel } from "../graph/model";
+import studioStyles from "../styles.css?raw";
 import { newestPresenceByActor, type AgentPresence } from "../runtime/session";
 import type { RuntimeEvent } from "../runtime/types";
 
@@ -139,6 +140,54 @@ describe("node evidence", () => {
     );
   });
 });
+
+/**
+ * The ink layer covers the drawn content (#1072). The sheet-ink SVG was fixed at 2600x1700, so a
+ * verified connection into a generated column or row past that box was clipped while the DOM card
+ * it points at stayed visible. The SVG must be at least as wide and tall as the farthest card.
+ */
+describe("the ink layer", () => {
+  it("is at least as wide and tall as the farthest card when 16 nodes carry a verified edge into the last column", () => {
+    const nodes = Array.from({ length: 16 }, (_, index) => ({ id: `n${index}`, state: "ready" as const, touches: 0, lastEventAt: null, history: [], reopened: null }));
+    const model: GraphModel = {
+      ...MODEL,
+      nodes,
+      edgesKnown: true,
+      edges: [{ id: "n0->n15", from: "n0", to: "n15", type: "control" }],
+    };
+    const board: BoardState = { ...emptyBoard(), positions: { n15: { x: 3400, y: 2200 } } };
+    const { container } = render(<Board model={model} board={board} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    const ink = container.querySelector("svg.sheet-ink");
+    expect(ink).not.toBeNull();
+    expect(container.querySelectorAll("svg.sheet-ink path.edge")).toHaveLength(1);
+    const width = Number(ink!.getAttribute("width"));
+    const height = Number(ink!.getAttribute("height"));
+    expect(width).toBeGreaterThanOrEqual(3400 + 320);
+    expect(height).toBeGreaterThanOrEqual(2200 + 100);
+  });
+
+  it("renders at the ink extent under the real stylesheet, where the farthest card sets both width and height", () => {
+    /* The global `svg { width: 14px; height: 14px }` rule in styles.css outranks presentation
+       attributes, so the attributes alone do not size the box (#1072 review). This cell applies the
+       real stylesheet and reads the COMPUTED size. The farthest card is a touched one (288px tall) at
+       (3400, 2400), past every grid slot, so dropping the card height from the extent changes the
+       computed height from 2768 to 2480 (measured by that sabotage) and reddens this cell. */
+    const style = document.createElement("style");
+    style.textContent = studioStyles;
+    document.head.appendChild(style);
+    try {
+      const nodes = Array.from({ length: 16 }, (_, index) => ({ id: `n${index}`, state: "ready" as const, touches: index === 15 ? 1 : 0, lastEventAt: null, history: [], reopened: null }));
+      const model: GraphModel = { ...MODEL, nodes, edgesKnown: true, edges: [{ id: "n0->n15", from: "n0", to: "n15", type: "control" }] };
+      const board: BoardState = { ...emptyBoard(), positions: { n15: { x: 3400, y: 2400 } } };
+      const { container } = render(<Board model={model} board={board} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+      const ink = container.querySelector("svg.sheet-ink") as SVGSVGElement;
+      const computed = getComputedStyle(ink);
+      expect({ width: computed.width, height: computed.height }).toEqual({ width: `${3400 + 320 + 80}px`, height: `${2400 + 288 + 80}px` });
+      expect(computed.overflow).toBe("visible");
+    } finally {
+      style.remove();
+    }
+  });});
 
 /** The props every render needs beyond the ones a given test is about. */
 const REST = {

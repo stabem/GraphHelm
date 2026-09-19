@@ -737,9 +737,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .sheet-ink {
   position: absolute;
-  inset: 0;
-  width: 2600px;
-  height: 1700px;
+  left: 0;
+  top: 0;
+  /* width and height come from board.tsx as an inline style (the global `svg` 14px rule outranks
+     presentation attributes): the farthest card plus a margin, never below 2600x1700 (#1072). */
+  overflow: visible;
   pointer-events: none;
 }
 

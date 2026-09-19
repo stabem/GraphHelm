@@ -396,6 +396,12 @@ export function Board({
   /** The card's measured height (graph/board.ts): the first entry node carries the objective
    * and is taller by its allowance, so bounds, edges and the camera frame what is drawn. */
   const nodeHeight = (node: GraphNode) => cardHeight(node, hasObjective && isFirstEntryNode(model, node.id));
+  /* THE INK COVERS WHAT IS DRAWN (#1072). The sheet-ink SVG was a fixed 2600x1700 box, so a
+     verified connection into a generated column or row past it was clipped while the card it
+     points at stayed visible. The box grows to the farthest card plus a margin; the old size
+     stays the floor so strokes and talk lines drawn inside it keep their room. */
+  const inkWidth = Math.max(2600, ...model.nodes.map((node, index) => nodePosition(node.id, index).x + CARD_WIDTH + 80));
+  const inkHeight = Math.max(1700, ...model.nodes.map((node, index) => nodePosition(node.id, index).y + nodeHeight(node) + 80));
   const edgeGeometry = model.edges.flatMap((edge) => {
     const from = places.get(edge.from);
     const to = places.get(edge.to);
@@ -848,7 +854,7 @@ export function Board({
           {!model.edgesKnown && <button type="button" onClick={() => setConnectOpen(true)}>Verify connections</button>}
         </div>
 
-        <svg className="sheet-ink" aria-hidden="true">
+        <svg className="sheet-ink" aria-hidden="true" width={inkWidth} height={inkHeight} style={{ width: `${inkWidth}px`, height: `${inkHeight}px` }}>
           <defs>
             <filter id="roughen" x="-5%" y="-5%" width="110%" height="110%">
               <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="noise" />

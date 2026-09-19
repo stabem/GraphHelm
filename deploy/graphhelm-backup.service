@@ -1,0 +1,8 @@
+[Unit]
+Description=Create a local GraphHelm VPS recovery bundle
+Documentation=https://github.com/stabem/GraphHelm/blob/main/docs/operations/VPS_UPGRADE_BACKUP_RESTORE.md
+RequiresMountsFor=/var/lib/graphhelm /var/backups/graphhelm
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/graphhelm-backup-vps --destination /var/backups/graphhelm

@@ -1246,7 +1246,9 @@ path) and with STUDIO_MVP §5 (agent actions are recorded as agents).
 
 ## 42. ADR-037 — The systemd VPS install and update path is an exception to D-002, recorded before it ships
 
-**Status:** proposed. Conditional on PR #595 landing; not in effect while #595 is open. If #595 closes unmerged, this ADR is withdrawn rather than accepted.
+**Status:** accepted on the merge of #595.
+
+**The status names the event and not a calendar date, which is a deliberate departure from this ADR's own `accepted <date>` instruction and is recorded here so it does not read as an oversight.** This edit rides in #595's squash, so it is written before the button is pressed: any date put here would be a prediction about when that happens, and a document whose entire purpose is that the register never contradicts the tree should not rest on a prediction. The event is exact and verifiable from the merge itself. The calendar date belongs in #595's merge comment, which is where the Consequences section below already sends it.
 
 **Context:** `docs/DECISION_REGISTER.md` D-002 is normative for version 0.1 and says *"Existing VPS connected via SSH; installation and updates via Docker."* PR #595 (owner's lane) ships `deploy/upgrade-vps.sh`, `deploy/backup-vps.sh`, `deploy/restore-vps.sh`, `deploy/graphhelm-backup.service`, `deploy/graphhelm-backup.timer` and `docs/operations/VPS_UPGRADE_BACKUP_RESTORE.md`: a **systemd**-managed install, update, backup and restore path with no container in it. #663 measured that nothing in `docs/adr/`, `docs/rfc/` or this file records that divergence, so the day #595 merges the highest-precedence document describes a system the repository does not ship. This ADR is the record #663 asks for, written while the path is still on a branch so the register never contradicts the tree for even one commit.
 

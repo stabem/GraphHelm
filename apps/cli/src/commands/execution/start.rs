@@ -141,9 +141,21 @@ pub(crate) fn execute(
         // Nothing measured here on purpose: this command reports the mutation it just made,
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
         // rather than into calm, so the omission is stated instead of implied.
-        &graphhelm_execution::AttentionInputs::default(),
+        // But the BUDGET is not a measurement. It is declared in the graph this projection
+        // already holds, and `default()` asserted there was none -- so `attention` took the
+        // `(None, measured)` arm and answered `NoDeclaredBudget` with the remedy "declare a
+        // budget for this node", to an operator who had declared one (G's measurement on
+        // #1013). `for_surface` derives it from the projection; the empty map is the AGE,
+        // which really is unmeasured here, and that lands on the honest `(Some, None)` arm:
+        // `NotMeasured`, remedy `Unavailable { SurfaceMeasuredNoAge }`.
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
         // The instants ARE measured here: this command just wrote to the store, so when the
-        // log last moved is a fact it can read back. Only the silence BUDGET stays absent.
+        // log last moved is a fact it can read back. The silence budget above comes from the
+        // projection; the per-node age remains unmeasured on this surface.
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
         Some(&prepared.spec),
     ))
@@ -192,7 +204,11 @@ pub(crate) fn execute_held(
     let (_, _, projection) = load_projection(&store, Some(prepared.execution_id.as_str()))?;
     Ok(render(
         &projection,
-        &graphhelm_execution::AttentionInputs::default(),
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
         // #134: this door holds no graph, so no dispatch gate is published from it.
         None,

@@ -108,16 +108,20 @@ pub(crate) fn execute(
         // Nothing measured here on purpose: this command reports the mutation it just made,
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
         // rather than into calm, so the omission is stated instead of implied.
-        &graphhelm_execution::AttentionInputs::default(),
-        // NOT the same posture as the budget above, and #158 is the lived reason for the
-        // split. Judging silence needs a clock reading and a declared bound, which this
-        // command has not got. An INSTANT is a fact already sitting in the log, and a
-        // command that has just appended to the store can honestly report when the store
-        // last moved -- which is what the doc on `Liveness::from_store` says, and what
-        // `start`, also a mutation, has always done. Publishing null here made an operator's
-        // timestamps depend on WHICH VERB they typed: on the first real operator run resume
-        // reported `lastEventAt: null` and an empty `nodeLastEventAt` immediately after
-        // re-dispatching four nodes, while `status` read the same store correctly.
+        // But the BUDGET is not a measurement. It is declared in the graph this projection
+        // already holds, and `default()` asserted there was none -- so `attention` took the
+        // `(None, measured)` arm and answered `NoDeclaredBudget` with the remedy "declare a
+        // budget for this node", to an operator who had declared one (G's measurement on
+        // #1013). `for_surface` derives it from the projection; the empty map is the AGE,
+        // which really is unmeasured here, and that lands on the honest `(Some, None)` arm:
+        // `NotMeasured`, remedy `Unavailable { SurfaceMeasuredNoAge }`.
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
+        // Preserve the main-branch liveness contract: the mutation did not measure node silence,
+        // but the event store can still report the instant at which this resume moved it.
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
         Some(&prepared.spec),
     );

@@ -99,11 +99,12 @@ pub(crate) fn execute(
         // honest verdict when the projection could not be built at all.
         let row = match graphhelm_events::replay(&stream.scope, &stream.stream_id, &history) {
             Ok(projection) => {
-                let inputs = graphhelm_execution::AttentionInputs {
-                    node_silence_seconds: super::node_silence_seconds(&history, chrono::Utc::now()),
-                    silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
-                    at_sequence: head,
-                };
+                // Budgets derived, not passed (#176).
+                let inputs = graphhelm_execution::AttentionInputs::for_surface(
+                    &projection,
+                    super::node_silence_seconds(&history, chrono::Utc::now()),
+                    head,
+                );
                 let full = render(
                     &projection,
                     &inputs,

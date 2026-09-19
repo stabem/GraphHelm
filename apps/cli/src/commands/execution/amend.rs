@@ -175,9 +175,11 @@ pub(crate) fn execute(
     let history = store
         .read_replay_stream(&scope, &stream)
         .map_err(|error| repository_failure(&error))?;
-    let inputs = graphhelm_execution::AttentionInputs {
-        node_silence_seconds: super::node_silence_seconds(&history, chrono::Utc::now()),
-        silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
+    // Budgets derived by `for_surface`, never passed (#176): this surface has no private reading
+    // of them to drift from `status`'s.
+    let inputs = graphhelm_execution::AttentionInputs::for_surface(
+        &projection,
+        super::node_silence_seconds(&history, chrono::Utc::now()),
         // `None` when the history is empty: no vantage point rather than a claim to have
         // looked at sequence zero. Shared with `status` so the two cannot drift.
         //
@@ -187,8 +189,8 @@ pub(crate) fn execute(
         // comment, and nothing else. (On this path the history also carries the amendment appended
         // a few lines above, so the empty case is unreachable HERE — which is exactly why a
         // regression here would go unnoticed.)
-        at_sequence: super::at_sequence(&history),
-    };
+        super::at_sequence(&history),
+    );
     Ok(render(
         &projection,
         &inputs,

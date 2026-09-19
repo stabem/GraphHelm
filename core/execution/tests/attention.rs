@@ -1283,3 +1283,87 @@ fn a_requeued_node_whose_calm_was_bought_is_still_named() {
          that calm must not read as untroubled: {answer:?}"
     );
 }
+
+/// A DEFAULT FEED IS NOT AN ABSTENTION -- it is a false claim about the GRAPH (#1013).
+///
+/// Five mutation replies and one serve route passed `AttentionInputs::default()` and explained
+/// it as "nothing measured here on purpose". That reasoning is right about the AGE and wrong
+/// about the BUDGET: the budget is not measured by a surface, it is declared in the graph the
+/// projection already holds. An empty `silence_budget_seconds` sends `attention` down the
+/// `(None, measured)` arm, which answers `NoDeclaredBudget` and hands the operator the remedy
+/// "declare a budget for this node" -- for a node whose budget they declared.
+///
+/// Found by G, on #1013, by judging ONE projection twice. That is why this cell judges one
+/// projection twice too: two fixtures could differ for a reason that is not the feed.
+///
+/// The `default()` half is not certifying a shipped defect -- no production site passes a
+/// default any more. It is the CONTRAST that makes the other half mean something, and it is
+/// what falls if someone reverts a surface to `default()` believing it abstains.
+#[test]
+fn a_default_feed_claims_no_budget_where_the_graph_declares_one() {
+    let mut projection = silent_queued_node(1);
+    projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
+        execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
+        node_ids: vec![graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap()],
+        node_timeout_seconds: [(
+            graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap(),
+            30,
+        )]
+        .into_iter()
+        .collect(),
+        // #134 added these three to `ExecutionFormDeclared` after this branch was cut. `None` for
+        // all three on purpose: this cell is about a DECLARED BUDGET being visible to a surface
+        // that passed `default()`, and a name, an objective or an executor would be three more
+        // things the reader has to rule out before believing the verdict. The absent case is the
+        // one that keeps the contrast clean.
+        name: None,
+        objective: None,
+        executor: None,
+    });
+
+    // CONTROL: the budget really is declared. Without this the two verdicts below could differ
+    // because the fixture declares nothing, which would measure the fixture and not the feed.
+    assert_eq!(
+        graphhelm_execution::effective_budgets(&projection).get("flaky_check"),
+        Some(&30),
+        "the fixture must declare a budget or neither assertion below means anything"
+    );
+
+    let defaulted = graphhelm_execution::attention(
+        &projection,
+        &graphhelm_execution::AttentionInputs::default(),
+    );
+    assert_eq!(
+        defaulted.silence_unevaluated(),
+        vec![graphhelm_execution::Unevaluated::Node {
+            node: "flaky_check".to_owned(),
+            reason: graphhelm_execution::NodeUnevaluated::NoDeclaredBudget,
+            remedy: graphhelm_execution::Remedy::DeclareNodeBudget {
+                node: "flaky_check".to_owned(),
+                observed_silence_seconds: 0,
+                computed_at_sequence: None,
+            },
+        }],
+        "a default feed must be shown SAYING there is no declared budget: {defaulted:?}"
+    );
+
+    let fed = graphhelm_execution::attention(
+        &projection,
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
+    );
+    assert_eq!(
+        fed.silence_unevaluated(),
+        vec![graphhelm_execution::Unevaluated::Node {
+            node: "flaky_check".to_owned(),
+            reason: graphhelm_execution::NodeUnevaluated::NotMeasured,
+            remedy: graphhelm_execution::Remedy::Unavailable {
+                because: graphhelm_execution::RemedyUnavailable::SurfaceMeasuredNoAge,
+            },
+        }],
+        "the shared feed must report the budget present and the age unmeasured: {fed:?}"
+    );
+}

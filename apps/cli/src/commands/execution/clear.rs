@@ -240,7 +240,16 @@ pub(crate) fn execute(
     };
     let mut value = render(
         &projection,
-        &graphhelm_execution::AttentionInputs::default(),
+        // THE EIGHTH SURFACE, arriving with `claim` at a31265d9 (#1036) after this branch converted
+        // the six it knew about. Same correction, same reason: `default()` asserts there is no
+        // declared budget, and the budget is declared in the graph this projection already holds --
+        // so it answered `NoDeclaredBudget` to an operator who had declared one. `for_surface`
+        // derives it and leaves the age empty, which is the half that genuinely is unmeasured here.
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
         &super::Liveness::from_store(&store, &prepared.scope, prepared.stream.as_str()),
         // #134: this door holds no graph, so no dispatch gate is published from it.
         None,

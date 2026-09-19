@@ -142,7 +142,18 @@ pub(crate) fn execute(
         // Nothing measured here on purpose: this command reports the mutation it just made,
         // not a liveness reading. The seam turns "not measured" into `silenceUnevaluated`
         // rather than into calm, so the omission is stated instead of implied.
-        &graphhelm_execution::AttentionInputs::default(),
+        // But the BUDGET is not a measurement. It is declared in the graph this projection
+        // already holds, and `default()` asserted there was none -- so `attention` took the
+        // `(None, measured)` arm and answered `NoDeclaredBudget` with the remedy "declare a
+        // budget for this node", to an operator who had declared one (G's measurement on
+        // #1013). `for_surface` derives it from the projection; the empty map is the AGE,
+        // which really is unmeasured here, and that lands on the honest `(Some, None)` arm:
+        // `NotMeasured`, remedy `Unavailable { SurfaceMeasuredNoAge }`.
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
         // Same posture for the instants: a mutation reply publishes null rather than a
         // stillness it never looked for.
         &super::Liveness::default(),

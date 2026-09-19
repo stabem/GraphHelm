@@ -62,6 +62,42 @@ pub struct AttentionInputs {
     pub at_sequence: Option<u64>,
 }
 
+impl AttentionInputs {
+    /// The ONE feed. Every surface asks for its inputs here instead of assembling them (#176).
+    ///
+    /// The rule (`attention`) has always been shared and could not drift. The FEED could: each
+    /// surface built this struct itself, and a surface that filled `silence_budget_seconds` from
+    /// some other source would compile without complaint and then disagree with its siblings
+    /// while applying the identical rule. The symptom is "same rule, different verdicts", which
+    /// nobody hunts for, because the first thing anyone checks is whether the rule is shared --
+    /// and it is.
+    ///
+    /// #176 deferred this while two surfaces did the assembling, on the ground that a constructor
+    /// with two documented callers is machinery against a hunch, and named its own trigger: the
+    /// third. There were FOUR by `95a7ad9d` -- `execution/amend.rs`, `execution/list.rs`,
+    /// `execution/status.rs`, `serve/monitor.rs` -- so the deferral's arithmetic no longer held.
+    ///
+    /// **What is derived and what is passed is the whole design.** The budgets are DERIVED here,
+    /// always, from `effective_budgets`: no caller can supply them, so no caller can supply a
+    /// different set. The other two fields are PASSED, because they are facts about the surface
+    /// that the projection cannot know -- the subtraction needs a clock, which this crate does not
+    /// have, and the vantage point is a property of the read rather than of the history. A
+    /// surface that did not fetch by sequence passes `None` and says so, instead of inventing a
+    /// zero that would read like sequence zero.
+    #[must_use]
+    pub fn for_surface(
+        projection: &ExecutionProjection,
+        node_silence_seconds: BTreeMap<String, u64>,
+        at_sequence: Option<u64>,
+    ) -> Self {
+        Self {
+            node_silence_seconds,
+            silence_budget_seconds: effective_budgets(projection),
+            at_sequence,
+        }
+    }
+}
+
 /// A list that cannot be empty, enforced by the constructor rather than by a test.
 ///
 /// The reviewer's attack on my first design, accepted: an assertion ("reasons is empty only

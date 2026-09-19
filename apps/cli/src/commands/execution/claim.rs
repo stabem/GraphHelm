@@ -161,9 +161,25 @@ pub(crate) fn execute(
     let projection = replay_projection(&store, &scope, &stream)?;
     let mut value = render(
         &projection,
-        // Nothing measured here on purpose: this command reports the mutation it just made,
-        // not a liveness reading (the same posture as every other mutation reply).
-        &graphhelm_execution::AttentionInputs::default(),
+        // THE SEVENTH SURFACE, and it arrived on main at a31265d9 (#1036) AFTER this branch had
+        // converted the six it knew about -- caught by this PR's own census on a tree nobody aimed
+        // it at, which is the drift the census exists for.
+        //
+        // The comment that stood here said "nothing measured here on purpose", and the liveness
+        // half of that is still true: this command reports the mutation it just made, not a
+        // liveness reading. But `default()` does not say "unmeasured" -- it asserts there is NO
+        // DECLARED BUDGET, and the budget is not a measurement. It is declared in the graph this
+        // projection already holds. So an operator who HAD declared one was answered
+        // `NoDeclaredBudget` with the remedy "declare a budget for this node".
+        //
+        // `for_surface` derives the budget from the projection and leaves the AGE empty, which is
+        // the part that really is unmeasured here, landing on the honest `(Some, None)` arm:
+        // `NotMeasured`, remedy `Unavailable { SurfaceMeasuredNoAge }`.
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            std::collections::BTreeMap::new(),
+            None,
+        ),
         &super::Liveness::from_store(&store, &scope, &stream),
         // #134: this door holds no graph, so no dispatch gate is published from it.
         None,

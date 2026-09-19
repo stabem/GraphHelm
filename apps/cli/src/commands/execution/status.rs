@@ -212,17 +212,16 @@ pub(crate) fn read_within(
     // The read surface is the one that CAN measure: it is holding the history. It supplies
     // the subtraction; the budget stays empty until a surface can see the manifest that
     // declares it, and an unbudgeted node comes back as unevaluated rather than as calm.
-    let inputs = graphhelm_execution::AttentionInputs {
-        node_silence_seconds: super::node_silence_seconds(&history, chrono::Utc::now()),
-        // The budgets the operator declared, now that persistence carries them. Before this
-        // they never reached the seam at all, so every node in flight came back unevaluated
-        // and the verdict was PERMANENTLY unknown -- honest, and useless.
-        silence_budget_seconds: graphhelm_execution::effective_budgets(&projection),
+    // The budgets are NOT passed here: `for_surface` derives them, so this surface cannot hold a
+    // private reading of them (#176). What it does pass is what only it knows.
+    let inputs = graphhelm_execution::AttentionInputs::for_surface(
+        &projection,
+        super::node_silence_seconds(&history, chrono::Utc::now()),
         // Where this read was looking, so a remedy can be placed in the history later. `None`
         // when there was nothing to look at: an empty history has no vantage point, and
         // `Some(0)` would claim one at a sequence streams never issue.
         at_sequence,
-    };
+    );
     Ok(Read {
         projection,
         history,

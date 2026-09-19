@@ -2621,8 +2621,14 @@ async fn drive(
         Ok(projection) => Ok(execution::render_with_context(
             &projection,
             // This path holds a projection and no history: it states that it measured
-            // nothing instead of implying calm.
-            &graphhelm_execution::AttentionInputs::default(),
+            // nothing instead of implying calm. The BUDGET is not part of that absence --
+            // it is declared in the graph this projection holds, and `default()` claimed
+            // otherwise (#1013).
+            &graphhelm_execution::AttentionInputs::for_surface(
+                &projection,
+                std::collections::BTreeMap::new(),
+                None,
+            ),
             &execution::Liveness::default(),
             // #134: no graph on this path either -- `ServeState` holds one, but publishing the
             // dispatch view here and not from the CLI command would split the two surfaces'

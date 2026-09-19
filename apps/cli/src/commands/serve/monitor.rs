@@ -328,16 +328,13 @@ fn render_page(
     // printing calm.
     let answer = attention(
         projection,
-        &AttentionInputs {
-            node_silence_seconds: silence_seconds.clone(),
-            // The SAME declared budgets the API reads, through the same function. A private
-            // reading here is the two-budgets defect this page already lost its thresholds
-            // over.
-            silence_budget_seconds: graphhelm_execution::effective_budgets(projection),
-            // The page renders a snapshot it did not fetch by sequence, so it reports no
-            // vantage point rather than inventing one.
-            at_sequence: None,
-        },
+        // The SAME declared budgets the API reads -- now not by calling the same function, but by
+        // being unable to call any other: `for_surface` derives them (#176). A private reading
+        // here is the two-budgets defect this page already lost its thresholds over.
+        //
+        // The page renders a snapshot it did not fetch by sequence, so it passes `None` and
+        // reports no vantage point rather than inventing one.
+        &AttentionInputs::for_surface(projection, silence_seconds.clone(), None),
     );
     // #1064: the executor the run was DECLARED under, from the same projection field
     // `render()` publishes as `executor` — the page cannot call a run a demonstration that the

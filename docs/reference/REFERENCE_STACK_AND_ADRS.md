@@ -79,6 +79,8 @@ coherent with security, portability, community, and extensibility.
 
 **Decision:** use SSH for diagnostics and installation. Normal operation goes through the Public Runtime API with mTLS.
 
+**Temporary amendment (ADR-039, D-055):** the Milestone 05 loopback HTTP/bearer-token MVP may also use an SSH tunnel for operator API access. This narrowly suspends the SSH-only-for-maintenance restriction for that topology; it does not demonstrate mTLS or satisfy the remote-production identity contract. The exception ends when the mTLS Runtime API is implemented and verified, or an accepted superseding ADR replaces it. Normal remote-production operation still requires mTLS.
+
 **Rationale:** avoid modeling control on terminal parsing and enable SDKs.
 
 ## 5. ADR-003 — Declarative and typed Graph DSL
@@ -1287,3 +1289,30 @@ So today D-002 is true of the tree; it stops being true at the merge of #595, an
 **Alternatives rejected:** a store-layer not-found signal (deferred in 05a) — it would change the event store contract for a distinction the command layer already has all the facts for; keeping `400` on the listing and silencing the browser console — hides the true answer behind client code.
 
 **Precedence note:** no entry in `docs/DECISION_REGISTER.md`, no accepted ADR and no schema under `schemas/` states either old behaviour; both records were milestone and plan notes. This ADR is the record `AGENTS.md` asks for so the reversal is not silent.
+## 44. ADR-039 — A container keeps the loopback-only bind and joins the host's network; no flag relaxes the guarantee
+
+**Status:** accepted. The decision was already in effect in the tree when it was recorded: the shipped `docker-compose.yml` (PR #327, `0339862d`) runs the container with `network_mode: host` and `GRAPHHELM_BIND: "127.0.0.1:8080"`, and `install/VPS_REHEARSAL.md` describes how to check that path against `http://127.0.0.1:8080/health` on the host. The rehearsal has not been executed, so this is a configured topology and an unexecuted validation procedure, not release evidence. This ADR writes down the choice that file made, so the next author of a container path does not make the security call implicitly (#128).
+
+**Context:** `serve --bind` is validated by `parse_loopback_bind` (`apps/cli/src/commands/serve/mod.rs:1765` at `95a7ad9d`), which refuses any non-loopback address unconditionally — *"the Public Runtime API is never exposed beyond localhost"* — and the refusal is proven able to fail by `a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened` (`apps/cli/tests/api_http.rs:1432`). There is no flag that relaxes it. D-002 says installation and updates happen via Docker, and a container on Docker's default bridge network has its own loopback: a process bound to `127.0.0.1` inside it is unreachable from the host regardless of `-p`, so D-002 and the guard are in tension the moment a container path is built on the bridge (#128, raised while drafting #106). The two ways out named in #128: run the container in the host's network namespace, or add an explicit off-by-default flag that relaxes the guard for containers.
+
+**Source configuration inspected at `origin/main` `95a7ad9d`; the VPS rehearsal remains unexecuted:**
+
+```
+docker-compose.yml          network_mode: host · GRAPHHELM_BIND: "127.0.0.1:8080" · read_only · cap_drop ALL · no-new-privileges
+Dockerfile                  ENV GRAPHHELM_BIND=127.0.0.1:8080 · USER 10001:10001
+install/VPS_REHEARSAL.md    unexecuted curl procedure for http://127.0.0.1:8080 on the host (lines 68–90); no VPS result
+git grep -n 'is_loopback' origin/main -- apps/cli/src/commands/serve   one site, the guard above; no override flag anywhere
+```
+
+**Decision:** a containerised deployment runs in the **host's network namespace** (`network_mode: host` / `--network=host`) and binds loopback, exactly as a bare-metal or systemd deployment does. The loopback guarantee in `parse_loopback_bind` stays **unconditional**: no flag, environment variable, build feature or container-specific branch relaxes it. Remote access to the current Milestone 05 API is by a temporary SSH tunnel to the host's loopback, which is what the loopback constraint already wants (#106's blueprint). This is operator reachability for today's plain HTTP and bearer-token MVP; it is not an mTLS implementation, an identity waiver, or a remote-production endpoint. The bridge-network path with `-p` is not supported and is not to be documented as if it were.
+
+**The guardrail, written now rather than after:** if a future need makes a non-loopback bind necessary, that is a **new ADR** superseding this one, and it is not acceptable without all three of: TLS on the HTTP surface (today `sqlx`'s `tls-rustls-ring-native-roots` secures only the Postgres connection, not this server); a two-key arming — an explicit flag **and** a matching environment variable, so a copied command line can never produce a non-loopback bind by itself; and the guard's test extended so the refusal is still proven able to fail with the flag absent. Any one of the three without the others is the implicit security call this ADR exists to forbid.
+
+**Affected contracts:** ADR-002 (temporarily amended to permit operator API access through SSH for the Milestone 05 loopback MVP, beyond diagnostics and installation); D-002 (unchanged; this ADR fixes how its Docker path reaches the host); D-055 in `docs/DECISION_REGISTER.md` (the row for this decision); `docs/milestones/runtime.md` ("The server": one sentence pointing here); `docker-compose.yml` and `Dockerfile` (already conform; a change to `network_mode` or to `GRAPHHELM_BIND` away from loopback is a change to this ADR). `docs/architecture/SYSTEM_ARCHITECTURE.md` remains unchanged: its mTLS, Runtime identity, and remote-production endpoint requirements are preserved and deferred until their implementation and observer exist.
+
+**Alternatives considered:** (a) an off-by-default `--allow-non-loopback` flag — rejected: it reopens a guarantee the code makes unconditionally, for a deployment shape (bridge + `-p`) that host networking already serves with zero code, and the guardrail it would need (TLS, two-key arming) does not exist yet; (b) binding `0.0.0.0` inside the container and relying on Docker's port mapping as the perimeter — rejected: the perimeter would then be Docker's iptables rules rather than the Runtime's own refusal, and a `-p 0.0.0.0:8080:8080` typo publishes the API to the internet with the bearer token as the only defence; (c) leave it unrecorded because the compose file already does the right thing — rejected: that is exactly the implicit security call #128 asked not to make.
+
+**Consequences:** host networking couples the container to the host's port space — `8080` must be free on the host, which `install/VPS_REHEARSAL.md` already checks ("Nothing listening on `127.0.0.1:8080`"). `graphhelm doctor` (#127), when it exists, checks that a running container is in host network mode rather than asking whether the bind is loopback — the bind is always loopback. Closes #128 as the governance record it asked for.
+
+**Relationship:** temporarily amends ADR-002's SSH usage restriction only for operator access to the Milestone 05 loopback HTTP/bearer-token MVP. This exception ends when the mTLS Runtime API is implemented and verified, or an accepted superseding ADR replaces it. It is consistent with D-002 and ADR-037's systemd path (both reach the same loopback-bound server), records the choice PR #327 shipped, and preserves the architecture's mTLS and identity requirements for remote-production operation. An SSH tunnel is not evidence of that contract; a future non-loopback bind still requires a superseding ADR under the guardrail above.
+

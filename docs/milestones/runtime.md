@@ -34,6 +34,8 @@ ecosystem and the register's replaceability rules; no handler holds state beyond
 Binding is **loopback-only, fail-closed** — a non-loopback `--bind` is refused with
 `GHCLI006_SERVE_INVALID` before anything opens, proven able to fail by a test that also caught its
 own first version hanging on the regression it guards (`a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened`).
+In a container the guarantee is the same: the shipped `docker-compose.yml` runs with `network_mode: host`
+and `GRAPHHELM_BIND=127.0.0.1:8080`, and no flag relaxes the bind (ADR-039, D-055).
 
 Auth is a bearer token: 32 OS-random bytes, hex, stored **beside** the events directory
 (`<dir>.token`), never inside it — the store's layout allowlist rejects foreign entries with

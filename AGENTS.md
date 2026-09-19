@@ -82,8 +82,11 @@ target — a full `C:` takes the machine down, so the floor is the rule; and nev
 15 GB free). The long form is `.factory/MERGE-CHECKLIST.md` item 2. Before launching, count LAUNCHES, not cargos — one
 gate is 2–9 cargo processes: live `powershell.exe` launching `ci/gate.ps1` (by `-File` or by `-Command … &`;
 the regex in `.factory/MERGE-CHECKLIST.md`, tested against real command lines) with at least one descendant;
-at most one other live gate, on the other spindle. Proof of life is a CPU delta on the
-compiling descendant read 30 s apart (dead = read fails, wedged = equal, progressing = greater). The package-cache lock
+at most one other live gate, on the other spindle. **Proof of life is the log GROWING** — monotone,
+so it is the primary positive signal; descendant count and descendant CPU are weaker, because children
+die and leave the sum (70.1 s → 6.1 s in 15 s, measured), and a healthy gate sits 45 s flat between
+stages. **Wedged is never a 30 s reading: require ≥ 5 min with log size, descendant count and descendant
+CPU ALL flat** (#867). The package-cache lock
 (`$CARGO_HOME/.package-cache`, one per machine, unchanged by `CARGO_TARGET_DIR`) is still shared: on
 `Blocking waiting for file lock on package cache`, wait — it frees itself and the gate proceeds; it is not a
 lost gate; do not relaunch (see #833's matcher).

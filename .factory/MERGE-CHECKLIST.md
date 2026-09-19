@@ -120,7 +120,8 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    since a pass was written, that pass does not cover the head: **do not press; ask both reviewers
    to re-pin against the new sha** (a one-line "re-read at `<sha>`, still approve" is a pass;
    silence is not). Say "no open roots AGAINST `<sha>`", never "no open roots". **At the button,
-   re-read BOTH boxes, paginated, in the same breath as the head re-check**: a reading older than the
+   re-read ALL THREE surfaces from item 6's list -- `issues/N/comments`, `pulls/N/reviews` AND
+     `pulls/N/comments` -- paginated, in the same breath as the head re-check**: a reading older than the
    newest comment is a cache; a BLOCK published after your read and before your press is your absence,
    not theirs (H pressed #852 on 6 of 9 comments — two re-pins and a measurement were already there; #888).
    The same for whoever ASSIGNS: an order written from a reading older than the newest comment is a cache
@@ -378,9 +379,15 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    A plain `CommandLine -match 'gate.ps1'` returned 11 for 3 real gates. At most one other live gate, on
    the other spindle.
    A target costs ~10.7 GB (measured); check the disk before you add one. New gates enter in
-   review-ready order. Proof of life with numbers (H): read
-   `(Get-Process -Id <pid>).CPU` twice, 30 s apart — dead = the read fails, wedged = equal, progressing
-   = greater — on the compiling descendant, not the wrapper. The package-cache lock
+   review-ready order. **Proof of life is item 2's rule and nothing else** (#867). This paragraph
+   used to carry a second one — a CPU delta on the compiling descendant, read thirty seconds apart,
+   with equality taken to mean wedged — which contradicted item 2 on all four points from 76 lines
+   away: the threshold (thirty seconds
+   against ≥ 5 min), the equality test (CPU equal is NOT wedged), the greater-than test (the sum
+   DROPS in a healthy gate, 70.1 s → 6.1 s in 15 s measured), and the target (the compiling
+   descendant dies; it is not a stable subject). A document that answers differently depending on
+   where it is opened is not half-fixed, and the action a `wedged` verdict invites is to KILL the
+   gate — which on the main gate is the run every `merge-proof` is waiting for. The package-cache lock
    (`$CARGO_HOME/.package-cache`, one per machine, unchanged by `CARGO_TARGET_DIR`) is still shared:
    on `Blocking waiting for file lock on package cache`, **wait** — the lock frees itself and the gate
    proceeds; it is contention, not contamination and not a lost gate; **do not relaunch** (#833's
@@ -533,15 +540,393 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    Each item is either closed by another pass, marked non-blocking BY ITS AUTHOR, or written into
    the merge comment as accepted risk with an issue number.
    A *carry* is a review-shaped comment by a lane other than the author that names the sha it
-   measured. **Counting passes reads BOTH surfaces** — `repos/O/R/issues/N/comments` AND
-   `repos/O/R/pulls/N/reviews` — one surface read as the whole nearly blocked #833, which had two passes
-   and showed one (#840). **A zero on either surface is checked against a known positive** (a PR you know
+   measured. **A census reads THREE surfaces** — `repos/O/R/issues/N/comments` (issue comments),
+   `repos/O/R/pulls/N/reviews` (pull-request reviews) AND `repos/O/R/pulls/N/comments` (the inline
+   review threads) — one surface read as the whole nearly blocked #833, which had two passes and
+   showed one (#840); TWO surfaces read as the whole cost two APPROVEs on #1004, where all three
+   findings lived in the third (M, measured: `issues/N/comments` 10, `pulls/N/reviews` 2,
+   `pulls/N/comments` 3). **A Codex review whose body is empty in the `reviews` box is NOT an empty
+   review** — the header sits there and the findings sit in the third surface, so a `reviews` box
+   holding two banners reads as "the automated review said nothing" while it is saying P1.
+   **The bot filter below belongs to the pass COUNT, never to the READ**: a bot is not a lane and
+   cannot cast a pass, but excluding it from what you LOOK AT is how its findings go unread.
+   **And the census is taken in the SAME breath as the comment that publishes it, citing the head
+   read.** Reading all three and publishing minutes later is a different defect wearing the same
+   shape: M read three surfaces on #1004, counted three inline threads, and published "I read all
+   three" at 01:49:36Z — the fourth thread, a P2 that turned out to be a real defect in the fix
+   under review, had been created at 01:46:27Z. Three minutes. **A census is a measurement and it
+   decays**; quote it from the command that posts, with the sha it was taken against.
+   **And do NOT filter at all: list every body and classify it by reading.** The first version of
+   this paragraph prescribed a matcher, and a reviewer showed that every matcher available here is
+   lossy in one direction or the other: `startswith("Lane: X")` returns a false zero whenever the
+   identity line is not the first text of a body (item 8 documents bodies where it is not), and
+   `contains("Lane: X")` matches a body that merely QUOTES another lane's line. Either can report
+   a reviewer as holding no verdict and let them press against the third-lane rule — which is the
+   error this paragraph was added to prevent. The census is small; **print each body's author and
+   its COMPLETE text and decide by reading**. Filtering buys nothing here except the chance to be
+   wrong in silence, and **truncating buys the same thing**: item 8 documents bodies whose identity
+   line is not the first text in them, so a first-line print hides exactly the verdict a matcher
+   would have hidden. This item shipped that error twice before it was believed -- the commands
+   below printed a byte slice, were corrected to print the first line, and that was still a
+   truncation (Codex P1, twice, on the pull request that added this paragraph).
+
+   **The publication check is optimistic: GitHub has no atomic GitHub transaction spanning the
+   head, the three reads, and the comment.** Before publishing, save the head and all three
+   paginated, complete JSON responses. **Stop and manually classify that saved BEFORE snapshot,
+   including its exact head and every body on all three surfaces. Prepare or confirm `$bodyFile`
+   from that snapshot, not an earlier census.** The prompts below require the operator to type
+   `REVIEWED <full-head>` after doing that work. The operator may be an authorized reviewer lane, including an agent; owner input is not required.
+   This is a review decision boundary: do not blindly prefill confirmation. An agent may supply it
+   through tools only after reading and classifying the saved exact snapshot. A finding already
+   present in both snapshots is still something the operator must assess. Declining or missing the
+   confirmation stops before posting. Publish with `gh pr comment "$N" --body-file "$bodyFile"`
+   and keep the returned comment ID. Immediately re-read the head and all three surfaces in full
+   again, including every body's author, body, and review state. **Compare as a SUBSET, not as an
+   equality:** every object present in the FIRST read must still be present in the second, unchanged.
+   Ignore the one issue-comment whose ID is the comment just returned -- it did not exist when the
+   first read was taken -- and ignore ANY OBJECT THE SECOND READ ADDED, because another lane posting
+   while you publish did not change the evidence your verdict rests on.
+
+   That last clause is the correction. The sentence it replaces demanded whole-set equality, so a
+   concurrent comment by any other lane withdrew your own CORRECT verdict -- and on a repository
+   several lanes work at once that is the normal case, not a race. It was fixed in both executable
+   blocks one commit before this sentence, which left the governing prose describing the defect while
+   the code no longer had it: the half a lane actually reads before deciding what to do.
+
+   An edit to an existing review can change its body without changing its timestamp, so compare
+   bodies and states, not timestamps. If any object you READ had its body, author or state changed,
+   or vanished, withdraw the verdict, read the new set, and re-post only after the new read; the
+   changed read is not authority.
+   Every failure after publication attempts to replace that comment with its identity line and
+   `WITHDRAWN: NO AUTHORITY`, then reads the public comment back and checks its ID and exact body.
+   A verified withdrawal removes the original verdict text. The verdict body's first line must contain only the lane/session
+   identity and measured head. A failed request can have reached GitHub even when its response is lost:
+   an unknown comment ID, failed withdrawal, or failed readback means **MANUAL CLEANUP REQUIRED**.
+   Find the possibly published comment, remove its verdict, and verify the public body before proceeding.
+   Network failure and process termination cannot guarantee withdrawal. No failed path grants authority.
+   Even a successful final read cannot prevent a later change; the optimistic, non-atomic limit remains.
+   **Inputs this block expects from its caller, none of which it sets:** `$N`, the pull request
+   number; `$bodyFile`, the path to the verdict body. It creates its own scratch directory. Neither
+   was declared before, and `$tmp` was neither declared NOR created -- twenty uses of an unassigned
+   variable under `set -u`, so the block aborted on its first line rather than misbehaving later.
+   
+   **The bash shape needs a standalone `jq`, which is NOT installed on this machine.** `gh --jq` is
+   gh's own built-in and is a different program; every `gh api --jq` in this document works, and the
+   six bare `jq` invocations below do not. Measured: `command -v jq` finds nothing, and no `jq.exe`
+   exists under Program Files, chocolatey, WinGet or beside `gh`. **Use the PowerShell shape below**
+   unless jq has been installed since; it performs the same procedure over the same three surfaces
+   and invokes `jq` zero times.
+   
+   Bash shape (the saved JSON files are the comparison inputs):
+   ```bash
+   set -euo pipefail
+   # `$tmp` IS USED TWENTY TIMES BELOW AND WAS NEVER ASSIGNED. Under `set -u` the first use aborts
+   # the block with `tmp: unbound variable` -- so the prescription did not fail at the wrong moment,
+   # it could not run AT ALL, and the first lane to follow it got an error instead of a publication.
+   # Found by a reviewer. The block had been read several times and executed by nobody.
+   tmp=$(mktemp -d) || { echo 'could not create a scratch directory: NO PUBLICATION' >&2; exit 1; }
+   trap 'rm -rf "$tmp"' EXIT
+   before_head=$(gh pr view "$N" --json headRefOid --jq .headRefOid) || exit 1
+   [[ "$before_head" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'head read was empty or malformed: NO AUTHORITY' >&2; exit 1; }
+   for route in "issues/$N/comments" "pulls/$N/reviews" "pulls/$N/comments"; do
+     gh api --paginate --slurp "repos/stabem/GraphHelm/$route" > "$tmp/before-${route//\//_}.pages.json" || exit 1
+     jq 'add' "$tmp/before-${route//\//_}.pages.json" > "$tmp/before-${route//\//_}.json" || exit 1
+   done
+   printf 'Read and classify every before-*.json snapshot in %s at head %s. Prepare or confirm %s from that exact set.\n' "$tmp" "$before_head" "$bodyFile"
+   read -r -p "Type REVIEWED $before_head only after that manual review: " confirmation || exit 1
+   test "$confirmation" = "REVIEWED $before_head" || { echo 'snapshot not reviewed: NO PUBLICATION' >&2; exit 1; }
+   test -s "$bodyFile" || { echo 'verdict body is missing or empty: NO PUBLICATION' >&2; exit 1; }
+   identity=$(head -n 1 "$bodyFile")
+   withdrawal_body=$(printf '%s\nWITHDRAWN: NO AUTHORITY' "$identity")
+   jq -n --arg body "$withdrawal_body" '{body:$body}' > "$tmp/withdrawal.json"
+   comment_id=''; publication_attempted=false; publication_verified=false
+   withdraw_on_exit() {
+     rc=$?
+     trap - EXIT   # the cleanup trap set at the top is REPLACED here, so both exits below rm it
+     if [[ "$publication_attempted" == true && "$publication_verified" != true ]]; then
+       if [[ "$comment_id" =~ ^[0-9]+$ ]] &&
+          gh api --method PATCH --input "$tmp/withdrawal.json" "repos/stabem/GraphHelm/issues/comments/$comment_id" > "$tmp/withdrawal-response.json" &&
+          gh api "repos/stabem/GraphHelm/issues/comments/$comment_id" > "$tmp/withdrawal-readback.json" &&
+          jq -e --arg id "$comment_id" --arg body "$withdrawal_body" '(.id|tostring) == $id and .body == $body' "$tmp/withdrawal-readback.json" > /dev/null; then
+         echo 'WITHDRAWN: NO AUTHORITY; public body verified' >&2
+       else
+         echo "NO AUTHORITY: MANUAL CLEANUP REQUIRED; withdrawal unverified (comment ID: ${comment_id:-unknown})" >&2
+       fi
+       rm -rf "$tmp"
+       exit 1
+     fi
+     rm -rf "$tmp"
+     exit "$rc"
+   }
+   trap withdraw_on_exit EXIT
+   publication_attempted=true
+   comment_url=$(gh pr comment "$N" --body-file "$bodyFile") || exit 1
+   comment_id=${comment_url##*issuecomment-}
+   [[ "$comment_id" =~ ^[0-9]+$ ]] || { echo 'publish returned no issuecomment ID' >&2; exit 1; }
+   # THE PUBLISHED COMMENT IS VERIFIED BEFORE IT IS EXCLUDED (P1 thread on this file).
+   #
+   # The filters below drop this id from BOTH snapshots so the new comment does not read as a change.
+   # Dropping it by id alone assumes it is there and says what was published. If another session on
+   # the shared account edited or deleted it between the post and the after-read, the id is removed
+   # regardless, every other object matches, and the block reports authority for a verdict whose
+   # public text is no longer the one it verified -- or is not there at all.
+   #
+   # The account is shared by every lane in this factory, so this is not a hypothetical about an
+   # attacker; it is a concurrency fact about the surface being written to.
+   gh api "repos/stabem/GraphHelm/issues/comments/$comment_id" > "$tmp/publication-readback.json" || exit 1
+   jq -e --arg id "$comment_id" --rawfile want "$bodyFile" \
+      '(.id|tostring) == $id and .body == $want' "$tmp/publication-readback.json" > /dev/null \
+      || { echo 'the published comment is missing or its body is not what was posted: withdraw the verdict' >&2; exit 1; }
+   after_head=$(gh pr view "$N" --json headRefOid --jq .headRefOid) || exit 1
+   [[ "$after_head" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'head read was empty or malformed: NO AUTHORITY' >&2; exit 1; }
+   for route in "issues/$N/comments" "pulls/$N/reviews" "pulls/$N/comments"; do
+     gh api --paginate --slurp "repos/stabem/GraphHelm/$route" > "$tmp/after-${route//\//_}.pages.json" || exit 1
+     jq 'add' "$tmp/after-${route//\//_}.pages.json" > "$tmp/after-${route//\//_}.json" || exit 1
+   done
+   test "$before_head" = "$after_head" || { echo 'changed: withdraw the verdict' >&2; exit 1; }
+   # WHAT THIS CHECK IS FOR, and what it was doing instead.
+   #
+   # It answers one question: did the evidence I READ change under me while I published? An ADDITION
+   # by another lane does not answer yes. Several lanes work one repository here, and the old
+   # comparison -- byte equality of the whole set with only the publisher's OWN comment filtered out --
+   # treated any concurrent comment as grounds to withdraw. A correct verdict, over an unchanged head,
+   # was retracted because somebody else posted in the same window. On a busy PR that is not a rare
+   # race, it is the normal case.
+   #
+   # THE FIX IS A NARROWER QUESTION, not a wider filter: every item present in BEFORE must still be
+   # present in AFTER and unchanged. New items are ignored -- they are not evidence this verdict
+   # rested on. An edit or a deletion of something read still fails, which is the real hazard and the
+   # reason the block exists.
+   for pair in "issues_${N}_comments" "pulls_${N}_reviews" "pulls_${N}_comments"; do
+     for side in before after; do
+       jq -S --arg id "$comment_id" \
+          'map(select((.id|tostring) != $id)) | map({id:(.id|tostring), body:.body, author:(.user.login//null), state:(.state//null)}) | sort_by(.id)' \
+          "$tmp/${side}-${pair}.json" > "$tmp/${side}-${pair}-items.json" || exit 1
+     done
+     # SUBSET, NOT EQUALITY. Every BEFORE item must still appear byte-identical in AFTER; anything new
+     # in AFTER is ignored. That is the whole difference from the `cmp` this replaces.
+     jq -e -s '.[1] as $after | .[0] | all(. as $b | $after | any(. == $b))' \
+        "$tmp/before-${pair}-items.json" "$tmp/after-${pair}-items.json" > /dev/null \
+        || { echo "changed: an item this verdict read was edited or removed in ${pair}: withdraw the verdict" >&2; exit 1; }
+   done
+
+   # THE CENSUS RE-CHECK: a SECOND rule, beside the subset rule and not a tightening of it.
+   #
+   # The two ask different questions and fire on different things, which is why one cannot be folded
+   # into the other:
+   #
+   #   subset  did the evidence I READ change under me?   an ADDITION does not answer yes
+   #   census  is the COUNT I PUBLISHED still true?       an ADDITION does answer yes
+   #
+   # Without this, the block reported authority for a verdict whose own census line was already false
+   # when it was posted. Reproduced by a reviewer: an inline finding created after the three
+   # before-reads and before the publish left the comment standing with `inline 1` over a surface
+   # holding 2, zero withdrawal calls, no throw. That is the #1004 shape the prose above names, and
+   # the subset loop cannot see it BY CONSTRUCTION -- it iterates BEFORE items only.
+   #
+   # Tightening the subset rule to catch it would re-open the false positive it was written to close:
+   # another lane's comment would withdraw a correct verdict again. Two rules.
+   #
+   # THE COUNTS ARE TAKEN AFTER THE PROMPT, not before it. `read -r -p` above blocks for however long
+   # a human takes, and that wait is inside the window; a count captured before it would measure the
+   # wrong instant while looking correct.
+   for pair in "issues_${N}_comments" "pulls_${N}_reviews" "pulls_${N}_comments"; do
+     before_n=$(jq 'length' "$tmp/before-${pair}-items.json") || exit 1
+     after_n=$(jq 'length' "$tmp/after-${pair}-items.json") || exit 1
+     test "$before_n" = "$after_n" || {
+       echo "census stale: ${pair} held $before_n when this verdict was written and holds $after_n now;" \
+            "the published count is already false -- withdraw the verdict, re-read, and re-post" >&2
+       exit 1
+     }
+   done
+   publication_verified=true
+   trap - EXIT
+   rm -rf "$tmp"
+   ```
+   PowerShell uses the same order and checks each command immediately:
+   ```powershell
+   $ErrorActionPreference = 'Stop'
+   # SAME DEFECT AS THE BASH SHAPE: $tmp was used three times here and assigned nowhere. This variant
+   # does not run under Set-StrictMode either, and it is the shape this document now recommends.
+   $tmp = Join-Path ([IO.Path]::GetTempPath()) ('verdict-' + [Guid]::NewGuid().ToString('N'))
+   New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+   # REMOVED ON EVERY PATH. This variant left its scratch behind too -- three surfaces of before/after
+   # JSON per run -- and it went unnoticed because the block had never executed.
+   try {
+   $beforeRaw = gh pr view $N --json headRefOid; if ($LASTEXITCODE -ne 0) { throw 'read failure means NO AUTHORITY' }; try { $beforeHead = ($beforeRaw | ConvertFrom-Json -ErrorAction Stop).headRefOid } catch { throw 'read failure means NO AUTHORITY' }; if ([string]$beforeHead -notmatch '^[0-9a-fA-F]{40}$') { throw 'head read was empty or malformed: NO AUTHORITY' }
+   $before = @(); foreach ($route in @("issues/$N/comments", "pulls/$N/reviews", "pulls/$N/comments")) { $raw = gh api --paginate --slurp "repos/stabem/GraphHelm/$route"; if ($LASTEXITCODE -ne 0) { throw 'read failure means NO AUTHORITY' }; try { $pages = @($raw | ConvertFrom-Json -ErrorAction Stop) } catch { throw 'read failure means NO AUTHORITY' }; $rows = @($pages | ForEach-Object { $_ | ForEach-Object { $_ } }); $before += ,$rows }
+   for ($i = 0; $i -lt 3; $i++) { ConvertTo-Json -InputObject $before[$i] -Depth 50 | Set-Content -LiteralPath (Join-Path $tmp "before-surface-$i.json") -Encoding UTF8 -ErrorAction Stop }
+   Write-Host "Read and classify before-surface-0.json (issue comments), 1 (reviews), and 2 (inline comments) in $tmp at head $beforeHead. Prepare or confirm $bodyFile from that exact set."
+   $confirmation = Read-Host "Type REVIEWED $beforeHead only after that manual review"
+   if ($confirmation -cne "REVIEWED $beforeHead") { throw 'snapshot not reviewed: NO PUBLICATION' }
+   if (-not (Test-Path -LiteralPath $bodyFile -PathType Leaf) -or (Get-Item -LiteralPath $bodyFile).Length -eq 0) { throw 'verdict body is missing or empty: NO PUBLICATION' }
+   $identity = Get-Content -LiteralPath $bodyFile -TotalCount 1 -Encoding UTF8 -ErrorAction Stop
+   $withdrawalBody = "$identity`nWITHDRAWN: NO AUTHORITY"
+   $withdrawalPath = Join-Path $tmp 'withdrawal.json'
+   [IO.File]::WriteAllText($withdrawalPath, (@{ body = $withdrawalBody } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false))
+   $commentId = $null
+   try {
+   $commentUrl = gh pr comment $N --body-file $bodyFile; if ($LASTEXITCODE -ne 0) { throw 'publish failed: no authority' }
+   if ($commentUrl -notmatch 'issuecomment-(\d+)$') { throw 'publish returned no issuecomment ID' }; $commentId = $Matches[1]
+   $afterRaw = gh pr view $N --json headRefOid; if ($LASTEXITCODE -ne 0) { throw 'read failure means NO AUTHORITY' }; try { $afterHead = ($afterRaw | ConvertFrom-Json -ErrorAction Stop).headRefOid } catch { throw 'read failure means NO AUTHORITY' }; if ([string]$afterHead -notmatch '^[0-9a-fA-F]{40}$') { throw 'head read was empty or malformed: NO AUTHORITY' }
+   $after = @(); foreach ($route in @("issues/$N/comments", "pulls/$N/reviews", "pulls/$N/comments")) { $raw = gh api --paginate --slurp "repos/stabem/GraphHelm/$route"; if ($LASTEXITCODE -ne 0) { throw 'read failure means NO AUTHORITY' }; try { $pages = @($raw | ConvertFrom-Json -ErrorAction Stop) } catch { throw 'read failure means NO AUTHORITY' }; $rows = @($pages | ForEach-Object { $_ | ForEach-Object { $_ } }); $after += ,$rows }
+   # SAME ASSERTION AS THE BASH SHAPE: the comment about to be excluded must exist and carry exactly
+   # the body that was published. Excluding by id alone trusts that it is still there and unedited.
+   $publishedRaw = gh api "repos/stabem/GraphHelm/issues/comments/$commentId"; if ($LASTEXITCODE -ne 0) { throw 'the published comment could not be read back: withdraw the verdict' }
+   $published = $publishedRaw | ConvertFrom-Json
+   $wantBody = [IO.File]::ReadAllText($bodyFile)
+   if ([string]$published.id -ne [string]$commentId -or [string]$published.body -cne $wantBody) { throw 'the published comment is missing or its body is not what was posted: withdraw the verdict' }
+   $after[0] = @($after[0] | Where-Object { [string]$_.id -ne [string]$commentId })
+   $before[0] = @($before[0] | Where-Object { [string]$_.id -ne [string]$commentId })
+   # SUBSET, NOT WHOLE-SET EQUALITY -- the same rule as the bash shape above, and it was NOT here.
+   #
+   # `Compare-Object` over the serialised sets demanded byte equality, so ANOTHER LANE COMMENTING in
+   # the publication window made the sets differ and the trap withdrew THIS lane's correct verdict.
+   # Several lanes work one repository here; that is the normal case, not a rare race.
+   #
+   # Worse, and this is why it is fixed rather than documented: the previous commit repaired the
+   # unassigned $tmp in BOTH shapes and then pointed lanes at THIS one, because it is the shape that
+   # can run without a standalone jq. That turned a procedure nobody could follow into a procedure
+   # that runs and destroys a correct verdict. A block that cannot run is inert; a block that runs
+   # and is wrong is a live wrong path, and unblocking one armed the other. Caught by a reviewer who
+   # EXECUTED both shapes against four fixtures rather than reading them.
+   #
+   # The question is: did anything I READ change under me? An addition does not answer yes.
+   #
+   # FOUR FIELDS, because the prose above prescribes body, AUTHOR and STATE and an earlier version of
+   # this projection kept only {id, body}. A dismissed or re-authored review would then have passed
+   # silently -- the document describing a stricter check than the code performed, which is the same
+   # class as every stale claim on this branch. Missing keys project to null and compare equal to
+   # themselves, so a surface without `state` is not made to look changed by its absence.
+   $changed = $false
+   foreach ($surface in 0, 1, 2) {
+     $beforeItems = @($before[$surface] | ForEach-Object { ConvertTo-Json ([pscustomobject]@{ id = [string]$_.id; body = [string]$_.body; author = [string]$_.user.login; state = [string]$_.state }) -Compress })
+     $afterItems  = @($after[$surface]  | ForEach-Object { ConvertTo-Json ([pscustomobject]@{ id = [string]$_.id; body = [string]$_.body; author = [string]$_.user.login; state = [string]$_.state }) -Compress })
+     # `-cnotcontains`, NOT `-notcontains`. PowerShell's default comparison is CASE-INSENSITIVE, so a
+   # body edit that changes only letter case passed here while the jq shape caught it -- two
+   # implementations agreeing on every case anyone had thought to build and disagreeing on the one
+   # a reviewer constructed. A verdict body differing only in case is a different body.
+   foreach ($item in $beforeItems) { if ($afterItems -cnotcontains $item) { $changed = $true } }
+   }
+   # THE CENSUS RE-CHECK, the same SECOND rule as the bash shape. Beside the subset rule, not folded
+   # into it: `subset` asks whether the evidence I READ changed (an addition does not answer yes),
+   # `census` asks whether the COUNT I PUBLISHED is still true (an addition does). Tightening the
+   # first to catch the second re-opens the false positive the first was written to close.
+   #
+   # Counted AFTER the Read-Host above, because that prompt blocks for however long a human takes and
+   # the wait is inside the window.
+   $censusStale = $null
+   foreach ($surface in 0, 1, 2) {
+    # The verdict's own comment is an addition inside the window on EVERY run, so it must not be
+    # counted -- and it is ALREADY GONE by here: the pre-strip above rewrote $before[0]/$after[0] in
+    # place. A reviewer proved the filter that used to sit on these two lines was DEAD -- removing it
+    # changed no outcome across twelve runs, while removing the pre-strip changed them all.
+    #
+    # A dead guard in a block whose failure mode is DESTROYING A CORRECT VERDICT is worse than no
+    # guard: the next person to edit the pre-strip reads this line and believes they are still
+    # covered. So the filter is gone and an assertion stands in its place. It costs the same and,
+    # unlike the filter, it FIRES when the pre-strip stops doing its job.
+    if ($surface -eq 0 -and [string]$commentId -and
+        (@(@($before[0]) + @($after[0]) | Where-Object { [string]$_.id -eq [string]$commentId }).Count -gt 0)) {
+      throw "the pre-strip no longer removes the verdict's own comment: the census would withdraw every verdict it was asked to defend. Repair the pre-strip; do not filter here."
+    }
+    $beforeCount = @($before[$surface]).Count
+    $afterCount  = @($after[$surface]).Count
+     if ($beforeCount -ne $afterCount) {
+       $censusStale = "surface $surface held $beforeCount when this verdict was written and holds $afterCount now"
+     }
+   }
+   if ($censusStale) { throw "census stale: $censusStale; the published count is already false -- withdraw the verdict, re-read, and re-post" }
+   if ($beforeHead -ne $afterHead -or $changed) { throw 'changed: an item this verdict read was edited or removed; withdraw the verdict and re-read before reposting' }
+   } catch {
+     $publicationFailure = $_
+     try {
+       if ([string]$commentId -notmatch '^\d+$') { throw 'comment ID unknown' }
+       $null = gh api --method PATCH --input $withdrawalPath "repos/stabem/GraphHelm/issues/comments/$commentId"
+       if ($LASTEXITCODE -ne 0) { throw 'withdrawal request failed' }
+       $readbackRaw = gh api "repos/stabem/GraphHelm/issues/comments/$commentId"
+       if ($LASTEXITCODE -ne 0) { throw 'withdrawal readback failed' }
+       $readback = $readbackRaw | ConvertFrom-Json -ErrorAction Stop
+       if ([string]$readback.id -cne [string]$commentId -or [string]$readback.body -cne $withdrawalBody) { throw 'withdrawal body not verified' }
+     } catch {
+       throw "NO AUTHORITY: MANUAL CLEANUP REQUIRED; withdrawal unverified (comment ID: $commentId). $publicationFailure"
+     }
+     throw "WITHDRAWN: NO AUTHORITY; public body verified. $publicationFailure"
+   }
+   # The raw review objects include complete bodies and states; only the returned comment ID is omitted.
+   } finally {
+     if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+   }
+   ```
+
+   The matcher that started it is worth knowing anyway, because it fails in a way no reader would
+   suspect. **The trap is the form you would write**: `test("Lane: M\b")` puts a BACKSPACE in the
+   jq string, matches nothing on any input, and reports a clean zero on every thread forever. The
+   form that behaves as a word boundary is `test("Lane: M\\b")`, with the backslash escaped for
+   jq's own string parser — which is exactly why the trap is invisible: **the broken spelling is the
+   natural one, and the working spelling looks like a typo.** M published "0 of 8
+   bodies mine" from that spelling as the evidence of eligibility on #1002; the conclusion happened
+   to be true and the control could not have said otherwise. The same character is a boundary in
+   PCRE and in Python's `re`. **TWO LAYERS DECIDE THIS, and naming only one is how this
+   paragraph kept being wrong.** At the STRING-LITERAL layer `\b` is byte 0x08 — in jq, and
+   equally in an ordinary Python string: `re.search("Lane: M\b", "Lane: M x")` finds nothing,
+   because the engine never receives a backslash at all. At the REGEX layer a backslash-b that
+   does ARRIVE is a word boundary — in PCRE, in Python through the raw form, and in GNU sed,
+   where `s/M\b/HIT/` in a program FILE rewrites `Lane: M x`, which a backspace reading cannot
+   do. Both measured here, not assumed. **So jq is not the outlier; it is the ordinary
+   behaviour of a string literal, and the trap is that the literal eats the escape before the
+   engine can see it.** This paragraph has now been wrong in BOTH directions (Codex, twice on
+   #1010): first calling sed a backspace tool, then calling jq the exception. Name the LAYER as
+   well as the tool, and prove it with an input a backspace cannot match.
+   **A filter is not evidence until the SAME command has returned non-zero on a known positive.**
+
+   **The same class arrives without a regex.** A filter that returns NOTHING and a default that
+   supplies an answer in its place read identically: M counted `Invoke-Stage` calls at column 0 to
+   decide whether the gate claims its slot before any stage runs, got zero because every call sits
+   indented inside the `try` block, and the shell's `${VAR:-999999}` turned that emptiness into a
+   line number that made the comparison say "after". The answer was right; the reading was of a
+   default. **A count that could not have been zero must be shown able to be non-zero, in the same
+   command** — the controlled form reported 12 calls, 0 of them before the claim.
+   **A zero on any surface is checked against a known positive** (a PR you know
    has a pass there) before it is read as "none". Every time:
    ```
-   gh api --paginate repos/stabem/GraphHelm/issues/N/comments --jq '.[] | select(.user.login != "chatgpt-codex-connector[bot]") | "\(.created_at) \(.body[0:80])"'
-   gh api --paginate repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "\(.submitted_at) \(.state) \(.body[0:80])"'
+   gh api --paginate repos/stabem/GraphHelm/issues/N/comments --jq '.[] | "=== \(.created_at) \(.user.login)\n\(.body)"'
+   gh api --paginate repos/stabem/GraphHelm/pulls/N/reviews --jq '.[] | "=== \(.submitted_at) \(.user.login) \(.state)\n\(.body)"'
+   gh api --paginate repos/stabem/GraphHelm/pulls/N/comments --jq '.[] | "=== \(.created_at) \(.user.login) \(.path):\(.line)\n\(.body)"'
    ```
-   **`--paginate` ON BOTH LINES, and the one that lacked it dropped the NEWEST rows.** Measured on
+   Those three are **bash**. A jq expression carrying a quoted `\n` does not survive Windows
+   PowerShell 5.1: it reaches `gh` split in three, which answers `accepts 1 arg(s), received 3`
+   and exits 1 — measured on this repository, not inferred, and the same hazard this document
+   already records for the eligibility census. A census that cannot run on the shell the gate
+   itself runs is a census nobody takes. The PowerShell form asks `gh` for JSON and does the
+   formatting in the shell, so no jq string crosses the argument boundary:
+   ```powershell
+   foreach ($surface in @(
+       @{ Route = "issues/$N/comments"; Stamp = 'created_at' },
+       @{ Route = "pulls/$N/reviews";   Stamp = 'submitted_at' },
+       @{ Route = "pulls/$N/comments";  Stamp = 'created_at' })) {
+       # TWO flattens: --slurp returns one array per page, so a single ForEach unwraps the pages
+       # and leaves the arrays. With one flatten the count reads 1 on any PR (measured).
+       # NO PIPELINE BETWEEN THE COMMAND AND ITS EXIT CODE, and the reason is this census: a
+       # failed `gh api` (network, expired auth, a pagination error) prints nothing, so
+       # ConvertFrom-Json receives no rows, the surface reports `0 bodies`, and the NEXT
+       # iteration's success overwrites $LASTEXITCODE. One of the three mandatory surfaces is
+       # then skipped while the census looks finished — the empty-result-reads-as-an-answer
+       # class, in the command that exists to prevent it (Codex P1 on #1010).
+       $raw = & gh api --paginate --slurp "repos/stabem/GraphHelm/$($surface.Route)"
+       if ($LASTEXITCODE -ne 0) { throw "gh api failed on $($surface.Route) (exit $LASTEXITCODE): this census is INCOMPLETE" }
+       $rows = @($raw | ConvertFrom-Json) | ForEach-Object { $_ } | ForEach-Object { $_ }
+       Write-Host "## $($surface.Route): $(@($rows).Count) bodies"
+       @($rows) | ForEach-Object { "=== $($_.($surface.Stamp)) $($_.user.login)"; $_.body }
+   }
+   ```
+   Both forms were run verbatim on #1010 before being written here: 15 comments, 13 reviews, 15
+   inline thread comments, `exit 0` on each surface.
+   The read prints `.user.login`; the bot exclusion happens LATER, when passes are counted, and
+   never in the command above — the version that carried
+   `select(.user.login != "chatgpt-codex-connector[bot]")` inside the READ contradicted this item
+   in its own code block (Codex P1 on #1010, on the pull request that added this paragraph).
+   **`--paginate` ON EVERY CENSUS REQUEST, and the one that lacked it dropped the NEWEST rows.** Measured on
    #1005 today: 30 reviews without it, 37 with, and the seven missing were the most recent. An
    eligibility read taken with the unpaginated form is blind to exactly the verdicts most likely to
    change the answer, and it bites on every pull request past 30 reviews. Its neighbours above and
@@ -782,6 +1167,13 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
      blocking" and "required before the press" is a merge judgement, and its lane may not press;
    - **no body** — eligible.
    Read BOTH surfaces, paginated, with a timestamp and enough of each body to see the verdict word —
+   **two here, three in ITEM 6, and the difference is the QUESTION, not an oversight.** Item 6's
+   census asks what was SAID about the change, and findings live in inline review threads (all
+   three on #1004 did), so it reads `pulls/N/comments` too. This census asks who holds a VERDICT,
+   and a verdict is an issue comment or a review by protocol — **a lane that states a verdict only
+   inside an inline thread has not cast one**, which is a rule about where a pass lives, not a
+   surface this census may skip. Say it here rather than let a reader meet `BOTH` in one item and
+   `three` in the next and guess which is stale.
    the first line carries the lane but not always the verdict (52 of 186 bodies across 14 PRs did
    not begin with `Lane:`). Two forms, shell-specific on purpose, **both run verbatim on #958 (45
    comments, 0 reviews) before they were written here** — a jq expression with a quoted `\n` fails

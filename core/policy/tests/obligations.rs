@@ -57,6 +57,37 @@ fn removed_review_is_unsatisfied_then_waived_only_by_complete_owner_override() {
     assert_eq!(report.result_status, "completed_with_waivers");
 }
 
+/// #129: `complete_owner_override` refuses a request whose `acknowledged_risks` is empty, but
+/// nothing checked that the risks it demanded were then recorded anywhere -- an override that
+/// happened left no mark of what was acknowledged, only who did it and why. Two risks, not one,
+/// so a fix that only echoes the first (or a constant string) still fails this.
+#[test]
+fn a_waived_obligation_names_every_acknowledged_risk_not_just_the_actor_and_reason() {
+    let base = version();
+    let mut candidate = base.graph().clone();
+    candidate.spec.nodes.remove("review");
+    candidate
+        .spec
+        .edges
+        .retain(|edge| edge.from != "review" && edge.to != "review");
+    let mut request = owner_override("review");
+    request.acknowledged_risks = vec![
+        "quality gate bypassed".into(),
+        "no independent review before merge".into(),
+    ];
+
+    let report = evaluate_transition(&base, &candidate, Some(&request));
+    assert!(report.allows_transition());
+    let evidence = &report.requirement("review").unwrap().evidence;
+    for risk in &request.acknowledged_risks {
+        let marker = format!("owner-override-acknowledged-risk:{risk}");
+        assert!(
+            evidence.contains(&marker),
+            "waived obligation's evidence {evidence:?} does not name acknowledged risk {risk:?}"
+        );
+    }
+}
+
 #[test]
 fn non_owner_or_incomplete_override_cannot_waive_quality_gate() {
     let base = version();
@@ -75,6 +106,89 @@ fn non_owner_or_incomplete_override_cannot_waive_quality_gate() {
         report.requirement("review").unwrap().status,
         ObligationStatus::Unsatisfied
     );
+}
+
+#[test]
+fn oversized_manual_overrides_are_rejected_before_obligation_evidence_is_built() {
+    let base = version();
+    for (field, size) in [
+        ("waivedRequirements", 65),
+        ("acknowledgedRisks", 65),
+        ("actor/id", 257),
+        ("reason", 2049),
+        ("requirementText", 129),
+        ("riskText", 513),
+    ] {
+        let mut request = owner_override("review");
+        let path = match field {
+            "waivedRequirements" => {
+                request.waived_requirements = vec!["review".into(); size];
+                "/manualOverride/waivedRequirements"
+            }
+            "acknowledgedRisks" => {
+                request.acknowledged_risks = vec!["risk".into(); size];
+                "/manualOverride/acknowledgedRisks"
+            }
+            "actor/id" => {
+                request.actor.id = "a".repeat(size);
+                "/manualOverride/actor/id"
+            }
+            "reason" => {
+                request.reason = "r".repeat(size);
+                "/manualOverride/reason"
+            }
+            "requirementText" => {
+                request.waived_requirements = vec!["r".repeat(size)];
+                "/manualOverride/waivedRequirements"
+            }
+            "riskText" => {
+                request.acknowledged_risks = vec!["r".repeat(size)];
+                "/manualOverride/acknowledgedRisks"
+            }
+            _ => unreachable!(),
+        };
+        let report = evaluate_transition(&base, base.graph(), Some(&request));
+        assert_eq!(report.result_status, "blocked", "{field}");
+        assert!(!report.allows_transition(), "{field}");
+        assert_eq!(report.obligations.len(), 1, "{field}");
+        assert_eq!(report.obligations[0].requirement, "manual_override_limits");
+        assert_eq!(report.obligations[0].status, ObligationStatus::Impossible);
+        assert!(!report.obligations[0].overrideable);
+        assert_eq!(report.diagnostics.len(), 1, "{field}");
+        assert_eq!(report.diagnostics[0].code, "GHP001_OVERRIDE_LIMIT_EXCEEDED");
+        assert_eq!(report.diagnostics[0].path, path);
+    }
+}
+
+#[test]
+fn maximum_override_bounds_preserve_unicode_risks() {
+    let base = version();
+    let mut candidate = base.graph().clone();
+    candidate.spec.nodes.remove("review");
+    candidate
+        .spec
+        .edges
+        .retain(|edge| edge.from != "review" && edge.to != "review");
+    let mut request = owner_override("review");
+    request.actor.id = "a".repeat(256);
+    request.reason = "r".repeat(2048);
+    request.waived_requirements = vec!["review".into(); 64];
+    request.acknowledged_risks = vec!["é".repeat(512); 64];
+    let report = evaluate_transition(&base, &candidate, Some(&request));
+    let obligation = report.requirement("review").unwrap();
+    assert_eq!(obligation.status, ObligationStatus::Waived);
+    assert_eq!(
+        obligation
+            .evidence
+            .iter()
+            .filter(|item| item.starts_with("owner-override-acknowledged-risk:"))
+            .count(),
+        64
+    );
+    assert!(obligation.evidence.contains(&format!(
+        "owner-override-acknowledged-risk:{}",
+        "é".repeat(512)
+    )));
 }
 
 #[test]

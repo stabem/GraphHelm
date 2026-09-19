@@ -317,6 +317,39 @@ fn draft(base: &GraphVersion) -> GraphDraft {
     }
 }
 
+#[test]
+fn analyze_draft_rejects_oversized_override_before_applying_operations() {
+    let base = base();
+    for (requirements, risks, risk_chars, path) in [
+        (65, 2, 4, "/manualOverride/waivedRequirements"),
+        (1, 65, 4, "/manualOverride/acknowledgedRisks"),
+        (1, 2, 513, "/manualOverride/acknowledgedRisks"),
+    ] {
+        let mut request = draft(&base);
+        // This invalid operation must not be reached before the borrowed override check.
+        request.operations = vec![DraftOperation::RemoveNode {
+            id: "missing-node".into(),
+        }];
+        request.manual_override = Some(graphhelm_protocols::ManualOverride {
+            actor: Actor::new(ActorType::Owner, "owner-local"),
+            reason: "accepted risk".into(),
+            waived_requirements: vec!["review".into(); requirements],
+            acknowledged_risks: vec!["r".repeat(risk_chars); risks],
+            scope: graphhelm_protocols::WaiverScope::Execution,
+        });
+        let analysis = graphhelm_governor::analyze_draft(&base, &request);
+        assert!(analysis.candidate.is_none());
+        assert!(analysis.policy_report.is_none());
+        assert_eq!(analysis.diagnostics.len(), 1);
+        assert_eq!(
+            analysis.diagnostics[0].code,
+            "GHP001_OVERRIDE_LIMIT_EXCEEDED"
+        );
+        assert_eq!(analysis.diagnostics[0].source, request.id);
+        assert_eq!(analysis.diagnostics[0].path, path);
+    }
+}
+
 fn seed_base(
     repository: &LocalEventRepository,
     base: &GraphVersion,

@@ -2,8 +2,47 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_graph::{GraphVersion, lint};
 use graphhelm_protocols::{
-    ExecutionGraph, ManualOverride, NodeType, ObligationStatus, PolicyObligation, PolicyReport,
+    Diagnostic, ExecutionGraph, ManualOverride, NodeType, ObligationStatus, PolicyObligation,
+    PolicyReport,
 };
+
+/// Checks borrowed override sizes before policy evidence or draft candidates are allocated.
+/// Uses the durable draft limits; character scans stop at the first character beyond each limit.
+/// This checks size only, not owner authority, completeness, or whether a requirement is waivable.
+pub fn validate_manual_override_limits(request: &ManualOverride) -> Result<(), Diagnostic> {
+    let path = if request.waived_requirements.len() > 64 {
+        Some("/manualOverride/waivedRequirements")
+    } else if request.acknowledged_risks.len() > 64 {
+        Some("/manualOverride/acknowledgedRisks")
+    } else if request.actor.id.chars().nth(256).is_some() {
+        Some("/manualOverride/actor/id")
+    } else if request.reason.chars().nth(2048).is_some() {
+        Some("/manualOverride/reason")
+    } else if request
+        .waived_requirements
+        .iter()
+        .any(|value| value.chars().nth(128).is_some())
+    {
+        Some("/manualOverride/waivedRequirements")
+    } else if request
+        .acknowledged_risks
+        .iter()
+        .any(|value| value.chars().nth(512).is_some())
+    {
+        Some("/manualOverride/acknowledgedRisks")
+    } else {
+        None
+    };
+    match path {
+        Some(path) => Err(Diagnostic::error(
+            "GHP001_OVERRIDE_LIMIT_EXCEEDED",
+            "manual override exceeds the supported collection or text limit",
+            path,
+            "manualOverride",
+        )),
+        None => Ok(()),
+    }
+}
 
 /// Evaluates a candidate transition without side effects or ambient authority.
 #[must_use]
@@ -12,6 +51,26 @@ pub fn evaluate_transition(
     candidate: &ExecutionGraph,
     manual_override: Option<&ManualOverride>,
 ) -> PolicyReport {
+    if let Some(request) = manual_override
+        && let Err(diagnostic) = validate_manual_override_limits(request)
+    {
+        return PolicyReport {
+            // Keep the public decision predicate fail-closed without allocating
+            // evidence from the oversized request or changing empty-report semantics.
+            obligations: vec![PolicyObligation {
+                requirement: "manual_override_limits".into(),
+                status: ObligationStatus::Impossible,
+                evidence: vec![format!(
+                    "diagnostic:{}:{}",
+                    diagnostic.code, diagnostic.path
+                )],
+                reason: diagnostic.message.clone(),
+                overrideable: false,
+            }],
+            diagnostics: vec![diagnostic],
+            result_status: "blocked".into(),
+        };
+    }
     let mut obligations = BTreeMap::<String, PolicyObligation>::new();
 
     for (id, node) in &base.graph().spec.nodes {
@@ -97,6 +156,16 @@ pub fn evaluate_transition(
                 obligation
                     .evidence
                     .push(format!("owner-override:{}", request.actor.id));
+                // `complete_owner_override` requires a non-empty `acknowledged_risks` before an
+                // override is honored at all, but until now nothing carried the list itself past
+                // that check: a waived obligation named who overrode it and why, never what they
+                // said they were accepting. An override that happened left no mark of what was
+                // acknowledged (#129).
+                for risk in &request.acknowledged_risks {
+                    obligation
+                        .evidence
+                        .push(format!("owner-override-acknowledged-risk:{risk}"));
+                }
             }
         }
     }

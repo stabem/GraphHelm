@@ -1,7 +1,7 @@
 use graphhelm_graph::{
     DurableContentError, GraphVersion, MAX_DRAFT_OPERATIONS, PersistencePreflight, lint,
 };
-use graphhelm_policy::evaluate_transition;
+use graphhelm_policy::{evaluate_transition, validate_manual_override_limits};
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, Diagnostic, DraftOperation, EdgeType, ExecutionGraph, GraphDraft,
     GraphEdge, GraphNode, ManualOverride, OpaqueId, Optionality, PolicyReport,
@@ -24,6 +24,18 @@ pub struct DraftAnalysis {
 /// Applies typed operations to an isolated clone and evaluates it without persistence.
 #[must_use]
 pub fn analyze_draft(base: &GraphVersion, draft: &GraphDraft) -> DraftAnalysis {
+    if let Some(request) = &draft.manual_override
+        && let Err(mut diagnostic) = validate_manual_override_limits(request)
+    {
+        // The policy validator is reusable and reports its own field path. At this caller the
+        // diagnostic source is the draft being analyzed, just like operation diagnostics below.
+        diagnostic.source = draft.id.clone();
+        return DraftAnalysis {
+            candidate: None,
+            diagnostics: vec![diagnostic],
+            policy_report: None,
+        };
+    }
     let mut candidate = base.graph().clone();
     let mut diagnostics = Vec::new();
     if let Err(message) = apply_operations(&mut candidate, &draft.operations) {
@@ -284,6 +296,8 @@ fn preflight_override_limits(
     manual_override: &ManualOverride,
     usage: &mut PersistencePreflight,
 ) -> Result<(), DurableContentError> {
+    validate_manual_override_limits(manual_override)
+        .map_err(|_| DurableContentError::LimitExceeded)?;
     usage.account_collection(
         manual_override.waived_requirements.len(),
         MAX_OVERRIDE_REQUIREMENTS,

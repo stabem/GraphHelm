@@ -217,12 +217,12 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    **The manifest-only exception (#752, #674(b)):** a PR whose only change is `.factory/gate-runs/*.json`
    produced by the gate, and nothing else, RECORDS a run — it does not vouch for a merge. It may merge with
    `merge-proof` NOT or ABSENT under a NAMED exception: the merge comment cites the run's sha, status and
-   failed stages; the two passes read the JSON (sha, `pushed`, `dirtyDiffHash`, `staleArtifactCount`,
-   `artifactsUnprovenReuse`, `buildMode`, failed stages) instead of a diff — since #904 the artefacts
+   failed stages; the two passes read the JSON (sha, `pushed`, `dirtyDiffHash`, `artifactBuildExit`, `staleArtifactCount`,
+   `artifactsUnprovenReuse`, `artifactsContaminated`, `buildMode`, failed stages) instead of a diff -- `artifactBuildExit` because the workspace artefact build pass is not an `Invoke-Stage`, so a build that exits 101 after enumerating names no failed stage and the four counts describe a PARTIAL population — since #904 the artefacts
    a run cannot vouch for are counted by CONTENT in `artifactsUnprovenReuse`, while
    `staleArtifactCount` records only what a cold-only gate would have refused, so a warm run
-   (`buildMode: warm`) with a non-zero `staleArtifactCount` and `artifactsUnprovenReuse: 0` is a
-   PROVEN reuse and not an artefact red; one other path touched and the exception is void (#885 is the first:
+   (`buildMode: warm`) with a non-zero `staleArtifactCount`, `artifactsUnprovenReuse: 0` **and `artifactsContaminated: 0`** is a
+   PROVEN reuse and not an artefact red (both counts: `unproven-reuse` and `contaminated` share the verdict and differ in remedy, and reading only the first let a contaminated per-suite binary read as proven — #1007 review, the same conflation as #1146); one other path touched and the exception is void (#885 is the first:
    `45f43a3e` RED on one cell, ticket #886).
    **Known fleet reds — a CLOSED list (owner's delegation, 2026-09-05 11:5xZ: 26 PRs open, 6 with two passes
    waiting on a gate, nearly every red of the day a flake or an artefact).** A manifest with `pushed: True`
@@ -239,6 +239,13 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    a listed red is recorded as a frequency (#641: 3/40 under concurrency 4), one foreign manifest and one
    local one are one sample each and say nothing about 3/40 versus 12/40 — there the press is ACCEPTED RISK
    with an issue number, not "not a finding" (K).
+   **Named limitation of the second arm (#243):** comparing a stage's red between two runs' manifests
+   assumes both runs executed the same compiled binary at that stage, and today's manifest cannot verify
+   that — cargo's feature unification makes `-p <crate> --test <suite>` and `--workspace --all-features`
+   different compiled units for the identical source, so two manifests agreeing on a test NAME are not
+   proven to agree on a test BINARY. This invalidates none of today's presses, but it is an unstated
+   assumption in every one of them. Until the per-suite artefact link closes this, a presser using the
+   second arm writes this sentence in the merge comment.
    The list grows only by a docs PR carrying a measured instance:
    - `admin_operator_binds_pool_profile_and_source_identity` — #880 (both PostgreSQL matrices; and the
      `Unavailable` at `:847` under two concurrent gates);

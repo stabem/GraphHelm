@@ -2380,6 +2380,16 @@ function Select-UnprovenReuse {
 }
 
 function Get-TestArtifactManifest {
+    # #243: SCOPE IS A PARAMETER, NOT A CONSTANT. This used to hardcode `--workspace
+    # --all-features`, which is the ONLY invocation this function could ever fingerprint -- so the
+    # binaries the `cli: <suite>` stages below actually execute (`-p graphhelm-cli --test <suite>`,
+    # a DIFFERENT compiled unit under cargo's feature-unification rules, measured on #243) were
+    # never in the population `staleArtifacts`/`instrumentSuspect` judge at all. Not "unlinked to a
+    # stage" -- absent. Default preserves the original workspace-wide call untouched.
+    # #1007: `-Enrolling` marks the ONE retry this function may make of itself (see the enrolment
+    # block before the return); it is never passed by an outside caller.
+    param([string[]] $CargoArgs = @('--workspace', '--all-features'), [switch] $Enrolling)
+
     # #956: THE CLAIM INSTANT MUST EXIST BEFORE ANY ARTEFACT IS JUDGED. Every freshness verdict
     # below is `$mtimeUtc -ge $runStartUtc`, and `-ge $null` is True for every file: called before
     # the slot claim, this would report a clean rebuild the run did not do, staleArtifactCount 0,
@@ -2405,10 +2415,68 @@ function Get-TestArtifactManifest {
     $crateInputHashWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $crateInputHashes = $null
     $crateInputHashError = $null
+    # MEMOISED ACROSS THE RUN (#1053). Get-TestArtifactManifest is called ONCE PER SUITE -- 54 times
+    # on this workspace -- and this helper was recomputed on every one of them. Measured at 2.84 s
+    # average over three runs, that is +153.2 s per gate from a single helper, 51% of #1053's entire
+    # 300 s target, and 306.7 s at twice the suite count: more than the whole budget.
+    #
+    # THE INVARIANT THAT MAKES THE CACHE SOUND: the crate input hashes are a pure function of the
+    # workspace source tree and the toolchain id. A gate run measures ONE head and does not rewrite
+    # its own sources, so both are fixed for the life of the run. The key carries both anyway rather
+    # than assuming it, so a caller that ever varies either gets a fresh computation instead of a
+    # silently wrong one.
+    #
+    # THE LEDGER READ BELOW IS DELIBERATELY NOT CACHED. It is a file that stages write during the
+    # run, so a cached copy could answer with a state that has since moved -- and it is a file read,
+    # not a `cargo metadata` plus a content hash of every workspace member. The expensive half is
+    # the half that is safe to reuse.
+    # `Test-Path variable:` rather than a $null comparison: gate.ps1 runs under Set-StrictMode, where
+    # READING an unset $script: variable throws. A $null test would have crashed the gate on the very
+    # first suite. Caught by a probe that counted the calls, not by the suite, which stayed 12/12.
+    if (-not (Test-Path 'variable:script:crateInputHashCache')) { $script:crateInputHashCache = @{} }
+    # THE ONE FILE THE GATE ITSELF REWRITES INSIDE THE HASHED SET, and therefore part of the key.
+    #
+    # `tools/ci-canary` IS a workspace member (Cargo.toml:29) and `Write-CanaryNonce` rewrites the
+    # TRACKED tools/ci-canary/src/nonce.rs every run by design (#152). So "the workspace source is
+    # fixed for the life of the run" -- the invariant this cache rests on -- is NOT intrinsically
+    # true on this repo. It is true only because the rotation at :4693 happens before both call
+    # sites, at :4774 and :4900. Measured, not assumed.
+    #
+    # That is an ORDERING assumption, and an ordering assumption is exactly the kind that a later
+    # edit breaks silently: move the rotation below :4774 and every suite would be judged against a
+    # pre-rotation hash, with nothing red to say so. Keying on the nonce's own bytes makes the
+    # rotation INVALIDATE the cache instead, so the ordering stops being load-bearing. One small
+    # tracked file read per call, against a `cargo metadata` plus a hash of every member avoided.
+    #
+    # Found by a reviewer's brief asking whether anything the gate writes lands inside the hashed
+    # set, not by me: I had written the invariant down and not tested it against this repo.
+    $noncePathForKey = Join-Path $repositoryRoot 'tools\ci-canary\src\nonce.rs'
+    $nonceStamp = if (Test-Path -LiteralPath $noncePathForKey) {
+        (Get-FileHash -LiteralPath $noncePathForKey -Algorithm SHA256).Hash
+    } else {
+        'absent'
+    }
+    $crateInputHashKey = "$repositoryRoot|$toolchain|$nonceStamp"
     try {
-        $crateInputHashes = Get-CrateInputHashes -WorkspaceRoot $repositoryRoot -ToolchainArgument $toolchain
+        if ($script:crateInputHashCache.ContainsKey($crateInputHashKey)) {
+            $cached = $script:crateInputHashCache[$crateInputHashKey]
+            $crateInputHashes = $cached.Hashes
+            $crateInputHashError = $cached.ErrorMessage
+            # The NOTE is not reprinted 53 more times, but the FAILURE is still carried: a cached
+            # error must refuse exactly as the first one did, or the cache would launder it.
+        } else {
+            $crateInputHashes = Get-CrateInputHashes -WorkspaceRoot $repositoryRoot -ToolchainArgument $toolchain
+            $script:crateInputHashCache[$crateInputHashKey] = [pscustomobject]@{
+                Hashes       = $crateInputHashes
+                ErrorMessage = $null
+            }
+        }
     } catch {
         $crateInputHashError = [string]$_.Exception.Message
+        $script:crateInputHashCache[$crateInputHashKey] = [pscustomobject]@{
+            Hashes       = $null
+            ErrorMessage = $crateInputHashError
+        }
         Write-Host "[gate] NOTE: the crate input hashes could not be computed, so no artefact can be PROVEN reused this run: $crateInputHashError" -ForegroundColor Yellow
     }
     $ledger = Read-ArtifactLedger -TargetDir $actualTargetDir
@@ -2428,9 +2496,11 @@ function Get-TestArtifactManifest {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        # `--all-features` is load-bearing and unguarded here too - see the note on the
-        # 'workspace tests' stage below. Pointer, not a copy: it carries nothing that can drift.
-        $lines = cargo $toolchain test --workspace --all-features --locked --no-run --message-format=json 2>&1
+        # `--all-features` is load-bearing and unguarded for the WORKSPACE scope - see the note on
+        # the 'workspace tests' stage below. The per-suite scope below deliberately carries none:
+        # it must fingerprint the SAME invocation the `cli: <suite>` stage actually runs, not a
+        # wider one -- that scope-changes-the-binary property is #243's entire subject.
+        $lines = cargo $toolchain test @CargoArgs --locked --no-run --message-format=json 2>&1
         $buildExit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
@@ -2509,6 +2579,11 @@ function Get-TestArtifactManifest {
             package    = $parsed.package_id
             target     = $parsed.target.name
             executable = $exePath
+            # #1007 (thread 5): the INVOCATION that produced this row. A per-suite row and the
+            # workspace `--all-features` row for the same target differed only by the hash-suffixed
+            # path; no consumer decides on this field today, but a reader of `staleArtifacts` could
+            # not tell the two apart without it.
+            scope      = ($CargoArgs -join ' ')
             sha256     = $hash
             mtimeUtc   = if ($mtimeUtc) { $mtimeUtc.ToString('o') } else { $null }
             freshBuild = $freshBuild
@@ -2550,10 +2625,82 @@ function Get-TestArtifactManifest {
             Write-Host '[gate] cargo produced no non-JSON output, so it exited non-zero without saying why.' -ForegroundColor Red
         }
     }
+    # #1007 TAKEOVER MERGE: main's #904 classification and this branch's redacted diagnostic
+    # tail are COMPLEMENTARY, not competing. Main counts the reuse population and returns it;
+    # this branch renders cargo's JSON compiler-messages into readable, redacted lines so a
+    # fingerprint failure says WHY. Both are kept: the classification is untouched, and the
+    # selected tail is added BESIDE main's raw tail rather than replacing it -- the raw one is
+    # what cargo said, the selected one is what a reader needs, and #484 is the record of
+    # losing the first by keeping only the second.
+    $evidenceTail = @()
+    if ($buildExit -ne 0) {
+        # Cargo's compiler messages are JSON, so the evidence selector cannot recognise their
+        # error markers until rendered text is decoded into lines. Redact AFTER decoding: secrets
+        # can be escaped inside JSON. Other output, including ordinary stderr, stays in the stream.
+        $diagnosticLines = New-Object System.Collections.Generic.List[string]
+        foreach ($rawLine in $lines) {
+            $text = [string]$rawLine
+            $messageRecord = $null
+            # A line that is not JSON is cargo's plain stderr (progress, warnings, the human error
+            # summary). It is NOT swallowed: the first pass over $lines above already appended every
+            # such line to $nonJson, which is printed and published as buildPassNonJsonTail. This
+            # second pass only wants the compiler-message records, so the non-JSON case is a null
+            # here BY DESIGN and its word was said once, by the first pass.
+            try { $messageRecord = $text | ConvertFrom-Json -ErrorAction Stop } catch { $messageRecord = $null }
+            if ($null -ne $messageRecord -and $messageRecord.PSObject.Properties['reason'] -and $messageRecord.reason -eq 'compiler-message' -and $messageRecord.PSObject.Properties['message']) {
+                $message = $messageRecord.message
+                if ($null -ne $message -and $message.PSObject.Properties['rendered'] -and -not [string]::IsNullOrWhiteSpace([string]$message.rendered)) {
+                    $text = [string]$message.rendered
+                } elseif ($null -ne $message -and $message.PSObject.Properties['message']) {
+                    $level = 'diagnostic'
+                    if ($message.PSObject.Properties['level']) { $level = [string]$message.level }
+                    $text = "${level}: $($message.message)"
+                }
+            }
+            foreach ($diagnosticLine in ($text -split '\r?\n')) { $diagnosticLines.Add($diagnosticLine) }
+        }
+        $protectedLines = @($diagnosticLines | ForEach-Object { Protect-GateEvidenceLine -Line $_ })
+        $evidenceTail = @(Select-GateEvidenceLines -Lines $protectedLines -Budget 40)
+        if ($evidenceTail.Count -eq 0) {
+            $evidenceTail = @("<absent: fingerprint exit $buildExit with no output on stdout or stderr>")
+        }
+    }
+    # #1007 ENROLMENT. A binary with NO ledger row that cargo chose not to rebuild is `unproven-reuse`
+    # and RED -- correctly, the run cannot vouch for it. But it is not contamination: the ledger
+    # simply never covered it. That happens to every binary the first time the ledger learns of it
+    # (the first run after this mechanism landed found 212 of them; #1007 adds ~54 per-suite
+    # binaries in one go), and cargo, by mtime, sees nothing to rebuild -- so the RED repeats on
+    # every run until a human deletes the target. The remedy the doc promised ("run once cold") is
+    # done HERE, for exactly those binaries and no others: delete the executable so cargo MUST
+    # rebuild it, run the same enumeration once more, and let the mtime rule -- which has full
+    # authority inside the run's own window -- prove it. `contaminated` (a row that DISAGREES) is
+    # deliberately not enrolled: that is the backdated-mtime shape this whole mechanism exists to
+    # catch, and rebuilding it here would erase the evidence. One retry, flagged, never nested.
+    if (-not $Enrolling -and $buildExit -eq 0) {
+        $enrol = @($artifacts | Where-Object {
+            [string]::Equals([string]$_['reuseProof'], 'unproven-reuse', [System.StringComparison]::Ordinal) -and
+            $null -eq $_['ledgerInputHash'] -and $null -eq $_['ledgerSha256'] -and
+            -not [string]::Equals([string]$_['crateInputHashSource'], 'unresolved-embedded-input', [System.StringComparison]::Ordinal) -and
+            -not [string]::IsNullOrEmpty([string]$_['executable']) -and (Test-Path -LiteralPath ([string]$_['executable']))
+        })
+        if ($enrol.Count -gt 0) {
+            Write-Host "[gate] ENROLLING $($enrol.Count) test binary(ies) the ledger has no row for: deleting them so cargo rebuilds them inside this run's window, then enumerating once more." -ForegroundColor Yellow
+            foreach ($candidate in $enrol) {
+                Remove-Item -LiteralPath ([string]$candidate['executable']) -Force -ErrorAction Stop
+            }
+            $again = Get-TestArtifactManifest -CargoArgs $CargoArgs -Enrolling
+            $again['artifactsEnrolled'] = $enrol.Count
+            return $again
+        }
+    }
     return [ordered]@{
         buildExitCode          = $buildExit
         buildPassNonJsonTail   = @($nonJson | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 30)
+        # #1007: how many binaries THIS enumeration enrolled (see above). 0 on the retry itself and on
+        # every run whose ledger already covers everything; the outer call overwrites it with the count.
+        artifactsEnrolled      = 0
         artifacts              = $artifacts
+        outputTail             = $evidenceTail
         # #904: the record the audit of this change reads. `staleArtifactCount` in the run manifest
         # keeps saying what a cold-only gate would have refused; these say what was proven instead.
         artifactsRebuilt       = $rebuilt
@@ -2791,6 +2938,23 @@ function Get-TargetBuildState {
         }
     }
 
+    # #1007: A RUN THAT FINISHED AND COULD NOT VOUCH IS NOT A RUN THAT DIED. Before this state existed
+    # such a run left its `building` mark in place, the next run found the owner gone and read
+    # `interrupted` -- suspect -- and aborted at the #455 guard before its first compile, sticky
+    # until a human deleted the target. The comment beside the stamp said the next run "rebuilds
+    # cold"; it did not, it refused. `unproven` is the honest word: the pass completed, the ledger
+    # was not written because one or more binaries could not be proven, and the next run must run
+    # its own freshness check like any other -- contaminated (no clean-reuse claim), NOT suspect
+    # (nothing is half-written; cargo's fingerprints are whole).
+    if ([string]::Equals($recordedState, 'unproven', [System.StringComparison]::Ordinal)) {
+        return [ordered]@{
+            contaminated = $true
+            suspect      = $false
+            state        = 'unproven'
+            reason       = 'the last run in this target finished but could not vouch for every binary, so nothing is reused on trust; this run proves or rebuilds each one itself'
+        }
+    }
+
     if ([string]::Equals($recordedState, 'building', [System.StringComparison]::Ordinal)) {
         $ownerPid = 0
         if ($null -ne $marker.PSObject.Properties['processId']) {
@@ -2853,9 +3017,13 @@ function Write-TargetBuildState {
         [Parameter(Mandatory)] [string] $State,
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $Head
     )
+    # #1007 adds `unproven`: the pass FINISHED but could not vouch for every binary. It is a terminal
+    # state like `complete`, written where `complete` would have been, so that a finished-unproven
+    # run is never mistaken for one that died mid-compile (see the `unproven` branch of the reader).
     if (-not ([string]::Equals($State, 'building', [System.StringComparison]::Ordinal) -or
-            [string]::Equals($State, 'complete', [System.StringComparison]::Ordinal))) {
-        throw "Write-TargetBuildState: '$State' is not a build state; expected 'building' or 'complete'."
+            [string]::Equals($State, 'complete', [System.StringComparison]::Ordinal) -or
+            [string]::Equals($State, 'unproven', [System.StringComparison]::Ordinal))) {
+        throw "Write-TargetBuildState: '$State' is not a build state; expected 'building', 'complete' or 'unproven'."
     }
     if (-not (Test-Path -LiteralPath $TargetDir)) {
         [void][System.IO.Directory]::CreateDirectory($TargetDir)
@@ -4198,6 +4366,10 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         artifactsProvenReuse   = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsProvenReuse'
         artifactsUnprovenReuse = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsUnprovenReuse'
         artifactsContaminated  = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsContaminated'
+        # #1007: how many binaries this run enrolled (deleted and rebuilt inside its window because
+        # the ledger had no row for them). Summed across the workspace pass and every per-suite
+        # pass; it was summed and never published until lane B read the manifest for it.
+        artifactsEnrolled      = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'artifactsEnrolled'
         buildMode              = $buildMode
         buildPassSecs          = Read-ArtifactManifestField -Manifest $ArtifactManifest -Name 'buildPassSecs'
         # What the proof COST, beside what it bought. A mechanism whose overhead nobody records is
@@ -4843,6 +5015,54 @@ try {
         Write-Host "[gate] cli suite EXCLUDED: $excluded - $($excludedSuites[$excluded])" -ForegroundColor Yellow
     }
     foreach ($suite in $suites) {
+        # #243: fingerprint the binary THIS stage is about to run, scoped exactly like the stage
+        # itself (`-p graphhelm-cli --test $suite`, no `--all-features`) -- not the workspace-wide
+        # one already captured above, which cargo's feature unification makes a DIFFERENT compiled
+        # unit. Appended into the SAME artefact list the freshness check (`staleArtifacts`,
+        # `instrumentSuspect`) already reads, so a stale per-suite binary is no longer invisible to
+        # the guard built for exactly that (#455's class, named by ISSUES 1 on #987).
+        $fingerprintStartedUtc = [DateTime]::UtcNow
+        $suiteManifest = Get-TestArtifactManifest -CargoArgs @('-p', 'graphhelm-cli', '--test', $suite)
+        $fingerprintEndedUtc = [DateTime]::UtcNow
+        # Codex P1 on this commit: a fingerprint pass that fails to build (transient or not) used
+        # to be discarded here, and the stage below runs its OWN `cargo test` regardless -- if THAT
+        # invocation happens to succeed, the gate finishes GREEN while `$suiteManifest.artifacts` is
+        # incomplete or empty, recreating the exact blind spot this fix exists to close, silently.
+        # A fingerprint that could not build is a gate failure in its own right, not a value to
+        # drop and move past.
+        if ($suiteManifest.buildExitCode -ne 0) {
+            Write-Host "[gate] cli: $suite - per-suite fingerprint build FAILED (exit $($suiteManifest.buildExitCode)); the freshness population for this suite is incomplete" -ForegroundColor Red
+            foreach ($evidenceLine in $suiteManifest.outputTail) { Write-Host $evidenceLine }
+            $script:failed = @($script:failed) + "cli: $suite (fingerprint)"
+            # A fingerprint is an operation with its own verdict. Keep it in the durable stage
+            # ledger as well as the summary list, so the published manifest cannot report only the
+            # later cargo stage and lose the failed freshness measurement.
+            $fingerprintStartedText = $fingerprintStartedUtc.ToString('o')
+            $fingerprintEndedText = $fingerprintEndedUtc.ToString('o')
+            $script:stageRecords.Add([ordered]@{
+                name         = "cli: $suite (fingerprint)"
+                passed       = $false
+                exitCode     = [int]$suiteManifest.buildExitCode
+                wallTimeSecs = [math]::Round(($fingerprintEndedUtc - $fingerprintStartedUtc).TotalSeconds, 3)
+                startedUtc   = $fingerprintStartedText
+                endedUtc     = $fingerprintEndedText
+                outputTail   = @($suiteManifest.outputTail)
+            })
+        }
+        foreach ($suiteArtifact in $suiteManifest.artifacts) {
+            $artifactManifest.artifacts.Add($suiteArtifact)
+        }
+        # #1007 (both reviewer lanes, independently): the run manifest publishes the four reuse
+        # counts "read off the artefact manifest rather than recomputed", and the append above grew
+        # the LIST without growing the COUNTS -- so a receipt read `testArtifacts: 2`,
+        # `artifactsUnprovenReuse: 0`, `instrumentSuspect: true`, which the merge checklist's
+        # receipt-signature paragraph reads as a PROVEN reuse. The counts follow the list.
+        foreach ($countName in @('artifactsRebuilt', 'artifactsProvenReuse', 'artifactsUnprovenReuse', 'artifactsContaminated', 'artifactsEnrolled')) {
+            $artifactManifest[$countName] = [int]$artifactManifest[$countName] + [int]$suiteManifest[$countName]
+        }
+        if ($suiteManifest.artifacts.Count -gt 0 -and [string]$artifactManifest['buildMode'] -ne 'unknown' -and [string]$suiteManifest['buildMode'] -eq 'warm') {
+            $artifactManifest['buildMode'] = 'warm'
+        }
         Invoke-Stage "cli: $suite" {
             cargo $toolchain test -p graphhelm-cli --test $suite --locked
         } | Out-Null
@@ -5086,12 +5306,15 @@ try {
     # cargo refused to rebuild them, because by mtime they were fresh. Stuck RED until a human
     # deleted the target.
     #
-    # THE REMEDY IS TO LEAVE THE MARK UNSTAMPED, not to invent a state: `Write-TargetBuildState`
-    # takes `building` or `complete` and nothing else, and a `building` mark whose process is gone
-    # is exactly what `Get-TargetBuildState` reads back as `interrupted` -- suspect, and rebuilt
-    # cold by the next run. That is the vocabulary ci/gate-target-build-state.tests.ps1 already
-    # holds, and the word is right here in a way it is not on the stale path: the pass really was
-    # interrupted.
+    # THE REMEDY USED TO BE "LEAVE THE MARK UNSTAMPED", on the belief that a `building` mark whose
+    # process is gone reads back as `interrupted` and is "rebuilt cold by the next run". The first
+    # half was true; the second was FALSE (#1007, verified link by link): `interrupted` is SUSPECT,
+    # and a suspect target ABORTS at the #455 guard before its first compile, HARNESS-BROKE, and the
+    # mark is deliberately sticky. A finished run that could not vouch was therefore bricking its
+    # target, and #1007 -- which enrols ~54 per-suite binaries that have no ledger row -- made every
+    # target hit it. The pass was not interrupted; it finished. So it is stamped `unproven`: a
+    # terminal state the reader treats as contaminated (no clean-reuse claim) and NOT suspect (no
+    # abort), and the next run proves or rebuilds each binary itself.
     #
     # THE SAME DERIVATION AS THE VERDICT'S, spelled the same way on purpose (`-is [int]` first, so
     # the `$null` of a manifest that was never built widens to "not established").
@@ -5103,10 +5326,16 @@ try {
     # path that did not finish. Two branches' worth of prose after the stamp broke that distance;
     # one short `else` keeps the guard readable and the stamp adjacent to the flag.
     $unstampedNote = if (-not $buildPassSucceededAtEnd) {
-        "[gate] NOTE: the artefact build pass did not succeed (exit $buildExitAtEnd), so its list of $(@($artifactManifest.artifacts).Count) binary(ies) may be PARTIAL. No ledger is written and this target is left unstamped, so the next run reads it as interrupted and rebuilds cold."
+        "[gate] NOTE: the artefact build pass did not succeed (exit $buildExitAtEnd), so its list of $(@($artifactManifest.artifacts).Count) binary(ies) may be PARTIAL. No ledger is written and this target is stamped unproven, so the next run reuses nothing on trust and proves or rebuilds each binary itself."
     } else {
         "[gate] NOTE: $unprovenAtEnd artefact(s) this run cannot vouch for, so this target is NOT stamped as a clean reuse."
     }
+    # #1007: the `else` below stamps `unproven` -- FINISHED, NOT DIED -- on both of its cases. A build
+    # pass that failed returns from cargo with whole fingerprints (cargo writes a fingerprint only on
+    # success), so it is as far from `interrupted` as a pass that could not vouch; leaving `building`
+    # there is what made the next run abort before its first compile. The prose sits HERE, above the
+    # guard, for the same 400-character reason as the note above: a comment inside the `else` pushed
+    # the completion flag out of the stamp's reach and ci/gate-target-build-state.tests.ps1 said so.
     if ($unprovenAtEnd -eq 0 -and $buildPassSucceededAtEnd) {
         # #904: ONLY HERE IS THE LEDGER WRITTEN, and BEFORE the stamp. Every artefact of this run
         # was either rebuilt inside the run's own window -- where the mtime rule still has full
@@ -5128,6 +5357,7 @@ try {
         Write-TargetBuildState -TargetDir $actualTargetDir -State 'complete' -Head ([string]$gatedHeadAtStart)
     } else {
         Write-Host $unstampedNote -ForegroundColor Yellow
+        Write-TargetBuildState -TargetDir $actualTargetDir -State 'unproven' -Head ([string]$gatedHeadAtStart)
     }
     $script:stagesCompleted = $true
 } finally {

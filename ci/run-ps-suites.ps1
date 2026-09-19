@@ -48,6 +48,7 @@ $PinnedSuites = @(
     'gate-rustfmt-path-length.tests.ps1',
     'gate-slot-claim.tests.ps1',
     'gate-slot-wait.tests.ps1',
+    'gate-suite-artifact.tests.ps1',
     'gate-script-paths.tests.ps1',
     'gate-stage-overlap.tests.ps1',
     'gate-stage-reddens.tests.ps1',

@@ -25,7 +25,7 @@
 # question is answered by the operating system in both cells rather than by a stub that would agree
 # with whatever the implementation happened to do.
 
-$ExpectedAssertionCount = 53
+$ExpectedAssertionCount = 55
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:total = 0
@@ -233,6 +233,18 @@ try {
     # every crate and defeat the caching this whole guard exists to keep.
     Assert-True -Condition (Test-Path -LiteralPath (Join-Path $roundTrip '.graphhelm-build-state.json')) `
         'the marker lives at the target root, outside debug/ and release/, where no cargo fingerprint reaches it'
+
+    # #1007: A RUN THAT FINISHED BUT COULD NOT VOUCH is stamped `unproven`, and the reader must tell
+    # it from a run that DIED. Before this state existed the gate left `building` in place on that
+    # path, the next run found the owner gone, read `interrupted` -- suspect -- and aborted before its
+    # first compile, sticky. The two arms below are the distinction: `unproven` reuses nothing on
+    # trust (contaminated, like `interrupted`) and does NOT abort (not suspect, unlike `interrupted`).
+    Write-TargetBuildState -TargetDir $roundTrip -State 'unproven' -Head 'deadbeef'
+    $afterUnproven = Get-TargetBuildState -TargetDir $roundTrip
+    Assert-True -Condition ($afterUnproven.state -ceq 'unproven' -and $afterUnproven.contaminated -eq $true -and $afterUnproven.suspect -eq $false) `
+        "a finished run that could not vouch reads back as UNPROVEN: contaminated (no clean reuse) and NOT suspect (no abort) (got state='$($afterUnproven.state)', contaminated=$($afterUnproven.contaminated), suspect=$($afterUnproven.suspect))"
+    Assert-True -Condition ($afterUnproven.suspect -ne $interruptedRead.suspect -and $afterUnproven.contaminated -eq $interruptedRead.contaminated) `
+        'and it differs from INTERRUPTED on exactly the axis that decides the abort: same contamination, opposite suspicion'
 
     Write-Host ''
     Write-Host '-- the marker is UNTRUSTED INPUT: another process wrote it (Codex on #1009) --' -ForegroundColor Cyan

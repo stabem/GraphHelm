@@ -32,7 +32,7 @@
 # half-written file to the concurrent compile. The same claim is measured here by redirecting ONE
 # package's directory in the REAL graph at a copy, which changes no byte under version control.
 
-$ExpectedAssertionCount = 112
+$ExpectedAssertionCount = 117
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:total = 0
@@ -876,14 +876,44 @@ include!(concat!(
     Assert-True ($guardStart -ge 0 -and $ledgerWrites.Count -eq 1 -and $ledgerWrites[0].Index -gt $guardStart) `
         'and that site is inside the guard, after it, never before'
 
-    # THE UNSTAMPED TARGET IS THE REMEDY, and it is the EXISTING vocabulary: Write-TargetBuildState
-    # takes `building` or `complete` and nothing else, and a `building` mark whose process is gone
-    # is what Get-TargetBuildState reads back as `interrupted` -- suspect, and rebuilt cold next run.
-    Assert-True ($gateText.Contains('the next run reads it as interrupted and rebuilds cold')) `
-        'the failed-pass branch says out loud that the target is left unstamped and why'
+    # THE FINISHED-BUT-UNPROVEN TARGET IS STAMPED `unproven` (#1007). The cell that stood here asserted
+    # the sentence "the next run reads it as interrupted and rebuilds cold" -- and that sentence was
+    # FALSE: `interrupted` is suspect, a suspect target aborts at the #455 guard before its first
+    # compile, and the mark is sticky. A guard that pins a false sentence certifies the defect. This
+    # one pins the truth and the site that makes it true.
+    Assert-True ($gateText.Contains('this target is stamped unproven')) `
+        'the failed-pass branch says out loud that the target is stamped unproven, not left to read as interrupted'
+    $unprovenStampSites = [regex]::Matches($gateText, 'Write-TargetBuildState -TargetDir ' + [regex]::Escape('$actualTargetDir') + " -State 'unproven'")
+    Assert-True ($unprovenStampSites.Count -eq 1 -and $guardStart -ge 0 -and $unprovenStampSites[0].Index -gt $guardStart) `
+        "and the unproven stamp has exactly ONE site, inside the same guard as the ledger write (found $($unprovenStampSites.Count))"
     $stampSites = [regex]::Matches($gateText, "Write-TargetBuildState -TargetDir \`$actualTargetDir -State 'complete'")
     Assert-True ($stampSites.Count -le 2) `
         "and the `complete` stamp has not sprouted a new site outside the guard (found $($stampSites.Count))"
+
+    # ENROLMENT (#1007) has two properties that must never drift, and both are in the producer's text:
+    # it happens ONCE (the retry is flagged `-Enrolling` and the flag disables it), and it deletes
+    # ONLY binaries the ledger has no row for -- never a `contaminated` one, whose disagreeing row is
+    # the evidence this whole mechanism exists to keep.
+    $enrolProducer = Get-GateFunctionText -Name 'Get-TestArtifactManifest'
+    $enrolGuard = [regex]::Match($enrolProducer, '(?m)^\s*if \(-not \$Enrolling -and \$buildExit -eq 0\) \{')
+    Assert-True ($enrolGuard.Success) `
+        'the enrolment block is guarded by -not $Enrolling, so the retry cannot enrol again'
+    $removeSites = [regex]::Matches($enrolProducer, 'Remove-Item -LiteralPath')
+    Assert-True ($removeSites.Count -eq 1 -and $enrolGuard.Success -and $removeSites[0].Index -gt $enrolGuard.Index) `
+        "the producer deletes binaries at exactly ONE site and it is inside the enrolment guard (found $($removeSites.Count))"
+    Assert-True ($enrolProducer.Contains('Get-TestArtifactManifest -CargoArgs $CargoArgs -Enrolling')) `
+        'the retry calls the producer with -Enrolling and the same cargo arguments'
+    $enrolFilter = [regex]::Match($enrolProducer, '(?s)\$enrol = @\(\$artifacts \| Where-Object \{(.*?)\}\)')
+    Assert-True ($enrolFilter.Success -and $enrolFilter.Groups[1].Value.Contains("'unproven-reuse'") -and -not $enrolFilter.Groups[1].Value.Contains("'contaminated'")) `
+        'the enrolment filter selects unproven-reuse and never contaminated'
+} catch {
+    # An aborted suite must say WHY before the finally exits 2: this file reported "expected 117,
+    # ran 35" with no cause when a real `cargo metadata` under it hit a bad toolchain (lane B on
+    # #1007, who first credited the abort to a sabotage and withdrew that). Same four lines as its
+    # sibling gate-suite-artifact.tests.ps1.
+    Write-Host "HARNESS-BROKE: a cell threw: $($_.Exception.GetType().Name): $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" -ForegroundColor Magenta
+    Write-Host $_.ScriptStackTrace -ForegroundColor Magenta
+    throw
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot) {
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

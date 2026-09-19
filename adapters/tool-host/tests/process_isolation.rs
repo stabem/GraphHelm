@@ -5,60 +5,155 @@
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use graphhelm_tool_host::process::{CapturedProcess, ProcessLimits, run_in_workspace};
 
+const FIXTURE_CLEANUP_SECONDS: u64 = 5;
+const FIXTURE_CLEANUP_PATIENCE: Duration = Duration::from_secs(FIXTURE_CLEANUP_SECONDS);
+#[cfg(windows)]
+const CLI_WRAPPER_STARTUP_GRACE_SECONDS: u64 = 5;
+#[cfg(windows)]
+const CLI_SURROGATE_READY_SECONDS: u64 = 20;
+#[cfg(windows)]
+const CLI_SURROGATE_REAP_SECONDS: u64 = 5;
+#[cfg(windows)]
+const CLI_GRANDCHILD_REAP_SECONDS: u64 = 30;
+#[cfg(windows)]
+const CLI_SURROGATE_READY_PATIENCE: Duration = Duration::from_secs(CLI_SURROGATE_READY_SECONDS);
+#[cfg(windows)]
+const CLI_SURROGATE_REAP_PATIENCE: Duration = Duration::from_secs(CLI_SURROGATE_REAP_SECONDS);
+#[cfg(windows)]
+const CLI_GRANDCHILD_REAP_PATIENCE: Duration = Duration::from_secs(CLI_GRANDCHILD_REAP_SECONDS);
+#[cfg(windows)]
+const CLI_DELAYED_VALID_CONTROL_SECONDS: u64 = 8;
+#[cfg(windows)]
+const CLI_DELAYED_VALID_CONTROL: Duration = Duration::from_secs(CLI_DELAYED_VALID_CONTROL_SECONDS);
+// Cleanup visits two captured identities and can run once on the normal path and once again from
+// Drop when the explicit path reports a failure. Keep the full worst-case accounting in the
+// named budget so the outer lifecycle timeout does not cut off a valid nested observer.
+#[cfg(windows)]
+const CLI_CLEANUP_IDENTITIES: u64 = 2;
+#[cfg(windows)]
+const CLI_CLEANUP_PASSES: u64 = 2;
+#[cfg(windows)]
+const CLI_CLEANUP_BUDGET_SECONDS: u64 =
+    CLI_CLEANUP_IDENTITIES * CLI_CLEANUP_PASSES * FIXTURE_CLEANUP_SECONDS;
+#[cfg(windows)]
+const CLI_NESTED_OBSERVER_BUDGET_SECONDS: u64 = CLI_DELAYED_VALID_CONTROL_SECONDS
+    + CLI_SURROGATE_READY_SECONDS
+    + CLI_SURROGATE_REAP_SECONDS
+    + CLI_GRANDCHILD_REAP_SECONDS
+    + CLI_CLEANUP_BUDGET_SECONDS;
+#[cfg(windows)]
+const CLI_WRAPPER_TIMEOUT: Duration =
+    Duration::from_secs(CLI_NESTED_OBSERVER_BUDGET_SECONDS + CLI_WRAPPER_STARTUP_GRACE_SECONDS);
+
 fn fake_tool() -> String {
     env!("CARGO_BIN_EXE_fake_tool").to_owned()
 }
 
-/// The grandchild's id, waited on as an EVENT and still bounded (#727).
-///
-/// The fixture used to write the id into a file, which a test can only ask about again later --
-/// so the wait was 400 sleeps of 50 ms and the normal path's duration was set by the poll
-/// interval rather than by the fixture. On a loaded gate the window expired and the cell reported
-/// HARNESS-BROKE: the right colour, and still a run that decided nothing.
-///
-/// A connection is something a test can block on, so the wait returns the instant the id exists.
-/// The bound stays, because #703's whole thesis is that a wait made deterministic by being
-/// unbounded reintroduces the third colour -- `cargo test` has no per-test timeout, so a fixture
-/// that never reports would become a suite that never returns rather than a refusal anyone can
-/// read. What changed is that the bound is now only ever REACHED when nothing was reported at
-/// all; it no longer decides the normal path.
-///
-/// `None` is that refusal, and it is the caller's job to say HARNESS-BROKE about it rather than to
-/// read it as a verdict about a tree kill.
+/// Read the fixture's direct-child/grandchild report through one bounded nonblocking reader.
+/// The compatibility wrapper selects the grandchild for cells that observe only that process.
+/// Missing, malformed, oversized, or incomplete reports refuse instead of providing a verdict.
 fn wait_for_reported_grandchild(listener: TcpListener, patience: Duration) -> Option<u32> {
-    let address = listener
-        .local_addr()
-        .expect("the listener knows its own address");
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let accepting = std::thread::spawn(move || {
-        let reported = listener.accept().ok().and_then(|(mut stream, _)| {
-            // The reader carries the same bound. Without it a fixture that connects and then never
-            // writes parks this thread forever -- the hang moved rather than removed, one layer
-            // further in and harder to see than the one being fixed.
-            stream.set_read_timeout(Some(patience)).ok()?;
-            let mut text = String::new();
-            stream.read_to_string(&mut text).ok()?;
-            text.trim().parse::<u32>().ok()
-        });
-        let _ = sender.send(reported);
-    });
+    wait_for_reported_processes(listener, patience).map(|(_, grandchild)| grandchild)
+}
 
-    let answer = receiver.recv_timeout(patience).ok().flatten();
-    if answer.is_none() {
-        // A thread still parked in `accept` is woken by connecting to it, rather than left to leak
-        // for the life of the process. #726 is the same shape one layer out: an abandoned reader
-        // is not a reaped one, and a test suite that leaks a thread per refusal is a suite whose
-        // later cells run in a machine it damaged itself.
-        let _ = TcpStream::connect(address);
+/// One bounded nonblocking accept/read loop; no worker or join can outlive the deadline.
+/// Scheduler delays may exceed patience, but neither socket operation waits for peer progress.
+fn wait_for_reported_processes(listener: TcpListener, patience: Duration) -> Option<(u32, u32)> {
+    listener.set_nonblocking(true).ok()?;
+    let deadline = Instant::now().checked_add(patience)?;
+    let mut stream = None;
+    let mut bytes = Vec::new();
+    loop {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        if stream.is_none() {
+            match listener.accept() {
+                Ok((accepted, _)) => {
+                    accepted.set_nonblocking(true).ok()?;
+                    stream = Some(accepted);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return None,
+            }
+        }
+        if let Some(stream) = stream.as_mut() {
+            let mut buffer = [0; 32];
+            match stream.read(&mut buffer) {
+                Ok(0) => {
+                    let text = std::str::from_utf8(&bytes).ok()?;
+                    let mut ids = text.trim().split(',').map(str::parse::<u32>);
+                    let direct = ids.next()?.ok()?;
+                    let grandchild = ids.next()?.ok()?;
+                    return (direct != 0 && grandchild != 0 && ids.next().is_none())
+                        .then_some((direct, grandchild));
+                }
+                Ok(count) => {
+                    if bytes.len() + count > 32 {
+                        return None;
+                    }
+                    bytes.extend_from_slice(&buffer[..count]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return None,
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
-    let _ = accepting.join();
-    answer
+}
+
+/// Captured before the act under test. Even an observation/assertion panic cleans both identities.
+/// Drop is best effort and uses finite OS waits; explicit cleanup reports errors on the normal path.
+#[derive(Default)]
+struct FixtureCleanup {
+    direct: Option<graphhelm_process_tree::ProcessIdentity>,
+    grandchild: Option<graphhelm_process_tree::ProcessIdentity>,
+}
+
+impl FixtureCleanup {
+    fn capture(reported: Option<(u32, u32)>) -> Self {
+        let mut guard = Self::default();
+        if let Some((direct, grandchild)) = reported {
+            guard.direct = graphhelm_process_tree::ProcessIdentity::capture(direct).ok();
+            guard.grandchild = graphhelm_process_tree::ProcessIdentity::capture(grandchild).ok();
+        }
+        guard
+    }
+
+    fn cleanup(&self) -> Result<(), &'static str> {
+        let mut failed = false;
+        for identity in [&self.direct, &self.grandchild].into_iter().flatten() {
+            match identity.is_running() {
+                Ok(false) => continue,
+                Ok(true) | Err(_) => {
+                    // A concurrent exit can make the terminate request fail while the identity
+                    // is still signaled moments later. The bounded identity wait is the deciding
+                    // observation; an immediate second liveness sample races the exit and creates
+                    // a false cleanup failure.
+                    let _ = identity.terminate();
+                }
+            }
+            let gone = identity.wait_until_gone(FIXTURE_CLEANUP_PATIENCE);
+            failed |= gone != Ok(true);
+        }
+        if failed {
+            Err("fixture identity could not be terminated and observed gone")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for FixtureCleanup {
+    fn drop(&mut self) {
+        let _ = self.cleanup();
+    }
 }
 
 fn limits() -> ProcessLimits {
@@ -80,6 +175,28 @@ fn run(root: &Path, args: &[&str], limits: &ProcessLimits) -> CapturedProcess {
         None,
     )
     .unwrap()
+}
+
+#[cfg(windows)]
+fn reap_child(
+    child: &mut std::process::Child,
+    patience: Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    let deadline = Instant::now()
+        .checked_add(patience)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "reap overflow"))?;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "child did not exit within reap patience",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
@@ -966,7 +1083,7 @@ fn a_cancelled_call_leaves_no_process_alive_under_that_id() {
 /// The grandchild reports its OWN id, because the host never held a handle to it: that is the whole
 /// difficulty, and it is why the fixture reports the id out of band instead of the test reading it
 /// from anywhere in the host. It reports over a socket rather than into a file so the wait can be
-/// an event rather than a poll -- see `wait_for_reported_grandchild` and #727.
+/// a bounded readiness observation -- see `wait_for_reported_grandchild` and #727.
 ///
 /// **The CANCELLATION is the trigger, and the choice is about determinism rather than semantics.**
 /// Both stop conditions go through the same two lines, so the subject is identical either way; the
@@ -1024,11 +1141,11 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     };
 
     // Readiness is the grandchild's id ARRIVING, which the fixture now reports over a socket the
-    // test blocks on. Bounded, and an exhausted bound is HARNESS-BROKE naming the limit rather than
+    // test observes without blocking. An exhausted bound is HARNESS-BROKE naming the limit rather than
     // a red about the kill.
     //
     // The bound is generous BECAUSE it is not the mechanism, exactly as the reap patience below is:
-    // the wait returns the instant the id arrives, so on the passing path its size costs nothing.
+    // the nonblocking reader observes arrival on its next iteration; the patience is only a ceiling.
     // Its predecessor was 400 sleeps of 50 ms, and there the size WAS the mechanism -- the normal
     // path paid at least one interval, and a loaded gate could exhaust the window while the tree
     // kill was perfectly correct (#727).
@@ -1038,8 +1155,8 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     // replacement as alive, and killing it then terminates a stranger on a busy host (Codex, on
     // #703). On Windows an open handle keeps the kernel object -- and therefore the pid -- from
     // being reused for as long as this binding lives, which is what makes the reap below safe.
-    let reported = wait_for_reported_grandchild(listener, READY_PATIENCE);
-    let identity = reported.map(graphhelm_process_tree::ProcessIdentity::capture);
+    let reported = wait_for_reported_processes(listener, READY_PATIENCE);
+    let cleanup = FixtureCleanup::capture(reported);
 
     signal.cancel();
     let captured = handle
@@ -1047,7 +1164,7 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
         .expect("the call thread returns")
         .expect("the call returns a record for the child the cancellation stopped");
 
-    let Some(grandchild) = reported else {
+    let Some((_, grandchild)) = reported else {
         panic!(
             "HARNESS-BROKE: the fixture never reported a grandchild id in {READY_PATIENCE:?}; \
              nothing here measures a tree kill"
@@ -1101,39 +1218,22 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     // it, and this authoritative gate would fail on the OS's reaping schedule. That is #715, still
     // open, and judging with an instrument a filed defect says lies is worse than not judging:
     // AGENTS.md:121 -- "if a promised behavior has no adequate observer, stop with OBSERVER_MISSING".
-    let Some(handle) = identity
-        .as_ref()
-        .and_then(|captured| captured.as_ref().ok())
+    let (Some(_direct_identity), Some(grandchild_identity)) =
+        (&cleanup.direct, &cleanup.grandchild)
     else {
-        panic!(
-            "OBSERVER_MISSING: no ProcessIdentity for the grandchild {grandchild}, and the pid \
-             probe reads a zombie as alive (#715), so this run has no honest way to decide whether \
-             the tree kill worked"
-        );
+        panic!("OBSERVER_MISSING: both fixture identities must be captured before cancellation");
     };
 
-    let survived = !handle.wait_until_gone(REAP_PATIENCE).unwrap_or_else(|_| {
+    let survived = !grandchild_identity.wait_until_gone(REAP_PATIENCE).unwrap_or_else(|_| {
         panic!(
             "HARNESS-BROKE: the wait on the grandchild's identity failed; this run decides nothing \
              about the tree kill"
         )
     });
 
-    if survived {
-        // Through the IDENTITY, not through the number. This used to shell out to `taskkill /PID`
-        // or `kill -9`, which is safe on Windows -- the held handle reserves the id -- and unsafe on
-        // Linux, where a pidfd does not reserve it: between the liveness answer above and the signal
-        // the number can be reassigned and the kill lands on a stranger. The crate now owns that
-        // asymmetry (Codex, on #703), so this cell no longer has to remember which platform it is
-        // on, and it spawns no process to clean one up.
-        //
-        // Best-effort by design: the verdict is already in `survived`, so a cleanup that fails must
-        // not replace it with a panic about the cleanup.
-        let _ = handle.terminate();
-    }
-
-    // Released only after the reap, because the reap goes through it.
-    drop(identity);
+    cleanup
+        .cleanup()
+        .expect("HARNESS-BROKE: fixture cleanup failed");
 
     assert!(
         !captured.readers_abandoned,
@@ -1150,6 +1250,170 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
     );
 }
 
+/// #185: the operator's REAL stop signal is not a call into this crate at all -- it is Ctrl-C on
+/// the sync CLI process itself, which has no cancel channel (`apps/cli/src/commands/execution/
+/// driver.rs:83-85` says so explicitly). Every cell above kills a TOOL CALL from inside the same
+/// process that made it; none of them answer what happens to a tool call's descendants when the
+/// process that made the call is the one that dies.
+///
+/// So this is a two-process fixture, not a two-function one. The OUTER run is the test; the INNER
+/// run, spawned as a genuine child PROCESS (a thread's death would not exercise OS-level handle
+/// cleanup, which is the entire question), plays the CLI: it blocks inside `run_in_workspace`
+/// exactly the way a sync verb does, with `cancel: None`, and is killed from OUTSIDE by
+/// `Child::kill()` -- `TerminateProcess` on Windows, no unwind, no `Drop`, no chance for this
+/// crate's own cleanup code to run. That is Ctrl-C's actual guarantee, not a gentler stand-in for
+/// it.
+///
+/// **Windows only, deliberately.** `TerminateProcess` closes the CLI surrogate's job-object
+/// handle unconditionally, and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is what this cell measures.
+/// The Unix path binds only the DIRECT child (`PR_SET_PDEATHSIG`, `adapters/process-tree/src/
+/// lib.rs:158`), which this fixture's grandchild is not, so `Child::kill()`'s SIGKILL there
+/// proves nothing about the property this cell names -- that half of #185 is not this cell's
+/// remainder to close, and stays open until a Linux-run cell exists for it.
+#[cfg(windows)]
+#[test]
+fn a_killed_cli_process_leaves_no_live_grandchild() {
+    if std::env::var_os("GH_CLI_SURROGATE_REPORT_ADDR").is_some() {
+        println!("AMBIENT_REPORT_ADDRESS_RECEIVED=1");
+    }
+    if std::env::var_os("GH_CLI_SURROGATE_DELAYED_CONTROL").is_some() {
+        println!("DELAYED_VALID_CONTROL_RECEIVED=1");
+        std::thread::sleep(CLI_DELAYED_VALID_CONTROL);
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
+    let workspace = tempfile::tempdir().expect("the CLI workspace must be creatable");
+    let mut surrogate = std::process::Command::new(fake_tool())
+        .args(["cli-surrogate", &report_address])
+        .current_dir(workspace.path())
+        .spawn()
+        .expect("spawning the CLI surrogate process");
+
+    // Captured while the grandchild is certainly alive, and held across the kill -- a numeric pid
+    // is recyclable, so probing the bare number afterward can report an unrelated replacement as
+    // alive (the same reasoning `the_stop_kills_the_whole_tree...` above already established).
+    let reported = wait_for_reported_processes(listener, CLI_SURROGATE_READY_PATIENCE);
+    let cleanup = FixtureCleanup::capture(reported);
+
+    // THE ACT: kill the CLI SURROGATE, not the tool call, not a signal into this crate. Whatever
+    // the surrogate was doing dies with it, unread and unhandled.
+    surrogate
+        .kill()
+        .expect("HARNESS-BROKE: killing the CLI surrogate was refused");
+    reap_child(&mut surrogate, CLI_SURROGATE_REAP_PATIENCE)
+        .expect("HARNESS-BROKE: reaping the killed CLI surrogate failed");
+
+    let Some((_, grandchild)) = reported else {
+        panic!(
+            "HARNESS-BROKE: the surrogate never reported a grandchild id in {CLI_SURROGATE_READY_PATIENCE:?}; \
+             nothing here measures whether a killed CLI leaves descendants alive"
+        );
+    };
+
+    let (Some(_direct_identity), Some(handle)) = (&cleanup.direct, &cleanup.grandchild) else {
+        panic!("OBSERVER_MISSING: both fixture identities must be captured before surrogate kill");
+    };
+
+    let survived = !handle
+        .wait_until_gone(CLI_GRANDCHILD_REAP_PATIENCE)
+        .unwrap_or_else(|_| {
+            panic!(
+                "HARNESS-BROKE: the wait on the grandchild's identity failed; this run decides \
+             nothing about the killed CLI's descendants"
+            )
+        });
+
+    cleanup
+        .cleanup()
+        .expect("HARNESS-BROKE: fixture cleanup failed");
+
+    assert!(
+        !survived,
+        "the grandchild {grandchild} outlived the killed CLI process: `Child::kill()` on the CLI \
+         surrogate left everything its tool call had spawned running, reparented, and orphaned. \
+         Still alive after {:?}, waited for as an event rather than sampled",
+        CLI_GRANDCHILD_REAP_PATIENCE
+    );
+}
+
+/// The observer must always execute its real outer path. An ambient report address must not turn
+/// the test binary into an inner surrogate; the actual outer path owns a private listener and
+/// launches the explicit fake-tool surrogate itself.
+#[cfg(windows)]
+#[test]
+fn an_ambient_surrogate_report_address_cannot_route_the_observer() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the hostile listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the hostile listener has an address")
+        .to_string();
+    let workspace = tempfile::tempdir().expect("the observer workspace must be creatable");
+    let program = std::env::current_exe().expect("the observer test executable exists");
+    let program = program
+        .to_str()
+        .expect("the observer test executable path is UTF-8");
+    let arguments = vec![
+        "--exact".to_owned(),
+        "a_killed_cli_process_leaves_no_live_grandchild".to_owned(),
+        "--nocapture".to_owned(),
+    ];
+    let mut extra_env = BTreeMap::new();
+    extra_env.insert("GH_CLI_SURROGATE_REPORT_ADDR".to_owned(), report_address);
+    extra_env.insert(
+        "GH_CLI_SURROGATE_DELAYED_CONTROL".to_owned(),
+        "1".to_owned(),
+    );
+    let started = Instant::now();
+    let target = run_in_workspace(
+        workspace.path(),
+        program,
+        &arguments,
+        &extra_env,
+        &[],
+        None,
+        &ProcessLimits {
+            timeout: CLI_WRAPPER_TIMEOUT,
+            max_output_bytes: 1024 * 1024,
+        },
+        None,
+    )
+    .expect("the ToolHost wrapper must run the observer subprocess");
+    let elapsed = started.elapsed();
+
+    let reported = wait_for_reported_processes(listener, Duration::from_secs(2));
+    let cleanup = FixtureCleanup::capture(reported);
+    let had_report = reported.is_some();
+    cleanup
+        .cleanup()
+        .expect("HARNESS-BROKE: hostile ambient fixture cleanup failed");
+    assert!(
+        target.exit_code == Some(0) && !target.timed_out,
+        "the observer subprocess must complete successfully under an ambient marker: exit={:?}, timed_out={}, stderr={:?}",
+        target.exit_code,
+        target.timed_out,
+        String::from_utf8_lossy(&target.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&target.stdout).contains("AMBIENT_REPORT_ADDRESS_RECEIVED=1"),
+        "the observer subprocess must receive the ambient report address through ToolHost extra_env"
+    );
+    assert!(
+        String::from_utf8_lossy(&target.stdout).contains("DELAYED_VALID_CONTROL_RECEIVED=1"),
+        "the observer subprocess must receive the delayed-control marker through ToolHost extra_env"
+    );
+    assert!(
+        elapsed >= CLI_DELAYED_VALID_CONTROL,
+        "the delayed-valid control must actually run longer than the old 7-second wrapper: elapsed={elapsed:?}, delay={CLI_DELAYED_VALID_CONTROL:?}"
+    );
+    assert!(
+        !had_report,
+        "an ambient report address routed the observer into the surrogate branch"
+    );
+}
+
 /// #727: a fixture that never reports is REFUSED inside the bound, rather than hanging.
 ///
 /// This is the half of the closing criterion that the tree-kill cell above cannot show, because
@@ -1161,7 +1425,7 @@ fn the_stop_kills_the_whole_tree_and_not_only_the_direct_child() {
 /// is the same function the cell above calls; only the number differs.
 ///
 /// The elapsed-time assertions are deliberately one-sided in strength. The LOWER bound is exact
-/// -- `recv_timeout` cannot return early, so returning before the patience would mean the wait is
+/// -- the deadline check cannot expire early, so returning before the patience would mean the wait is
 /// not waiting. The UPPER bound is generous to the point of being uninteresting, because its job
 /// is only to tell "bounded" from "hung": `cargo test` has no per-test timeout, so the failure it
 /// exists to catch is a suite that never returns, and a cell that is tight here would fail on a
@@ -1453,4 +1717,62 @@ fn the_record_reports_the_sweep_that_chased_an_escaping_descendant() {
          `None` means the answer is still dropped at the call site; a `BoundReached` would mean \
          the escapee outlived the sweep, and BOTH are things a caller must be able to read (#748)"
     );
+}
+
+#[test]
+fn readiness_refuses_a_connected_peer_that_never_finishes_and_an_oversized_report() {
+    use std::io::Write;
+    for oversized in [false, true] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        if oversized {
+            peer.write_all(&[b'1'; 33]).unwrap();
+        }
+        // Keep the peer open throughout the read. A blocking read-to-EOF would never finish.
+        assert!(wait_for_reported_processes(listener, Duration::from_millis(50)).is_none());
+    }
+}
+
+#[test]
+fn retained_fixture_cleanup_ends_both_children_during_unwind() {
+    // Arrangement owns every Child immediately, even if the second spawn or identity capture fails.
+    struct ChildOwner(std::process::Child);
+    impl Drop for ChildOwner {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.try_wait();
+        }
+    }
+    let mut first = ChildOwner(
+        std::process::Command::new(fake_tool())
+            .arg("sleep")
+            .spawn()
+            .unwrap(),
+    );
+    let mut second = ChildOwner(
+        std::process::Command::new(fake_tool())
+            .arg("sleep")
+            .spawn()
+            .unwrap(),
+    );
+    let cleanup = FixtureCleanup::capture(Some((first.0.id(), second.0.id())));
+    // The guard exists before any capture assertion can unwind.
+    let first_observer = graphhelm_process_tree::ProcessIdentity::capture(first.0.id());
+    let second_observer = graphhelm_process_tree::ProcessIdentity::capture(second.0.id());
+    let outcome = std::panic::catch_unwind(move || {
+        let _cleanup = cleanup;
+        panic!("deliberate cleanup-path probe");
+    });
+    assert!(outcome.is_err());
+    for observer in [first_observer, second_observer] {
+        assert!(
+            observer
+                .expect("OBSERVER_MISSING")
+                .wait_until_gone(FIXTURE_CLEANUP_PATIENCE)
+                .unwrap()
+        );
+    }
+    // Nonblocking reaps after the identity observations; no independent unbounded wait.
+    assert!(first.0.try_wait().unwrap().is_some());
+    assert!(second.0.try_wait().unwrap().is_some());
 }

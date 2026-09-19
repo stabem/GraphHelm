@@ -12,10 +12,12 @@
 //! - `cwd`: print the current directory, exit 0
 //! - `sleep`: sleep 3600 s (the host must kill it)
 //! - `spawn-grandchild <addr>`: spawn `sleep` as a CHILD OF THIS CHILD, then connect to the
-//!   loopback address `<addr>` and write its process id there before sleeping. The fixture for
+//!   loopback address `<addr>` and write `direct_pid,grandchild_pid` before sleeping. The fixture for
 //!   #618: every other mode is a single process, so none of them can observe whether a kill
 //!   reached a tree or only its root. The grandchild reports its own id because the host never had
 //!   a handle to it.
+//! - `cli-surrogate <addr>`: run `spawn-grandchild <addr>` through the real ToolHost process
+//!   funnel, then block until the outer observer kills this CLI surrogate.
 //!
 //!   It reports over a SOCKET rather than into a file because a file has no arrival: a reader can
 //!   only ask again later, so the waiting side of the protocol was 400 sleeps of 50 ms and the
@@ -37,7 +39,10 @@
 //!   from a cut on the other, which a single fused flag cannot express (#177).
 //! - `exit-code <n>`: exit with `<n>` parsed as `i32`
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
+
+use graphhelm_tool_host::process::{ProcessLimits, run_in_workspace};
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
@@ -62,6 +67,29 @@ fn main() {
                 "{}",
                 std::env::current_dir().expect("current dir").display()
             );
+        }
+        "cli-surrogate" => {
+            let report_to = arguments
+                .next()
+                .expect("cli-surrogate needs a loopback address to report to");
+            let workspace = std::env::current_dir().expect("cli-surrogate current dir");
+            let program = std::env::current_exe().expect("cli-surrogate own path");
+            let program = program.to_str().expect("cli-surrogate path is UTF-8");
+            let result = run_in_workspace(
+                &workspace,
+                program,
+                &["spawn-grandchild".to_owned(), report_to],
+                &BTreeMap::new(),
+                &[],
+                None,
+                &ProcessLimits {
+                    // The outer observer kills this process; the timeout must not end the fixture.
+                    timeout: std::time::Duration::from_secs(120),
+                    max_output_bytes: 1024,
+                },
+                None,
+            );
+            panic!("cli-surrogate ToolHost returned before outer kill: {result:?}");
         }
         "append-forever" => {
             let path = arguments.next().expect("append-forever needs a path");
@@ -124,8 +152,8 @@ fn main() {
                 let mut report = std::net::TcpStream::connect(report_to.as_str())
                     .expect("the readiness channel accepts a connection");
                 report
-                    .write_all(grandchild.id().to_string().as_bytes())
-                    .expect("the grandchild id is reported");
+                    .write_all(format!("{},{}", std::process::id(), grandchild.id()).as_bytes())
+                    .expect("the direct child and grandchild ids are reported");
                 report.flush().expect("the grandchild id is flushed");
             }
             std::thread::sleep(std::time::Duration::from_secs(3600));
@@ -168,7 +196,7 @@ fn main() {
                 let mut report = std::net::TcpStream::connect(report_to.as_str())
                     .expect("the readiness channel accepts a connection");
                 report
-                    .write_all(grandchild.id().to_string().as_bytes())
+                    .write_all(format!("{},{}", std::process::id(), grandchild.id()).as_bytes())
                     .expect("the grandchild id is reported");
                 report.flush().expect("the grandchild id is flushed");
             }

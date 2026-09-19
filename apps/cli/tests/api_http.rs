@@ -3261,15 +3261,31 @@ fn all_events(base: &str, token: &str, execution: &str) -> Vec<Value> {
 //
 // One scripted story, driven twice: once entirely through the CLI, once entirely through the API,
 // against two independent fresh stores. Both traces use the same graph, the same execution id, the
-// same fixtures at each step and the same signal envelope content, so the *only* thing that can
-// legitimately differ between the two runs is who the commands are attributed to (the CLI's 04f
-// owner/system split vs. the API's caller-supplied header actor) — and attribution is not part of
-// `execution::render`'s output (see `core/…`/`execution/mod.rs`'s `render`: executionId, mode,
-// status, attention (tri-state), attentionReasons, nodeStateCounts, signalsRecorded,
-// acceptedMutations, untriagedInterruptions, plus
-// `headSequence` from `status.rs`), nor are the `--file`/`--fixtures` paths either surface was given
-// (redaction discipline: neither field ever reaches `render`'s output). So the final `status` `data`
-// from both traces is expected to be byte-identical, with zero exceptions.
+// same fixture outcomes and signal kind, but not identical event histories. The signal IDs are
+// `signal-parity-cli` and `signal-parity-api`; CLI mutations generate fresh idempotency keys while
+// the API requests supply `parity-*` keys. Actor attribution also differs (the CLI's 04f owner/system
+// split vs. the API's caller-supplied header actor). These identities and keys are not fields in
+// the rendered status compared here. THE ILLUSTRATIVE LIST, not the whole one (Codex P2 on #990):
+// executionId, mode, status, attention (tri-state), attentionReasons, nodeStateCounts,
+// signalsRecorded, acceptedMutations, untriagedInterruptions, headSequence (from `status.rs`) —
+// AND ALSO nodeStates, silenceUnevaluated, startedAt, lastEventAt, nodeLastEventAt, every one of
+// which `render` (`execution/mod.rs`) emits and `strip_parity_exceptions` below still compares:
+// the three timestamp-shaped fields are normalised to presence and key-set rather than compared
+// byte-for-byte (an instant is real, not reproducible, across two independent traces), everything
+// else is exact. Attribution and the `--file`/`--fixtures` paths are excluded because neither ever
+// reaches `render`'s output (redaction discipline) — not because this list above them is complete.
+//
+// THE STRUCTURAL-EQUALITY GUARANTEE, CORRECTED (Codex P2, second round on #990) -- "structural",
+// not "byte-identical": both traces are deserialized into `serde_json::Value` before comparison,
+// so JSON key order and whitespace are not part of what this guards, only the parsed values are.
+// A prior revision of
+// this comment named wall-clock liveness as an unqualified risk. It is not, FOR THIS STORY,
+// for two independent reasons named in full beside the test below: this fixture's nodes never
+// leave `Blocked`/`Ready`/`Succeeded`, and `has_judgeable_silence` (`core/execution/src/
+// attention.rs:514`) excludes every one of those states outright — `attention`/`attentionReasons`
+// cannot diverge on liveness here regardless of when either surface reads, budget or no budget.
+// See the doc comment on the test itself for the full precondition list and what would make this
+// story time-sensitive.
 // ---------------------------------------------------------------------------------------------
 
 const PARITY_EXECUTION: &str = "exec-parity-guard";
@@ -3578,9 +3594,92 @@ fn run_story_over_api(events: &Path, directory: &Path) -> (Value, Value) {
 }
 
 /// The parity guard itself: the same story, driven once per surface against two fresh stores, must
-/// report byte-identical `status` `data` once the (empty) `PARITY_EXCEPTIONS` list has been
-/// stripped from both sides. This is D-039's "never a second path" rule as a regression test — when
-/// 05d swaps the driver underneath the API, this is what proves the two surfaces did not drift.
+/// report structurally identical `status` `data` (as parsed `serde_json::Value`, not raw
+/// serialized bytes — both traces deserialize before this compares them, so key order and
+/// whitespace are not part of the guarantee) after `strip_parity_exceptions` normalises timestamp
+/// values on both sides. Its field-exclusion list, `PARITY_EXCEPTIONS`, is empty.
+///
+/// WHAT THIS GUARDS: THE FIVE MUTATION ROUTES, not the status read. #169 asked whether this is a
+/// dormant blade or decoration and reasoned only about the read; so did two earlier revisions of
+/// this comment. Both were wrong for the same reason. It is a DORMANT BLADE.
+///
+/// The two halves drive the SAME story through genuinely different plumbing:
+///
+///     CLI   cli(&[.. "approve" ..])            subprocess, arg parsing, CLI defaults
+///     HTTP  post_json("../approve")            route handler, JSON body mapping, actor handling
+///
+/// and the same for start, signal, pause and resume. The two stores therefore hold INDEPENDENTLY
+/// PRODUCED histories, and the shared read is the INSTRUMENT, not the subject: that both surfaces
+/// fold through `execution::status::execute_within` is what makes the comparison meaningful, not
+/// what makes it vacuous.
+///
+/// SCOPED TO WHAT `render` PUBLISHES, and no wider. The comparison sees a route regression only
+/// where it reaches `render`'s output — examples include executionId, mode, status, attention, attentionReasons,
+/// nodeStateCounts, signalsRecorded, acceptedMutations, untriagedInterruptions, plus
+/// `headSequence`. This list is illustrative; the comparison covers all normalized render fields
+/// described in the fixture header above. A route that mis-maps a node name, drops a mutation, or lands a different state
+/// moves one projection and not the other, and this catches it. A route that attributes a
+/// mutation to the wrong actor does NOT show up here: attribution is deliberately outside
+/// `render`, as this fixture's own header says above, and neither are the `--file`/`--fixtures`
+/// paths. Claiming actor-mapping coverage would need the event envelopes compared, not the
+/// rendered status.
+///
+/// WHAT IT DOES NOT GUARD, so nobody documents it as the budget observer: CORRECTED (Codex P2,
+/// second round on #990) — a prior revision of this comment claimed the CLI trace calls `execute`
+/// (`ReadBudget::unbounded()`) while the HTTP trace calls `budgeted`. It does not: `execution
+/// status`'s own command handler (`status::run`, `status.rs:116`) calls `budgeted` too, exactly as
+/// `serve::routes::status` does. Both entry points THIS TEST drives pass `status_read_budget()` —
+/// `execute`/unbounded exists in the module but neither trace here reaches it. There is therefore
+/// no budget-based divergence axis between the two surfaces AT THIS FIXTURE'S SIZE — CORRECTED
+/// AGAIN (A on #990): "both surfaces call `budgeted`" proves the same CODE runs, not that the two
+/// runs answer alike at every size. `status_read_budget()` mints a FRESH deadline via
+/// `ReadBudget::starting_now` (`commands/mod.rs:359`) at the instant EACH call is made — the CLI's
+/// and the API's are two separate processes, so their five-second windows start at two different
+/// wall-clock moments, not one shared one. `check_progress` only reads that clock across a
+/// `READ_BUDGET_CHECK_INTERVAL` = 256 event boundary (`core/events/src/budget.rs:105-109`), and
+/// this story is two orders of magnitude short of that, so for THIS fixture the clock is never
+/// consulted by either surface and nothing can diverge. A story seeded past 256 events would make
+/// it reachable in principle: two independently-started five-second windows crossing that boundary
+/// at different real elapsed times could see one surface's read exceed its budget while the
+/// other's has not. That is a claim about SIZE, not about which function is called, and this
+/// fixture's own smallness is what it rests on — not an absence of any route to bare `execute`.
+/// (Driving one surface through `execute` directly, considered and dropped in an earlier revision
+/// of this comment, would still corrupt this journey's own subject — cross-surface parity through
+/// the real entry points — into a mixed-entry-point test that asks a different question. Budget
+/// coverage belongs at the `execute_within` seam `status.rs`'s own tests already exercise with
+/// injected lapsed and ample budgets, or as an independent test per public surface at a size that
+/// crosses the checkpoint.)
+///
+/// THIS IS PARITY OF THE NORMALISED RENDERED VALUES, NOT OF IDENTICAL HISTORIES. Relevant
+/// fixture assumptions and limits include the following; they are not an exhaustive guarantee
+/// over future status fields. Changing the fixture or exposing currently unrendered inputs can
+/// require revisiting this comparison even when both surfaces behave correctly:
+///
+///   the read budget    each surface's `status_read_budget()` starts its own five-second window
+///                      at its own call instant (`commands/mod.rs:359`), and `check_progress`
+///                      only reads the clock across a 256-event boundary
+///                      (`core/events/src/budget.rs:105-109`) -- unreachable because this story is
+///                      two orders of magnitude short of that, not because the two windows share
+///                      one clock. Seed the story past 256 events and this becomes reachable.
+///   actor attribution  outside `render`, so a wrong owner id folds to identical data
+///   signal identity    the two `signal_envelope` calls use different IDs, currently unrendered
+///   idempotency keys   CLI mutations generate fresh keys; API requests use explicit `parity-*`
+///                      keys. This fixture does not compare those keys or prove key equivalence.
+///                      A future field exposing signal identity or key-derived state would need
+///                      aligned inputs or a separately justified comparison.
+///   the liveness clock `execute_within` reads `Utc::now()` into `node_silence_seconds`, feeding
+///                      `attention`/`attentionReasons` — but `has_judgeable_silence`
+///                      (`core/execution/src/attention.rs:514`) excludes `Blocked`, `Ready` and
+///                      every terminal state outright, and this story's two observations
+///                      (mid-run, and after `resume` completes it) never leave that set. Even a
+///                      DECLARED silence budget could not make either read observe silence here —
+///                      the state exclusion holds independently of the budget-declared precondition
+///                      an earlier revision named alone. A parity fixture that visits `Running` or
+///                      a retried `Queued` node, WITH a declared budget, is what would make this
+///                      time-sensitive between its two runs.
+///
+/// The blocked-moment half below compares at a moment where attention is non-empty, which is the
+/// drift class #168 found live in `serve/monitor.rs`.
 #[test]
 fn the_cli_and_the_api_report_identical_status_for_the_same_story() {
     let cli_directory = tempfile::tempdir().unwrap();

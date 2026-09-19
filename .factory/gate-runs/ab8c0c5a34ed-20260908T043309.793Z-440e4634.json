@@ -1,0 +1,2386 @@
+{
+    "status":  "RED",
+    "runClass":  "UNCLASSIFIED",
+    "runClassOrigin":  "automatic",
+    "relatedToDiff":  null,
+    "headSha":  "ab8c0c5a34ed0c15c1bfb0e64788dfccb2e56f97",
+    "pullRequest":  990,
+    "pullRequestReason":  null,
+    "pushed":  null,
+    "pushedReason":  "the upstream of refs/heads/issue-169-parity-guards-the-budget could not be resolved (git rev-parse issue-169-parity-guards-the-budget@{upstream} exited 128 and said: fatal: no upstream configured for branch \u0027issue-169-parity-guards-the-budget\u0027), so there was no server to ask (a local ref, refs/remotes/origin/issue-169-parity-guards-the-budget, names it, but that is memory from the last fetch)",
+    "upstreamSha":  null,
+    "dirtyDiffHash":  null,
+    "untrackedPaths":  [
+
+                       ],
+    "coverage":  {
+                     "postgres":  "skipped",
+                     "complete":  false
+                 },
+    "headMovedDuringRun":  false,
+    "cargoTargetDir":  "E:\\orch-runner-targets\\pr990",
+    "queuedUtc":  "2026-09-08T04:19:21.1097608Z",
+    "runStartUtc":  "2026-09-08T04:19:21.1610717Z",
+    "slotWaitSecs":  0.051,
+    "runEndUtc":  "2026-09-08T04:33:09.7653524Z",
+    "canaryPassed":  true,
+    "psSuitesStartedEarly":  true,
+    "psSuitesOverlapped":  true,
+    "stages":  [
+                   {
+                       "name":  "contamination canary (ci-canary)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  6.789,
+                       "startedUtc":  "2026-09-08T04:19:21.2515199Z",
+                       "endedUtc":  "2026-09-08T04:19:28.0484885Z"
+                   },
+                   {
+                       "name":  "rustfmt",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  29.014,
+                       "startedUtc":  "2026-09-08T04:23:43.4407433Z",
+                       "endedUtc":  "2026-09-08T04:24:12.4550880Z"
+                   },
+                   {
+                       "name":  "clippy (deny warnings)",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  26.682,
+                       "startedUtc":  "2026-09-08T04:24:12.4580988Z",
+                       "endedUtc":  "2026-09-08T04:24:39.1392637Z"
+                   },
+                   {
+                       "name":  "workspace tests",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  248.875,
+                       "startedUtc":  "2026-09-08T04:24:39.1408700Z",
+                       "endedUtc":  "2026-09-08T04:28:48.0172506Z"
+                   },
+                   {
+                       "name":  "cli: amend_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2,
+                       "startedUtc":  "2026-09-08T04:28:48.0369484Z",
+                       "endedUtc":  "2026-09-08T04:28:50.0358987Z"
+                   },
+                   {
+                       "name":  "cli: api_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  23.24,
+                       "startedUtc":  "2026-09-08T04:28:50.0384114Z",
+                       "endedUtc":  "2026-09-08T04:29:13.2783093Z"
+                   },
+                   {
+                       "name":  "cli: attention_tag_domain",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.379,
+                       "startedUtc":  "2026-09-08T04:29:13.2798184Z",
+                       "endedUtc":  "2026-09-08T04:29:13.6588588Z"
+                   },
+                   {
+                       "name":  "cli: cli_smoke",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.307,
+                       "startedUtc":  "2026-09-08T04:29:13.6598583Z",
+                       "endedUtc":  "2026-09-08T04:29:14.9672291Z"
+                   },
+                   {
+                       "name":  "cli: context_citation_fixtures",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.45,
+                       "startedUtc":  "2026-09-08T04:29:14.9692334Z",
+                       "endedUtc":  "2026-09-08T04:29:15.4193866Z"
+                   },
+                   {
+                       "name":  "cli: development_benchmark",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.353,
+                       "startedUtc":  "2026-09-08T04:29:15.4208894Z",
+                       "endedUtc":  "2026-09-08T04:29:15.7734159Z"
+                   },
+                   {
+                       "name":  "cli: development_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.363,
+                       "startedUtc":  "2026-09-08T04:29:15.7753001Z",
+                       "endedUtc":  "2026-09-08T04:29:16.1379889Z"
+                   },
+                   {
+                       "name":  "cli: development_concurrency",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.372,
+                       "startedUtc":  "2026-09-08T04:29:16.1389923Z",
+                       "endedUtc":  "2026-09-08T04:29:16.5108492Z"
+                   },
+                   {
+                       "name":  "cli: development_context_budget",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.616,
+                       "startedUtc":  "2026-09-08T04:29:16.5123544Z",
+                       "endedUtc":  "2026-09-08T04:29:17.1277643Z"
+                   },
+                   {
+                       "name":  "cli: development_contract_schemas",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.59,
+                       "startedUtc":  "2026-09-08T04:29:17.1292642Z",
+                       "endedUtc":  "2026-09-08T04:29:17.7184684Z"
+                   },
+                   {
+                       "name":  "cli: development_journey",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.617,
+                       "startedUtc":  "2026-09-08T04:29:17.7204816Z",
+                       "endedUtc":  "2026-09-08T04:29:18.3371486Z"
+                   },
+                   {
+                       "name":  "cli: development_package_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.552,
+                       "startedUtc":  "2026-09-08T04:29:18.3391546Z",
+                       "endedUtc":  "2026-09-08T04:29:18.8911004Z"
+                   },
+                   {
+                       "name":  "cli: development_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.17,
+                       "startedUtc":  "2026-09-08T04:29:18.8931128Z",
+                       "endedUtc":  "2026-09-08T04:29:20.0629319Z"
+                   },
+                   {
+                       "name":  "cli: development_redaction",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.548,
+                       "startedUtc":  "2026-09-08T04:29:20.0644457Z",
+                       "endedUtc":  "2026-09-08T04:29:20.6119687Z"
+                   },
+                   {
+                       "name":  "cli: development_sabotage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.449,
+                       "startedUtc":  "2026-09-08T04:29:20.6139857Z",
+                       "endedUtc":  "2026-09-08T04:29:21.0627435Z"
+                   },
+                   {
+                       "name":  "cli: development_surface_parity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.038,
+                       "startedUtc":  "2026-09-08T04:29:21.0647524Z",
+                       "endedUtc":  "2026-09-08T04:29:22.1024994Z"
+                   },
+                   {
+                       "name":  "cli: event_store_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.607,
+                       "startedUtc":  "2026-09-08T04:29:22.1040017Z",
+                       "endedUtc":  "2026-09-08T04:29:22.7111889Z"
+                   },
+                   {
+                       "name":  "cli: event_store_local_backup",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.128,
+                       "startedUtc":  "2026-09-08T04:29:22.7126942Z",
+                       "endedUtc":  "2026-09-08T04:29:23.8399355Z"
+                   },
+                   {
+                       "name":  "cli: execution_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.509,
+                       "startedUtc":  "2026-09-08T04:29:23.8419432Z",
+                       "endedUtc":  "2026-09-08T04:29:28.3502128Z"
+                   },
+                   {
+                       "name":  "cli: extension_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  5.735,
+                       "startedUtc":  "2026-09-08T04:29:28.3527331Z",
+                       "endedUtc":  "2026-09-08T04:29:34.0873857Z"
+                   },
+                   {
+                       "name":  "cli: extension_lifecycle",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.451,
+                       "startedUtc":  "2026-09-08T04:29:34.0893889Z",
+                       "endedUtc":  "2026-09-08T04:29:35.5402164Z"
+                   },
+                   {
+                       "name":  "cli: gate_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.329,
+                       "startedUtc":  "2026-09-08T04:29:35.5412229Z",
+                       "endedUtc":  "2026-09-08T04:29:37.8705091Z"
+                   },
+                   {
+                       "name":  "cli: gateway_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.735,
+                       "startedUtc":  "2026-09-08T04:29:37.8720304Z",
+                       "endedUtc":  "2026-09-08T04:29:38.6075878Z"
+                   },
+                   {
+                       "name":  "cli: http_helper_inventory",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.459,
+                       "startedUtc":  "2026-09-08T04:29:38.6095966Z",
+                       "endedUtc":  "2026-09-08T04:29:39.0680289Z"
+                   },
+                   {
+                       "name":  "cli: jpd_capsule_authority",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.528,
+                       "startedUtc":  "2026-09-08T04:29:39.0705398Z",
+                       "endedUtc":  "2026-09-08T04:29:39.5977951Z"
+                   },
+                   {
+                       "name":  "cli: jpd_graph_contract",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.509,
+                       "startedUtc":  "2026-09-08T04:29:39.5993021Z",
+                       "endedUtc":  "2026-09-08T04:29:40.1082688Z"
+                   },
+                   {
+                       "name":  "cli: jpd_observer_trust",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.566,
+                       "startedUtc":  "2026-09-08T04:29:40.1102739Z",
+                       "endedUtc":  "2026-09-08T04:29:40.6756345Z"
+                   },
+                   {
+                       "name":  "cli: jpd_plugin",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.317,
+                       "startedUtc":  "2026-09-08T04:29:40.6776353Z",
+                       "endedUtc":  "2026-09-08T04:29:41.9938725Z"
+                   },
+                   {
+                       "name":  "cli: jpd_promotion_policy",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.363,
+                       "startedUtc":  "2026-09-08T04:29:41.9963813Z",
+                       "endedUtc":  "2026-09-08T04:29:42.3588696Z"
+                   },
+                   {
+                       "name":  "cli: jpd_retry_semantics",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.481,
+                       "startedUtc":  "2026-09-08T04:29:42.3603790Z",
+                       "endedUtc":  "2026-09-08T04:29:42.8417211Z"
+                   },
+                   {
+                       "name":  "cli: mcp_capability",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.82,
+                       "startedUtc":  "2026-09-08T04:29:42.8437272Z",
+                       "endedUtc":  "2026-09-08T04:29:45.6640893Z"
+                   },
+                   {
+                       "name":  "cli: mcp_stdio",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  4.165,
+                       "startedUtc":  "2026-09-08T04:29:45.6655901Z",
+                       "endedUtc":  "2026-09-08T04:29:49.8299067Z"
+                   },
+                   {
+                       "name":  "cli: mcp_url",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.464,
+                       "startedUtc":  "2026-09-08T04:29:49.8319079Z",
+                       "endedUtc":  "2026-09-08T04:29:50.2955832Z"
+                   },
+                   {
+                       "name":  "cli: monitor_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.652,
+                       "startedUtc":  "2026-09-08T04:29:50.2975821Z",
+                       "endedUtc":  "2026-09-08T04:29:51.9489837Z"
+                   },
+                   {
+                       "name":  "cli: resume_atomicity",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.885,
+                       "startedUtc":  "2026-09-08T04:29:51.9504905Z",
+                       "endedUtc":  "2026-09-08T04:29:53.8348784Z"
+                   },
+                   {
+                       "name":  "cli: resume_project_default",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.172,
+                       "startedUtc":  "2026-09-08T04:29:53.8369103Z",
+                       "endedUtc":  "2026-09-08T04:29:55.0093888Z"
+                   },
+                   {
+                       "name":  "cli: runtime_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  21.647,
+                       "startedUtc":  "2026-09-08T04:29:55.0108926Z",
+                       "endedUtc":  "2026-09-08T04:30:16.6573031Z"
+                   },
+                   {
+                       "name":  "cli: schema_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.855,
+                       "startedUtc":  "2026-09-08T04:30:16.6593140Z",
+                       "endedUtc":  "2026-09-08T04:30:19.5145772Z"
+                   },
+                   {
+                       "name":  "cli: shipped_package_coverage",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.443,
+                       "startedUtc":  "2026-09-08T04:30:19.5170889Z",
+                       "endedUtc":  "2026-09-08T04:30:19.9595888Z"
+                   },
+                   {
+                       "name":  "cli: source_invariants",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.434,
+                       "startedUtc":  "2026-09-08T04:30:19.9610925Z",
+                       "endedUtc":  "2026-09-08T04:30:20.3950822Z"
+                   },
+                   {
+                       "name":  "cli: surface_completeness",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.456,
+                       "startedUtc":  "2026-09-08T04:30:20.3965916Z",
+                       "endedUtc":  "2026-09-08T04:30:20.8529624Z"
+                   },
+                   {
+                       "name":  "cli: sweep_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.928,
+                       "startedUtc":  "2026-09-08T04:30:20.8544653Z",
+                       "endedUtc":  "2026-09-08T04:30:21.7823771Z"
+                   },
+                   {
+                       "name":  "cli: test_support_has_no_dead_helpers",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.63,
+                       "startedUtc":  "2026-09-08T04:30:21.7838860Z",
+                       "endedUtc":  "2026-09-08T04:30:22.4141085Z"
+                   },
+                   {
+                       "name":  "cli: tool_cli",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.175,
+                       "startedUtc":  "2026-09-08T04:30:22.4156079Z",
+                       "endedUtc":  "2026-09-08T04:30:23.5903976Z"
+                   },
+                   {
+                       "name":  "cli: wake_http",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  61.11,
+                       "startedUtc":  "2026-09-08T04:30:23.5929061Z",
+                       "endedUtc":  "2026-09-08T04:31:24.7030001Z"
+                   },
+                   {
+                       "name":  "schema catalog",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  78.373,
+                       "startedUtc":  "2026-09-08T04:31:24.7050086Z",
+                       "endedUtc":  "2026-09-08T04:32:43.0782829Z"
+                   },
+                   {
+                       "name":  "schema baseline compatibility",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  2.91,
+                       "startedUtc":  "2026-09-08T04:32:43.0802906Z",
+                       "endedUtc":  "2026-09-08T04:32:45.9900371Z"
+                   },
+                   {
+                       "name":  "schema conformance",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.832,
+                       "startedUtc":  "2026-09-08T04:32:45.9915369Z",
+                       "endedUtc":  "2026-09-08T04:32:47.8238656Z"
+                   },
+                   {
+                       "name":  "locked metadata",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  0.06,
+                       "startedUtc":  "2026-09-08T04:32:47.8248663Z",
+                       "endedUtc":  "2026-09-08T04:32:47.8847253Z"
+                   },
+                   {
+                       "name":  "whitespace",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.031,
+                       "startedUtc":  "2026-09-08T04:32:47.8862364Z",
+                       "endedUtc":  "2026-09-08T04:32:48.9179166Z"
+                   },
+                   {
+                       "name":  "frozen release guard",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  1.597,
+                       "startedUtc":  "2026-09-08T04:32:48.9194166Z",
+                       "endedUtc":  "2026-09-08T04:32:50.5161968Z"
+                   },
+                   {
+                       "name":  "ci powershell suites",
+                       "passed":  true,
+                       "exitCode":  0,
+                       "wallTimeSecs":  645.99,
+                       "startedUtc":  "2026-09-08T04:19:28.0757169Z",
+                       "endedUtc":  "2026-09-08T04:30:14.0654820Z"
+                   },
+                   {
+                       "name":  "required-features coverage",
+                       "passed":  false,
+                       "exitCode":  1,
+                       "wallTimeSecs":  0.416,
+                       "startedUtc":  "2026-09-08T04:32:50.6168564Z",
+                       "endedUtc":  "2026-09-08T04:32:51.0320052Z",
+                       "outputTail":  [
+                                          "[required-features] 2 target(s) gated behind a feature:",
+                                          "  graphhelm-postgres-event-store/concurrency  [test]  required-features: test-support",
+                                          "  graphhelm-postgres-event-store/repository_conformance  [test]  required-features: test-support",
+                                          "[required-features] these gated targets built nothing in this run: graphhelm-postgres-event-store/concurrency (required-features: test-support); graphhelm-postgres-event-store/repository_conformance (required-features: test-support)",
+                                          "[required-features] a target whose features are off is never built, so it prints nothing and the run stays green. That is the state this stage exists to refuse."
+                                      ]
+                   }
+               ],
+    "artifactBuildExit":  0,
+    "testArtifacts":  [
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/process-tree#graphhelm-process-tree@0.1.0",
+                              "target":  "graphhelm_process_tree",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_process_tree-42bf83b6ece7a23e.exe",
+                              "sha256":  "E94B463E2FD884BA4FC430EDC25F3153197E6FFA4EDE9491D93337A15D4D738B",
+                              "mtimeUtc":  "2026-09-08T04:19:44.0496679Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/ci-canary#0.1.0",
+                              "target":  "ci_canary",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\ci_canary-d35f538f2d573620.exe",
+                              "sha256":  "52A39545EABDD920F8B8E76BC7816D210CEA154EA9C9DDA4E07EA7C41D8F92BA",
+                              "mtimeUtc":  "2026-09-08T04:19:49.2815476Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "pathogens",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\pathogens-d428de7eb538a147.exe",
+                              "sha256":  "A78C45443F862653D89355E47407C7F8080D7A0172B7F21B884986C93ADAC453",
+                              "mtimeUtc":  "2026-09-08T04:19:49.4615468Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "subject_refusals",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\subject_refusals-248328e4b5e2ef15.exe",
+                              "sha256":  "4B2539DA5A83EEEFC1B02F55802390AC937BE0B8DF780A68190972AD8BD502FF",
+                              "mtimeUtc":  "2026-09-08T04:19:51.8438633Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "subject_honours_target_dir",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\subject_honours_target_dir-94f713c614bae9dc.exe",
+                              "sha256":  "73C931880A9F29E8800EE5121B1FDB39D4E1B3814972AB4C8545657C54708F88",
+                              "mtimeUtc":  "2026-09-08T04:19:51.8333158Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "generic_harness",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\generic_harness-0924c0716f669c11.exe",
+                              "sha256":  "711D38C9EEFB7B30908DE80FF881DE10EDF0E3F3B4B0B0D25CF29D52C1DB2A15",
+                              "mtimeUtc":  "2026-09-08T04:19:52.1302777Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "mold",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mold-82621595498b78d2.exe",
+                              "sha256":  "ED3C60903AFA03F75C433F66C2ECDE86174846F89C0A76A7A4C755ADFAAF42C2",
+                              "mtimeUtc":  "2026-09-08T04:19:52.2041322Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "prose_states_no_count",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\prose_states_no_count-a0ff432c8fbd8844.exe",
+                              "sha256":  "CD5113056E9EE4A7860B3D9DC81FB248C2243588D243A1E4EA07593A4CFE3345",
+                              "mtimeUtc":  "2026-09-08T04:19:52.2387681Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "retry_lineage_gates",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\retry_lineage_gates-f3b2816622106054.exe",
+                              "sha256":  "F9C13E5EAF517DDA261223506ABE4688F070FAD510CA9464378A7CF3969F6E47",
+                              "mtimeUtc":  "2026-09-08T04:19:52.5370455Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\thymus-47d5a6e1d304f014.exe",
+                              "sha256":  "DA1C0A0B8882F3C761659ABF5646E8A05263434D444FD0FAD9C52C0BAD750F6F",
+                              "mtimeUtc":  "2026-09-08T04:19:52.7911855Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-5ba048ba1b12eeb7.exe",
+                              "sha256":  "375DCB83D0CCFD15D13305AB194CE662B6CFA66510658D61A860B5D34AA1BB88",
+                              "mtimeUtc":  "2026-09-08T04:19:53.2405201Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/pathogens#0.1.0",
+                              "target":  "jpd_gates",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_gates-aa97f1a7f93b48c7.exe",
+                              "sha256":  "A3A5F2F3FFE58FCFCF175FC403BFC734307E877678882A2E40B5C62F70D26450",
+                              "mtimeUtc":  "2026-09-08T04:19:53.5386535Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\freeze-f7a0238fffc1b5a9.exe",
+                              "sha256":  "45D4C580829428DAE9FECF2EA4C935500B0F07525BCD254086A76C1727BEB497",
+                              "mtimeUtc":  "2026-09-08T04:19:58.6387277Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "freeze_enforced",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\freeze_enforced-31a44fa25b6e0903.exe",
+                              "sha256":  "A83A42B8AACF9F58AA86D643F43E75DB4BC4FB7ECE5435FC80615025A83ED845",
+                              "mtimeUtc":  "2026-09-08T04:19:59.0654225Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "geometry",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\geometry-9c3f05e0bd3e563b.exe",
+                              "sha256":  "E1CBAAD8CABE6D2A889281C9AF499018FAB303CB357277E89A8BE31F60821D4B",
+                              "mtimeUtc":  "2026-09-08T04:19:59.0649216Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "shared_source_invariant_predicate",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\shared_source_invariant_predicate-d992fa91a30ce43b.exe",
+                              "sha256":  "7535FADC35F8C56A1EC79395C8AAFD682D1F59C2549C10A45FA1B3E51003C308",
+                              "mtimeUtc":  "2026-09-08T04:19:59.0639208Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "graphhelm_quality",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_quality-ce351108b13ac27e.exe",
+                              "sha256":  "C192160E0A9782099873AB30B9E70C64BC9047C378954CEB0A7BBDE111C3224A",
+                              "mtimeUtc":  "2026-09-08T04:19:59.7262462Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-2a58a2f6b191b10f.exe",
+                              "sha256":  "36BB94A496DF6FEDB11C12F68C36E0B3F77B3A22F932904B1A300237614399B4",
+                              "mtimeUtc":  "2026-09-08T04:19:59.7071395Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "manifest_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\manifest_contract-1f0ca82cd81f0c18.exe",
+                              "sha256":  "D9D426984D2B599A4E0B64748F72869BB488FA251AC2F57989E8FF776ECD95A5",
+                              "mtimeUtc":  "2026-09-08T04:19:59.7630183Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "graphhelm_gateway",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_gateway-d71bb3f8232660ae.exe",
+                              "sha256":  "E17F6C4C6196714E28F7A75B5C9828C9FA95ACE86A0DF3D6D65D2A32A8CC82F2",
+                              "mtimeUtc":  "2026-09-08T04:19:59.7675428Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/quality#graphhelm-quality@0.1.0",
+                              "target":  "thymus",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\thymus-aee8feaaf5368ab1.exe",
+                              "sha256":  "23268BB64713513C5B120CC64FF183B25AFEA8FD1D3CE0163AD326387550DFA4",
+                              "mtimeUtc":  "2026-09-08T04:19:59.8303532Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/gateway#graphhelm-gateway@0.1.0",
+                              "target":  "capacity_mapping",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\capacity_mapping-d453fbf368bc84eb.exe",
+                              "sha256":  "F74388F08EC85EFD0F4282BB07652F75AF193E513B9A87BED78C5C65C6F61E29",
+                              "mtimeUtc":  "2026-09-08T04:19:59.8966381Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "mcp_capability_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mcp_capability_contract-b701f4fb345d7382.exe",
+                              "sha256":  "AC7B1A7D8AEF95DD8D8056A63B19CDF54A4BD694855F88D519345604A580C903",
+                              "mtimeUtc":  "2026-09-08T04:20:02.5687971Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "authorize_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\authorize_contract-6df3363a56bba580.exe",
+                              "sha256":  "9E08C27063A479C594EF41DD6C1579E9C97C39A52F77912F2BDD653873C1B51D",
+                              "mtimeUtc":  "2026-09-08T04:20:02.6617584Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "effect_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\effect_contract-d9c767a8bf6c0400.exe",
+                              "sha256":  "27F197F161E47251C4F568C29D112AC501BC594E8B2D8A4EAE12B481ABBB7C30",
+                              "mtimeUtc":  "2026-09-08T04:20:03.1233478Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "graphhelm_tool_broker",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_tool_broker-3200ea80794f0a1a.exe",
+                              "sha256":  "EDE2BAB85AA4DB4E1314F886CC1342A272EBB15002A0BE0BC45C4EC3F6159C65",
+                              "mtimeUtc":  "2026-09-08T04:20:03.3474087Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "node_type_vocabularies_agree",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\node_type_vocabularies_agree-5f955cea1aeafc7b.exe",
+                              "sha256":  "0A252CBD3F83975CDACD3F64D6C91C0FE191989EA9FAC31C04336F15810D28ED",
+                              "mtimeUtc":  "2026-09-08T04:20:03.4855638Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-bbf8e6637cd80e92.exe",
+                              "sha256":  "DEC60071F5E4A91F38BB782AE16A7A4DAB6CA2AA75122A8EE3E2B1C05218E0B8",
+                              "mtimeUtc":  "2026-09-08T04:20:04.3654875Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "record_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\record_contract-0c59750c9fd80503.exe",
+                              "sha256":  "416584E0E63BC1A17881CA1D1328817262C539375378C30EA73A76C986864356",
+                              "mtimeUtc":  "2026-09-08T04:20:04.3863253Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-2c09319e77d6c715.exe",
+                              "sha256":  "8A96B67EBC610F7FBC0687CC04A561157AED728D4F194D8DE93442FE3EC1F69A",
+                              "mtimeUtc":  "2026-09-08T04:20:04.4717330Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "countersign_append_is_declared_only",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\countersign_append_is_declared_only-fe8f10eb3bf551f2.exe",
+                              "sha256":  "E6E151C0B15B5A870EAFD1C976FDA13C6395BB9E088911D0238480CF74F1DFCC",
+                              "mtimeUtc":  "2026-09-08T04:20:04.5394712Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "dead_letter_is_declared_only",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\dead_letter_is_declared_only-76a4b315a835a5e0.exe",
+                              "sha256":  "A2127811E3F14244EA971344391BDA11B22FF1BC75EBBB5F674E8C09F65F1658",
+                              "mtimeUtc":  "2026-09-08T04:20:04.9244258Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "authored_strings_across_the_workspace",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\authored_strings_across_the_workspace-54f127c13b4393fb.exe",
+                              "sha256":  "94321A3B19B57D10720F6BF7345F2588177BF91A54C16330469AD3B26EE4D5FD",
+                              "mtimeUtc":  "2026-09-08T04:20:05.0174059Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/tool-broker#graphhelm-tool-broker@0.1.0",
+                              "target":  "path_rules",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\path_rules-d5c1714e27df2f3e.exe",
+                              "sha256":  "FC2458FC2A733AD000DB70F31EC6DF1F90B212CDF09B171602AD9AAB0E78D291",
+                              "mtimeUtc":  "2026-09-08T04:20:05.2102632Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "resolve_once",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\resolve_once-fcea40ea492ac6a3.exe",
+                              "sha256":  "894CF1D99A03CEBCD6252E46CB4675C69163C0B86F14EFF5A9AE8B6577B11088",
+                              "mtimeUtc":  "2026-09-08T04:20:06.1171160Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "graphhelm_policy",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_policy-c8e4dc4c07225c77.exe",
+                              "sha256":  "58F8016DF723778576F7A233CD879E6F91FCB0C91B097B6B04F0B17419A19C74",
+                              "mtimeUtc":  "2026-09-08T04:20:09.5170897Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "graphhelm_schema_evolution",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_schema_evolution-7a31b58337ac09d8.exe",
+                              "sha256":  "89AF299F8AE5D6BC5DED37D814EE7258A7C9C530AE2E8176A69A71096598DECC",
+                              "mtimeUtc":  "2026-09-08T04:20:10.0675082Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "waivers",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\waivers-cbb39a2c850ac39d.exe",
+                              "sha256":  "E1CD5175E4A77DB7B84236D91BC10F519A94EAEDDE003179FE5C9CE158B0429C",
+                              "mtimeUtc":  "2026-09-08T04:20:10.2062052Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\determinism-b4ef1ff5b98abd0b.exe",
+                              "sha256":  "4137B2577FE2027003566CE0B159FA492E06AC2CABFCB077BA3934AFF59E884C",
+                              "mtimeUtc":  "2026-09-08T04:20:10.2539437Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "precedence",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\precedence-9acd4764e95463cc.exe",
+                              "sha256":  "49A3F82E6B6FF65CCDF19EDC59D7B3084F3E8D118A2083627E873F37BFB2C0ED",
+                              "mtimeUtc":  "2026-09-08T04:20:10.3177814Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "sources",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\sources-34d13b120430073c.exe",
+                              "sha256":  "250E1A0D82969CE27345DBB0F302F8D69BF9854FC1A7C0E97B76ABEF69E48B09",
+                              "mtimeUtc":  "2026-09-08T04:20:10.4712926Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "wire_roundtrip",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\wire_roundtrip-8742b077772ce03f.exe",
+                              "sha256":  "482420F1FD24AF35F058528A598711612B1CF3EFDF80F4453995AEF164331F90",
+                              "mtimeUtc":  "2026-09-08T04:20:10.5234365Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "release_gate",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\release_gate-afc6476bec06067f.exe",
+                              "sha256":  "51DB92E14AA72A2EF104995C69CE3042239A072B9EDBB482DB20B89A405388DE",
+                              "mtimeUtc":  "2026-09-08T04:20:10.5425361Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "graphhelm_extension_host",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_extension_host-aa0dffd89be0ef5e.exe",
+                              "sha256":  "C45ED424170C5464040B3A13268494E4EAF6D247FCA745780C14762E7D12F375",
+                              "mtimeUtc":  "2026-09-08T04:20:28.2269607Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "links",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\links-f3752a1522032326.exe",
+                              "sha256":  "D0241D1A21A39D1D59EECDF8F3AC00A11C41EA26F6BC5383B3AEFF4BAC3C9F50",
+                              "mtimeUtc":  "2026-09-08T04:20:30.4524205Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "canonical_examples",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\canonical_examples-ccc8943dc2022713.exe",
+                              "sha256":  "C71F96C6A5AE6DAABE8813E35A3048F32AEE63E62AAD134021E6F1FEB33F3B22",
+                              "mtimeUtc":  "2026-09-08T04:20:32.4427855Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "offline_registry",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\offline_registry-ea42ba19b11ac336.exe",
+                              "sha256":  "B281089F3D39BEA346CE0E79DB090D801586DF7051763544A4152F30777A4084",
+                              "mtimeUtc":  "2026-09-08T04:20:30.4509218Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "baseline_origin",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\baseline_origin-d4ed2ce391470b68.exe",
+                              "sha256":  "3F497633FC04B6C070B840872C2218868536DF1C3134D819FF1054FD0BE19654",
+                              "mtimeUtc":  "2026-09-08T04:20:28.1275604Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "uninstall",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\uninstall-ee5868f99cb11131.exe",
+                              "sha256":  "0BB7B1A3800AF6C9F9FD0B7C4B20C61D96AE40AA8C17AE64EF10701BC290AECE",
+                              "mtimeUtc":  "2026-09-08T04:20:32.4427855Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "lint_rules",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\lint_rules-1ac0c1eca4c1ab0f.exe",
+                              "sha256":  "255991A969768F4E006B022F14DF4D8C34C25E4BF455D7B786B48E4A1473AA8E",
+                              "mtimeUtc":  "2026-09-08T04:20:32.5787728Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "install",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\install-9b2df37189a74b0b.exe",
+                              "sha256":  "488B1D425706D526E8017DB6EE882DBBD0B36ABFBC401399ED3F46387B9C771F",
+                              "mtimeUtc":  "2026-09-08T04:20:32.4508123Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "staging",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\staging-059fd7c3bdebfefa.exe",
+                              "sha256":  "C57D520B948C9A0EBF346D5460A22392E54B84B51F60C429DA843BD7E3E5AF12",
+                              "mtimeUtc":  "2026-09-08T04:20:32.4508123Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/policy#graphhelm-policy@0.1.0",
+                              "target":  "obligations",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\obligations-0dddb8a8246f33aa.exe",
+                              "sha256":  "0FCDBABA6E6CF33D3DAB1F272115CF5CE267D9FBF837F753E77EFE2287F8A58E",
+                              "mtimeUtc":  "2026-09-08T04:20:32.4513136Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "immutability",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\immutability-a5da5cd8d4d2dccf.exe",
+                              "sha256":  "4D4CBE80AC9E835448B6D991E78AA1147D7758E32BE8785CE1336163B2165C4E",
+                              "mtimeUtc":  "2026-09-08T04:20:33.0771991Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-2be709cd77865655.exe",
+                              "sha256":  "DDB99748D5C4466A1A4A3A633C2EA766AF8FD55BD9005D281ECD821EF7A45779",
+                              "mtimeUtc":  "2026-09-08T04:20:33.2857082Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "compatibility",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\compatibility-7c7c1eac5aa68118.exe",
+                              "sha256":  "6D26B46B4BA26BF811FF2F21C1350B2DECEEE1A731EF7559B90FB8A1A2D1D31F",
+                              "mtimeUtc":  "2026-09-08T04:20:33.7281964Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "determinism",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\determinism-26fefe07d08fbd7d.exe",
+                              "sha256":  "A8ADEB2D3298E548852BBE283043011E536385DF73584C3B4278144D412E36C4",
+                              "mtimeUtc":  "2026-09-08T04:20:33.9762978Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "discovery",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\discovery-1efadc049bd94c59.exe",
+                              "sha256":  "E8AD1988CFB16050A69C02EE3E4C28F37CFFC75EE8D86E0EE076BDA5A4AB769A",
+                              "mtimeUtc":  "2026-09-08T04:20:34.5255144Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "pin_defence",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\pin_defence-6ead11b2846af5fd.exe",
+                              "sha256":  "5E27F29E7E13F99630E70F7F6477F03843995CA06B6FE0EF2F935657948BFD3B",
+                              "mtimeUtc":  "2026-09-08T04:20:34.8647661Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "persistence_projection",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\persistence_projection-b40819e83414e2c3.exe",
+                              "sha256":  "BA2BB3C9E8C07C5736351243FF2D0EA45AF17140F50116566E49448EFC875930",
+                              "mtimeUtc":  "2026-09-08T04:20:34.9250756Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-1ccabf37030f08df.exe",
+                              "sha256":  "C3C3DD65C4CC6CA61E8A0BBA6CC41033E9F28CCF4E5928E034FD2914DE94A93D",
+                              "mtimeUtc":  "2026-09-08T04:20:34.8808437Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\migration-4403d5b377d7338a.exe",
+                              "sha256":  "D031B1C72A801BDB6BDC1D78DF80D1844449AD666F4E5111263055A461F9070D",
+                              "mtimeUtc":  "2026-09-08T04:20:35.2653679Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "graphhelm_protocols",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_protocols-8ab75a56c0d22bed.exe",
+                              "sha256":  "2027F53DF4370C3FF45D724472BE1DD1BE9002F3C1E4FB31B0D530C58F6D925B",
+                              "mtimeUtc":  "2026-09-08T04:20:35.3769583Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "canonical_hash",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\canonical_hash-2721c3c9f71b749f.exe",
+                              "sha256":  "D9FE64798B529D85AB47CF6BFF6CDA97A3A7898C1507E33F0EC162DF266DA856",
+                              "mtimeUtc":  "2026-09-08T04:20:35.4778071Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/graph#graphhelm-graph@0.1.0",
+                              "target":  "graphhelm_graph",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_graph-ffeaf7778401df45.exe",
+                              "sha256":  "BF718701B50DD7ABE9DFEAA52D666960990E202522F1587C271B7B0FF9AAF5FF",
+                              "mtimeUtc":  "2026-09-08T04:20:35.6964391Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "claim_binding",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\claim_binding-2ccd5d23309cf407.exe",
+                              "sha256":  "CEAF166BCF198BC7396DCBB9C223B3C07DBFA0640DFA2871BE9E96BBFF58B362",
+                              "mtimeUtc":  "2026-09-08T04:20:35.9147894Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "union_provability",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\union_provability-8d512724d92cac32.exe",
+                              "sha256":  "1AA414B58835464CBB43EE16355DC975423C4104C8F80054B273C72EA8470120",
+                              "mtimeUtc":  "2026-09-08T04:20:36.7397478Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/extension-host#graphhelm-extension-host@0.1.0",
+                              "target":  "activation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\activation-c84433336266f7f3.exe",
+                              "sha256":  "4D3DC2E75C653653382DB4F2E3E13BAC80FD0A2C6E8FB9165A375C0C830F3A6A",
+                              "mtimeUtc":  "2026-09-08T04:20:36.8050640Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema#graphhelm-schema@0.1.0",
+                              "target":  "graphhelm_schema",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_schema-446c571838924ac8.exe",
+                              "sha256":  "C9613208E8214675CBB14CE8D4B9EDC125BF2D8F359024015DFF52C0710B6405",
+                              "mtimeUtc":  "2026-09-08T04:20:36.9718053Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "catalog_integrity",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\catalog_integrity-df4cdb690dc800dc.exe",
+                              "sha256":  "F68F752BFDFA62D59760DA9C499A8B1E95288028F57435828258F7D6186681E7",
+                              "mtimeUtc":  "2026-09-08T04:20:37.1815999Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/protocols#graphhelm-protocols@0.1.0",
+                              "target":  "persistence_wire",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\persistence_wire-6db9814264c30e6e.exe",
+                              "sha256":  "AC9E435B6CA3BFC62BB17E82EB9C2806BD8700CBE97B6847FCAC69F3047201E0",
+                              "mtimeUtc":  "2026-09-08T04:20:37.2937590Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/schema-evolution#graphhelm-schema-evolution@0.1.0",
+                              "target":  "conformance",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\conformance-0da39bf4da031a1b.exe",
+                              "sha256":  "BF296C7FCFB44E6DC3E42F4592F0195C09F30A072F3AB54E885A700B22B4D5C1",
+                              "mtimeUtc":  "2026-09-08T04:20:37.2757582Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-3d50a7ec65d3b728.exe",
+                              "sha256":  "5CA3E6C67E7923E01EEDF4F59FE3432F8E0CD92284F95652CF703747508F4D63",
+                              "mtimeUtc":  "2026-09-08T04:20:43.4486156Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "committed_stores",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\committed_stores-a92a7ae4f5260e87.exe",
+                              "sha256":  "9BC44ABA2D30C17DC17B3855C18BCBB3F1CFFFB0508CA0E5B07A3983D71FD114",
+                              "mtimeUtc":  "2026-09-08T04:20:43.7307461Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "async_repository_contracts",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\async_repository_contracts-cdce2517298f5fe4.exe",
+                              "sha256":  "D796D305290FB9F85897F1DEDA43AFCCACE1967AE033A4D0D0B8E287A4F2ECE0",
+                              "mtimeUtc":  "2026-09-08T04:20:43.6905305Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "dlq_kinds_are_declared",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\dlq_kinds_are_declared-3de3e2d9d51dc4d3.exe",
+                              "sha256":  "DAEE73801E826B592CE968C0C1B56485EE79C4BB0904BD1EBB0A00BECF98DF70",
+                              "mtimeUtc":  "2026-09-08T04:20:43.8233805Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "customs_stage_vocabularies_agree",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\customs_stage_vocabularies_agree-badb5dfa7a6a3a54.exe",
+                              "sha256":  "BEA68C1E7F7AF6D7B0B8A0D40375FE7AECE1BE6F86C1B85FA15227845EE0EF84",
+                              "mtimeUtc":  "2026-09-08T04:20:45.2992580Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "amendment_replay",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\amendment_replay-f07b0d5fcd1e3a51.exe",
+                              "sha256":  "85E431B74A89341B18D06A927B5C5676611E049675837118351CA330FD2D447F",
+                              "mtimeUtc":  "2026-09-08T04:20:45.2942309Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "committed_journals",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\committed_journals-2cc055246fad6504.exe",
+                              "sha256":  "CE3798C6BBD3515D7B553B1B0F670C9C5152A5052B779298EDD694C0D06AE424",
+                              "mtimeUtc":  "2026-09-08T04:20:45.7314043Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\retention-58fab46cc1cfa7bc.exe",
+                              "sha256":  "1B9E183EDE7D1925708880645C26F72F5946FD33FB9D145A8DCBE2778A2590F6",
+                              "mtimeUtc":  "2026-09-08T04:20:46.3818040Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "deterministic_simulation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\deterministic_simulation-99e24efdcf0830b8.exe",
+                              "sha256":  "4FACC0FF0788782EFC4AF0DC75E53F4920336AB67C576E2A1AB6D259110F0C45",
+                              "mtimeUtc":  "2026-09-08T04:20:46.5646714Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_concurrency",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\read_concurrency-9b10a993c1c5b668.exe",
+                              "sha256":  "776DBFDC9F70DE45362CE6A2D2E9DE03AEE95B590589AE0FFD876CBBE462623C",
+                              "mtimeUtc":  "2026-09-08T04:20:47.3029378Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "record_demonstration",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\record_demonstration-6307d9bd57d5344c.exe",
+                              "sha256":  "F4A74E88C13B32C4CB1B524AC4DEBAFE1E19629966F7C249ACF65D8C9560272C",
+                              "mtimeUtc":  "2026-09-08T04:20:48.2285978Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "graphhelm_model_gateway",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_model_gateway-a343aba2fe39a51e.exe",
+                              "sha256":  "2E30052FA43163741C8A3B43D4E147AC67162239DB505ED1EFF57FD9E3F22BCB",
+                              "mtimeUtc":  "2026-09-08T04:20:48.2215539Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "attention",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\attention-a51521956919f1d6.exe",
+                              "sha256":  "339FF3CD65483DF1598878DABCC4CD0646ECB0CF7F901FB8395F3B1F239D081C",
+                              "mtimeUtc":  "2026-09-08T04:20:47.9585527Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "sweep_verb",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\sweep_verb-832785868e6262de.exe",
+                              "sha256":  "5F707E7AB6FAF4EE7C7A934FB407F1094C06C53277A7F82ED9A1BF37A20F73B6",
+                              "mtimeUtc":  "2026-09-08T04:20:52.6434462Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "evidence_crypto",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\evidence_crypto-fc3878dda7e94bee.exe",
+                              "sha256":  "5167B7DABD685ED5B483DBDC068CF928E8F89E5C3BC0DB499F9D551435B4A6F1",
+                              "mtimeUtc":  "2026-09-08T04:20:52.5862155Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance_map",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\acceptance_map-243ed95c375b4d83.exe",
+                              "sha256":  "FB64EFB21217812105A6869E7FEFD326DD3E3909062799E3225C5AA8708CEBB4",
+                              "mtimeUtc":  "2026-09-08T04:20:52.6962332Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "shared_lock_blocks_writers",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\shared_lock_blocks_writers-ebf5a7f12408b8f4.exe",
+                              "sha256":  "980651052482ECC1E4A4032E6536208BDA6A60AD5A238A2EABEBF328E2A02879",
+                              "mtimeUtc":  "2026-09-08T04:20:52.5916983Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "recoverable_layout",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\recoverable_layout-d56a562edc0d9572.exe",
+                              "sha256":  "AAEECE269FDF1A5C39748E6546C0E395EE78C879C74BC179013FB98CA244EEDC",
+                              "mtimeUtc":  "2026-09-08T04:20:57.0506912Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\memory-07e4c3f0c6ae6a13.exe",
+                              "sha256":  "1847B618EF4AC9122E444095610B3DF03222A0602DBE1182B563F2C137E0DFD3",
+                              "mtimeUtc":  "2026-09-08T04:20:57.1480566Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "execution_lifecycle",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\execution_lifecycle-05778634293f70de.exe",
+                              "sha256":  "A59AD3CD4AEA9E4BCC7EB7991FCE22269E71304E80808D4F9BE2621EC97908A6",
+                              "mtimeUtc":  "2026-09-08T04:20:56.4074722Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "scheduling_properties",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\scheduling_properties-cbc5e0edb658ccdc.exe",
+                              "sha256":  "A359076747ED629EA9EB4DA0D3F90FA8B8BCB0BFA24319C8BA006F315EC62D90",
+                              "mtimeUtc":  "2026-09-08T04:20:56.4034674Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "replay",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\replay-8fb0270f8cf6d943.exe",
+                              "sha256":  "CE80B2FCDF9624329950F570A09396FD55858E0B596FD882F1E6CB99A0AD560C",
+                              "mtimeUtc":  "2026-09-08T04:21:03.4520600Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "read_budget",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\read_budget-ca2527bd6f847f16.exe",
+                              "sha256":  "6558BA608DB94E8327D14F0AF526F96430ADA4F41B3E39408798373EFBB7756B",
+                              "mtimeUtc":  "2026-09-08T04:21:03.2656535Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "fake_runtime",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\fake_runtime-a2ef77a3e3ee68ac.exe",
+                              "sha256":  "C73DA41F73A4BD270B56B3C95292F7D4F5E578E98304EF4D4C82E8E19C6FD160",
+                              "mtimeUtc":  "2026-09-08T04:21:13.5422385Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "sealed_provider",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\sealed_provider-c70b1891a5c142ab.exe",
+                              "sha256":  "14BA2CE0DA457EE2CDD6ED2E38505BF6968F9D5F33F627D189556C70755A6943",
+                              "mtimeUtc":  "2026-09-08T04:21:13.5823388Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "fake_tool",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\fake_tool-15d2f75bb1caa99f.exe",
+                              "sha256":  "0CB4DD4CA75A8CA0EAF8E69B908BD94F21B3DC44028A06A6FDA7A4C043FEE99D",
+                              "mtimeUtc":  "2026-09-08T04:21:13.8106935Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-90796774f267a234.exe",
+                              "sha256":  "8CC12C4DC5C38508A942F2A9FF49C6D8547D7262CE41EFF2C65306ED4E1994DC",
+                              "mtimeUtc":  "2026-09-08T04:21:14.2451424Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\authored_string_invariants-166056ee454f9353.exe",
+                              "sha256":  "0988DB1CAE032977C1C78C801C8EC4A1436105ECB0FAB5222C4DE60EC61AD19D",
+                              "mtimeUtc":  "2026-09-08T04:21:14.9909617Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm_development_benchmark",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_development_benchmark-f69af754a7a421bc.exe",
+                              "sha256":  "A1012DFD99D7F7F5CC3DD50968161954AC18952A55516FF468486969E50F6D3C",
+                              "mtimeUtc":  "2026-09-08T04:21:15.1302078Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "graphhelm_execution",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_execution-0588cfe17c81bfff.exe",
+                              "sha256":  "1CB3012933E3B38110D2A533EF81ACD09B03C3CE52FC99C7AD783FF1455021BF",
+                              "mtimeUtc":  "2026-09-08T04:21:15.0749421Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "inflight_governance",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\inflight_governance-1f730f32bb17e655.exe",
+                              "sha256":  "EFADAF7A20CB97D28F0C3E02E493787FE9C50CCFF6A89DF1ABE0E22603E64B6B",
+                              "mtimeUtc":  "2026-09-08T04:21:15.4136385Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "runtime_adapters",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\runtime_adapters-0474f886cb92197f.exe",
+                              "sha256":  "EF1551344C264A23E878796DA4AC977F593C75F2648790BAE816D56BC3C96E13",
+                              "mtimeUtc":  "2026-09-08T04:21:16.2022905Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "graphhelm_codebase_memory_mcp",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_codebase_memory_mcp-0a3221b4d4470f6d.exe",
+                              "sha256":  "958B743A5388A4C557D971485FA8D2F2E5D5B83326F61E85739935D75A147743",
+                              "mtimeUtc":  "2026-09-08T04:21:16.3729485Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "apply_overflow",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\apply_overflow-1c6105c3ef74988d.exe",
+                              "sha256":  "EF411FABBB9C32F48863AE75D4860CF7AD34FE4F107182225FA137061E1CF384",
+                              "mtimeUtc":  "2026-09-08T04:21:16.2482302Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "byok_adapters",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\byok_adapters-1f281ba02c4805ed.exe",
+                              "sha256":  "AC24686C47FC5C19510CBE1C26A2784D8F1663F39E7E6BB56B175431D2457BE1",
+                              "mtimeUtc":  "2026-09-08T04:21:16.5880872Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "graphhelm_runtime",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_runtime-3b03c6bd06987145.exe",
+                              "sha256":  "9D5EED2AEA2AAE3F3F84CB33123629E995A8F70F7184595CE53D75841952DB4D",
+                              "mtimeUtc":  "2026-09-08T04:21:16.6320927Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/model-gateway#graphhelm-model-gateway@0.1.0",
+                              "target":  "broker",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\broker-9f6fe0b849cda787.exe",
+                              "sha256":  "7196BCAC6AA21FA40B7F2A4B80C00C258054587B45AAC8F50F770115976B274D",
+                              "mtimeUtc":  "2026-09-08T04:21:16.7122344Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "memory",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\memory-81f73a9b3fde4f89.exe",
+                              "sha256":  "B5FA8845B8005D61C53197AAAB14526E126A7588B8011C47BED8AB2B097C38CA",
+                              "mtimeUtc":  "2026-09-08T04:21:16.8421589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "fake_mcp_server",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\fake_mcp_server-dae52e3fec616bc2.exe",
+                              "sha256":  "A9573D727EB24FC0E61518727C321EF193680721284D15970C6AE8A8273DF7BA",
+                              "mtimeUtc":  "2026-09-08T04:21:32.1354297Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "contained_session",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\contained_session-96dfcea77ab493de.exe",
+                              "sha256":  "9869BAEB9358E6B0CCC07176C12B16EC0E1ABB4885002A5389DA2BF169F29B96",
+                              "mtimeUtc":  "2026-09-08T04:21:33.1417827Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_cancellation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\workspace_cancellation-501b668fb22ba7b4.exe",
+                              "sha256":  "D10D0621591F4F0C852AFD11F74B2F648AC92A6709ECD762CAB591478510DD59",
+                              "mtimeUtc":  "2026-09-08T04:21:33.1407779Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "request_set_ceiling",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\request_set_ceiling-1bf8f75f197df7e7.exe",
+                              "sha256":  "A2E044D661D6BD782BD7CD18B4CDE7A3A6FF1008E06EFBCDDEC26B3B03C55554",
+                              "mtimeUtc":  "2026-09-08T04:21:33.4896656Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "declared_gap_delta_application",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\declared_gap_delta_application-5ac11931613f219f.exe",
+                              "sha256":  "D257431DFE9D83ED2980993EFB2BB6D41947EA542067AFAF62C6983D3CB7D80A",
+                              "mtimeUtc":  "2026-09-08T04:21:33.2929002Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "verified_executable",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\verified_executable-e1cbd61bd5f0c17b.exe",
+                              "sha256":  "0FFDA49EA498BFF3C0FCD7114609BE85E31DD76B40B95631E99519165842445C",
+                              "mtimeUtc":  "2026-09-08T04:21:33.2939204Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "pinned_snapshot",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\pinned_snapshot-a82ea53321e88f5e.exe",
+                              "sha256":  "5318076F1943104078576492856C5F9CD6648260046423D7A2271F076CDEFCA7",
+                              "mtimeUtc":  "2026-09-08T04:21:32.5104530Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_channel",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\workspace_source_channel-d7df63e736233a22.exe",
+                              "sha256":  "6AD04B62FE1591DA66969ED087E601C207B7D05C027925284E60BCF687F678AB",
+                              "mtimeUtc":  "2026-09-08T04:21:33.1372396Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "execution_projection",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\execution_projection-6304d0816eea1539.exe",
+                              "sha256":  "6B8930950969F197FC5A43369D81347F7560814FF65DF3A5427D54C577A9524E",
+                              "mtimeUtc":  "2026-09-08T04:21:34.1815251Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "draft_application",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\draft_application-ab87e56c93c286fd.exe",
+                              "sha256":  "040FFF35305B68E7AC3B26CF8009E3D305714F3EFE4B293871762BE34D9BEDEE",
+                              "mtimeUtc":  "2026-09-08T04:21:34.2285896Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "ceiling_reproduction",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\ceiling_reproduction-dd3336a37a135bbc.exe",
+                              "sha256":  "E47FC8EC381619C230295FF8435D01D02F5D1D2B946B63149B634A03121FD6E1",
+                              "mtimeUtc":  "2026-09-08T04:21:35.9023876Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_containment",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\workspace_containment-51c45dc87d3533b6.exe",
+                              "sha256":  "AE180B204610B88966F102C1B1A57E21005442EC58C215D715585EAB971948E2",
+                              "mtimeUtc":  "2026-09-08T04:21:35.9728177Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "materialization",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\materialization-8d94fcaba91ba046.exe",
+                              "sha256":  "447FC06D86930468A4E5069FA7DEFCEF683D222041B79B748C62F81B5E59007C",
+                              "mtimeUtc":  "2026-09-08T04:21:34.2285896Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "broker_end_to_end",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\broker_end_to_end-bb725af4815855d2.exe",
+                              "sha256":  "46BC800256ED68B41E955B158E7267EC150BC2C37D90E5A7411586BCA732D9C7",
+                              "mtimeUtc":  "2026-09-08T04:21:35.9466223Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "process_isolation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\process_isolation-4f6ce051933e47a8.exe",
+                              "sha256":  "782C30BFF86CEF099974EF792DBFDD90102DE39CEBCFBD4E668F80A3747D413E",
+                              "mtimeUtc":  "2026-09-08T04:21:36.0248332Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "retrieval",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\retrieval-0a7bd1ea7e274e07.exe",
+                              "sha256":  "A87574C2705B026ABF8CF426B0D603E990292E33931EA0D56DAFCAD3BF47A2A8",
+                              "mtimeUtc":  "2026-09-08T04:21:35.9756998Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "workspace_source_reader",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\workspace_source_reader-0926e94bdbcffb91.exe",
+                              "sha256":  "BC203AE277D9357A1E86F054C2E17ED3FD25E37BE6C2053BA955B1F075997DE5",
+                              "mtimeUtc":  "2026-09-08T04:21:39.6520925Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "mcp_client_population",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mcp_client_population-8bc58e2ce26d6928.exe",
+                              "sha256":  "2EBDD47B3C217D7C886B43E605EC69124DA72C43C720E946B5C41EE23CFA0982",
+                              "mtimeUtc":  "2026-09-08T04:21:40.0066079Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "fake-index-provider",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\fake_index_provider-632907ad49ab8e40.exe",
+                              "sha256":  "C4C85D86BDD6C706FA85CBC1FEBFA260F3621C67C6F8025ABE363FC28FF644DC",
+                              "mtimeUtc":  "2026-09-08T04:21:40.2825957Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "runner_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\runner_cli-e1ee72bf765acdbd.exe",
+                              "sha256":  "731BC9228BE1721B9DF4F77AD6A989030154F9BCF89D8C08144A8C818203E7A0",
+                              "mtimeUtc":  "2026-09-08T04:21:40.8799574Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "owner_output",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\owner_output-d13189f5cf460acb.exe",
+                              "sha256":  "A7C681B39338420D2B4D8DF07D0EE085D3C6FC6E0E8A2379C4FBE26404D5A0F9",
+                              "mtimeUtc":  "2026-09-08T04:21:41.2757413Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "safe_publication",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\safe_publication-e3ba45ef37d7d8b6.exe",
+                              "sha256":  "9ABA09FC136FB523BC983FC31BD2F72ACA1AC352D7BBC452FBCE729AE2A49A49",
+                              "mtimeUtc":  "2026-09-08T04:21:41.5213563Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_compiler",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\context_compiler-d32f304273b14b27.exe",
+                              "sha256":  "9B9AB761498BDDEBABAAD9EB91240A496BA5A2FBD26E6733F215F7477492087E",
+                              "mtimeUtc":  "2026-09-08T04:21:41.7423075Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "contained_provider",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\contained_provider-a520f67c7d5ad561.exe",
+                              "sha256":  "F0B4683119C972F80C7D13978371EB5A2D95C788A46C25E4B08B9CEF6B977F4A",
+                              "mtimeUtc":  "2026-09-08T04:21:41.9619879Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "dry_run_pipeline",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\dry_run_pipeline-b3e806f73e6bccf5.exe",
+                              "sha256":  "26DF40B47201A4A79CC5764471D00380ADC67FFF5E0FF553A699A273A7EC72BA",
+                              "mtimeUtc":  "2026-09-08T04:21:42.2610383Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "graphhelm-development-benchmark",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_development_benchmark-d210324186000576.exe",
+                              "sha256":  "1898741ED29A15FF654FA2B8D84DB4BE17459D3B5454E10C212D4A1E98EEF750",
+                              "mtimeUtc":  "2026-09-08T04:21:42.4652294Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generate-retrieval",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\generate_retrieval-56681f8075163323.exe",
+                              "sha256":  "FCB10D7653EDE1E16B5E963C1E3D47ACB758D5BEC327D5A6DC74E2BE498A451C",
+                              "mtimeUtc":  "2026-09-08T04:21:42.5896657Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired-driver",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\paired_driver-165db5e4e84a5c44.exe",
+                              "sha256":  "3FF47DCBD024C4FCFD0FA43B6ABB9B24A28384C2344982685A5658B202AEBF28",
+                              "mtimeUtc":  "2026-09-08T04:21:43.0538235Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-814137ab5a1057c4.exe",
+                              "sha256":  "518080F4CD09D6967370C04991E26AB5E3F9678E4D58D84EE84497A9AC5991F6",
+                              "mtimeUtc":  "2026-09-08T04:21:43.4084023Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "failure_causes",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\failure_causes-8334a46c9bc4f1a4.exe",
+                              "sha256":  "321E779AD4FFF9AC53F286E26568F6338EEB8CAF092E57BAD8DEDDE489539B39",
+                              "mtimeUtc":  "2026-09-08T04:21:45.9809440Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "axis_completeness",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\axis_completeness-958a5c4b3e6e6090.exe",
+                              "sha256":  "18D7C9D84888CA190EAD9A90DFE1F20D12D2AFB71012084BD3816673CE6DE2C0",
+                              "mtimeUtc":  "2026-09-08T04:21:46.0326495Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "cost_provenance",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\cost_provenance-cfab38d0fc807a2b.exe",
+                              "sha256":  "9CFA33C42FDC0630E818914C5E7EF15E4AE556488B1365BEAF8439D78AEABDCC",
+                              "mtimeUtc":  "2026-09-08T04:21:45.9844589Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "oracle_isolation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\oracle_isolation-1fb9c48325e8081b.exe",
+                              "sha256":  "15653EAEDDC42B95A5AFD6E8C2C6C9B201FF50D9DB8FA43522E84AAD8BF006A4",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1325038Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "run_directory",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\run_directory-f59fe0d643cd830b.exe",
+                              "sha256":  "7BC6380CA1A575BE81906CECBFE3D4B44436D3806B6661F49D726E08D3808B55",
+                              "mtimeUtc":  "2026-09-08T04:21:45.9598407Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "manifest_freeze",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\manifest_freeze-da8473f16b600c44.exe",
+                              "sha256":  "7A3B748DD9540D404F2AEDEC9C5B86DB2322D641284BFDE1F5DB1BB505FC89C3",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1050409Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "artifact_from_rows",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\artifact_from_rows-c151f80148b7de47.exe",
+                              "sha256":  "A3561E7645B90AE8443D18F3DE889D34049911A28C7B0D274567C4265FB01025",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1495656Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "zero_bar",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\zero_bar-f6fe8d737cbbdb97.exe",
+                              "sha256":  "FD12874A8FF9F3A7C6B6816DECBBCADBF87B93225E0C52EB10CE40BE19F3C2F7",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1229517Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "generator_arming_site",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\generator_arming_site-20b0c4829849ebfa.exe",
+                              "sha256":  "E08DB81C7BC0D942F2B15DF748362210EE83F9780EB39DFF9EE8810B773CA296",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1962882Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "evaluator_policy",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\evaluator_policy-bbc74c65eadd2bca.exe",
+                              "sha256":  "A956CEE06344FA6F5DE2424E1CE53D455B310A9999077C0E5ECF93538AC89B66",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1796764Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "arm_symmetry",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\arm_symmetry-17ed96fc8d878c46.exe",
+                              "sha256":  "8C1FAE6539FBDF08D242B1975B0228B774DC6E526F13FA81BDCBD3D3C4B5363D",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1294935Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/codebase-memory-mcp#graphhelm-codebase-memory-mcp@0.1.0",
+                              "target":  "decoder",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\decoder-73994c6ee76ada31.exe",
+                              "sha256":  "EE89B8F070AE056AE5E5575B2194459DD498C1FBCDDD2D32E2AD882443DB21B0",
+                              "mtimeUtc":  "2026-09-08T04:21:46.2098471Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "paired_contexts",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\paired_contexts-1b1d2b8d4f58a482.exe",
+                              "sha256":  "C2E6C214A64EEB07EA2A0F8DF9F65E076E817BBD617CA0DD30FDDF09C58061DA",
+                              "mtimeUtc":  "2026-09-08T04:21:46.2098471Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "critical_miss",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\critical_miss-25619816af2fd454.exe",
+                              "sha256":  "0479A9B971C3A8E778B70DC8381EBC7358CED7194688620DC59D64A7BB1CCA58",
+                              "mtimeUtc":  "2026-09-08T04:21:46.1050409Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "frozen_files",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\frozen_files-d7e8f6f04394950b.exe",
+                              "sha256":  "5AD77D41C866C24F87ED7375FC4C3EE5F1E5116F94D404328E07DB331569CD7F",
+                              "mtimeUtc":  "2026-09-08T04:21:46.2655705Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/development-benchmark#graphhelm-development-benchmark@0.1.0",
+                              "target":  "live_provider",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\live_provider-1d6018512697742e.exe",
+                              "sha256":  "FB65565B9BE17C8FC222BD3471C36FF84A9B33A2DAD388EE6808CDFEF2B3D4A6",
+                              "mtimeUtc":  "2026-09-08T04:21:46.2454785Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "context_accounting",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\context_accounting-732e1c9f0c45970f.exe",
+                              "sha256":  "D8287EE6DAF4D72364FD651D6DB786A9C034B18E5CD84E175DD3DBE380C141B2",
+                              "mtimeUtc":  "2026-09-08T04:21:46.5178850Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-08838b3e9550c37b.exe",
+                              "sha256":  "569B85DFA60A723A52545D9157D2347D46C0840F1ACFDD2CE79241350C0EC15B",
+                              "mtimeUtc":  "2026-09-08T04:21:47.7722937Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "prompt_assembly",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\prompt_assembly-8c1106951e447d67.exe",
+                              "sha256":  "BC0C9A1793547D582B273FEB42977ADBE2EFE0A58B2DAFA6AB9A73A7E1945E39",
+                              "mtimeUtc":  "2026-09-08T04:21:47.7557411Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "blind_judge",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\blind_judge-3c503af61e4ef0e4.exe",
+                              "sha256":  "A1F88BDCA4A88DC2B06193270F27D6C39630DE273784E3338BC510FFE88B62E8",
+                              "mtimeUtc":  "2026-09-08T04:21:47.8227770Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/tool-host#graphhelm-tool-host@0.1.0",
+                              "target":  "graphhelm_tool_host",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_tool_host-2877cb05147aec28.exe",
+                              "sha256":  "4C53559E99891438FB475BCD4B318D519024BCCBF6CD03A3605D57A17355C93A",
+                              "mtimeUtc":  "2026-09-08T04:21:47.8519151Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "authored_string_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\authored_string_invariants-23e77cee14a7a152.exe",
+                              "sha256":  "13CF3037AF20C8A0D13735A69F2E1328A03EDBE973835C06C2E6AD06AE297067",
+                              "mtimeUtc":  "2026-09-08T04:21:48.4641060Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/simulation#graphhelm-simulation@0.1.0",
+                              "target":  "graphhelm_simulation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_simulation-0bf61f7ec30fc42a.exe",
+                              "sha256":  "B2CCBA3C9687AE801360F1921C1D87AD891278D19B3EA09725BCE0C88E3267A0",
+                              "mtimeUtc":  "2026-09-08T04:21:49.4908356Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "persisted_node_bytes",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\persisted_node_bytes-adbd348bb95f7f4f.exe",
+                              "sha256":  "7CA0E816B842D0C5AAAD76C592EF3C09A6E915F3E8F7DC466F7FCB7FCBC55C6F",
+                              "mtimeUtc":  "2026-09-08T04:21:50.0077011Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_url",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mcp_url-cc4f770703a40f86.exe",
+                              "sha256":  "392EB630738F3A9BA851701D30E2433F03411068D2D9DAC793FC69CDF0053187",
+                              "mtimeUtc":  "2026-09-08T04:21:50.7154522Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_redaction",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_redaction-73c82091c1015beb.exe",
+                              "sha256":  "98AAAC784908FDE42B556AD164757CD69AA06F54C53ADE50884C5A84AF13C953",
+                              "mtimeUtc":  "2026-09-08T04:21:50.7330280Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "http_helper_inventory",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\http_helper_inventory-2375f06e909f1d8a.exe",
+                              "sha256":  "5130857D32CE76C846F7FCB5C7630E57BF43A1356B335776BE0D3B82F4DC607A",
+                              "mtimeUtc":  "2026-09-08T04:21:51.0479021Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "attention_tag_domain",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\attention_tag_domain-79fc723095252462.exe",
+                              "sha256":  "0FDC08E1B37D9C50369D4C73A4C47ABA461F47ADC9B6A8FCEF27CCFC87DCBF75",
+                              "mtimeUtc":  "2026-09-08T04:21:51.5863124Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "tool_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\tool_cli-f430c8534c735b53.exe",
+                              "sha256":  "23E8AF997BE91A152003D3495529F4741E1CC444EB7483FFDCEE6658F7C93870",
+                              "mtimeUtc":  "2026-09-08T04:21:51.8050595Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_concurrency",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_concurrency-672c75a918c8c917.exe",
+                              "sha256":  "4E6FB9E75505097C6E2D85AA4FCBBBA18396DE352DBB8DAFEE36AEC13810A36B",
+                              "mtimeUtc":  "2026-09-08T04:21:51.5095847Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gateway_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\gateway_cli-f658f5c1003ec060.exe",
+                              "sha256":  "9C1AAA135FF8CE911C16780CF733594E7D97678612622BA0ABDBE8068C40DC90",
+                              "mtimeUtc":  "2026-09-08T04:21:51.4977138Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "test_support_has_no_dead_helpers",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\test_support_has_no_dead_helpers-52d23a93142698dd.exe",
+                              "sha256":  "CB24EDAA331FDCC2293CE5AC41927538FBC0F2C828EE6AF4F13702625AAFE230",
+                              "mtimeUtc":  "2026-09-08T04:21:52.5360278Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_surface_parity",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_surface_parity-cfeede303f50dad3.exe",
+                              "sha256":  "196E95344BD8FA6B0B368A385165F8286A8BC4843EDBB2A5E5BA1B8DA0C70FA4",
+                              "mtimeUtc":  "2026-09-08T04:21:53.1956870Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "sweep_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\sweep_cli-90b5daba1c1af316.exe",
+                              "sha256":  "A3F926224186DA69755875C0127462D53AD071EFC50B5BA47FA2AC3D044425DB",
+                              "mtimeUtc":  "2026-09-08T04:21:55.0740337Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "gate_nodes",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\gate_nodes-e10fa6c0c71f52e3.exe",
+                              "sha256":  "89BF9F26D952EA207DE4374BE422BF5528DF97B6F13D2B3B129688268DD1015F",
+                              "mtimeUtc":  "2026-09-08T04:21:53.2172272Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/runtime#graphhelm-runtime@0.1.0",
+                              "target":  "driver_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\driver_contract-9816306b08d1d116.exe",
+                              "sha256":  "F420D6587A1773F22C21397D623CB40C436ED55D33BCAFEBB57D920002B3F72D",
+                              "mtimeUtc":  "2026-09-08T04:21:55.0911104Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_project_default",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\resume_project_default-24de34b224dc0993.exe",
+                              "sha256":  "B4D7008ADA83DA998CFA230A5349E13468065F8691E8F546CF2BD9A11F5FFD9F",
+                              "mtimeUtc":  "2026-09-08T04:21:56.7088453Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-006ff097572e307a.exe",
+                              "sha256":  "A24A963207D6CDD6F58C17FACDCE1F1F4D12869F8AFA50BF977662C6B7254193",
+                              "mtimeUtc":  "2026-09-08T04:21:57.0248222Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_plugin",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_plugin-213f81c2c91b5702.exe",
+                              "sha256":  "743A3B1EDE52996CBE533A4824233FFDD527D5261124ACA03A1761A20EFCA9DB",
+                              "mtimeUtc":  "2026-09-08T04:21:57.2581501Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_contract_schemas",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_contract_schemas-61744cc742acd52a.exe",
+                              "sha256":  "58B3AFF5D21B4BB74B48DFF457411DC5331EB41674042725EDEA6A31D75E6AA8",
+                              "mtimeUtc":  "2026-09-08T04:21:57.2571508Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_capability",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mcp_capability-5e6aab289c4cc5b5.exe",
+                              "sha256":  "535FBA07A287CBDBEAC0795F2AEDD6F3D41D2BFF1CB30ED1E971D547FAACF6D2",
+                              "mtimeUtc":  "2026-09-08T04:21:57.2757330Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "surface_completeness",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\surface_completeness-c4471ff647377b9e.exe",
+                              "sha256":  "81972E2684F10D7FC13F1D139FC2448890914E22E5954DBB90CFBFCC09E0F3DB",
+                              "mtimeUtc":  "2026-09-08T04:21:57.6623974Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_observer_trust",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_observer_trust-92a5bb68cb2f3409.exe",
+                              "sha256":  "9A146D579A205E8FCA441B21B8A6687266BC792E4DF47A98A3AD44587D6293B3",
+                              "mtimeUtc":  "2026-09-08T04:21:57.7302001Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_retry_semantics",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_retry_semantics-a8abfe496a148e9f.exe",
+                              "sha256":  "ED3679A687793EB538B87935C83D6161B2D5E40AC1EE6A3AE6679313EFF16559",
+                              "mtimeUtc":  "2026-09-08T04:21:57.7357087Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_plugin",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_plugin-3c1afe9276b694ad.exe",
+                              "sha256":  "478C0153AC9D2E5703F4FD02BAC9E3A77CCBF678BBE02F85ED728A552703D9B8",
+                              "mtimeUtc":  "2026-09-08T04:21:57.9098839Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_package_inventory",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_package_inventory-23d128af5616503a.exe",
+                              "sha256":  "2843713BCE51FD6477DB7738A54D826BA52FB61F067C4FD0C9E75A2D6ED6B982",
+                              "mtimeUtc":  "2026-09-08T04:21:58.2378978Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "resume_atomicity",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\resume_atomicity-10dab9eb2aa34ef8.exe",
+                              "sha256":  "FBF7587458A7FC3613ABE4688982781918B3256CB7EDF0ECED097596EC006575",
+                              "mtimeUtc":  "2026-09-08T04:21:58.3990413Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "execution_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\execution_cli-3b1c4a04b60c6ba8.exe",
+                              "sha256":  "59A7230D3230E615931794F5936D75DEB918B23D6B2792D9AEDCE037A8BC358A",
+                              "mtimeUtc":  "2026-09-08T04:21:58.9168403Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "monitor_http",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\monitor_http-cef5d90885c52356.exe",
+                              "sha256":  "706D0BEEB2BA37F33ACB7543D3C1083DB8E98A5CADBC166F5ADCB50C68367403",
+                              "mtimeUtc":  "2026-09-08T04:22:06.2394612Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "context_citation_fixtures",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\context_citation_fixtures-8e98a101334888c1.exe",
+                              "sha256":  "1651A33493A466FA410566CB552BAD5B530395DB148B8AD6F136E0D50BBDFF99",
+                              "mtimeUtc":  "2026-09-08T04:22:11.2569224Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "mcp_stdio",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\mcp_stdio-37397deaa14afa67.exe",
+                              "sha256":  "5A3668FC3144F0B4E73B26968965AFC4D2DD46F58A8C9F74BC3FC80620D481EB",
+                              "mtimeUtc":  "2026-09-08T04:22:11.0475126Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "projection",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\projection-f31c71b2e7fc0eaa.exe",
+                              "sha256":  "528CE73EEBFC4F6833D146E62E637CA48A4AD6AB2D6BB5C1C96E629FB47ECA9B",
+                              "mtimeUtc":  "2026-09-08T04:22:17.4768094Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_graph_contract",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_graph_contract-14c41a991090f02f.exe",
+                              "sha256":  "F3C3CB33E6475BBCE4EEBAAAE11CD70D6D823132B02B05EC762B6F3FAD9B4778",
+                              "mtimeUtc":  "2026-09-08T04:22:24.0407085Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\event_store_cli-c016aeb55f12c899.exe",
+                              "sha256":  "BE68035152C61190E1317229946E6850793F38CED980AE09B68C2C1D42F32DB5",
+                              "mtimeUtc":  "2026-09-08T04:22:26.0929151Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "event_store_local_backup",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\event_store_local_backup-9c90da3553c7a192.exe",
+                              "sha256":  "EF740E2043C0C0C762DAE7FCE72BDAA16280C58D684CE72BA2CAEF7D7D8095FD",
+                              "mtimeUtc":  "2026-09-08T04:22:26.5082185Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\extension_cli-f4e8ef2a93959ba5.exe",
+                              "sha256":  "D223DA3CA565F98D4FF3381723A789D025EEAEC6C54F0B8165D39EC4F76573D7",
+                              "mtimeUtc":  "2026-09-08T04:22:26.5601444Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_cli-42c55c7045de074f.exe",
+                              "sha256":  "101258B700E02059BD5DA92C9456BFA411EDD64D3C6AA01A747C5C4117CA50CA",
+                              "mtimeUtc":  "2026-09-08T04:22:28.9464163Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "shipped_package_coverage",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\shipped_package_coverage-360cc463b88cb0d4.exe",
+                              "sha256":  "8497A36C451F6D2D3E9714D4CFA3EEEB395623AABA13A44409C8645E4F35567F",
+                              "mtimeUtc":  "2026-09-08T04:22:29.2964198Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "extension_lifecycle",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\extension_lifecycle-3681d9a3c7dfa2f7.exe",
+                              "sha256":  "02BA53183DB09BD3D2C8AAE65C989A482A3255E27CBD347B64C7943E6881DE10",
+                              "mtimeUtc":  "2026-09-08T04:22:30.3608848Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_context_budget",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_context_budget-ce9dab4b56b9ed3b.exe",
+                              "sha256":  "97CFC56D6CE19388D405DB25A99E6E93F9365826D8CB31C55BA82642D1BF285C",
+                              "mtimeUtc":  "2026-09-08T04:22:30.4536792Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "cli_smoke",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\cli_smoke-a4fd29d998bf3a3d.exe",
+                              "sha256":  "597441B4496C08FB2892EC5197A395F5A5493184E8DD77C29C51148B11491E99",
+                              "mtimeUtc":  "2026-09-08T04:22:30.5751784Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "gate_http",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\gate_http-1384b8f3e29dd61c.exe",
+                              "sha256":  "FB1BC15D83592525F63F6E04F5688C9DB9287E1F9C80DF49CBAC478B2E39FF8B",
+                              "mtimeUtc":  "2026-09-08T04:22:31.7237496Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "acceptance-map",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\acceptance_map-321f003458e6b752.exe",
+                              "sha256":  "587FA424A084778F8820E937D18D7B1F65D5C6B659A1C12762A2F033018211F1",
+                              "mtimeUtc":  "2026-09-08T04:22:34.4438678Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "runtime_http",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\runtime_http-13ba53a86f14ba81.exe",
+                              "sha256":  "919EBFA0B28F0BBC96B7545720D3BC808EB15FEA7CDE0CF0C1C474AE8B5482B9",
+                              "mtimeUtc":  "2026-09-08T04:22:33.6560810Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_promotion_policy",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_promotion_policy-7a818e5df18c2318.exe",
+                              "sha256":  "2FEE352B5A6F755BAA36A4E63953DA9A1A8E834900055D33D30A66F00FB3E967",
+                              "mtimeUtc":  "2026-09-08T04:22:37.1221451Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_journey",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_journey-19afcf4c10a2a74d.exe",
+                              "sha256":  "DA8CD5B65EA2E05539B108FD2EE08AEE0D499A7421AD570650E98909432F468D",
+                              "mtimeUtc":  "2026-09-08T04:22:37.5057679Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/tools/acceptance-map#0.1.0",
+                              "target":  "grounded",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\grounded-7c2a0af6de776b03.exe",
+                              "sha256":  "6F0E635461FA18DDDB0A3FA512DFFAB779CA133C6663C145055DD869027C7DD5",
+                              "mtimeUtc":  "2026-09-08T04:22:39.0337755Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_benchmark",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_benchmark-1671c0fc334cb0a7.exe",
+                              "sha256":  "9B67E612B7F4556316B2C5F7F53D1DA57A4512FC025152682440646560788F2B",
+                              "mtimeUtc":  "2026-09-08T04:22:38.4610716Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "jpd_capsule_authority",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\jpd_capsule_authority-d896902fab488445.exe",
+                              "sha256":  "3D7E4301BB908745A0533A56ACB2437F86AE640C903B61A647DC890281E555F2",
+                              "mtimeUtc":  "2026-09-08T04:22:38.6593122Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "amend_budget",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\amend_budget-c1471a912b86adcc.exe",
+                              "sha256":  "01E6AA1FD4291BCCBFA11A48F11FFC0D805D513E4E22EB090ECE7408CF4EEFD6",
+                              "mtimeUtc":  "2026-09-08T04:22:39.0337755Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "schema_cli",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\schema_cli-bbf201145a9f30bb.exe",
+                              "sha256":  "9FB04B0BA1CCBED2E7F0B9887BFB8F9BAA87E72F871515392BFEB25162900612",
+                              "mtimeUtc":  "2026-09-08T04:22:38.6804432Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "api_http",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\api_http-05df56fb754c8f60.exe",
+                              "sha256":  "44226CD0C41A96B357AC2CA6982E7D0F8B46F844424AEA45CEFCE86C6B377E83",
+                              "mtimeUtc":  "2026-09-08T04:22:38.6804432Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "development_sabotage",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\development_sabotage-120d83213d9f9791.exe",
+                              "sha256":  "F24FE5E88A5E655CEBBD6D322F641BC216BC626666D85D9FDF91262F580484DD",
+                              "mtimeUtc":  "2026-09-08T04:22:39.0881104Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "local_atomicity",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\local_atomicity-e89d0a3f6e53c87d.exe",
+                              "sha256":  "8BAEBBD28393B8E03E6E836556AE1415B0BF6611C62C212B0D34E1B408E65DCD",
+                              "mtimeUtc":  "2026-09-08T04:22:39.1473800Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "append_only",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\append_only-d3b04e4de346911f.exe",
+                              "sha256":  "02E9866492DF2C4EF159C97518C297C3D2DD7BBAE90918376189243A674FF4A6",
+                              "mtimeUtc":  "2026-09-08T04:22:40.4578427Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "wake_http",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\wake_http-ef84d05489a5e2da.exe",
+                              "sha256":  "9A5B6B488287540326C19DFCED791B18F3F464FF52305966BBC80E8FA8409A2F",
+                              "mtimeUtc":  "2026-09-08T04:22:40.1542725Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "graphhelm_postgres_event_store",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_postgres_event_store-770e541e474cc054.exe",
+                              "sha256":  "EF644E5322BE6B6C45D08C1946D04ADFBF41C9B0312E9286D70D093DDBBE7D8A",
+                              "mtimeUtc":  "2026-09-08T04:22:39.0704949Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "concurrency",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\concurrency-c85147712552c1af.exe",
+                              "sha256":  "75C63CF518400FBC15133BA96FE7FFA76BDC411BDC396AAD33FA62CA6996EFC2",
+                              "mtimeUtc":  "2026-09-08T04:22:43.5382720Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "isolation",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\isolation-cdb592d70fbea044.exe",
+                              "sha256":  "F6C3F35E0CAAE5091FD4A6769D5A6685E0C4C87E0D290DA5C33E407193ACA55C",
+                              "mtimeUtc":  "2026-09-08T04:22:43.2681069Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "migration",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\migration-2a7492210acdabcf.exe",
+                              "sha256":  "2323826B42A9E57641CE59EE1D627038320134734C960606CEF436979C6D086D",
+                              "mtimeUtc":  "2026-09-08T04:22:46.2502087Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "batch_validation_bound",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\batch_validation_bound-b590b333fa6ff55f.exe",
+                              "sha256":  "E71ADC11B9470E661F101B6637D80418599233EF1E54773D4CEFA08180321793",
+                              "mtimeUtc":  "2026-09-08T04:22:46.5990293Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "source_invariants",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\source_invariants-664e14f765c25973.exe",
+                              "sha256":  "4BE734370E85AF67C8EE09C280FECDAA161B13FA0EF2A9760B9DA8B765E453FF",
+                              "mtimeUtc":  "2026-09-08T04:22:46.8863539Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "held_file_contention",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\held_file_contention-edbb7653b3d891cb.exe",
+                              "sha256":  "197F29ED9664165B3E11CE0D905579E27F45162CA05087AAF68765E24E1E33A2",
+                              "mtimeUtc":  "2026-09-08T04:22:47.7656533Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/execution#graphhelm-execution@0.1.0",
+                              "target":  "transition_properties",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\transition_properties-629d673df7741e98.exe",
+                              "sha256":  "0A5BEC51B7592DA1C15B170DD4F4AE4B12A64A181485711F3C1DBC261A722E4D",
+                              "mtimeUtc":  "2026-09-08T04:22:47.9017394Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/governor#graphhelm-governor@0.1.0",
+                              "target":  "graphhelm_governor",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_governor-c62b833bbf5e7def.exe",
+                              "sha256":  "5396C5A52FDDB9499BF7405CCD1B27B1D24AAE9AFC9C8FB7B93E0986A39A9FBD",
+                              "mtimeUtc":  "2026-09-08T04:22:49.8208468Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\repository_conformance-0c3020abfa5d2a90.exe",
+                              "sha256":  "D0CAF5395F24FFDB5151950DDC9E3DA1F972FEB99061B451FD0D6DADDAD2D5BB",
+                              "mtimeUtc":  "2026-09-08T04:22:48.4264602Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "projection_rebuild",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\projection_rebuild-f084cdc5cf2ff2ec.exe",
+                              "sha256":  "B75186C584DF5ACF065FB8E434CFABBA3996C38984F7DFCD7A1466D54CC5F43A",
+                              "mtimeUtc":  "2026-09-08T04:23:06.0808003Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/sealed-key-provider#graphhelm-sealed-key-provider@0.1.0",
+                              "target":  "graphhelm_sealed_key_provider",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_sealed_key_provider-de71c3c2c569e26b.exe",
+                              "sha256":  "54B4DA6762F4C5D121BD2E1D0D74390E9F3CF32E9B4A87E672882C6597BFEDB2",
+                              "mtimeUtc":  "2026-09-08T04:23:06.0933239Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "repository_conformance",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\repository_conformance-a200d4f89cbb9858.exe",
+                              "sha256":  "A2BD4D96536EF5B813059A75CFDBA7BA911E54B0464A264C56227579ECCBABD7",
+                              "mtimeUtc":  "2026-09-08T04:23:06.6244132Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "retention",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\retention-1cbaa4229c9bf304.exe",
+                              "sha256":  "60889EA73DA721B4221A78C430E37F439EC1AA5D6F00784CB8CB41AE34603F6C",
+                              "mtimeUtc":  "2026-09-08T04:23:06.2491801Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/adapters/postgres-event-store#graphhelm-postgres-event-store@0.1.0",
+                              "target":  "backup_restore",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\backup_restore-d6f24369dc915821.exe",
+                              "sha256":  "953A65C3ABFE23D109BB7A8448208E1919672FC3A4D7340B85A80EC12CB3E9ED",
+                              "mtimeUtc":  "2026-09-08T04:23:06.6244132Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/core/events#graphhelm-events@0.1.0",
+                              "target":  "graphhelm_events",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm_events-9d7fb2d0f22fe025.exe",
+                              "sha256":  "2A47BEAA287102999F74784D5DEBA3833293A42B4980DB8ED622C67DD58A6B60",
+                              "mtimeUtc":  "2026-09-08T04:23:09.2503987Z",
+                              "freshBuild":  true
+                          },
+                          {
+                              "package":  "path+file:///D:/orch-runner-benches-ssd/pr990/apps/cli#graphhelm-cli@0.1.0",
+                              "target":  "graphhelm",
+                              "executable":  "E:\\orch-runner-targets\\pr990\\debug\\deps\\graphhelm-4b7ea5bf84762efa.exe",
+                              "sha256":  "F68EF4768F9C1EE147AB4ABFD68FE073AF8C0E39AFBE40C53D81F2F2CDB9A03D",
+                              "mtimeUtc":  "2026-09-08T04:23:09.2433628Z",
+                              "freshBuild":  true
+                          }
+                      ],
+    "staleArtifactCount":  0,
+    "postgresExecution":  {
+
+                          },
+    "staleArtifacts":  [
+
+                       ],
+    "slotLockAtStart":  {
+                            "schemaVersion":  2,
+                            "status":  "present",
+                            "path":  "E:/graphhelm-slot/SLOT.lock",
+                            "content":  "HELD by gate | 2026-09-08T04:19:21Z | gate cwd=D:\\orch-runner-benches-ssd\\pr990 head=ab8c0c5a34ed0c15c1bfb0e64788dfccb2e56f97 | STATUS: gate run\nClaimed through create-or-fail: the kernel refused every other claimant.\nholder: pid=12820 start=2026-09-08T04:19:19.7224644Z\n",
+                            "holderVerdict":  "live",
+                            "observedAtUtc":  "2026-09-08T04:19:21.2248913Z"
+                        },
+    "slotLockAtEnd":  {
+                          "schemaVersion":  2,
+                          "status":  "absent",
+                          "path":  "E:/graphhelm-slot/SLOT.lock",
+                          "observedAtUtc":  "2026-09-08T04:32:51.0856626Z"
+                      },
+    "slotLockStartEndIdentical":  false,
+    "scope":  {
+                  "full":  false,
+                  "reason":  "SCOPED: 1 crate(s) selected",
+                  "crates":  [
+                                 "graphhelm-cli"
+                             ],
+                  "matrix":  false,
+                  "matrixReason":  "skipped: nothing in the selection reaches adapters/postgres-event-store/"
+              },
+    "instrumentSuspect":  false,
+    "overallPassed":  false
+}

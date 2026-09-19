@@ -15,14 +15,66 @@ const COMMAND: &str = "execution.status";
 /// `execution status`: replay only, no appends. The output is the operator's triage view — the
 /// same `render` every mutating command replies with, including the untriaged-interruption list,
 /// plus `headSequence` (Milestone 05a Task 2): the raw stream's last sequence, or 0 for an empty
-/// stream. The Public Runtime API's `GET /v1/executions/{id}` calls this exact function (see
-/// `commands::serve::routes::status`), so the CLI and the API report byte-identical `data` for the
-/// same stream — "one store, one truth" — and the API's `If-Match` workflow (a later task) reads
-/// `headSequence` as the version to race against.
+/// stream. The Public Runtime API's `GET /v1/executions/{id}` answers from the SAME BODY through
+/// [`budgeted`], not through this function (see `commands::serve::routes::status`) — and the
+/// `execution status` CLI command reaches this same [`budgeted`] entry point too, through
+/// [`run`] below, NOT through this bare [`execute`]. So the CLI and the API report structurally
+/// identical `data` (as `serde_json::Value`, not raw serialized bytes — key order and whitespace
+/// are not part of the guarantee) for the same stream — "one store, one truth" — via the SAME
+/// budgeted read on both sides — MODULO TWO AXES, and both are wall-clock, not stream content.
+/// LIVENESS: this replays into `render` through `execute_within`, which feeds
+/// `node_silence_seconds(&history, Utc::now())` into `attention`. Two reads of a shared,
+/// still-running stream taken on opposite sides of a node's declared silence threshold can
+/// legitimately return different `attention`/`attentionReasons` from identical stream content.
+/// BUDGET EXPIRATION: [`budgeted`] mints its deadline via `ReadBudget::starting_now` at the
+/// instant EACH call is made, not one shared clock — for a repository-open WALK crossing
+/// `READ_BUDGET_CHECK_INTERVAL` (256 events, see below for what is counted), two
+/// independently-started five-second windows can cross that checkpoint at different real elapsed
+/// times, so one sequential CLI/API read can exceed its budget while the other still returns
+/// data. See `apps/cli/tests/api_http.rs`'s CLI/API parity guard for the full precondition
+/// analysis on both axes and why its own fixture is exempt from both (short stream, states outside
+/// `has_judgeable_silence`).
+/// That fixture compares independently produced histories, not a shared stream: its signal IDs,
+/// idempotency keys and actors differ, and timestamp values are normalised before comparison.
+/// Its assertion covers the resulting rendered values, not equality of those history inputs.
+/// This bare [`execute`] function stays in use elsewhere, where a
+/// read must never observe a budget at all (a mutation's own reply after it already committed,
+/// and the immediate-pause poll loop — see [`budgeted`]'s doc comment) — it is not what the CLI's
+/// `status` command or the API's status route calls, so it is not a source of divergence between
+/// them. `ReadBudget::check_progress` consults its clock
+/// only when a walk crosses a `READ_BUDGET_CHECK_INTERVAL` (256) event boundary — and on this
+/// path there are TWO walks, and they count different things. `check_progress` has two production
+/// call sites. (1) `replay_within` (`core/events/src/projection.rs`), reached from
+/// `execute_within` below: the fold over the SELECTED history, stepping `index → index+1`, so it
+/// crosses at the 256th event of that history. (2) `verify_lines` (`core/events/src/local.rs`),
+/// on the repository-open path before `resolve_stream` narrows to any execution (`open_within` →
+/// `open_inner` → `load_state` → `verify_lines`): what it walks is chosen by prefix-verification
+/// state the caller of `status` cannot see — with a verified prefix, only the suffix past
+/// `verified_offset`; without one, the whole journal — stepped by whole batches. So a five-event
+/// execution in a repository whose cold open walks 305 events IS refused when the budget lapses
+/// (measured on #990) even though its own fold never reaches 256, and a warm open of a
+/// 10 000-event journal with twelve new events consults the deadline only if the selected history
+/// itself crosses 256. Inside the walks, below every crossing, the deadline is ADVISORY — nothing
+/// looks. But the read is NOT done when the walks are: `execute_within` calls
+/// `ReadBudget::check_now` (`core/events/src/budget.rs`), which reads the clock on EVERY call with
+/// no interval guard, after `render_read` and again after `render_snapshot`. So a read whose
+/// render and derivation outlast `STATUS_READ_BUDGET_MILLIS` is refused with `walked` equal to the
+/// history's length, whatever that length is — an eight-event stream was refused this way on a
+/// loaded host (#993's gate, #990). Only the time spent INSIDE a sub-interval walk goes unreported;
+/// a slow render is caught at the end, and the refusal's wording ("this stream is longer than the
+/// read can fold") then names the wrong cause, because it is the fold's sentence borrowed by the
+/// post-render check.
+/// The API's `If-Match` workflow (a later task) reads `headSequence` as the version to race
+/// against.
+///
+/// THIS SENTENCE SAID "calls this exact function" UNTIL #169, and had been stale since #750 split
+/// [`budgeted`] out. A reader who believed it concluded the two surfaces could not diverge, which
+/// is how a decidable question stayed open for eighteen days: the case for deleting the parity
+/// test as decoration rested on this comment rather than on the call site.
 ///
 /// Widened from private to `pub(crate)`: the one cross-module visibility widening this task needs
-/// for status, so the server can call the exact same code path the CLI does rather than a second
-/// implementation of "replay, then render."
+/// for status, so the server can reach the same "replay, then render" body the CLI does rather
+/// than a second implementation of it.
 pub(crate) fn execute(
     events: &Path,
     execution: Option<&str>,

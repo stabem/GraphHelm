@@ -2613,6 +2613,305 @@ fn start_over_http_drives_the_graph_and_a_second_start_is_refused() {
     );
 }
 
+/// #90, the HTTP spelling of `execution start --held`: `{"held": true}` publishes the graph and
+/// records `execution_started` WITHOUT entering the drive loop, so no node is dispatched.
+///
+/// The property is asserted where dispatch leaves a trace: dispatch APPENDS, so "no node was
+/// dispatched" is exactly "the stream holds no `node_` event". The zero carries a control from the
+/// same read (`execution_started` present), or a wrong stream would pass by reading nothing.
+#[test]
+fn a_start_request_with_held_true_publishes_without_dispatching_any_node() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-held";
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let fixtures = all_success_fixtures(directory.path());
+
+    let (_guard, base, token) = serve(&events);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "held-start-1"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "held": true,
+        }),
+    );
+    assert_eq!(
+        status, 200,
+        "ARRANGEMENT: the held start must succeed: {reply}"
+    );
+    assert_eq!(reply["command"], "execution.start");
+
+    let kinds: Vec<String> = all_events(&base, &token, execution)
+        .iter()
+        .map(|event| {
+            event["kind"]["type"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| *kind == "execution_started")
+            .count(),
+        1,
+        "CONTROL: the publish half must be in this stream: {kinds:?}"
+    );
+    let dispatched: Vec<&String> = kinds
+        .iter()
+        .filter(|kind| kind.starts_with("node_"))
+        .collect();
+    assert!(
+        dispatched.is_empty(),
+        "a start with {{\"held\": true}} must dispatch no node, but the stream holds {dispatched:?} (all kinds: {kinds:?})"
+    );
+    assert!(
+        kinds.iter().any(|kind| kind == "execution_paused"),
+        "the hold must be recorded as a pause so `resume` is the way out: {kinds:?}"
+    );
+}
+
+/// The `kind.type` of every event in `execution`'s stream, in order.
+fn event_kinds(base: &str, token: &str, execution: &str) -> Vec<String> {
+    all_events(base, token, execution)
+        .iter()
+        .map(|event| {
+            event["kind"]["type"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// #90 review (BLOCKING by /root at ce5826e9): the held cell above runs on
+/// `manual-override-deploy.yaml`, whose `deploy` node makes `drive_is_viable_for` false, so it
+/// only ever proved the SYNCHRONOUS fallback is skipped. This journey runs on the customs graph
+/// (two `agent` nodes, every type Cognitive), which a fixture-only server drives on the
+/// async-capable path - the control start below proves that on the same server, by the
+/// `executor: "fixture"` that only the async arm declares.
+///
+/// Held start: `execution_started`, `execution_paused`, no `node_` event, and no executor
+/// declared (the async arm would have declared `fixture`). Then `resume` over HTTP drives it: the
+/// stream gains node events for BOTH nodes and ends `completed`.
+#[test]
+fn a_held_start_on_an_async_capable_graph_dispatches_nothing_until_resume_drives_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = customs_graph();
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({ "implementation": "success", "release_notes": "success" }),
+    );
+    let (_guard, base, token) = serve(&events);
+    let headers = |key: &'static str| {
+        [
+            ("Idempotency-Key", key),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ]
+    };
+    let body = |held: bool| {
+        serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "held": held,
+        })
+    };
+
+    // CONTROL, same server, same graph, same fixtures: an unheld start takes the async arm,
+    // which declares `executor: "fixture"` and dispatches nodes. Without this the held cell
+    // below could pass on a graph that never reaches the async arm at all - the gap the review
+    // named.
+    let (status, control) = post_json(
+        &format!("{base}/v1/executions/exec-http-held-async-control/start"),
+        &token,
+        &headers("held-async-control"),
+        &body(false),
+    );
+    assert_eq!(status, 200, "ARRANGEMENT: the control start: {control}");
+    assert_eq!(
+        control["data"]["executor"], "fixture",
+        "CONTROL: this graph must take the async-capable drive on this server: {control}"
+    );
+    assert!(
+        event_kinds(&base, &token, "exec-http-held-async-control")
+            .iter()
+            .any(|kind| kind.starts_with("node_")),
+        "CONTROL: the async drive must dispatch on this graph"
+    );
+
+    let execution = "exec-http-held-async";
+    let (status, held) = post_json(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &headers("held-async-start"),
+        &body(true),
+    );
+    assert_eq!(status, 200, "ARRANGEMENT: the held start: {held}");
+    assert!(
+        held["data"]["executor"].is_null(),
+        "a held start must not enter the async drive, which declares an executor: {held}"
+    );
+    let kinds = event_kinds(&base, &token, execution);
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| *kind == "execution_started")
+            .count(),
+        1,
+        "CONTROL: the publish half must be in this stream: {kinds:?}"
+    );
+    let dispatched: Vec<&String> = kinds.iter().filter(|k| k.starts_with("node_")).collect();
+    assert!(
+        dispatched.is_empty(),
+        "a held start on an async-capable graph must dispatch no node, but the stream holds \
+         {dispatched:?} (all kinds: {kinds:?})"
+    );
+    assert!(
+        kinds.iter().any(|kind| kind == "execution_paused"),
+        "the hold must be a pause so `resume` is the way out: {kinds:?}"
+    );
+
+    let (status, resumed) = post_json(
+        &format!("{base}/v1/executions/{execution}/resume"),
+        &token,
+        &headers("held-async-resume"),
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "fixtures": fixtures.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(
+        status, 200,
+        "the resume of a held start must succeed: {resumed}"
+    );
+    let after: Vec<Value> = all_events(&base, &token, execution);
+    for node in ["implementation", "release_notes"] {
+        assert!(
+            after.iter().any(|event| {
+                event["kind"]["type"]
+                    .as_str()
+                    .is_some_and(|kind| kind.starts_with("node_"))
+                    && event.to_string().contains(&format!("\"{node}\""))
+            }),
+            "resume must drive `{node}`: {resumed}"
+        );
+    }
+    assert_eq!(
+        resumed["data"]["status"], "completed",
+        "resume must drive the held execution to completion: {resumed}"
+    );
+}
+
+/// #90 review: `held` is refused unless it is a JSON boolean - 400, `GHCLI001_ARGUMENT_INVALID`
+/// at `/held` - and a refused start appends NOTHING: the execution does not exist afterwards.
+#[test]
+fn a_start_request_with_a_non_boolean_held_is_refused_and_appends_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = customs_graph();
+    let (_guard, base, token) = serve(&events);
+    for (index, held) in [serde_json::json!("yes"), serde_json::json!(1)]
+        .into_iter()
+        .enumerate()
+    {
+        let execution = format!("exec-http-held-malformed-{index}");
+        let key = format!("held-malformed-{index}");
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/start"),
+            &token,
+            &[
+                ("Idempotency-Key", key.as_str()),
+                ("X-GraphHelm-Actor", "owner-local"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({
+                "file": graph.to_str().unwrap(),
+                "mode": "supervised",
+                "held": held,
+            }),
+        );
+        assert_eq!(status, 400, "held={held} must be refused: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID",
+            "held={held}: {reply}"
+        );
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/held",
+            "held={held}: {reply}"
+        );
+        let status_url = format!("{base}/v1/executions/{execution}");
+        assert_eq!(
+            get_status(&status_url, Some(&token)),
+            404,
+            "a refused held={held} start must append nothing: {}",
+            get_json(&status_url, Some(&token))
+        );
+    }
+}
+
+/// #90 review, held retry: a retry of a held start under the SAME Idempotency-Key is the
+/// recorded reply (200, stream unchanged); a second held start under a NEW key is refused 409
+/// `GHCLI005_EXECUTION_STATE` - an execution is started once, held or not - and appends nothing.
+#[test]
+fn a_held_start_retried_is_idempotent_and_a_second_held_start_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let graph = customs_graph();
+    let execution = "exec-http-held-retry";
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(),
+        "mode": "supervised",
+        "held": true,
+    });
+    let headers = |key: &'static str| {
+        [
+            ("Idempotency-Key", key),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ]
+    };
+    let (status, first) = post_json(&url, &token, &headers("held-retry-1"), &body);
+    assert_eq!(status, 200, "ARRANGEMENT: {first}");
+    let head = head_sequence(&base, &token, execution);
+
+    let (retry_status, retry) = post_json(&url, &token, &headers("held-retry-1"), &body);
+    assert_eq!(retry_status, 200, "a same-key retry is success: {retry}");
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        head,
+        "a same-key retry of a held start must append nothing"
+    );
+
+    let (second_status, second) = post_json(&url, &token, &headers("held-retry-2"), &body);
+    assert_eq!(second_status, 409, "{second}");
+    assert_eq!(second["diagnostics"][0]["code"], "GHCLI005_EXECUTION_STATE");
+    assert_eq!(
+        head_sequence(&base, &token, execution),
+        head,
+        "a refused second held start must append nothing"
+    );
+    assert!(
+        !event_kinds(&base, &token, execution)
+            .iter()
+            .any(|kind| kind.starts_with("node_")),
+        "no held start, first or retried, may dispatch"
+    );
+}
+
 /// Milestone 05a follow-up Minor 1: the idempotency pre-flight must run *before*
 /// `load_and_publish` for `start`/`resume`, so a recognized retry never re-reads/re-lints the
 /// graph file. Proven observably: delete the graph file between the original `start` and a

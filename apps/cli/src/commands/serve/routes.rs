@@ -955,8 +955,8 @@ fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<Graph
 }
 
 /// `POST /v1/executions/{id}/start`: body `{"file": "<path>", "fixtures": "<path, omitted for
-/// none>", "mode": "autopilot|supervised|manual"}`, mirroring the CLI's `--file`/`--fixtures`/
-/// `--mode`. The operator-supplied `file`/`fixtures` paths are used exactly as the CLI would use
+/// none>", "mode": "autopilot|supervised|manual", "held": <bool, omitted for false>}`, mirroring
+/// the CLI's `--file`/`--fixtures`/`--mode`/`--held`. The operator-supplied `file`/`fixtures` paths are used exactly as the CLI would use
 /// them (D-040's premise: the server is local by construction) — the same trust seam `signal`'s
 /// `evidenceOut` and `approve`'s `node` already rely on.
 ///
@@ -1012,6 +1012,13 @@ pub(super) async fn start(
         );
     };
     let mode = mode.to_owned();
+    // #90: the HTTP spelling of `execution start --held`. Absent means false (every existing
+    // caller drives, unchanged); anything but a boolean is refused rather than read as truthy.
+    let held = match payload.get("held") {
+        None => false,
+        Some(serde_json::Value::Bool(held)) => *held,
+        Some(_) => return bad_request(START_COMMAND, "\"held\" must be a boolean", "/held"),
+    };
     // Cloned ahead of the closure below — `state` is cheap to clone (every field is
     // `Arc`-backed) and `execution_id` is a plain owned `String` — so `async move` can take
     // ownership of its own copies while the outer call still borrows the originals directly.
@@ -1031,6 +1038,19 @@ pub(super) async fn start(
             Box::pin(async move {
                 let version =
                     load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
+                // #90: a held start is the publish half and NO drive half, whichever drive this
+                // graph would otherwise get - the same `execute_held` the CLI's `--held` calls.
+                if held {
+                    return Ok(execution::start::execute_held(
+                        &version,
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        &mode,
+                        Some(drive_execution_id.as_str()),
+                        actor,
+                        key,
+                    )?);
+                }
                 // Reported deviation from the literal STEP 4 wording (see `drive_is_viable_for`'s
                 // own doc comment): the async drive is used whenever it CAN run this graph — a
                 // real executor is configured, or every node type classifies as Cognitive/Tool —
@@ -1058,8 +1078,7 @@ pub(super) async fn start(
                             // reads, so the form and the warning never disagree.
                             executor: Some(ExecutorWiring::from_state(&drive_state).declared()),
                         },
-                        // The HTTP start always drives; `--held` is the CLI spelling and its own
-                        // route is the follow-up this PR names. #90.
+                        // #90: `held` returned above, so this start drives.
                         false,
                     )?;
                     drive(&drive_state, &drive_execution_id, prepared, setup).await

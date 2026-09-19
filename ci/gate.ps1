@@ -66,6 +66,24 @@
     Skips the ignored PostgreSQL matrix. Use only when a change cannot touch persistence, and say so
     when reporting the result - a gate run without it is not a full gate.
 
+.PARAMETER MergeTargetRef
+    Optional local baseline ref, or expected base name when LandingSnapshotPath is supplied.
+
+.PARAMETER LandingSnapshotPath
+    Optional JSON captured by an external orchestrator: head, sha, ref, pullRequest. Validated
+    locally without credentials. Trusted main's merge proof independently checks PR-base evidence.
+    Example: {"head":"<source SHA>","sha":"<base SHA>","ref":"main","pullRequest":993}.
+    Fetch the objects externally, then run ./ci/gate.ps1 -LandingSnapshotPath <file>. The unchanged
+    ./ci/gate.ps1 command still runs the complete offline test suite using local baseline provenance.
+    Rollout: existing receipts keep their historical test-coverage meaning. Once this producer and
+    target-aware verifier land on trusted main, merging requires a receipt with supplied target
+    evidence; legacy/local-only receipts do not acquire that evidence retroactively. Gate again with
+    an externally captured snapshot when target proof is required. This is not an atomic merge guard.
+
+.PARAMETER NonPullRequest
+    Explicit local mode (also the default without LandingSnapshotPath). Full test coverage remains
+    available offline; local provenance alone is not PR-base proof after trusted-main activation.
+
 .PARAMETER PostgresBin
     Passed through to ci/postgres.ps1 as GRAPHHELM_PG_BIN. Required unless PostgreSQL is discoverable
     on this machine.
@@ -83,6 +101,11 @@ param(
     # otherwise, because a scoped run that narrows on a bad selection runs fewer stages and reports
     # the same green.
     [string] $ScopeSelection,
+    # Optional local baseline ref, or expected supplied snapshot base name; defaults to origin/main.
+    [string] $MergeTargetRef,
+    [string] $LandingSnapshotPath,
+    # Explicit local mode; also the default when no LandingSnapshotPath is supplied.
+    [switch] $NonPullRequest,
     # #883: permits a detached-HEAD run to proceed past the startup refusal below, to measure
     # without publishing. Off by default -- the refusal exists because a detached run's manifest
     # can never be committed, and that must stay the loud default, not something a flag quietly
@@ -3098,6 +3121,111 @@ function Get-RecordedStatus {
     return $Status
 }
 
+function Invoke-LandingCommand {
+    # The deadline bounds admission and polling, not OS Start/Kill/Dispose calls. A timed-out
+    # command refuses the gate; it is not a promise that all native descendants have exited.
+    param([string]$Program, [string[]]$Arguments, [string]$Root, [int]$TimeoutMilliseconds = 30000)
+    if ($TimeoutMilliseconds -le 0) { throw 'Landing metadata command admission expired.' }
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $Program
+    $info.WorkingDirectory = $Root
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    # Windows CRT quoting also works for ProcessStartInfo on supported Unix .NET hosts.
+    $info.Arguments = (@($Arguments | ForEach-Object {
+        '"' + (($_ -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+    }) -join ' ')
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $info
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $started = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) { throw 'Landing metadata command did not start.' }
+        $outBuffer = New-Object char[] 4096
+        $errBuffer = New-Object char[] 4096
+        $outRead = $process.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
+        $errRead = $process.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
+        $output = New-Object Text.StringBuilder
+        $total = 0L
+        while ($null -ne $outRead -or $null -ne $errRead -or -not $process.HasExited) {
+            if ($clock.ElapsedMilliseconds -ge $TimeoutMilliseconds) { throw 'Landing metadata command timed out.' }
+            if ($null -ne $outRead -and $outRead.IsCompleted) {
+                $count = $outRead.GetAwaiter().GetResult()
+                $total += $count
+                if ($total -gt 4194304) { throw 'Landing metadata output exceeded 4 MiB characters.' }
+                if ($count -eq 0) { $outRead = $null } else {
+                    [void]$output.Append($outBuffer, 0, $count)
+                    $outRead = $process.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
+                }
+            }
+            if ($null -ne $errRead -and $errRead.IsCompleted) {
+                $count = $errRead.GetAwaiter().GetResult()
+                $total += $count
+                if ($total -gt 4194304) { throw 'Landing metadata output exceeded 4 MiB characters.' }
+                if ($count -eq 0) { $errRead = $null } else {
+                    $errRead = $process.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
+                }
+            }
+            Start-Sleep -Milliseconds 10
+        }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output.ToString() }
+    } finally {
+        try { if ($started -and -not $process.HasExited) { $process.Kill() } }
+        finally { $process.Dispose() }
+    }
+}
+
+function Get-LandingSnapshot {
+    param([string]$Root, [string]$Head, [string]$ExpectedRef, [switch]$LocalOnly, [string]$SnapshotPath)
+    if ($Head -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot capture landing snapshot without candidate SHA.' }
+    $mode = 'non-pr'
+    $name = if ($ExpectedRef) { $ExpectedRef } else { 'origin/main' }
+    $landing = $null
+    $number = $null
+    if ($SnapshotPath) {
+        if ($LocalOnly) { throw 'NonPullRequest cannot be combined with LandingSnapshotPath.' }
+        $file = Get-Item -LiteralPath $SnapshotPath -ErrorAction Stop
+        if ($file.Length -gt 8192) { throw 'Landing snapshot exceeds 8192 bytes.' }
+        $data = New-Object byte[] 8193
+        $stream = [IO.File]::OpenRead($file.FullName)
+        try {
+            $used = 0
+            while ($used -lt $data.Length) {
+                $read = $stream.Read($data, $used, $data.Length - $used)
+                if ($read -eq 0) { break }
+                $used += $read
+            }
+        } finally { $stream.Dispose() }
+        if ($used -gt 8192) { throw 'Landing snapshot exceeds 8192 bytes.' }
+        $record = ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($data, 0, $used)) -ErrorAction Stop
+        if ($record -isnot [pscustomobject] -or $record.head -isnot [string] -or
+            -not [string]::Equals($record.head, $Head, [StringComparison]::Ordinal) -or
+            $record.sha -isnot [string] -or $record.ref -isnot [string] -or
+            ($record.pullRequest -isnot [int] -and $record.pullRequest -isnot [long]) -or $record.pullRequest -le 0) {
+            throw 'Landing snapshot must identify the captured source head, base and PR.'
+        }
+        $name = $record.ref
+        $landing = $record.sha
+        $number = $record.pullRequest
+        if ($landing -cnotmatch '^[0-9a-f]{40}$' -or [string]::IsNullOrWhiteSpace($name)) { throw 'PR base metadata is incomplete.' }
+        if ($ExpectedRef -and -not [string]::Equals($ExpectedRef, $name, [StringComparison]::Ordinal)) { throw 'MergeTargetRef does not match the actual PR base.' }
+        $mode = 'supplied-pr'
+    }
+    $reference = if ($landing) { $landing } else { $name }
+    $verified = Invoke-LandingCommand -Program git -Root $Root -Arguments @('rev-parse', '--verify', '--end-of-options', "$reference^{commit}")
+    $sha = $verified.Output.Trim()
+    if ($verified.ExitCode -ne 0 -or $sha -cnotmatch '^[0-9a-f]{40}$' -or ($landing -and -not [string]::Equals($sha, $landing, [StringComparison]::Ordinal))) { throw 'Cannot verify captured landing commit.' }
+    $base = Invoke-LandingCommand -Program git -Root $Root -Arguments @('merge-base', $Head, $sha)
+    $baseSha = $base.Output.Trim()
+    if ($base.ExitCode -ne 0 -or $baseSha -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot compute captured merge base.' }
+    # This describes one gate-time snapshot. Neither this record nor a later read binds a merge.
+    return [pscustomobject]@{ mode = $mode; ref = $name; head = $Head; sha = $sha; mergeBase = $baseSha; pullRequest = $number }
+}
+
 function Get-HeadProvenance {
     <#
         Where this run's head can be found later, if anywhere.
@@ -3986,7 +4114,8 @@ function Get-RunCoverage {
     #>
     param(
         [Parameter(Mandatory)] [bool] $SkipPostgres,
-        [string] $BuildMode = 'unknown'
+        [string] $BuildMode = 'unknown',
+            [bool] $NonPullRequest = $false
     )
 
     # IN THE BODY, NOT AS A [ValidateSet] ATTRIBUTE. `ci/classify-run.tests.ps1` derives the run
@@ -4004,6 +4133,7 @@ function Get-RunCoverage {
 
     return [ordered]@{
         postgres = if ($SkipPostgres) { 'skipped' } else { 'included' }
+        landing  = if ($NonPullRequest) { 'non-pr' } else { 'pr-base' }
         complete = (-not $SkipPostgres)
         build    = $BuildMode
     }
@@ -4125,6 +4255,28 @@ function Write-RunManifest {
     # keeps other SESSIONS out; another shell in the same session is what remains. Declared as a
     # limit rather than papered over: this detects movement that LASTS, not movement that returns.
     $provenance = Get-HeadProvenance -HeadSha $headSha -BranchRef $script:gatedBranchAtStart
+    # #993 (Codex, "preserve supplied PR provenance in offline manifests"): when the gate host has
+    # no `gh` and no server, Get-HeadProvenance answers null for both load-bearing top-level fields
+    # and `Test-ManifestVouches` refuses the manifest before the supplied landing snapshot -- which
+    # DOES identify the PR and this head, captured online -- can say anything. So a supplied-pr
+    # snapshot fills exactly those two fields, only when the lookup found NOTHING (a measured value,
+    # including a measured `pushed: false`, is never overwritten), with reasons naming the source.
+    # merge-proof re-verifies the snapshot against the LIVE PR at press time
+    # (Test-ManifestLandingSnapshot: number, base ref, base sha, merge-base) -- BUT ONLY ONCE
+    # origin/main's gate.ps1 defines Get-LandingSnapshot (#733: the proof runs from main's copy, and
+    # merge-proof:624 arms the landing proof from main's AST). Until that lands, including for this
+    # PR's own receipts, the two fields are the snapshot's CLAIM and the reason strings say so.
+    if ($null -ne $mergeTargetSnapshot -and [string]::Equals([string]$mergeTargetSnapshot.mode, 'supplied-pr', [System.StringComparison]::Ordinal) -and
+        [string]::Equals([string]$mergeTargetSnapshot.head, [string]$headSha, [System.StringComparison]::Ordinal)) {
+        if ($null -eq $provenance.pullRequest -and $mergeTargetSnapshot.pullRequest -is [int]) {
+            $provenance.pullRequest = [int]$mergeTargetSnapshot.pullRequest
+            $provenance.pullRequestReason = "gh could not look ($($provenance.pullRequestReason)); taken from the supplied landing snapshot -- a CLAIM of the snapshot, checked by merge-proof against the live PR only once origin/main's gate defines Get-LandingSnapshot (the landing proof is inert before that)"
+        }
+        if ($null -eq $provenance.pushed) {
+            $provenance.pushed = $true
+            $provenance.pushedReason = "no server to ask ($($provenance.pushedReason)); the supplied landing snapshot named this commit as the PR's head when captured online -- a CLAIM of the snapshot, checked by merge-proof against the live PR only once origin/main's gate defines Get-LandingSnapshot (the landing proof is inert before that)"
+        }
+    }
     # BOTH READS, because a tree is the commit it names only when nothing is modified AND nothing
     # untracked is sitting in it (#725). `git diff HEAD` answers the first; only `git status
     # --porcelain --untracked-files=all` answers the second, and the publisher below has been using
@@ -4148,7 +4300,7 @@ function Write-RunManifest {
             if ([string]::Equals($recordedMode, $candidate, [System.StringComparison]::Ordinal)) { $buildMode = $candidate }
         }
     }
-    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped) -BuildMode $buildMode
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]$script:matrixSkipped) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath))
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
     # #904: THE POPULATION THAT DECIDES, beside the one that used to. `$staleArtifacts` is every
@@ -4260,6 +4412,7 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         # `headSha` alone cannot do it -- a squash merge discards the commit this run measured, so
         # the number is the only key that survives into main's history, and `pushed` says whether
         # this sha ever left the machine at all.
+        mergeTarget        = $mergeTargetSnapshot
         pullRequest        = $provenance.pullRequest
         # The REASONS travel too. Without them a null `pullRequest` is indistinguishable from a
         # field nobody filled in, which is the exact distinction this design is built on: a value
@@ -4632,7 +4785,6 @@ $gatedHeadOutput = @(& git rev-parse HEAD 2>$null)
 $gatedHeadExit = $LASTEXITCODE
 $gatedHeadAtStart = $gatedHeadOutput | Select-Object -First 1
 $gatedHeadAtStart = if ($gatedHeadExit -eq 0 -and $gatedHeadAtStart) { ([string]$gatedHeadAtStart).Trim() } else { $null }
-
 # #883: A DETACHED HEAD IS REFUSED HERE, not discovered 40 minutes later at publish. The
 # capture above already answers the question -- $gatedBranchAtStart is $null exactly when
 # there is no branch -- so this reads nothing new; it only acts on what was just read. Before
@@ -4656,6 +4808,20 @@ if (-not $gatedBranchAtStart) {
     Write-Host ('[gate] HEAD is detached and -AllowDetachedHead was passed: this run will measure but the run ' +
         'manifest will not be committed (#883).') -ForegroundColor Yellow
 }
+
+# #993: THE LANDING SNAPSHOT IS TAKEN AFTER THE DETACHED-HEAD PRECONDITION, not before it. The
+# first placement sat between the head capture and that refusal, so the gate's precondition slice
+# (ci/gate-detached-head.tests.ps1) reached `$MergeTargetRef` with no parameters bound and refused
+# every checkout, and a real run asked the server before it had checked it had a branch to publish
+# onto. The snapshot needs `$gatedHeadAtStart`, which the capture above already produced.
+try {
+    $mergeTargetSnapshot = Get-LandingSnapshot -Root $repositoryRoot -Head $gatedHeadAtStart -ExpectedRef $MergeTargetRef -LocalOnly:$NonPullRequest -SnapshotPath $LandingSnapshotPath
+} catch {
+    Write-Host ('[gate] REFUSED: landing snapshot unavailable: ' + $_.Exception.Message) -ForegroundColor Red
+    exit 1
+}
+$mergeTargetRefResolved = $mergeTargetSnapshot.sha
+$env:GRAPHHELM_MERGE_TARGET_REF = $mergeTargetSnapshot.sha
 
 if ($gatedBranchAtStart -and $gatedHeadAtStart) {
     $branchValueOutput = @(& git rev-parse --verify --quiet $gatedBranchAtStart 2>$null)
@@ -5106,7 +5272,7 @@ try {
         & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
             -File (Join-Path $repositoryRoot 'ci/frozen-release-guard.ps1') `
             -RepoRoot $repositoryRoot `
-            -MergeBase (& git -C $repositoryRoot merge-base HEAD origin/main) `
+            -MergeBase $mergeTargetSnapshot.mergeBase `
             -Head 'HEAD'
     } | Out-Null
 

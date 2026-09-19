@@ -11,7 +11,7 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 179
+$ExpectedAssertionCount = 201
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
@@ -1524,6 +1524,26 @@ try {
     Assert-True -Condition ($text -cmatch 'disagree on pushed') `
         -Message 'and so is a twin that says the head never reached the server'
 
+    # #993: `mergeTarget` became authorisation evidence (Test-ManifestLandingSnapshot reads it) and
+    # the twin loop did not compare it, so a committed copy saying `supplied-pr` beside a ledger
+    # saying `non-pr` read as consistent. Same fixture shape, one nested field flipped.
+    $repo2 = New-Repo -Name 'twintarget' -ProvenanceInGate
+    $gated2 = (& git -C $repo2 rev-parse HEAD).Trim()
+    $twinName2 = $gated2.Substring(0, 12) + '-2026-09-02T11-00-00.json'
+    $target = @{ mode = 'supplied-pr'; ref = 'main'; head = $gated2; sha = $gated2; mergeBase = $gated2; pullRequest = 42 }
+    Add-Manifest -Repo $repo2 -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated2; mergeTarget = $target } -Name $twinName2 | Out-Null
+    $tip2 = (& git -C $repo2 rev-parse HEAD).Trim()
+    $ledger2 = Join-Path $fixtureRoot 'twin-ledger-target'
+    [System.IO.Directory]::CreateDirectory($ledger2) | Out-Null
+    $ledgerTarget = @{ mode = 'non-pr'; ref = 'main'; head = $gated2; sha = $gated2; mergeBase = $gated2; pullRequest = 42 }
+    [System.IO.File]::WriteAllText((Join-Path $ledger2 $twinName2),
+        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated2; dirtyDiffHash = $null; mergeTarget = $ledgerTarget } | ConvertTo-Json -Depth 5), $utf8NoBom)
+    $out2 = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
+            -PullRequest 42 -Head $tip2 -RepositoryRoot $repo2 -LedgerDirectory $ledger2 2>&1 | ForEach-Object { [string]$_ })
+    $text2 = ($out2 -join "`n")
+    Assert-True -Condition ($text2 -cmatch 'disagree on mergeTarget\.mode') `
+        -Message 'a twin whose landing snapshot says non-pr beside a committed copy saying supplied-pr is a disagreement on mergeTarget.mode, not a silence'
+
     Write-Host ''
     Write-Host '-- a corrupt ledger entry for THIS head is named --' -ForegroundColor Cyan
     # The durable copy is the only independent witness this tool has. Swallowing a corrupt one is
@@ -2310,6 +2330,109 @@ try {
     Assert-True -Condition ($deriv -cmatch 'Select-Object -Unique') `
         -Message 'and de-duplicates, so a variable pointing at a default is not scanned twice'
 
+    # Target evidence is a separate predicate: candidate head carry remains the original rule.
+    & {
+        $text=[IO.File]::ReadAllText($subjectPath); $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
+        foreach($name in @('Invoke-Git','Test-SameText','Test-NameIsPresent','Read-ManifestField','Get-LandingSchemasTree','Test-ManifestLandingSnapshot','Test-ManifestVouches')) {
+            $node=$ast.Find({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq $name},$false)
+            Invoke-Expression $node.Extent.Text
+        }
+        $RepositoryRoot=New-Repo -Name 'landing-proof' -ProvenanceInGate
+        [void][IO.Directory]::CreateDirectory((Join-Path $RepositoryRoot 'schemas'))
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'schemas/x.json'),'{}',$utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'schemas/catalog.json'),'{"schemas":{"x":{"path":"schemas/x.json"}}}',$utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'ci/gate.ps1'),"function Get-HeadProvenance { }`nfunction Get-LandingSnapshot { }`n",$utf8NoBom)
+        & git -C $RepositoryRoot add -A
+        & git -C $RepositoryRoot commit --quiet -m 'landing producer and schema'
+        $candidate=(& git -C $RepositoryRoot rev-parse HEAD).Trim()
+        & git -C $RepositoryRoot push --quiet origin HEAD:refs/heads/main
+        & git -C $RepositoryRoot fetch --quiet origin
+        $snapshot=@{mode='supplied-pr';head=$candidate;sha=$candidate;ref='main';mergeBase=$candidate;pullRequest=42}
+        $good=@{status='GREEN';pushed=$true;headSha=$candidate;pullRequest=42;dirtyDiffHash=$null;mergeTarget=$snapshot}|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $script:landingProofRequired=$true
+        $script:actualLandingPr=[pscustomobject]@{number=42;headRefOid=$candidate;baseRefName='main';baseRefOid=$candidate}
+        $why=@(Test-ManifestVouches -Manifest $good -Head $candidate -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -eq 0) 'exact supplied source and landing evidence vouches'
+        foreach($case in @('missing','local','wrong source','wrong PR','wrong base name','wrong merge base')) {
+            $bad=$good|ConvertTo-Json -Depth 8|ConvertFrom-Json
+            switch($case){
+                'missing' {$bad.PSObject.Properties.Remove('mergeTarget')}
+                'local' {$bad.mergeTarget.mode='non-pr'}
+                'wrong source' {$bad.mergeTarget.head='a'*40}
+                'wrong PR' {$bad.mergeTarget.pullRequest=43}
+                'wrong base name' {$bad.mergeTarget.ref='other'}
+                'wrong merge base' {$bad.mergeTarget.mergeBase='a'*40}
+            }
+            $why=@(Test-ManifestVouches -Manifest $bad -Head $candidate -TipIsPure $false -PullRequest 42)
+            Assert-True ($why.Count -gt 0) "target proof refuses $case without weakening head proof"
+        }
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'unrelated.txt'),'documentation',$utf8NoBom)
+        & git -C $RepositoryRoot add -A
+        & git -C $RepositoryRoot commit --quiet -m 'unrelated landing advance'
+        $advanced=(& git -C $RepositoryRoot rev-parse HEAD).Trim()
+        $script:actualLandingPr.baseRefOid=$advanced
+        $why=@(Test-ManifestVouches -Manifest $good -Head $candidate -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -eq 0) 'unrelated fast-forward with identical confined schema closure preserves target proof'
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'schemas/x.json'),'{"type":"string"}',$utf8NoBom)
+        & git -C $RepositoryRoot add -A
+        & git -C $RepositoryRoot commit --quiet -m 'schema changed'
+        $script:actualLandingPr.baseRefOid=(& git -C $RepositoryRoot rev-parse HEAD).Trim()
+        $why=@(Test-ManifestVouches -Manifest $good -Head $candidate -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -gt 0) 'schema blob changes refuse target compatibility'
+        & git -C $RepositoryRoot checkout --quiet --detach $advanced
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'outside.json'),'{}',$utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $RepositoryRoot 'schemas/catalog.json'),'{"schemas":{"x":{"path":"outside.json"}}}',$utf8NoBom)
+        & git -C $RepositoryRoot add -A
+        & git -C $RepositoryRoot commit --quiet -m 'unsupported catalog path'
+        $outside=(& git -C $RepositoryRoot rev-parse HEAD).Trim()
+        Assert-True ($null -eq (Get-LandingSchemasTree -Root $RepositoryRoot -Commit $outside)) 'out-of-tree catalog paths cannot use whole-schemas equality'
+        $outsideSource=$good|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $outsideSource.headSha=$outside; $outsideSource.mergeTarget.head=$outside
+        $script:actualLandingPr.baseRefOid=$advanced
+        $why=@(Test-ManifestVouches -Manifest $outsideSource -Head $outside -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -gt 0) 'candidate catalog paths also belong to the captured closure and can refuse advancement'
+        $script:actualLandingPr.baseRefOid=(& git -C $RepositoryRoot rev-parse "$candidate^").Trim()
+        $why=@(Test-ManifestVouches -Manifest $good -Head $candidate -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -gt 0) 'a rewind cannot carry the captured landing evidence'
+        $script:landingProofRequired=$false
+        $legacy=$good|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $legacy.PSObject.Properties.Remove('mergeTarget')
+        $why=@(Test-ManifestVouches -Manifest $legacy -Head $candidate -TipIsPure $false -PullRequest 42)
+        Assert-True ($why.Count -eq 0) 'before trusted-main activation legacy receipts retain their prior gate meaning'
+        $script:landingProofRequired=$true
+        $script:actualLandingPr.baseRefOid=$candidate
+        $why=@(Test-ManifestVouches -Manifest $good -Head ('c'*40) -Parent ('b'*40) -TipIsPure $true -PullRequest 42)
+        Assert-True ($why.Count -gt 0) 'target proof never replaces the canonical manifest head predicate'
+
+        # Run the complete instrument with controlled gh output, including explicit -Head. Main's
+        # producer enables the check; supplied metadata cannot bypass a live PR head mismatch.
+        $gitBinary=@(Get-Command git -CommandType Application)[0].Source.Replace("'","''")
+        $wrapper=Join-Path $fixtureRoot 'landing-proof-wrapper.ps1'
+        foreach($case in @('valid','moved head','missing','local','wrong PR','wrong base','wrong source')) {
+            & git -C $RepositoryRoot checkout --quiet --detach $candidate
+            [IO.Directory]::CreateDirectory((Join-Path $RepositoryRoot '.factory/gate-runs')) | Out-Null
+            $record=$good|ConvertTo-Json -Depth 8|ConvertFrom-Json
+            switch($case){
+                'missing' {$record.PSObject.Properties.Remove('mergeTarget')}
+                'local' {$record.mergeTarget.mode='non-pr'}
+                'wrong PR' {$record.mergeTarget.pullRequest=43}
+                'wrong base' {$record.mergeTarget.ref='other'}
+                'wrong source' {$record.mergeTarget.head='a'*40}
+            }
+            $body=@{status=$record.status;pushed=$record.pushed;headSha=$record.headSha;pullRequest=$record.pullRequest;dirtyDiffHash=$null}
+            if($record.PSObject.Properties['mergeTarget']){$body.mergeTarget=$record.mergeTarget}
+            Add-Manifest -Repo $RepositoryRoot -Body $body | Out-Null
+            $receipt=(& git -C $RepositoryRoot rev-parse HEAD).Trim()
+            $meta=@{number=42;headRefOid=$(if($case -eq 'moved head'){'a'*40}else{$receipt});baseRefName='main';baseRefOid=$candidate}|ConvertTo-Json -Compress
+            $code="function git { if (`$args -contains 'get-url') { `$global:LASTEXITCODE=0; 'https://github.com/stabem/fixture.git'; return }; & '$gitBinary' @args; `$global:LASTEXITCODE=`$LASTEXITCODE }`nfunction gh { `$global:LASTEXITCODE=0; '"+$meta.Replace("'","''")+"' }`n& '"+$subjectPath.Replace("'","''")+"' -PullRequest 42 -Head '$receipt' -RepositoryRoot '"+$RepositoryRoot.Replace("'","''")+"'`nexit `$LASTEXITCODE"
+            [IO.File]::WriteAllText($wrapper,$code,$utf8NoBom)
+            $result=@(& powershell.exe -NoProfile -File $wrapper 2>&1)
+            $exit=$LASTEXITCODE
+            Assert-True (($case -ne 'valid' -and $exit -ne 0) -or ($case -eq 'valid' -and $exit -eq 0)) "complete main-activated proof checks $case (exit=$exit; $($result -join ' '))"
+        }
+        $script:landingProofRequired=$false
+    }
 } finally {
     $cleanupTimer = [Diagnostics.Stopwatch]::StartNew()
     try {

@@ -331,3 +331,54 @@ fn diagnostic_source(value: &str) -> &str {
 fn escape_pointer(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
+
+/// #507: what two catalog evolutions from one frozen base collided on.
+///
+/// `schemas/catalog.json` carries one `releaseVersion`. Two branches that each bump it from the
+/// same merge base can both be green in isolation and still land as one catalog carrying a
+/// version nobody reviewed as a whole. The gate asks this on one captured candidate/landing/base
+/// snapshot; a later publication must capture a new snapshot before making its own decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum CatalogVersionCollision {
+    /// Both sides moved `releaseVersion` from `base` to the same number: two catalogs, one name.
+    DuplicateVersion { base: Version, version: Version },
+    /// Both sides moved `releaseVersion` from `base` to different numbers: whichever textual merge
+    /// wins, the landed version was reviewed against neither sibling.
+    DivergentVersions {
+        base: Version,
+        ours: Version,
+        theirs: Version,
+    },
+}
+
+/// Compares the branch's catalog version (`ours`) and the version now on the target (`theirs`)
+/// against the version both grew from (`base`).
+///
+/// This pure predicate describes one observed snapshot only. Callers that make a merge decision
+/// must capture the candidate, landing tip, and merge base first, then load all three catalogs from
+/// those exact object IDs; this function cannot promise freshness for a future merge.
+///
+/// A side that left the version at `base` did not evolve the catalog and cannot collide; that is
+/// the ordinary rebase case. Only two independent moves from one base are refused.
+pub fn catalog_version_collision(
+    base: &Version,
+    ours: &Version,
+    theirs: &Version,
+) -> Option<CatalogVersionCollision> {
+    if ours == base || theirs == base {
+        return None;
+    }
+    Some(if ours == theirs {
+        CatalogVersionCollision::DuplicateVersion {
+            base: base.clone(),
+            version: ours.clone(),
+        }
+    } else {
+        CatalogVersionCollision::DivergentVersions {
+            base: base.clone(),
+            ours: ours.clone(),
+            theirs: theirs.clone(),
+        }
+    })
+}

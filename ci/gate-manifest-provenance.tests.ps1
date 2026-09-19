@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 183
+$ExpectedAssertionCount = 197
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -2024,6 +2024,63 @@ try {
             -Message 'and the hash is a function of the tree, not of when it was taken'
     }
 
+# Exact gate functions, real local Git and native children; no GitHub call is permitted.
+& {
+    $tokens=$null; $errors=$null
+    $tree=[Management.Automation.Language.Parser]::ParseInput($gateText,[ref]$tokens,[ref]$errors)
+    foreach($name in @('Invoke-LandingCommand','Get-LandingSnapshot','Get-RunCoverage')) {
+        $node=$tree.Find({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq $name},$false)
+        Invoke-Expression $node.Extent.Text
+    }
+    $native=${function:Invoke-LandingCommand}
+    function Invoke-LandingCommand {
+        param($Program,$Arguments,$Root,$TimeoutMilliseconds=30000)
+        if($Program -eq 'gh'){throw 'Network discovery is forbidden in the offline gate'}
+        & $native -Program $Program -Arguments $Arguments -Root $Root -TimeoutMilliseconds $TimeoutMilliseconds
+    }
+    $repo=Join-Path $fixtureRoot 'offline landing'
+    [void][IO.Directory]::CreateDirectory($repo)
+    & git -C $repo init --quiet -b main
+    & git -C $repo -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgSign=false -c core.hooksPath=NUL commit --quiet --allow-empty -m baseline
+    $head=(& git -C $repo rev-parse HEAD).Trim()
+    & git -C $repo update-ref refs/remotes/origin/main $head
+    $local=Get-LandingSnapshot -Root $repo -Head $head
+    Assert-True ($local.sha -ceq $head -and $local.mode -ceq 'non-pr') 'default landing capture is fully local and needs no gh'
+    $coverage=Get-RunCoverage -SkipPostgres $false -NonPullRequest $true
+    Assert-True $coverage.complete 'offline local evidence preserves full test completeness'
+    $path=Join-Path $fixtureRoot 'landing.json'
+    $record=@{head=$head;sha=$head;ref='stacked';pullRequest=993}
+    [IO.File]::WriteAllText($path,($record|ConvertTo-Json),$utf8NoBom)
+    $supplied=Get-LandingSnapshot -Root $repo -Head $head -SnapshotPath $path
+    Assert-True ($supplied.mode -ceq 'supplied-pr' -and $supplied.sha -ceq $head -and $supplied.pullRequest -eq 993) 'supplied snapshot validates locally and remains distinct from verified PR proof'
+    foreach($case in @('wrong head','bad sha','missing PR','string PR','oversize','bad JSON','base mismatch','local conflict')) {
+        $record=@{head=$head;sha=$head;ref='stacked';pullRequest=993}
+        $expected=''; $localFlag=$false
+        switch($case){
+            'wrong head' {$record.head='b'*40}
+            'bad sha' {$record.sha='bad'}
+            'missing PR' {$record.Remove('pullRequest')}
+            'string PR' {$record.pullRequest='993'}
+            'base mismatch' {$expected='main'}
+            'local conflict' {$localFlag=$true}
+        }
+        $json=$record|ConvertTo-Json
+        if($case -eq 'oversize'){$json=' '*8193}
+        if($case -eq 'bad JSON'){$json='invalid'}
+        [IO.File]::WriteAllText($path,$json,$utf8NoBom)
+        $refused=$false
+        try{$null=Get-LandingSnapshot -Root $repo -Head $head -SnapshotPath $path -ExpectedRef $expected -LocalOnly:$localFlag}catch{$refused=$true}
+        Assert-True $refused "offline snapshot refuses $case"
+    }
+    $result=& $native -Program powershell.exe -Root $repo -Arguments @('-NoProfile','-Command','exit 7')
+    Assert-True ($result.ExitCode -eq 7) 'native exit status survives completion'
+    $refused=$false
+    try{$null=& $native -Program powershell.exe -Root $repo -Arguments @('-NoProfile','-Command','Start-Sleep 10') -TimeoutMilliseconds 50}catch{$refused=$true}
+    Assert-True $refused 'real sleeping child reaches the polling timeout refusal'
+    $refused=$false
+    try{$null=& $native -Program powershell.exe -Root $repo -Arguments @('-NoProfile','-Command','exit 0') -TimeoutMilliseconds 0}catch{$refused=$true}
+    Assert-True $refused 'zero budget refuses native admission'
+}
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

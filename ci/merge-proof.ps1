@@ -336,6 +336,65 @@ function Read-ManifestField {
     return [ordered]@{ ok = $true; value = $v; why = $null }
 }
 
+function Get-LandingSchemasTree {
+    param([string]$Root, [string]$Commit)
+    # The whole schemas tree is sufficient only when every catalog entry is confined to it.
+    # Unsupported external paths refuse compatibility rather than narrowing the observed closure.
+    $size = Invoke-Git -GitArgs @('-C', $Root, 'cat-file', '-s', "${Commit}:schemas/catalog.json")
+    $bytes = 0L
+    if ($size.exitCode -ne 0 -or -not [long]::TryParse(($size.lines -join '').Trim(), [ref]$bytes) -or $bytes -gt 1MB) { return $null }
+    $blob = Invoke-Git -GitArgs @('-C', $Root, 'show', "${Commit}:schemas/catalog.json")
+    if ($blob.exitCode -ne 0) { return $null }
+    try { $catalog = ConvertFrom-Json -InputObject ($blob.lines -join "`n") -ErrorAction Stop } catch { return $null }
+    if ($catalog.schemas -isnot [pscustomobject]) { return $null }
+    $entries = @($catalog.schemas.PSObject.Properties)
+    if ($entries.Count -gt 256) { return $null }
+    foreach ($entry in $entries) {
+        $path = $entry.Value.path
+        if ($path -isnot [string] -or -not $path.StartsWith('schemas/', [StringComparison]::Ordinal) -or
+            $path.Length -gt 1024 -or $path.Contains('\') -or $path.Contains(':') -or
+            @($path.Split('/') | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -gt 0) { return $null }
+        $exists = Invoke-Git -GitArgs @('-C', $Root, 'cat-file', '-e', "${Commit}:$path")
+        if ($exists.exitCode -ne 0) { return $null }
+    }
+    $tree = Invoke-Git -GitArgs @('-C', $Root, 'rev-parse', '--verify', "${Commit}:schemas")
+    if ($tree.exitCode -ne 0) { return $null }
+    return ($tree.lines -join '').Trim()
+}
+
+function Test-ManifestLandingSnapshot {
+    param([object]$Manifest, [object]$ActualPr, [string]$Root, [int]$Number)
+    $property = $Manifest.PSObject.Properties['mergeTarget']
+    if ($null -eq $property -or $property.Value -isnot [pscustomobject]) { return 'PR-base snapshot is absent or malformed' }
+    $snapshot = $property.Value
+    $fields = @{}
+    foreach ($name in @('mode','head','sha','ref','mergeBase')) {
+        $field = Read-ManifestField -Manifest $snapshot -Name $name -Kind string
+        if (-not $field.ok) { return "PR-base snapshot $name is absent or malformed" }
+        $fields[$name] = $field.value
+    }
+    if (-not (Test-SameText $fields.mode 'supplied-pr')) { return 'local-only test evidence is not PR-base proof' }
+    $pr = Read-ManifestField -Manifest $snapshot -Name pullRequest -Kind int
+    $source = Read-ManifestField -Manifest $Manifest -Name headSha -Kind string
+    if (-not $pr.ok -or $pr.value -ne $Number -or -not $source.ok -or -not (Test-SameText $source.value $fields.head)) { return 'PR-base snapshot does not identify this manifest source head and PR' }
+    if ($fields.head -cnotmatch '^[0-9a-f]{40}$' -or $fields.sha -cnotmatch '^[0-9a-f]{40}$' -or $fields.mergeBase -cnotmatch '^[0-9a-f]{40}$') { return 'PR-base snapshot contains an invalid commit ID' }
+    if ($null -eq $ActualPr -or $ActualPr.number -ne $Number -or -not (Test-SameText $fields.ref $ActualPr.baseRefName)) { return 'PR-base snapshot does not match the live PR identity/base name' }
+    $current = $ActualPr.baseRefOid
+    if ($current -isnot [string] -or $current -cnotmatch '^[0-9a-f]{40}$') { return 'live PR base SHA is unavailable' }
+    $base = Invoke-Git -GitArgs @('-C', $Root, 'merge-base', $fields.head, $fields.sha)
+    if ($base.exitCode -ne 0 -or -not (Test-SameText (($base.lines -join '').Trim()) $fields.mergeBase)) { return 'PR-base snapshot merge-base does not re-derive' }
+    if (-not (Test-SameText $fields.sha $current)) {
+        $ancestry = Invoke-Git -GitArgs @('-C', $Root, 'merge-base', '--is-ancestor', $fields.sha, $current)
+        if ($ancestry.exitCode -ne 0) { return 'live landing base is not a fast-forward of the captured base' }
+        $before = Get-LandingSchemasTree -Root $Root -Commit $fields.sha
+        $after = Get-LandingSchemasTree -Root $Root -Commit $current
+        $candidateInputs = Get-LandingSchemasTree -Root $Root -Commit $fields.head
+        $forkInputs = Get-LandingSchemasTree -Root $Root -Commit $fields.mergeBase
+        if (-not $before -or -not $after -or -not $candidateInputs -or -not $forkInputs -or
+            -not (Test-SameText $before $after)) { return 'landing schema input closure changed or is unsupported; fresh target evidence is required' }
+    }
+}
+
 function Test-ManifestVouches {
     <#
         THE PREDICATE, ONCE. A ledger record is a manifest: the gate writes the durable copy and the
@@ -407,6 +466,9 @@ function Test-ManifestVouches {
             $why += ("headSha is the head's PARENT, which is only acceptable when the tip adds nothing " +
                 "but the record -- and this tip also touches: " + (($outside | Select-Object -First 5) -join ', '))
         }
+    }
+    if ($script:landingProofRequired) {
+        $why += @(Test-ManifestLandingSnapshot -Manifest $Manifest -ActualPr $script:actualLandingPr -Root $RepositoryRoot -Number $PullRequest)
     }
     return $why
 }
@@ -535,6 +597,7 @@ if ($gateAtMain.exitCode -ne 0) {
 # function" are different states and only one of them is about #674(a) landing.
 $gateAtMainText = ($gateAtMain.lines -join "`n")
 $blocking = $false
+$script:landingProofRequired = $false
 $modeEvidence = 'the AST of ci/gate.ps1 at origin/main'
 # THE PARSER HAS TWO OUTPUT CHANNELS AND I DISCARDED BOTH. `ParseInput` does not THROW on a syntax
 # error -- it returns a PARTIAL ast and reports the errors through its second [ref]. So the `catch`
@@ -558,6 +621,11 @@ try {
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
                     (Test-SameText $node.Name 'Get-HeadProvenance')
             }, $true)).Count -gt 0
+    $script:landingProofRequired = @($gateAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            (Test-SameText $node.Name 'Get-LandingSnapshot')
+    }, $true)).Count -gt 0
 } catch {
     $blocking = ($gateAtMainText -cmatch '(?m)^\s*function\s+Get-HeadProvenance\b')
     $modeEvidence = 'a text match on ci/gate.ps1 at origin/main, which could not be parsed'
@@ -637,6 +705,36 @@ if (-not $Head) {
     $Head = ([string]$lookup).Trim()
 }
 $script:facts.headSha = $Head
+
+# Bootstrap is controlled by trusted main, not a candidate flag. Before its producer lands,
+# legacy receipts remain gate evidence without PR-base proof. After activation, local/missing
+# snapshots cannot authorize that proof. This adds a target check without changing the canonical
+# manifest head/parent/pure-tip predicate above (.factory/MERGE-CHECKLIST.md).
+$script:actualLandingPr = $null
+if ($script:landingProofRequired) {
+    $slug = Get-RemoteSlug -RepositoryRoot $RepositoryRoot
+    if (-not $slug) { Write-Broke -Reason 'cannot derive repository identity for live PR-base verification' }
+    $metadata = @(& gh pr view $PullRequest --repo $slug --json number,headRefOid,baseRefName,baseRefOid 2>$null)
+    $metadataExit = $LASTEXITCODE
+    if ($metadataExit -ne 0) { Write-Broke -Reason 'live PR-base metadata could not be read' }
+    try { $script:actualLandingPr = ConvertFrom-Json -InputObject ($metadata -join "`n") -ErrorAction Stop }
+    catch { Write-Broke -Reason 'live PR-base metadata is malformed' }
+    $live = $script:actualLandingPr
+    if ($live -isnot [pscustomobject] -or ($live.number -isnot [int] -and $live.number -isnot [long]) -or $live.number -ne $PullRequest -or
+        $live.headRefOid -isnot [string] -or -not (Test-SameText $live.headRefOid $Head) -or
+        $live.baseRefName -isnot [string] -or $live.baseRefOid -isnot [string] -or
+        $live.baseRefOid -cnotmatch '^[0-9a-f]{40}$') {
+        Write-Broke -Reason 'live PR metadata does not identify the requested head and base'
+    }
+    $present = Invoke-Git -GitArgs @('-C', $RepositoryRoot, 'cat-file', '-e', "$($live.baseRefOid)^{commit}")
+    if ($present.exitCode -ne 0) {
+        $fetchBase = Invoke-Git -GitArgs @('-C', $RepositoryRoot, 'fetch', '--quiet', '--no-tags', 'origin', $live.baseRefOid)
+        if ($fetchBase.exitCode -ne 0) { Write-Broke -Reason 'live PR base object is unavailable' }
+    }
+    $script:facts.scanNotes += 'PR-base proof is active; target advancement is allowed only for an ancestor with identical confined schema inputs. This is not atomic merge authorization.'
+} else {
+    $script:facts.scanNotes += 'PR-base proof has not activated on trusted main; legacy receipts establish gate evidence only. Target-aware evidence is required after rollout.'
+}
 
 # The parent is read BEFORE the store is searched, because the near-miss report below needs it.
 $parentEarlyProbe = Invoke-Git -GitArgs @('-C', $RepositoryRoot, 'rev-parse', "${Head}^")
@@ -995,6 +1093,26 @@ if ($presentStores.Count -eq 0) {
                 } elseif ($left.ok -and -not (Test-SameText $left.value $right.value)) {
                     $script:facts.disagreement += ("the slot ledger and the committed $($committed.name) are the two copies of ONE run " +
                         "and they disagree on ${fieldName}: ledger says $($left.value), the committed copy says $($right.value)")
+                }
+            }
+            # #993 (Codex, "compare landing evidence between manifest twins"): `mergeTarget` became
+            # authorisation evidence (Test-ManifestLandingSnapshot reads it) but the loop above did
+            # not compare it, so a committed copy saying `supplied-pr` beside a ledger saying
+            # `non-pr` read as consistent. Its subfields are compared by the same rule as the scalar
+            # fields: a twin absent on one side, or any subfield differing, is a disagreement.
+            $ledgerTarget = if (Test-NameIsPresent -Object $body -Name 'mergeTarget') { $body.PSObject.Properties['mergeTarget'].Value } else { $null }
+            $committedTarget = if (Test-NameIsPresent -Object $committed.body -Name 'mergeTarget') { $committed.body.PSObject.Properties['mergeTarget'].Value } else { $null }
+            if (($null -eq $ledgerTarget) -ne ($null -eq $committedTarget)) {
+                $script:facts.disagreement += ("the slot ledger and the committed $($committed.name) are the two copies of ONE run " +
+                    "and only one of them carries a mergeTarget snapshot")
+            } elseif ($null -ne $ledgerTarget) {
+                foreach ($sub in @('mode', 'ref', 'head', 'sha', 'mergeBase', 'pullRequest')) {
+                    $l = if (Test-NameIsPresent -Object $ledgerTarget -Name $sub) { [string]$ledgerTarget.$sub } else { '<absent>' }
+                    $r = if (Test-NameIsPresent -Object $committedTarget -Name $sub) { [string]$committedTarget.$sub } else { '<absent>' }
+                    if (-not (Test-SameText $l $r)) {
+                        $script:facts.disagreement += ("the slot ledger and the committed $($committed.name) are the two copies of ONE run " +
+                            "and they disagree on mergeTarget.${sub}: ledger says $l, the committed copy says $r")
+                    }
                 }
             }
         }

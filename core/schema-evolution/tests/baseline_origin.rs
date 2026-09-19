@@ -11,7 +11,7 @@
 //!
 //! 1. `the_gate_baseline_records_the_one_additive_current_schema` pins the exact intended delta.
 //! 2. `no_silent_breaking_change_against_what_landed_on_main` supplies a baseline the branch
-//!    CANNOT edit -- the merge base with `origin/main`, read out of git -- so that a comparison
+//!    CANNOT edit -- the merge base with the gate's captured landing SHA, read out of git -- so that a comparison
 //!    which can actually refuse exists somewhere in the gate.
 //!
 //! The byte-identity sibling remains strict for every schema already published in `1.0.0`; the new
@@ -23,11 +23,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use graphhelm_schema_evolution::{
-    CatalogResources, CompatibilityChange, CompatibilityClass, CompatibilityReport, SchemaCatalog,
-    SemverImpact, compare_catalogs,
+    CatalogResources, CatalogVersionCollision, CompatibilityChange, CompatibilityClass,
+    CompatibilityReport, SchemaCatalog, SemverImpact, catalog_version_collision, compare_catalogs,
 };
 use semver::Version;
 use serde_json::{Value, json};
+use tempfile::TempDir;
 
 const LIVE_CATALOG: &str = "schemas/catalog.json";
 const RELEASE_CATALOG: &str = "schemas/releases/1.0.0/catalog.json";
@@ -77,22 +78,120 @@ fn merge_base(root: &Path, reference: &str) -> Option<String> {
     (!base.is_empty()).then_some(base)
 }
 
-/// The commit this branch grew from. `origin/main` first, local `main` only as a fallback: a
-/// stale local ref is a cache, never the authority.
+/// The commit this branch grew from, against the gate's captured landing SHA. Standalone tests
+/// use `origin/main`, then local `main`; those local fallbacks do not establish the PR's base.
 ///
 /// Refuses rather than skips. A gate whose baseline could not be resolved has not compared
 /// anything, and reporting that as a pass is the exact defect this file exists to remove -- an
 /// unanswerable question is not evidence of a compatible branch.
 fn branch_point(root: &Path) -> String {
-    merge_base(root, "origin/main")
-        .or_else(|| merge_base(root, "main"))
-        .unwrap_or_else(|| {
-            panic!(
-                "cannot ask whether this branch breaks the landed schemas: git answered neither \
-                 `merge-base HEAD origin/main` nor `merge-base HEAD main`. Refusing rather than \
-                 passing."
-            )
+    let supplied = std::env::var("GRAPHHELM_MERGE_TARGET_REF")
+        .ok()
+        .filter(|reference| !reference.trim().is_empty());
+    let reference = supplied.as_deref().unwrap_or("origin/main");
+    let base = merge_base(root, reference);
+    let base = if base.is_none() && supplied.is_none() {
+        merge_base(root, "main")
+    } else {
+        base
+    };
+    base.unwrap_or_else(|| {
+        panic!("cannot compute the schema baseline against landing ref {reference}; refusing")
+    })
+}
+
+#[derive(Debug, Clone)]
+struct ObservedCatalogSnapshot {
+    head: String,
+    landing: String,
+    base: String,
+}
+
+/// Capture H, B, and their merge base once; later catalog reads use exact object IDs.
+fn observed_catalog_snapshot(
+    root: &Path,
+    explicit_landing: Option<&str>,
+) -> ObservedCatalogSnapshot {
+    let head = String::from_utf8(
+        git(root, &["rev-parse", "--verify", "HEAD"])
+            .unwrap_or_else(|| panic!("cannot read candidate HEAD; refusing snapshot")),
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let landing_ref = explicit_landing
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("GRAPHHELM_MERGE_TARGET_REF")
+                .ok()
+                .filter(|reference| !reference.trim().is_empty())
         })
+        .unwrap_or_else(|| "origin/main".to_owned());
+    let landing = String::from_utf8(
+        git(root, &["rev-parse", "--verify", &landing_ref]).unwrap_or_else(|| {
+            panic!("cannot read explicit landing ref {landing_ref}; refusing snapshot")
+        }),
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    assert!(
+        !landing.is_empty(),
+        "explicit landing ref resolved to an empty SHA"
+    );
+    let base = String::from_utf8(git(root, &["merge-base", &head, &landing]).unwrap_or_else(
+        || panic!("cannot compute merge base for captured H={head} and B={landing}"),
+    ))
+    .unwrap()
+    .trim()
+    .to_owned();
+    assert!(
+        !base.is_empty(),
+        "merge-base returned an empty captured snapshot"
+    );
+    ObservedCatalogSnapshot {
+        head,
+        landing,
+        base,
+    }
+}
+
+fn fixture_git(root: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "fixture git command failed: git {}",
+        args.join(" ")
+    );
+}
+
+fn fixture_commit(root: &Path, name: &str, contents: &str, message: &str) {
+    fs::write(root.join(name), contents).unwrap();
+    fixture_git(root, &["add", name]);
+    fixture_git(root, &["commit", "--quiet", "-m", message]);
+}
+
+fn fixture_catalog(root: &Path, version: &str) {
+    fs::create_dir_all(root.join("schemas")).unwrap();
+    fixture_commit(
+        root,
+        "schemas/catalog.json",
+        &format!(r#"{{"formatVersion":1,"releaseVersion":"{version}","schemas":{{}}}}"#),
+        &format!("catalog {version}"),
+    );
+}
+
+fn fixture_configure(root: &Path) {
+    let hooks = root.join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    fixture_git(root, &["config", "user.email", "fixture@example.invalid"]);
+    fixture_git(root, &["config", "user.name", "fixture"]);
+    fixture_git(root, &["config", "commit.gpgSign", "false"]);
+    fixture_git(root, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
 }
 
 /// A baseline with an origin the branch cannot edit: the catalog and schema blobs as they stand
@@ -774,5 +873,245 @@ fn a_breaking_change_at_the_maximum_major_never_reads_as_declared() {
         "a break announced {landed} -> {announced} passed as declared; the landed major is \
          already u64::MAX, so no version can ever satisfy the exact-next-major rule, and \
          saturating instead of rejecting let an unmoved major through: {undeclared:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// #507: catalog-version collisions between two evolutions of one base.
+// ---------------------------------------------------------------------------------------------
+
+fn v(text: &str) -> Version {
+    Version::parse(text).unwrap()
+}
+
+/// The recorded instance: two lanes each moved `releaseVersion` 1.0.0 -> 1.1.0 from the same base,
+/// each green alone, and the second to land would have carried two catalogs under one name.
+/// A rebase that moved the base up to main's tip is the ordinary case and must stay quiet.
+#[test]
+fn two_catalog_evolutions_from_one_base_cannot_share_a_version() {
+    assert_eq!(
+        catalog_version_collision(&v("1.0.0"), &v("1.1.0"), &v("1.1.0")),
+        Some(CatalogVersionCollision::DuplicateVersion {
+            base: v("1.0.0"),
+            version: v("1.1.0"),
+        }),
+        "the recorded instance -- both sides took 1.1.0 from 1.0.0 -- must be refused"
+    );
+    assert_eq!(
+        catalog_version_collision(&v("1.0.0"), &v("1.1.0"), &v("1.2.0")),
+        Some(CatalogVersionCollision::DivergentVersions {
+            base: v("1.0.0"),
+            ours: v("1.1.0"),
+            theirs: v("1.2.0"),
+        }),
+        "two different moves from one base were reviewed against neither sibling"
+    );
+    for (base, ours, theirs, why) in [
+        (
+            "1.0.0",
+            "1.1.0",
+            "1.0.0",
+            "only this branch moved the version",
+        ),
+        (
+            "1.0.0",
+            "1.0.0",
+            "1.1.0",
+            "only main moved it; this branch left the catalog alone",
+        ),
+        ("1.0.0", "1.0.0", "1.0.0", "nobody moved it"),
+        (
+            "1.1.0",
+            "1.2.0",
+            "1.1.0",
+            "rebased onto main's 1.1.0, then moved once from there",
+        ),
+    ] {
+        assert_eq!(
+            catalog_version_collision(&v(base), &v(ours), &v(theirs)),
+            None,
+            "{why}: base {base}, ours {ours}, theirs {theirs}"
+        );
+    }
+}
+
+/// The gate-time reading: candidate, merge base, and landing tip are captured as H, base, and B,
+/// then all three catalogs are loaded from those exact object IDs. This test cannot bind a future
+/// publication to the same snapshot.
+///
+/// Green on any branch that did not touch the version, and on the FIRST branch to move it. Red on
+/// the second lane to move it from the same base -- the lane that must rebase and re-read the
+/// catalog before its version means anything.
+#[test]
+fn catalog_versions_do_not_collide_at_the_observed_landing_snapshot() {
+    let root = repository_root();
+    let snapshot = observed_catalog_snapshot(&root, None);
+    let baseline = catalog_at(&root, &snapshot.base);
+    let landing = catalog_at(&root, &snapshot.landing);
+    let ours_catalog = catalog_at(&root, &snapshot.head);
+    let base = baseline.catalog.release_version;
+    let theirs = landing.catalog.release_version;
+    let ours = ours_catalog.catalog.release_version;
+
+    assert_eq!(
+        catalog_version_collision(&base, &ours, &theirs),
+        None,
+        "this branch and the captured landing tip both moved `releaseVersion` away from {base} \
+         (H={head}, B={landing}, base={base_commit}, ours={ours}, theirs={theirs}). Rebase onto \
+         B and re-derive the catalog version against that observed snapshot before landing yours.",
+        head = snapshot.head,
+        landing = snapshot.landing,
+        base_commit = snapshot.base,
+    );
+}
+
+#[test]
+fn observed_snapshot_keeps_landing_commit_when_main_moves_after_capture() {
+    let fixture = TempDir::new().unwrap();
+    fixture_git(fixture.path(), &["init", "--quiet", "-b", "main"]);
+    fixture_configure(fixture.path());
+    fixture_catalog(fixture.path(), "1.0.0");
+    let base_commit = String::from_utf8(git(fixture.path(), &["rev-parse", "main"]).unwrap())
+        .unwrap()
+        .trim()
+        .to_owned();
+    fixture_git(fixture.path(), &["checkout", "--quiet", "-b", "candidate"]);
+    fixture_commit(
+        fixture.path(),
+        "schemas/catalog.json",
+        r#"{"formatVersion":1,"releaseVersion":"1.1.0","schemas":{}}"#,
+        "candidate catalog 1.1.0",
+    );
+    fixture_git(fixture.path(), &["checkout", "--quiet", "main"]);
+    fixture_catalog(fixture.path(), "1.1.0");
+    fixture_git(fixture.path(), &["checkout", "--quiet", "candidate"]);
+
+    let captured = observed_catalog_snapshot(fixture.path(), Some("main"));
+    fixture_git(fixture.path(), &["checkout", "--quiet", "main"]);
+    fixture_catalog(fixture.path(), "1.2.0");
+    let moved_landing = String::from_utf8(git(fixture.path(), &["rev-parse", "main"]).unwrap())
+        .unwrap()
+        .trim()
+        .to_owned();
+
+    assert_ne!(
+        captured.landing, moved_landing,
+        "fixture must move B after capture"
+    );
+    assert_eq!(captured.base, base_commit,);
+    assert_ne!(
+        captured.head, captured.landing,
+        "candidate and landing must be distinct in fixture"
+    );
+    fixture_git(fixture.path(), &["checkout", "--quiet", "candidate"]);
+    let recaptured = observed_catalog_snapshot(fixture.path(), Some("main"));
+    assert_eq!(recaptured.landing, moved_landing);
+    assert_eq!(recaptured.base, captured.base);
+    assert_eq!(
+        catalog_version_collision(
+            &catalog_at(fixture.path(), &captured.base)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &captured.head)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &captured.landing)
+                .catalog
+                .release_version,
+        ),
+        Some(CatalogVersionCollision::DuplicateVersion {
+            base: v("1.0.0"),
+            version: v("1.1.0"),
+        })
+    );
+    assert_eq!(
+        catalog_version_collision(
+            &catalog_at(fixture.path(), &recaptured.base)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &recaptured.head)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &recaptured.landing)
+                .catalog
+                .release_version,
+        ),
+        Some(CatalogVersionCollision::DivergentVersions {
+            base: v("1.0.0"),
+            ours: v("1.1.0"),
+            theirs: v("1.2.0"),
+        })
+    );
+}
+
+#[test]
+fn observed_snapshot_uses_explicit_non_main_landing_ref() {
+    let fixture = TempDir::new().unwrap();
+    fixture_git(fixture.path(), &["init", "--quiet", "-b", "main"]);
+    fixture_configure(fixture.path());
+    fixture_catalog(fixture.path(), "1.0.0");
+    fixture_git(fixture.path(), &["checkout", "--quiet", "-b", "target"]);
+    fixture_catalog(fixture.path(), "1.1.0");
+    fixture_git(fixture.path(), &["checkout", "--quiet", "main"]);
+    fixture_git(fixture.path(), &["checkout", "--quiet", "-b", "candidate"]);
+    // Distinct parent even when the two catalog commits share timestamp, message and bytes.
+    fs::write(fixture.path().join("candidate-marker"), "candidate\n").unwrap();
+    fixture_git(fixture.path(), &["add", "candidate-marker"]);
+    fixture_git(
+        fixture.path(),
+        &["commit", "--quiet", "-m", "candidate parent"],
+    );
+    fixture_catalog(fixture.path(), "1.1.0");
+
+    let stacked = observed_catalog_snapshot(fixture.path(), Some("target"));
+    assert_eq!(
+        catalog_version_collision(
+            &catalog_at(fixture.path(), &stacked.base)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &stacked.head)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &stacked.landing)
+                .catalog
+                .release_version,
+        ),
+        Some(CatalogVersionCollision::DuplicateVersion {
+            base: v("1.0.0"),
+            version: v("1.1.0"),
+        })
+    );
+
+    let default_branch = observed_catalog_snapshot(fixture.path(), Some("main"));
+    assert_eq!(
+        catalog_version_collision(
+            &catalog_at(fixture.path(), &default_branch.base)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &default_branch.head)
+                .catalog
+                .release_version,
+            &catalog_at(fixture.path(), &default_branch.landing)
+                .catalog
+                .release_version,
+        ),
+        None,
+        "main must not stand in for the explicit stacked landing ref"
+    );
+}
+#[test]
+fn observed_snapshot_refuses_without_a_landing_ref() {
+    let fixture = TempDir::new().unwrap();
+    fixture_git(fixture.path(), &["init", "--quiet"]);
+    fixture_configure(fixture.path());
+    fixture_catalog(fixture.path(), "1.0.0");
+    fixture_git(fixture.path(), &["branch", "-m", "candidate"]);
+
+    let result = std::panic::catch_unwind(|| {
+        observed_catalog_snapshot(fixture.path(), Some("missing-landing-ref"))
+    });
+    assert!(
+        result.is_err(),
+        "missing explicit landing ref must refuse the snapshot"
     );
 }

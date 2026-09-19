@@ -29,7 +29,8 @@ pub use migration::{
     plan_migration_chain, validate_migration_manifest,
 };
 pub use release::{
-    ChangelogKey, FixturePairKey, MigrationKey, ReleaseEvidence, ReleaseReport, enforce_release,
+    CatalogVersionCollision, ChangelogKey, FixturePairKey, MigrationKey, ReleaseEvidence,
+    ReleaseReport, catalog_version_collision, enforce_release,
 };
 pub use view::{CanonicalSchemaView, canonical_view};
 

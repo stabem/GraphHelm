@@ -329,6 +329,33 @@ fn classify_termination_observation(
     }
 }
 
+/// #880: what the restore terminator does on a tick where no marker-owned backend is visible.
+///
+/// The terminator used to poll on a fixed tick budget and panic at its end. A restore that finished
+/// before the first poll never shows a marker-owned backend, so the terminator kept polling a
+/// database nobody was restoring and panicked "not observed" about 30 s later, although nothing was
+/// wrong. The restore's own completion is the signal that ends the wait: once it is set and the
+/// backend is absent, the outcome is a typed `NotObserved`, which asserts nothing about a kill.
+/// The tick budget stays as a backstop only while the restore is still running.
+#[derive(Debug, PartialEq, Eq)]
+enum UnobservedTick {
+    KeepPolling,
+    NotObserved,
+}
+
+fn classify_unobserved_tick(
+    restore_finished: bool,
+    budget_exhausted: bool,
+) -> Result<UnobservedTick, &'static str> {
+    if restore_finished {
+        return Ok(UnobservedTick::NotObserved);
+    }
+    if budget_exhausted {
+        return Err("restore process was not observed after its marker");
+    }
+    Ok(UnobservedTick::KeepPolling)
+}
+
 fn classify_failed_restore_state(
     closed: bool,
     marker: Option<&str>,
@@ -401,6 +428,30 @@ fn marker_owned_backend_may_disappear_but_a_mismatched_backend_never_counts_as_s
     assert_eq!(
         classify_termination_observation(41, false, Some(false), None),
         Err("observed restore PID changed ownership before termination"),
+    );
+}
+
+#[test]
+fn the_terminator_waits_on_the_restore_marker_signal_not_a_tick_budget() {
+    // A restore that finished before any poll saw its backend is not a failure of the cell.
+    assert_eq!(
+        classify_unobserved_tick(true, false),
+        Ok(UnobservedTick::NotObserved),
+        "a finished restore must end the wait with a typed not-observed outcome",
+    );
+    assert_eq!(
+        classify_unobserved_tick(true, true),
+        Ok(UnobservedTick::NotObserved),
+        "a restore that finished after the tick budget must not reach the exhaustion arm",
+    );
+    // While the restore still runs, keep polling, and the budget still bounds a hang.
+    assert_eq!(
+        classify_unobserved_tick(false, false),
+        Ok(UnobservedTick::KeepPolling)
+    );
+    assert_eq!(
+        classify_unobserved_tick(false, true),
+        Err("restore process was not observed after its marker"),
     );
 }
 
@@ -1341,8 +1392,10 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
             )
             .await
             .unwrap();
+            let restore_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let restore_terminator = if terminate_after_marker {
                 let root_pool = root_pool.clone();
+                let restore_finished = Arc::clone(&restore_finished);
                 let corrupt_name = corrupt_name.clone();
                 Some(tokio::spawn(async move {
                     // #880: TRUE only if `pg_terminate_backend` returned true in some iteration --
@@ -1353,7 +1406,13 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                     // consequence of a kill in runs where none happened. Six occurrences across
                     // three lanes, always at that assertion and never at this task's own panic.
                     let mut killed = false;
-                    for _ in 0..3_000 {
+                    let mut ticks = 0_u32;
+                    loop {
+                        // Read BEFORE the poll: a finished flag paired with an empty poll proves the
+                        // backend is gone for good, because the restore returned before we looked.
+                        let finished =
+                            restore_finished.load(std::sync::atomic::Ordering::SeqCst);
+                        let budget_exhausted = ticks >= 3_000;
                         let restore_pid: Option<i32> = sqlx::query_scalar(
                             "SELECT a.pid FROM pg_stat_activity a JOIN pg_database d ON d.oid=a.datid \
                              WHERE d.datname=$1 AND a.application_name LIKE 'graphhelm-restore-%' \
@@ -1415,17 +1474,28 @@ fn admin_operator_binds_pool_profile_and_source_identity() {
                             .unwrap()
                             {
                                 TerminationObservation::Satisfied => return killed,
-                                TerminationObservation::Retry => {}
+                                TerminationObservation::Retry => {
+                                    assert!(
+                                        !budget_exhausted,
+                                        "marker-owned restore backend {pid} survived the tick budget"
+                                    );
+                                }
+                            }
+                        } else {
+                            match classify_unobserved_tick(finished, budget_exhausted).unwrap() {
+                                UnobservedTick::NotObserved => return killed,
+                                UnobservedTick::KeepPolling => {}
                             }
                         }
+                        ticks += 1;
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
-                    panic!("restore process was not observed after its marker");
                 }))
             } else {
                 None
             };
             let restore_result = corrupt_operator.restore_from_path(failing_archive).await;
+            restore_finished.store(true, std::sync::atomic::Ordering::SeqCst);
             let terminator_killed = match restore_terminator {
                 Some(restore_terminator) => Some(restore_terminator.await.unwrap()),
                 None => None,

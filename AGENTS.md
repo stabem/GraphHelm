@@ -243,6 +243,7 @@ only other way it could have happened. The rule now:
 
 ## Git, review, and completion
 
+- **Delivery requires merge:** An open or published pull request is not delivery. A change task is delivered only after its pull request is merged into `main` and the required post-merge verification passes. If the merge cannot happen, report the task as blocked and not delivered; do not declare completion.
 - Issue-first is mandatory. The Foundation Graph Kernel is tracked by `#1`.
 - The required implementation branch/worktree is `feat/foundation-graph-kernel`.
 - Preserve user work. Never discard unrelated changes or use destructive Git commands without explicit authorization.

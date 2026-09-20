@@ -811,10 +811,9 @@ fn read_within_deadline(
 }
 
 /// The body of `read_within_deadline`, with its ONE source of "what time is it" made a parameter
-/// (#1129). Every caller in this suite goes through `read_within_deadline`, which passes
-/// `Instant::now` -- so this seam changes no behaviour anywhere; it exists so ONE cell
-/// (`eof_arriving_after_the_deadline_is_not_silently_accepted`) can decide its property without
-/// racing the real clock.
+/// (#1129). The wrapper passes `Instant::now`, and everything in this suite that is not itself a
+/// clock cell reads through that wrapper -- so this seam changes no behaviour anywhere; it exists
+/// so a cell can decide a property of this loop's OWN bookkeeping without racing the real clock.
 ///
 /// **Why a clock seam is legitimate HERE and was rightly refused one function over.** `:5715`
 /// records that `a_read_that_starts_before_any_byte_exists_still_times_out_at_the_shrunk_budget`
@@ -828,9 +827,42 @@ fn read_within_deadline(
 /// the real clock, and the socket is left doing its real job either way: the EOF this cell reads
 /// is a genuine close of a genuine loopback connection.
 ///
-/// `&mut dyn FnMut() -> Instant` rather than a generic parameter: this is called from exactly two
-/// places, one of which wants a stateful closure, and a trait object keeps the function from being
+/// `&mut dyn FnMut() -> Instant` rather than a generic parameter: this has four call sites, two
+/// of which want a stateful closure, and a trait object keeps the function from being
 /// monomorphised across a suite that already compiles slowly.
+///
+/// **What a caller owes `now` (#1144, scoped by #1163's review).** The clock must be monotonic
+/// non-decreasing. Nothing in this loop derives the deadline from the clock, and the arithmetic
+/// is saturating, so a clock that jumps backwards or far forwards stays correct.
+///
+/// The liveness half is narrower than it first looks, and belongs to ONE shape of transfer, not
+/// to every caller: the clock must eventually return an `Instant` at or past
+/// `started + total_deadline` only while the peer KEEPS FEEDING. That is the one case with no
+/// other way out -- the top-of-loop `remaining.is_zero()` check is then the ONLY exit, and it is
+/// a pure function of `now()`, so a clock frozen below the deadline never times out; it loops for
+/// as long as the peer keeps sending (measured at head `c816230e`: a probe still running after 3s
+/// against a 50ms deadline). A transfer that STALLS owes the clock nothing, because
+/// `set_read_timeout` is armed against wall-clock time the OS enforces: the read fails on its own
+/// and the loop leaves through the error arm whatever `now()` says.
+/// `a_sub_millisecond_remaining_arms_a_real_read_instead_of_expiring_early` is deliberately that
+/// caller -- a clock frozen one nanosecond BELOW the deadline, which therefore never satisfies
+/// the liveness half at all, pointed at a peer whose next byte is 10s away -- and it finishes in
+/// milliseconds, through the socket timeout.
+///
+/// Across the four call sites: one passes `Instant::now` and cannot freeze; two script a clock
+/// that does reach the deadline; one freezes below it against a peer that is not feeding. None of
+/// them can hang, so this is a contract, not a defect.
+///
+/// What the two #1144 cells observe, and what they do not: they fix the zero/non-zero boundary of
+/// the top-of-loop predicate, and nothing beyond it. In particular they do NOT observe the
+/// `.max(Duration::from_millis(1))` floor further down -- `std` bumps a non-zero sub-resolution
+/// timeout up to the platform minimum by itself, so deleting that floor changes no outcome either
+/// cell can see. That is carried as a declared gap on #1163's PR rather than claimed here. The
+/// two predicates that decide the top-of-loop exit are pinned by
+/// `read_within_deadline_clocked_fires_the_total_deadline_when_the_clock_reads_exactly_the_deadline`
+/// (`remaining.is_zero()`: exactly zero expires, before any read is attempted) and
+/// `a_sub_millisecond_remaining_arms_a_real_read_instead_of_expiring_early` (a `remaining` of one
+/// nanosecond does not expire: a real read is armed, and the exit is that read timing out).
 fn read_within_deadline_clocked(
     stream: &mut TcpStream,
     what: &str,
@@ -6324,6 +6356,128 @@ fn eof_arriving_after_the_deadline_is_not_silently_accepted() {
     );
 }
 
+/// #1144: the top-of-loop exit is the ONLY thing that ends a read the peer is still feeding, and
+/// it is a pure function of `now()` -- `remaining.is_zero()`. This cell fixes its boundary at the
+/// smallest input that IS an expiry: a clock frozen at exactly `started + total_deadline`, so
+/// `remaining` is exactly zero on the first reading. The function must report the total-deadline
+/// error from the phase `checked before starting a read`, with zero bytes received, WITHOUT ever
+/// attempting a read -- the peer here (a drip whose first byte is 10s away) would otherwise make
+/// the cell wait, and the phase witness (`:709`) is what distinguishes the path taken.
+///
+/// A frozen clock is legitimate here and does not hang precisely BECAUSE the predicate holds: the
+/// loop exits on its first check. That is the contract sentence added to
+/// `read_within_deadline_clocked`, exercised.
+#[test]
+fn read_within_deadline_clocked_fires_the_total_deadline_when_the_clock_reads_exactly_the_deadline()
+{
+    let total_deadline = Duration::from_millis(50);
+    let per_read_guard = CLIENT_IO_HANG_GUARD;
+    let base = drip_server(Duration::from_secs(10), b"ab");
+    let mut stream = connect_to(&base);
+    stream.write_all(b"x").unwrap();
+    let started = Instant::now();
+    let deadline = started + total_deadline;
+    // Frozen, and frozen AT the deadline: `saturating_duration_since` gives exactly zero, the
+    // smallest value `is_zero()` accepts. One reading is all a correct loop needs.
+    let mut readings = 0_u32;
+    let mut clock = || {
+        readings += 1;
+        deadline
+    };
+
+    let outcome = read_within_deadline_clocked(
+        &mut stream,
+        "reading a drip whose clock has already expired",
+        started,
+        total_deadline,
+        per_read_guard,
+        &mut clock,
+    );
+    let error = match outcome {
+        Ok(raw) => panic!(
+            "expected the total deadline to fire on an exactly-expired clock, got {} bytes",
+            raw.len()
+        ),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("TOTAL request deadline"),
+        "expected the total-deadline diagnostic specifically: {message}"
+    );
+    assert!(
+        message.contains("checked before starting a read"),
+        "expected the top-of-loop check to be the phase that produced this -- any other phase means a read was attempted despite a zero `remaining`, which is the frozen-clock hang this cell exists to keep out: {message}"
+    );
+    assert!(
+        message.contains("after 0 bytes received"),
+        "expected zero bytes: the exit must happen before any read is attempted: {message}"
+    );
+    assert_eq!(
+        readings, 1,
+        "expected exactly one clock reading: a correct loop decides on its first top-of-loop check and never arms the socket"
+    );
+}
+
+/// #1144, the other side of the same boundary: a `remaining` that is NON-zero but far below the
+/// 1ms floor must NOT take the top-of-loop exit. The floor (`.max(Duration::from_millis(1))`)
+/// exists so the socket is never armed with a degenerate budget, and the price of it is that the
+/// read window WIDENS past what `remaining` allowed -- the widening `:707`'s end-of-stream
+/// re-check was added to cover. This cell pins the arming: with the clock frozen 1ns before the
+/// deadline, the loop proceeds to a real read against a peer whose first byte is 10s away, and
+/// the failure that comes back is the one produced AFTER a read was armed and timed out
+/// (`checked once a read timed out`), not the top-of-loop one, and not an `InvalidInput` from
+/// `set_read_timeout`.
+///
+/// Together with the cell above, the pair fixes the predicate exactly: zero expires, anything
+/// above zero arms a read. An edit that moved the check to `remaining < Duration::from_millis(1)`
+/// -- which the floor invites -- reddens this cell and leaves the one above green.
+#[test]
+fn a_sub_millisecond_remaining_arms_a_real_read_instead_of_expiring_early() {
+    let total_deadline = Duration::from_millis(50);
+    let per_read_guard = CLIENT_IO_HANG_GUARD;
+    let base = drip_server(Duration::from_secs(10), b"ab");
+    let mut stream = connect_to(&base);
+    stream.write_all(b"x").unwrap();
+    let started = Instant::now();
+    // 1ns of budget left: non-zero, and six orders of magnitude under the floor (1ms/1ns = 1e6 --
+    // #1163's review caught "three" here). Frozen, so the verdict does not depend on how long the
+    // real read actually took, and frozen BELOW the deadline, so this caller never satisfies the
+    // liveness half of the clock contract: it exits through the socket timeout instead.
+    let almost_deadline = started + total_deadline - Duration::from_nanos(1);
+    let mut clock = || almost_deadline;
+
+    let outcome = read_within_deadline_clocked(
+        &mut stream,
+        "reading a drip with a sliver of budget left",
+        started,
+        total_deadline,
+        per_read_guard,
+        &mut clock,
+    );
+    let error = match outcome {
+        Ok(raw) => panic!(
+            "expected the armed read to time out against a 10s drip, got {} bytes",
+            raw.len()
+        ),
+        Err(error) => error,
+    };
+    assert_ne!(
+        error.kind(),
+        std::io::ErrorKind::InvalidInput,
+        "`set_read_timeout` refuses a literal zero `Duration` with InvalidInput. What this cell decides is the line above it -- whether a 1ns `remaining` expires at the top of the loop or arms a real read -- and an InvalidInput here would mean neither happened: {error}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("TOTAL request deadline"),
+        "expected the total-deadline diagnostic specifically: {message}"
+    );
+    assert!(
+        message.contains("checked once a read timed out"),
+        "expected the read to have been ARMED and then to have timed out -- the top-of-loop phase here would mean a non-zero `remaining` was treated as an expiry, and no read was ever attempted: {message}"
+    );
+}
+
 // The other direction, proven by sabotage rather than a second permanent cell (H, #740 review):
 // if `read_within_deadline` never enforced the total deadline at all, this same arrangement would
 // eventually fail via the per-read guard instead once the drip finally exceeds it -- a message
@@ -6402,6 +6556,196 @@ fn eof_arriving_after_the_deadline_is_not_silently_accepted() {
 // straight through to `started = Instant::now()`) and re-injected the ORIGINAL 260ms delay Codex
 // named -- reproduced the exact old failure again, `panicked ... after 0 bytes received`. Both
 // temporary edits reverted immediately after.
+
+/// #1163 (Codex review of #1144): the clock contract added by #1144 is prose, and prose about the
+/// clocked reader drifted from the reader it documents. Textual rather than behavioural on
+/// purpose, for exactly the reason `server_guard_sabotage_is_platform_portable` (`:540`) is: the
+/// subject is what the source SAYS, and no runtime arrangement can observe a sentence. What keeps
+/// this from being a spelling test is that the two numbers it checks are MEASURED -- the
+/// call-site count from this file's own non-comment lines, the order-of-magnitude gap from the
+/// two `Duration`s themselves -- so the guard ages with the file instead of against it, and a
+/// correct future edit that adds a fifth caller reddens here with a message naming the new count
+/// rather than silently leaving a stale sentence behind.
+///
+/// Three claims are checked:
+///
+/// 1. The doc must state the call-site count this file actually has. Any OTHER numeral in front
+///    of `callers`/`call sites`/`places` is a stale count, whichever way it drifted.
+/// 2. The sub-millisecond cell freezes the clock one nanosecond under a one-millisecond floor.
+///    That ratio is 1e6, so the prose must say `six orders of magnitude`; the derivation is done
+///    here from the same two `Duration` constructors the code uses, not copied from the prose.
+/// 3. The sentence that says what the two cells PIN must not mention the floor. The cells fix the
+///    zero/non-zero boundary of `remaining.is_zero()`; whether the `.max(1ms)` floor is
+///    load-bearing at all is this PR's first declared gap (std bumps a sub-resolution timeout to
+///    the platform minimum on its own, so removing the floor changes nothing these cells can
+///    see). Crediting the floor inside the claim-about-the-cells promotes a declared gap into an
+///    observation.
+#[test]
+fn the_clock_contract_describes_the_function_it_documents() {
+    let source = include_str!("api_http.rs");
+    // Every needle naming the clocked reader is assembled by `concat!`, so no line of this cell's
+    // own body ever contains one whole -- the counter below scans every non-comment line in the
+    // file, these included, and a guard that matched itself would report one call site too many.
+    let call = concat!("read_within_deadline", "_clocked(");
+    let definition = concat!("fn read_within_deadline", "_clocked(");
+    let call_sites = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter(|line| line.contains(call) && !line.contains(definition))
+        .count();
+    assert!(
+        call_sites > 0,
+        "HARNESS-BROKE: found no call sites at all -- the needle stopped matching, so every \
+         assertion below would pass for the wrong reason"
+    );
+
+    fn numeral(n: usize) -> &'static str {
+        [
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        ][n]
+    }
+
+    let doc_start = source
+        .find("/// The body of `read_within_deadline`")
+        .expect("HARNESS-BROKE: could not find the clocked reader's doc comment");
+    let doc_end = source[doc_start..]
+        .find(definition)
+        .map(|offset| doc_start + offset)
+        .expect("HARNESS-BROKE: could not bound the clocked reader's doc comment at its `fn`");
+    let doc = &source[doc_start..doc_end];
+
+    let claimed = format!("{} call sites", numeral(call_sites));
+    assert!(
+        doc.contains(&claimed),
+        "the clocked reader has {call_sites} call sites in this file, and its own doc comment \
+         does not say so -- it must state the count it was counted with ({claimed:?}), because a \
+         reader deciding whether the frozen-clock contract is reachable decides it from this \
+         sentence"
+    );
+    for wrong in (0..=10).filter(|candidate| *candidate != call_sites) {
+        for noun in [" call sites", " callers", " places"] {
+            let stale = format!("{}{noun}", numeral(wrong));
+            assert!(
+                !doc.contains(&stale),
+                "the doc comment still claims {stale:?}; this file has {call_sites} call sites \
+                 for the clocked reader, counted from its own non-comment lines"
+            );
+        }
+    }
+
+    let cell_start = source
+        .find("/// #1144, the other side of the same boundary")
+        .expect("HARNESS-BROKE: could not find the sub-millisecond cell");
+    let cell_end = source[cell_start..]
+        .find("\n// The other direction, proven by sabotage")
+        .map(|offset| cell_start + offset)
+        .expect("HARNESS-BROKE: could not bound the sub-millisecond cell");
+    let cell = &source[cell_start..cell_end];
+    assert!(
+        cell.contains("Duration::from_nanos(1)"),
+        "HARNESS-BROKE: the sub-millisecond cell no longer freezes the clock with \
+         `Duration::from_nanos(1)`, so the ratio derived below is not the ratio it exercises"
+    );
+    assert!(
+        one_millisecond_floor_is_armed(source, &one_millisecond_floor_needle()),
+        "HARNESS-BROKE: the one-millisecond floor is gone from the clocked reader's own body, \
+         so the ratio derived below is not the ratio the prose is talking about. The span \
+         searched is that body alone, and the needle is assembled at runtime, so this line \
+         cannot be what satisfies it -- see \
+         `the_one_millisecond_floor_prerequisite_observes_the_readers_own_body`"
+    );
+    let orders = (Duration::from_millis(1).as_nanos() / Duration::from_nanos(1).as_nanos()).ilog10()
+        as usize;
+    let claimed_orders = format!("{} orders of magnitude", numeral(orders));
+    assert!(
+        cell.contains(&claimed_orders),
+        "one nanosecond is {claimed_orders} under a one-millisecond floor, and the cell that \
+         freezes the clock there does not say so"
+    );
+    for wrong in (0..=10).filter(|candidate| *candidate != orders) {
+        let stale = format!("{} orders of magnitude", numeral(wrong));
+        assert!(
+            !cell.contains(&stale),
+            "the sub-millisecond cell still claims {stale:?}; 1ns against a 1ms floor is \
+             {claimed_orders}, computed here from the same two `Duration` constructors"
+        );
+    }
+
+    let claim_start = doc
+        .find("predicates that decide")
+        .expect("HARNESS-BROKE: could not find the sentence naming what the two cells pin");
+    let claim = &doc[claim_start..];
+    assert!(
+        !claim.contains("floor"),
+        "the sentence naming what the two cells pin credits the 1ms floor. The cells fix the \
+         zero/non-zero boundary of `remaining.is_zero()` and nothing more: removing the floor \
+         changes no outcome either cell can see, which is why it is a declared gap on this PR \
+         rather than an observation. Say what they pin; leave the floor to the gap"
+    );
+}
+
+/// The one-millisecond floor's needle, assembled at runtime from two halves so that no line of
+/// THIS file ever contains it whole. A textual prerequisite that its own source satisfies is not a
+/// prerequisite (Codex, #1163 review, on the head before this one).
+fn one_millisecond_floor_needle() -> String {
+    format!("{}{}", ".max(Duration::from_", "millis(1))")
+}
+
+/// Byte span of `read_within_deadline_clocked`'s EXECUTABLE body: from its `fn` line to the
+/// closing brace in column zero that ends it. Everything after that -- the write loop's own
+/// identical floor, later doc comments, later cells -- is outside, which is the whole point.
+fn clocked_reader_body(source: &str) -> (usize, usize) {
+    let definition = concat!("fn read_within_deadline", "_clocked(");
+    let start = source
+        .find(definition)
+        .expect("HARNESS-BROKE: could not find the clocked reader's definition");
+    let end = source[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset + 3)
+        .expect("HARNESS-BROKE: could not find the brace that ends the clocked reader's body");
+    (start, end)
+}
+
+/// Is the 1ms floor present in the clocked reader's own executable code? Comment lines inside the
+/// body are excluded: prose describing the floor must not stand in for the floor.
+fn one_millisecond_floor_is_armed(source: &str, needle: &str) -> bool {
+    let (start, end) = clocked_reader_body(source);
+    source[start..end]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .any(|line| line.contains(needle))
+}
+
+/// Negative control for the floor prerequisite used by
+/// `the_clock_contract_describes_the_function_it_documents`. Deleting the real floor from the
+/// clocked reader's body must make that prerequisite go false. If it stays true, the prerequisite
+/// is reading text that is not the reader's code -- the write loop's identical floor, a later
+/// comment, or this file's own needle -- and it can never witness the thing it claims to witness.
+#[test]
+fn the_one_millisecond_floor_prerequisite_observes_the_readers_own_body() {
+    let source = include_str!("api_http.rs");
+    let needle = one_millisecond_floor_needle();
+    assert!(
+        one_millisecond_floor_is_armed(source, &needle),
+        "HARNESS-BROKE: the 1ms floor is not in the clocked reader's body as written, so the \
+         removal staged below removes nothing and this control proves nothing"
+    );
+
+    let (start, end) = clocked_reader_body(source);
+    let mutated = format!(
+        "{}{}{}",
+        &source[..start],
+        source[start..end].replace(&needle, ""),
+        &source[end..]
+    );
+    assert!(
+        !one_millisecond_floor_is_armed(&mutated, &needle),
+        "the floor prerequisite still reports the 1ms floor present after every occurrence of \
+         it was deleted from the clocked reader's own body -- so the span it searches reaches \
+         text that is not the reader's executable code, and the prerequisite is decoration: \
+         sabotaging the real floor would leave the guard green"
+    );
+}
 
 // ---------------------------------------------------------------------------------------------
 // #159: the customs acting surface over HTTP. `POST /v1/executions/{id}/claim` and

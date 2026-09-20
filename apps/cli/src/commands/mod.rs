@@ -321,9 +321,11 @@ pub fn run(command: TopLevel) -> Outcome {
                 seconds,
                 at,
             } => execution::amend::run(&events, execution.as_deref(), &node, seconds, at),
-            ExecutionCommand::Pause { events, execution } => {
-                execution::pause::run(&events, execution.as_deref())
-            }
+            ExecutionCommand::Pause {
+                file,
+                events,
+                execution,
+            } => execution::pause::run(&events, execution.as_deref(), file.as_deref()),
             ExecutionCommand::Resume {
                 file,
                 events,

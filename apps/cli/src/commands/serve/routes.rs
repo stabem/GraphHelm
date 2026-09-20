@@ -1589,6 +1589,14 @@ pub(super) async fn pause(
                     Some(drive_execution_id.as_str()),
                     actor,
                     key,
+                    // No graph on this door: `POST /pause` carries no `file`, so the hold is
+                    // bare-state and the reply's `heldNodesGated: false` says so (#157).
+                    //
+                    // LIMIT: that flag is reply-only. The Paused events this path appends are
+                    // the same wide ones as before. An idempotent retry reconstructs current
+                    // status from events; it does not replay a stored response, so it carries no
+                    // edge evidence. #157 stays open for a persisted form.
+                    None,
                 )?)
             })
         },

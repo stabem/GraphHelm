@@ -671,9 +671,16 @@ pub enum ExecutionCommand {
         #[arg(long)]
         at: u64,
     },
-    /// Holds every dispatchable node (`Ready`/`Queued`), refusing unless the aggregate status is
-    /// unset or `Running`.
+    /// Holds every edge-eligible node, refusing unless the aggregate status is unset or
+    /// `Running`.
+    ///
+    /// `--file` supplies the graph this execution started from. With it, the hold is the
+    /// driver's edge-eligible set, upstream of capacity planning. Without it, pause falls back
+    /// to bare state and reports `heldNodesGated: false` rather than making an edge claim. The
+    /// flag is optional because the graph is not stored on the CLI's own execution streams.
     Pause {
+        #[arg(long)]
+        file: Option<PathBuf>,
         #[arg(long)]
         events: PathBuf,
         #[arg(long)]

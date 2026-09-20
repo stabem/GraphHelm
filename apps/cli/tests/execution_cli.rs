@@ -1858,6 +1858,193 @@ fn pause(events: &Path, execution: &str) -> Value {
     json(&output.stdout)["data"].clone()
 }
 
+/// `execution pause --file <graph>`, raw, so a REFUSING call is a subject too (#157 repair).
+fn pause_with_graph_file(events: &Path, execution: &str, graph: &Path) -> std::process::Output {
+    command()
+        .args([
+            "execution",
+            "pause",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap()
+}
+
+/// `execution pause --file`, the edge-aware form (#157). Separate helper from `pause` above so
+/// the two doors stay distinguishable in the tests that assert what each one holds.
+fn pause_with_graph(events: &Path, execution: &str) -> Value {
+    let graph = root().join("examples/graphs/manual-override-deploy.yaml");
+    let output = pause_with_graph_file(events, execution, &graph);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    json(&output.stdout)["data"].clone()
+}
+
+/// #157: `pause` must hold what the EDGES leave eligible, not what the state LABEL suggests.
+///
+/// `implementation` fails, so it is `Blocked` and its `data` edge to `deploy` never releases.
+/// `deploy` is `Ready` — the label — but `dispatch_candidates` excludes it, so the driver would
+/// never run it. Before this test, `pause` held it anyway and named it in `heldNodes`, which is a
+/// record claiming a hold that stopped nothing.
+///
+/// SCOPE, narrowed by review of this PR: `dispatch_candidates` is the EDGE-ELIGIBLE set,
+/// upstream of capacity planning. It is not a promise that every node in it would actually be
+/// dispatched on the next pass, so this cell asserts exclusion BY AN EDGE, the only thing that
+/// set decides.
+///
+/// The assertion is on BOTH halves, because narrowing the list without leaving the node alone
+/// would be the same defect with a shorter list: `heldNodes` is empty AND `deploy` stays `Ready`
+/// rather than being recorded `Paused`.
+#[test]
+fn pause_holds_only_edge_eligible_candidates() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure", "deploy": "success"}),
+    );
+    let start_data = start(&events, &fixtures, "supervised", "exec_pause_gated");
+    assert_eq!(start_data["nodeStateCounts"]["blocked"], 1);
+    assert_eq!(start_data["nodeStateCounts"]["ready"], 1);
+
+    let pause_data = pause_with_graph(&events, "exec_pause_gated");
+    assert_eq!(
+        pause_data["heldNodes"],
+        serde_json::json!([]),
+        "deploy is Ready but edge-gated behind a Blocked predecessor, so it is not edge-eligible and pause holds nothing: {pause_data}"
+    );
+    assert_eq!(pause_data["heldNodesGated"], serde_json::json!(true));
+    assert_eq!(pause_data["status"], "paused");
+    assert_eq!(pause_data["nodeStateCounts"]["paused"], 0);
+    assert_eq!(pause_data["nodeStateCounts"]["ready"], 1);
+
+    let projection = replay_projection(&events);
+    assert_eq!(
+        projection["nodeStates"]["deploy"], "ready",
+        "the node pause did not hold keeps its own state: {projection}"
+    );
+    assert_eq!(projection["nodeStates"]["implementation"], "blocked");
+}
+
+/// #157 control, POSITIVE arm: the narrowing must still hold what IS edge-eligible.
+///
+/// The exclusion cell above passes on an empty list, and an empty list is also what a pause that
+/// holds NOTHING produces. This cell is the other half: `approve` readies the entrypoint
+/// `implementation`, which has no predecessors and is therefore edge-eligible, while `deploy`
+/// stays gated behind it. One pass must hold exactly the first and leave the second alone.
+#[test]
+fn pause_holds_the_eligible_entrypoint_and_leaves_its_gated_successor() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure", "deploy": "success"}),
+    );
+    start(&events, &fixtures, "supervised", "exec_pause_eligible");
+
+    let approved = command()
+        .args([
+            "execution",
+            "approve",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_pause_eligible",
+            "--node",
+            "implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        approved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approved.stdout)
+    );
+    let readied = replay_projection(&events);
+    assert_eq!(readied["nodeStates"]["implementation"], "ready");
+    assert_eq!(readied["nodeStates"]["deploy"], "ready");
+
+    let pause_data = pause_with_graph(&events, "exec_pause_eligible");
+    assert_eq!(
+        pause_data["heldNodes"],
+        serde_json::json!(["implementation"]),
+        "the entrypoint has no predecessor to gate it, so the edge-aware hold must name it and must not name the successor it gates: {pause_data}"
+    );
+    assert_eq!(pause_data["heldNodesGated"], serde_json::json!(true));
+    assert_eq!(pause_data["nodeStateCounts"]["paused"], 1);
+
+    let projection = replay_projection(&events);
+    assert_eq!(projection["nodeStates"]["implementation"], "paused");
+    assert_eq!(
+        projection["nodeStates"]["deploy"], "ready",
+        "the gated successor is left exactly as it was: {projection}"
+    );
+}
+
+/// #157 control, REFUSAL arm: a graph that is not this execution's, and a graph that is not a
+/// graph, each leave the event store with byte-identical contents.
+///
+/// `--file` is new surface on a verb that APPENDS. The check that the supplied graph matches the
+/// execution runs before any append, and the loader/linter runs before that; this cell is what
+/// says so from outside, by comparing the whole journal — every atomic batch, type and payload —
+/// across the refusal rather than by trusting the order of the code.
+#[test]
+fn pause_with_a_graph_it_cannot_trust_leaves_the_journal_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(
+        directory.path(),
+        serde_json::json!({"implementation": "failure", "deploy": "success"}),
+    );
+    start(&events, &fixtures, "supervised", "exec_pause_untrusted");
+    let before = journal_bytes(&events);
+
+    // A well-formed graph that this execution did not start from.
+    let foreign = root().join("examples/graphs/provider-less-demo.yaml");
+    let refused = pause_with_graph_file(&events, "exec_pause_untrusted", &foreign);
+    assert!(
+        !refused.status.success(),
+        "a foreign graph must refuse: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    let reply = json(&refused.stdout);
+    assert_eq!(reply["ok"], false);
+    assert_eq!(reply["command"], "execution.pause");
+    assert_eq!(reply["diagnostics"][0]["code"], "GHCLI005_EXECUTION_STATE");
+    assert_eq!(
+        journal_bytes(&events),
+        before,
+        "a refused pause appends nothing: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+
+    // A file that is not a graph at all: the refusal must come from the loader, still with
+    // nothing appended.
+    let malformed = directory.path().join("not-a-graph.yaml");
+    std::fs::write(&malformed, "apiVersion: p50.dev/graph/v1\nkind: [oops\n").unwrap();
+    let refused_malformed = pause_with_graph_file(&events, "exec_pause_untrusted", &malformed);
+    assert!(
+        !refused_malformed.status.success(),
+        "a malformed graph must refuse: {}",
+        String::from_utf8_lossy(&refused_malformed.stdout)
+    );
+    assert_eq!(json(&refused_malformed.stdout)["ok"], false);
+    assert_eq!(
+        journal_bytes(&events),
+        before,
+        "a malformed graph appends nothing either: {}",
+        String::from_utf8_lossy(&refused_malformed.stdout)
+    );
+}
+
 fn resume(events: &Path, fixtures: &Path, execution: &str) -> Value {
     let graph = root().join("examples/graphs/manual-override-deploy.yaml");
     let output = command()
@@ -1919,6 +2106,12 @@ fn resume_does_not_run_held_work_whose_predecessor_never_finished() {
     let pause_data = pause(&events, "exec_pause_resume");
     assert_eq!(pause_data["status"], "paused");
     assert_eq!(pause_data["heldNodes"], serde_json::json!(["deploy"]));
+    // #157: this helper passes no `--file`, so the hold is the bare-state fallback and the reply
+    // says so. The `["deploy"]` above is therefore not the defect #157 names — it is the
+    // fallback, now labelled. The edge-aware door holds nothing here; see
+    // `pause_holds_only_edge_eligible_candidates`, which runs this exact graph and
+    // fixture through `pause --file`.
+    assert_eq!(pause_data["heldNodesGated"], serde_json::json!(false));
     assert_eq!(pause_data["nodeStateCounts"]["blocked"], 1);
     assert_eq!(pause_data["nodeStateCounts"]["paused"], 1);
 
@@ -2141,6 +2334,12 @@ fn resume_never_redispatches_a_waiting_node() {
 
     let pause_data = pause(&events, "exec_resume_waiting");
     assert_eq!(pause_data["heldNodes"], serde_json::json!(["deploy"]));
+    // #157: this helper passes no `--file`, so the hold is the bare-state fallback and the reply
+    // says so. The `["deploy"]` above is therefore not the defect #157 names — it is the
+    // fallback, now labelled. The edge-aware door holds nothing here; see
+    // `pause_holds_only_edge_eligible_candidates`, which runs this exact graph and
+    // fixture through `pause --file`.
+    assert_eq!(pause_data["heldNodesGated"], serde_json::json!(false));
 
     let resume_data = resume(&events, &fixtures, "exec_resume_waiting");
     assert_eq!(resume_data["nodeStateCounts"]["succeeded"], 0);
@@ -2792,6 +2991,22 @@ fn journal_events(events: &std::path::Path) -> Vec<(usize, String, serde_json::V
                     ))
                 })
                 .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The exact persisted bytes of every journal file, in stable path order.
+///
+/// `journal_events` intentionally decodes JSON for semantic assertions. It is not a byte-level
+/// witness because decoding removes whitespace and key order. Refusal tests that promise no
+/// append use this helper instead, so the assertion observes the files on disk exactly as they
+/// were written.
+fn journal_bytes(events: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    journal_paths(events)
+        .into_iter()
+        .map(|path| {
+            let bytes = std::fs::read(&path).expect("journal bytes readable");
+            (path, bytes)
         })
         .collect()
 }

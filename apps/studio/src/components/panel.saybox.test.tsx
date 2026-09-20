@@ -136,3 +136,17 @@ describe("the message box across run switches", () => {
     expect(screen.getByPlaceholderText(/say something/i)).toHaveValue("for run A");
   });
 });
+
+/**
+ * #1098 D3: the composer prints "Enter sends · Shift+Enter for a new line" under its box; the run's
+ * message box, which sends on Enter since #1091, printed no hint at all. Two boxes on one page with
+ * the same key contract and one of them silent about it.
+ */
+describe("the run's message box says what Enter does", () => {
+  beforeEach(() => resetPanelCaches());
+
+  it("prints the same Enter hint the composer prints", () => {
+    render(<RunPanel status={statusOf("run-a")} events={[]} onClose={vi.fn()} onSay={vi.fn()} />);
+    expect(screen.getByText("Enter sends · Shift+Enter for a new line")).toBeInTheDocument();
+  });
+});

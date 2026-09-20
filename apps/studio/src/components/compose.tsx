@@ -38,14 +38,20 @@ export function Composer({
   error,
   onSend,
   onCancel,
+  objective,
+  onObjectiveChange,
 }: {
   choice: RouteChoice | null;
   busy: boolean;
   error: string;
   onSend: (objective: string, route: string | null) => void;
   onCancel: () => void;
+  /** #1098 D1: the half-typed objective is owned by the PAGE, not by this component. Selecting a
+   * run unmounts the composer, and a sentence that lived only in local state died with it. The
+   * page keeps it so the next open restores it; `discard` is what erases it. */
+  objective: string;
+  onObjectiveChange: (objective: string) => void;
 }) {
-  const [objective, setObjective] = useState("");
   const [route, setRoute] = useState("");
 
   const usable = choice?.routes.filter((entry) => entry.enabled) ?? [];
@@ -123,7 +129,7 @@ export function Composer({
           maxLength={MAX_OBJECTIVE_LENGTH}
           disabled={busy}
           placeholder="Describe the work in your own words. It becomes the first node's objective, verbatim."
-          onChange={(event) => setObjective(event.target.value)}
+          onChange={(event) => onObjectiveChange(event.target.value)}
           // Enter sends, like every chat box on this page; Shift+Enter breaks the line. The
           // judge pressed Enter and nothing happened and nothing said why (#1077, MINOR).
           // #1083 F5: `sendsOnEnter` is shared with the run's message box (keys.ts).

@@ -101,3 +101,68 @@ describe("the objective on the entry card", () => {
     expect(isFirstEntryNode(model, "triage")).toBe(false);
   });
 });
+
+/**
+ * #1098 D5: on a COMPLETED run whose six nodes all succeeded, every card and the section heading
+ * still read "Dependencies awaiting evidence" — a present participle promising something still on
+ * its way, on a run where nothing more will ever arrive. On an ended run the wording must stop
+ * promising an arrival. It says what is true of THE VIEW — the evidence is not available here —
+ * rather than what this page cannot know about the run's past (see the P2 guard below). A run
+ * still going keeps the awaiting wording, because for it the evidence really can still arrive.
+ */
+describe("a finished run does not read as still waiting for its dependencies", () => {
+  const succeeded: GraphModel = {
+    ...model,
+    nodes: [
+      { id: "triage", state: "succeeded", touches: 3, lastEventAt: null, history: [], reopened: null },
+      { id: "work", state: "succeeded", touches: 3, lastEventAt: null, history: [], reopened: null },
+    ],
+  };
+
+  it("states the absence in the present, in the heading and on every card", () => {
+    render(<WorkOverview model={succeeded} ended selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.queryAllByText(/awaiting evidence/i)).toHaveLength(0);
+    expect(screen.getByText("Dependency evidence is unavailable in this view")).toBeInTheDocument();
+    expect(screen.getAllByText("Dependency evidence is unavailable in this view.")).toHaveLength(2);
+  });
+
+  it("keeps the awaiting wording while the run is still going", () => {
+    render(<WorkOverview model={succeeded} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByText("Dependencies awaiting evidence")).toBeInTheDocument();
+    expect(screen.getAllByText("Dependencies awaiting evidence.")).toHaveLength(2);
+  });
+});
+
+/**
+ * PR #1167 review, /root's BLOCKING P2. "Dependencies were never verified" is a claim about the
+ * run's WHOLE HISTORY, inferred from one bit of the CURRENT view. `edgesKnown` is false whenever
+ * this view holds no verified topology — which is also what a fresh selection leaves behind (the
+ * page drops the proof with the board), and what a later graph-read failure leaves behind. A run
+ * whose topology WAS verified a moment ago then reads as one that never was, and the sentence is
+ * false about the only thing it talks about.
+ *
+ * The honest sentence is about the view, not about the past: the evidence is unavailable HERE.
+ * A run still going keeps the "awaiting" wording, because for it the evidence really can arrive.
+ */
+describe("unavailable dependency evidence is not a claim about the run's past", () => {
+  const succeeded: GraphModel = {
+    ...model,
+    nodes: [
+      { id: "triage", state: "succeeded", touches: 3, lastEventAt: null, history: [], reopened: null },
+      { id: "work", state: "succeeded", touches: 3, lastEventAt: null, history: [], reopened: null },
+    ],
+  };
+
+  it("does not say the dependencies were never verified when this very view verified them a moment ago", () => {
+    const { rerender } = render(
+      <WorkOverview model={{ ...succeeded, edgesKnown: true }} ended selectedNode={null} onSelectNode={vi.fn()} />,
+    );
+    expect(screen.getByText("1 dependencies")).toBeInTheDocument();
+
+    // The proof goes away — a re-selection, or a graph read that failed. The run's past did not.
+    rerender(<WorkOverview model={succeeded} ended selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.queryAllByText(/never verified/i)).toHaveLength(0);
+    expect(screen.getByText("Dependency evidence is unavailable in this view")).toBeInTheDocument();
+    expect(screen.getAllByText("Dependency evidence is unavailable in this view.")).toHaveLength(2);
+  });
+});

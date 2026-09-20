@@ -2464,6 +2464,73 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
     expect(box).toHaveValue("");
   });
 
+  it("disconnect forgets a parked new-task draft before another Runtime connects", async () => {
+    let releaseA!: () => void;
+    const pendingA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let settledA = false;
+    const client = stubClient({
+      startTask: vi.fn(async () => {
+        await pendingA;
+        settledA = true;
+        return { ...PAUSED_EVIDENCE, action: "start" as const };
+      }),
+    });
+    const nextClient = stubClient({
+      startTask: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        action: "start" as const,
+        result: "unknown" as const,
+      })),
+    });
+    const clients = [client, nextClient];
+    const first = render(
+      <App
+        createClient={() => clients.shift() as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Runtime A must not cross the connection boundary",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    const idA = client.startTask.mock.calls[0][0] as string;
+    const keyA = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
+    await userEvent.click(screen.getByRole("button", { name: /^demo-deploy/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), {
+      detail: 1,
+    });
+    await screen.findByLabelText(/bearer token/i);
+    await userEvent.type(screen.getByLabelText(/bearer token/i), "runtime-b-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await screen.findByLabelText("Projects");
+    await userEvent.click(screen.getByRole("button", { name: /new task in this runtime/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Runtime B is a fresh task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(nextClient.startTask).toHaveBeenCalledTimes(1));
+    const idB = nextClient.startTask.mock.calls[0][0] as string;
+    const keyB = (nextClient.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
+    expect(idB).not.toBe(idA);
+    expect(keyB).not.toBe(keyA);
+
+    releaseA();
+    await waitFor(() => expect(settledA).toBe(true));
+    expect(await screen.findByLabelText("What should this task do?")).toHaveValue(
+      "Runtime B is a fresh task",
+    );
+    first.unmount();
+  });
+
   /** The agent window is re-addressed by a prop change without remounting: half of A's message
    * would ship to B on the next Enter. The window is keyed by who it belongs to. */
   it("switching agent windows never carries the draft over", async () => {
@@ -3254,6 +3321,21 @@ describe("the run it just started", () => {
     expect(await screen.findByText(/started — done/i)).toBeInTheDocument();
   });
 
+  it("does not re-park the consumed draft after a normal successful start", async () => {
+    const client = withStarted();
+    const firstId = await startOne(client);
+
+    await userEvent.click(screen.getByRole("button", { name: /new task/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "A genuinely different task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(2));
+
+    expect(client.startTask.mock.calls[1][0]).not.toBe(firstId);
+  });
+
   it("names the run by its objective wherever the id stood, and never by 'New task'", async () => {
     // A real Runtime answers 200 for every id it can replay - a hand-named run simply has no
     // objective; only a MISSING ROUTE answers 404 (which the client reports as null).
@@ -3319,4 +3401,225 @@ describe("a selection that lands while the rail is prefetching", () => {
     // One read for that run, not one per caller.
     expect(client.getBriefing.mock.calls.filter((call) => (call as unknown[])[0] === GENERATED)).toHaveLength(1);
   });
+});
+
+/**
+ * #1098 D1 (MAJOR). The composer is chosen by `draft !== null` AHEAD of the selection, and `select`
+ * never cleared the draft. So clicking a run in the rail moved the header to that run while the
+ * BODY stayed on the New task draft, showing its fake one-node overview ("1 nodes", a `ready`
+ * `start` card, "Nothing has run yet") over a run that has a real graph. It survived a second run
+ * click and only `discard` cleared it.
+ *
+ * Selecting a run must leave the draft. And it must not DESTROY it: the operator's half-typed
+ * objective is the one thing on that surface they cannot get back, so it is kept and restored the
+ * next time the composer opens. `discard` — the control that promises erasure — still erases it.
+ */
+describe("selecting a run leaves the new-task draft", () => {
+  const ROUTES = { configured: true, routes: [] };
+
+  it("shows the selected run instead of the draft, and keeps the typed objective for later", async () => {
+    const client = stubClient({ listRoutes: vi.fn(async () => ROUTES) });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    const box = await screen.findByLabelText("What should this task do?");
+    await userEvent.type(box, "Rotate the staging credentials");
+
+    const rail = screen.getByLabelText("Projects");
+    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+
+    // The body is the run's, not the draft's.
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText("What should this task do?")).not.toBeInTheDocument();
+
+    // And the sentence was not thrown away: reopening the composer brings it back.
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByLabelText("What should this task do?")).toHaveValue(
+      "Rotate the staging credentials",
+    );
+  });
+
+  it("still erases the objective when discard is pressed, because discard promises that", async () => {
+    const client = stubClient({ listRoutes: vi.fn(async () => ROUTES) });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Rotate the staging credentials",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Discard this task" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByLabelText("What should this task do?")).toHaveValue("");
+  });
+});
+
+/**
+ * PR #1167 review, /root's BLOCKING P1. The repair above parked only the draft's TEXT. A draft is
+ * not its text: it is an execution id reserved locally, and `start-<executionId>` is the
+ * idempotency key every retry of that draft carries. Dropping the id on selection means the
+ * composer that reopens MINTS A NEW ONE, so the retry of an UNKNOWN start is no longer a retry —
+ * it is a second start under a second identity, and the Runtime has nothing left to reconcile it
+ * against. The banner the operator is reading at that moment says the opposite in so many words:
+ * "the retry carries the same identity, so it cannot start a second run."
+ *
+ * The mirror of the same gap: a selection during an IN-FLIGHT start made `stillMine` false, so a
+ * start that then SUCCEEDED never cleared the sentence it consumed. Reopening the composer offered
+ * the already-started objective back, ready to be sent again.
+ */
+describe("a parked draft keeps its identity, not just its words", () => {
+  const ROUTES = { configured: true, routes: [] };
+
+  it("retries an unknown start under the SAME identity after a selection parked the draft", async () => {
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ROUTES),
+      startTask: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        action: "start" as const,
+        result: "unknown" as const,
+      })),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Rotate the staging credentials",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    const firstId = client.startTask.mock.calls[0][0] as string;
+    const firstKey = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
+
+    // The operator goes to look at another run while the outcome is unknown, then comes back.
+    const rail = screen.getByLabelText("Projects");
+    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByLabelText("What should this task do?")).toHaveValue(
+      "Rotate the staging credentials",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(2));
+    expect(client.startTask.mock.calls[1][0]).toBe(firstId);
+    expect((client.startTask.mock.calls[1][2] as { idempotencyKey: string }).idempotencyKey).toBe(
+      firstKey,
+    );
+  });
+
+  it("keeps an UNKNOWN draft identity when New task is clicked directly", async () => {
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ROUTES),
+      startTask: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        action: "start" as const,
+        result: "unknown" as const,
+      })),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Retry this exact task",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    const firstId = client.startTask.mock.calls[0][0] as string;
+    const firstKey = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
+    expect(await screen.findByText(/retry carries the same identity/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByText(/retry carries the same identity/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(2));
+    expect(client.startTask.mock.calls[1][0]).toBe(firstId);
+    expect((client.startTask.mock.calls[1][2] as { idempotencyKey: string }).idempotencyKey).toBe(firstKey);
+  });
+
+  it("does not offer an already-started objective back when the selection landed mid-start", async () => {
+    let release: () => void = () => {};
+    const landed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ROUTES),
+      startTask: vi.fn(async () => {
+        await landed;
+        return { ...PAUSED_EVIDENCE, action: "start" as const };
+      }),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "Rotate the staging credentials",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+
+    // The selection lands while the start is still in flight; THEN the start succeeds.
+    const rail = screen.getByLabelText("Projects");
+    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+    release();
+    await waitFor(() => expect(screen.queryByLabelText("What should this task do?")).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByLabelText("What should this task do?")).toHaveValue("");
+  });
+
+  it("keeps a parked in-flight start pending when its draft is reopened", async () => {
+    let release!: () => void;
+    const landed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let startSettled = false;
+    let releaseRefresh!: () => void;
+    const refresh = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let holdRefresh = false;
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ROUTES),
+      startTask: vi.fn(async () => {
+        await landed;
+        startSettled = true;
+        return { ...PAUSED_EVIDENCE, action: "start" as const };
+      }),
+      getStatus: vi.fn(async (id: string) => {
+        if (holdRefresh) await refresh;
+        return { ...STATUS, executionId: id };
+      }),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(
+      await screen.findByLabelText("What should this task do?"),
+      "must not be sent twice",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(client.startTask).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(within(screen.getByLabelText("Projects")).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    expect(await screen.findByLabelText("What should this task do?")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
+
+    // The old start is still pending, but the selected run starts its own read. Its busy state
+    // must survive the old completion and its receipt must not be painted onto this run.
+    await userEvent.click(within(screen.getByLabelText("Projects")).getByRole("button", { name: /^demo-calm/ }));
+    holdRefresh = true;
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    const statusCallsBeforeRefresh = client.getStatus.mock.calls.length;
+    await userEvent.click(refreshButton);
+    await waitFor(() => expect(client.getStatus.mock.calls.length).toBeGreaterThan(statusCallsBeforeRefresh));
+    release();
+    await waitFor(() => expect(startSettled).toBe(true));
+    expect(refreshButton).toBeDisabled();
+    expect(screen.queryByText(/started — done/i)).not.toBeInTheDocument();
+    releaseRefresh();
+    await waitFor(() => expect(refreshButton).not.toBeDisabled());
+  });
+
 });

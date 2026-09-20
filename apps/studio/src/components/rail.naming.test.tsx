@@ -76,3 +76,45 @@ describe("naming rows on the rail", () => {
     expect(bare.querySelector(".run-address")).toBeNull();
   });
 });
+
+/**
+ * #1098 D4: two runs whose objectives share a long prefix read identically on the rail — the name
+ * line ellipsises and the grey address line is the only difference. The blind visual judge hovered
+ * for the full name and got the id instead: the name line's `title` was the execution id, which the
+ * row already prints underneath. The hover must carry what is CUT (the full name), and the address
+ * line must carry its own full id, which is the part that ellipsises at 248px.
+ */
+describe("a truncated row says its whole name on hover", () => {
+  const long = "Produzir build de homologacao para o cliente e publicar o relatorio";
+  const other = "Produzir build de homologacao para o cliente e arquivar o anterior";
+
+  function railWithCollidingNames() {
+    render(
+      <ProjectRail
+        projects={[{ name: "store", runs: [{ ...row("run-aaaa1111"), objective: long }, { ...row("run-bbbb2222"), objective: other }] }]}
+        selected=""
+        connected
+        hasMore={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onNewTask={vi.fn()}
+        onAddProject={vi.fn()}
+      />,
+    );
+  }
+
+  it("titles the name line with the full name, not with the id printed below it", () => {
+    railWithCollidingNames();
+    const first = screen.getByRole("button", { name: new RegExp(long) });
+    const name = within(first).getByText(long);
+    expect(name).toHaveClass("run-id");
+    expect(name).toHaveAttribute("title", long);
+  });
+
+  it("titles the address line with the full id, which is what gets cut", () => {
+    railWithCollidingNames();
+    const second = screen.getByRole("button", { name: new RegExp(other) });
+    expect(within(second).getByText("run-bbbb2222")).toHaveAttribute("title", "run-bbbb2222");
+  });
+});

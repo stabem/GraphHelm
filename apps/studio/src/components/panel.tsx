@@ -1025,6 +1025,10 @@ function SayBox({
           {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Send aria-hidden="true" />}
         </button>
       </div>
+      {/* #1098 D3: the same sentence the composer prints, because this box has had the same key
+        * contract since #1091 and said nothing about it. Two boxes, one page, one rule — the hint
+        * is the only place that rule is visible without pressing the key and finding out. */}
+      <p className="lbl composer-hint">Enter sends · Shift+Enter for a new line</p>
       {error !== "" && (
         <p className="notice bad" role="alert">
           <TriangleAlert aria-hidden="true" />

@@ -2,7 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { useState } from "react";
+
 import { Composer } from "./compose";
+
+/**
+ * #1098 D1: the objective now lives on the PAGE, so these cells mount the composer inside the
+ * smallest possible owner of that state. Driving the real two-way binding is the point - a stub
+ * that ignored `onObjectiveChange` would let a composer that never reports its text pass.
+ */
+function Owned(props: Omit<Parameters<typeof Composer>[0], "objective" | "onObjectiveChange">) {
+  const [objective, setObjective] = useState("");
+  return <Composer {...props} objective={objective} onObjectiveChange={setObjective} />;
+}
 
 /**
  * Every control the composer offers is gated on `busy` - INCLUDING discard.
@@ -15,7 +27,7 @@ import { Composer } from "./compose";
 describe("the composer under a pending start", () => {
   const mount = (busy: boolean) =>
     render(
-      <Composer choice={null} busy={busy} error="" onSend={vi.fn()} onCancel={vi.fn()} />,
+      <Owned choice={null} busy={busy} error="" onSend={vi.fn()} onCancel={vi.fn()} />,
     );
 
   it("gates discard while the start is in flight", () => {
@@ -38,7 +50,7 @@ describe("the composer under a pending start", () => {
 describe("Enter in the composer", () => {
   function typed(text: string) {
     const onSend = vi.fn();
-    render(<Composer choice={{ configured: false, routes: [] }} busy={false} error="" onSend={onSend} onCancel={vi.fn()} />);
+    render(<Owned choice={{ configured: false, routes: [] }} busy={false} error="" onSend={onSend} onCancel={vi.fn()} />);
     const box = screen.getByLabelText("What should this task do?") as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: text } });
     box.focus();

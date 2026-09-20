@@ -34,6 +34,11 @@ export interface WorkOverviewProps {
   /** The run was started under the fixture executor (#1064): its log findings are expected and
    * read as a neutral note, not as an alarm (#1083 F9). */
   demonstration?: boolean;
+  /** #1098 D5: the run reached a terminal status. "Awaiting evidence" is a promise that something
+   * is still on its way; on an ended run nothing is, and a finished run read as unfinished. The
+   * same absence, stated so it stays true for an ended run — about THIS VIEW, never about the
+   * run's past (PR #1167 review, P2). */
+  ended?: boolean;
 }
 
 /** Whether a node is one of the run's entrypoints. Proven by the verified topology when there
@@ -88,7 +93,22 @@ export function WorkOverview({
   runId,
   objective = null,
   demonstration = false,
+  ended = false,
 }: WorkOverviewProps) {
+  /**
+   * The one sentence for "no verified topology is available here", written once so the heading
+   * and every card cannot drift apart.
+   *
+   * It speaks about THE VIEW, not about the run's history. `edgesKnown` is a property of what
+   * this page currently holds: it is false when no topology has been verified yet, AND when a
+   * selection dropped the proof with the board, AND when a later graph read failed. A run whose
+   * topology WAS verified moments ago has that same false bit, so "were never verified" would be
+   * a claim about the past inferred from present evidence that cannot carry it (PR #1167 review,
+   * P2). A run still going keeps "awaiting": for it the evidence really can still arrive.
+   */
+  const unverified = ended
+    ? "Dependency evidence is unavailable in this view"
+    : "Dependencies awaiting evidence";
   const activeNodes = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).length;
   const attentionNodes = model.nodes.filter((node) => ["blocked", "failed", "waiting_input", "waiting_capacity"].includes(node.state)).length;
   const nodeIds = new Set(model.nodes.map((node) => node.id));
@@ -195,7 +215,7 @@ export function WorkOverview({
         <section className="work-main" aria-label="Work nodes">
           <div className="work-section-heading work-node-heading">
             <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
-            <span>{model.edgesKnown ? `${model.edges.length} dependencies` : "Dependencies awaiting evidence"}</span>
+            <span>{model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
           </div>
           {model.nodes.length === 0 ? (
             <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
@@ -225,7 +245,7 @@ export function WorkOverview({
                         {outgoing.map((edge) => <button type="button" className="work-dependency" key={`out-${edge.id}`} onClick={() => onSelectNode(edge.to)}><ArrowUp aria-hidden="true" size={14} /><span>to {edge.to}</span></button>)}
                         {incoming.length === 0 && outgoing.length === 0 && <span className="work-no-dependencies">No dependencies</span>}
                       </div>
-                    ) : <p className="work-awaiting">Dependencies awaiting evidence.</p>}
+                    ) : <p className="work-awaiting">{ended ? "Dependency evidence is unavailable in this view." : "Dependencies awaiting evidence."}</p>}
                   </article>
                 );
               })}

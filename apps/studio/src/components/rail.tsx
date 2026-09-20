@@ -172,11 +172,15 @@ export function ProjectRail({
                     <span className="run-lines">
                       {/* The objective when there is one, the id otherwise - and the id ALWAYS
                           on the row as its title, so a name never hides the address. */}
-                      <span className="run-id" title={run.executionId}>{label}</span>
+                      {/* #1098 D4: the hover says what is CUT. Two runs whose objectives share a
+                          prefix ellipsise to the same words, and this title used to answer with
+                          the execution id — which the next line already prints in full. The name
+                          line titles the name; the address line titles the address. */}
+                      <span className="run-id" title={label}>{label}</span>
                       {/* #1083 F7: a run named by its objective still shows its address, as
                           secondary text - never only on hover. */}
                       {label !== run.executionId && (
-                        <span className="run-address">{run.executionId}</span>
+                        <span className="run-address" title={run.executionId}>{run.executionId}</span>
                       )}
                       <span className="run-when">
                         {clock(run.lastEventAt)}

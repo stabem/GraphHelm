@@ -140,6 +140,7 @@ export function Board({
   onCanvasChange,
   objective = null,
   demonstration = false,
+  ended = false,
   fixtureFile = "",
   onFixtureFileChange,
 }: {
@@ -182,6 +183,9 @@ export function Board({
   objective?: string | null;
   /** The run was started under the fixture executor (#1064). */
   demonstration?: boolean;
+  /** #1098 D5: the run reached a terminal status; passed straight through to the overview, which
+   * states an unverified topology in the tense that is true for a run nothing will add to. */
+  ended?: boolean;
   /** #1083 F2: a fixture file path on the RUNTIME's host, sent with `resume` as the API's
    * existing `fixtures` field. Offered only on a demonstration run - the fixture stands in for
    * the model there, and without it a resumed node has no outcome and parks `waiting_input`. */
@@ -773,7 +777,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} />
+        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

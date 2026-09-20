@@ -226,12 +226,48 @@ export default function App({
    * after `start this task` (#1077, the judge's third MAJOR). */
   const draftRef = useRef<{ executionId: string } | null>(null);
   draftRef.current = draft;
+  /**
+   * #1098 D1: the draft's half-typed objective, owned HERE rather than inside the Composer.
+   *
+   * Selecting a run now leaves the draft (see `select`), which unmounts the composer. The text
+   * the operator typed is the one thing on that surface that cannot be recovered from anywhere
+   * else, so it survives the unmount and comes back the next time the composer opens. Only the
+   * two controls that PROMISE to end the draft clear it: `discard`, and a verified send.
+   */
+  const [draftObjective, setDraftObjective] = useState("");
+  /**
+   * THE REST OF THE PARKED DRAFT (PR #1167 review, P1). A draft is not its text: it is an
+   * execution id reserved locally, and `start-<executionId>` is the idempotency key every attempt
+   * on that draft carries. Parking only the words meant the composer that reopened MINTED A NEW
+   * ID, so the retry of an UNKNOWN start was a second start under a second identity - exactly the
+   * duplicate the stable key exists to prevent, and the opposite of what the banner the operator
+   * is reading at that moment promises. The composer's error travels with it for the same reason:
+   * the sentence explaining why to resend must not be lost by looking away.
+   *
+   * A ref, not state: nothing renders from it. It is read at the next `startDraft` and by the
+   * guards in `sendDraft`, both of which need the value AT THE CALL, not at the last render.
+   */
+  const parkedDraft = useRef<{
+    executionId: string;
+    error: string;
+    pending: boolean;
+    busyToken: symbol | null;
+  } | null>(null);
+  /** Busy belongs to one draft send. A late completion from a parked draft must not clear the
+   * busy state of a newer composer or selected run. */
+  const draftBusyToken = useRef<symbol | null>(null);
+  /** Whether that draft operation currently owns the visible composer. Parking transfers the
+   * pending operation, but its completion must not touch a different run's controls. */
+  const draftBusyVisible = useRef(false);
   /** How wide the operator dragged the rail. Read once at mount, written on release. */
   const [railWidth, setRailWidth] = useState(loadRailWidth);
   const [addingProject, setAddingProject] = useState(false);
   /** The Runtime's own model list, read once per draft. `null` while it is being read. */
   const [routes, setRoutes] = useState<RouteChoice | null>(null);
   const [composeError, setComposeError] = useState("");
+  /** The composer's error readable at a call (see `parkedDraft`; `draftRef` for the shape). */
+  const composeErrorRef = useRef("");
+  composeErrorRef.current = composeError;
   /** The cancel button's in-place confirmation: destructive on an append-only log means no
    * undo, so the first press only asks. Per run - `select()` withdraws the question. */
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -540,6 +576,27 @@ export default function App({
   const select = useCallback(
     (id: string) => {
       if (!closeProjectDocument()) return;
+      // #1098 D1: leaving the draft is PART of selecting a run. The composer is chosen ahead of
+      // the selection (`draft !== null ?` in the render), so a draft left standing kept its fake
+      // one-node overview on screen under the selected run's header — through a second run click,
+      // and clearable only by `discard`. The draft is SET ASIDE WHOLE, not thrown away: its words
+      // above, and its identity and error here (PR #1167 review, P1). A parked draft that came
+      // back under a fresh execution id would turn its own retry into a duplicate run.
+      if (draftRef.current !== null) {
+        parkedDraft.current = {
+          executionId: draftRef.current.executionId,
+          error: composeErrorRef.current,
+          pending: draftBusyToken.current !== null,
+          busyToken: draftBusyToken.current,
+        };
+      }
+      setDraft(null);
+      // React updates draftRef on render, not at this call site. Clear it before selecting the
+      // newly-created run, otherwise select() would park the already-consumed draft again.
+      draftRef.current = null;
+      setComposeError("");
+      draftBusyVisible.current = false;
+      setBusy(false);
       selectedRef.current = id;
       setSelected(id);
       // A deselection starts no replacement read whose finally could release this flag.
@@ -591,9 +648,21 @@ export default function App({
    */
   const startDraft = useCallback(() => {
     const client = clientRef.current;
+    // The rail button stays mounted while the composer is visible. A second click during an
+    // start or an UNKNOWN result must not mint a new execution id or replace the retry key of
+    // the active draft; the existing composer already owns this operation.
+    if (draftRef.current !== null) return;
     if (!client || !closeProjectDocument()) return;
-    const executionId = newExecutionId();
+    // A parked draft is RESUMED, never re-minted: same execution id, so `start-<executionId>`
+    // still names the attempt the Runtime may already have (PR #1167 review, P1).
+    const resumed = parkedDraft.current;
+    parkedDraft.current = null;
+    const executionId = resumed?.executionId ?? newExecutionId();
     setDraft({ executionId });
+    draftRef.current = { executionId };
+    draftBusyToken.current = resumed?.pending ? resumed.busyToken : null;
+    draftBusyVisible.current = resumed?.pending === true;
+    setBusy(resumed?.pending === true);
     setTalkOpen(true);
     selectedRef.current = "";
     setSelected("");
@@ -601,7 +670,7 @@ export default function App({
     setEvents(null);
     setTopology(null);
     setTopologyError("");
-    setComposeError("");
+    setComposeError(resumed?.error ?? "");
     setRoutes(null);
     setBoard(emptyBoard());
     setFocus({ kind: "node", id: DRAFT_NODE_ID });
@@ -623,8 +692,34 @@ export default function App({
 
   const discardDraft = useCallback(() => {
     setDraft(null);
+    // The one control that promises erasure erases (#1098 D1). A selection only SETS the draft
+    // aside; `discard` is what ends it, and a draft that outlived its own discard would be the
+    // lie this recovery could tell. Its identity goes with its words: a discarded draft must not
+    // hand its execution id to the next one (PR #1167 review, P1).
+    setDraftObjective("");
+    parkedDraft.current = null;
     setFocus({ kind: "none" });
     setComposeError("");
+  }, []);
+
+  /**
+   * Says why a send did not land, TO THE DRAFT IT BELONGS TO. On screen that is the composer's
+   * banner; for a draft a selection parked mid-flight it is the parked record, so the sentence
+   * comes back with the draft instead of dying with the composer (PR #1167 review, P1). A send
+   * whose draft is gone entirely - discarded, or superseded - says nothing: its banner would land
+   * on whatever the operator is composing now.
+   */
+  const reportToDraft = useCallback((startedId: string, message: string) => {
+    if (draftRef.current !== null && draftRef.current.executionId === startedId) {
+      setComposeError(message);
+      draftBusyToken.current = null;
+      draftBusyVisible.current = false;
+      setBusy(false);
+      return;
+    }
+    if (parkedDraft.current?.executionId === startedId) {
+      parkedDraft.current = { ...parkedDraft.current, error: message, pending: false, busyToken: null };
+    }
   }, []);
 
   /**
@@ -640,6 +735,9 @@ export default function App({
       if (!client || draft === null) return;
       const startedId = draft.executionId;
       setBusy(true);
+      const busyToken = Symbol("draft-start");
+      draftBusyToken.current = busyToken;
+      draftBusyVisible.current = true;
       setComposeError("");
       try {
         const evidenceOfStart = await client.startTask(
@@ -655,7 +753,8 @@ export default function App({
         // (PR #467 review, P1 - the same class as the run guards, on the connection axis).
         if (clientRef.current !== client) return;
         if (evidenceOfStart.result === "refused") {
-          setComposeError(
+          reportToDraft(
+            startedId,
             evidenceOfStart.diagnostics[0]?.message ?? "The Runtime refused to start this task.",
           );
           return;
@@ -664,7 +763,8 @@ export default function App({
         // the objective and the retry identity for an action the client itself classified as
         // unconfirmed. The words stay on screen and resend is safe by the stable key above.
         if (evidenceOfStart.result === "unknown") {
-          setComposeError(
+          reportToDraft(
+            startedId,
             "The start could not be verified. Nothing was lost - send again; the retry carries the same identity, so it cannot start a second run.",
           );
           return;
@@ -673,9 +773,19 @@ export default function App({
         // superseded send must not unmount whatever the operator is composing now, nor drag
         // the page away from it. Decided from the REF, synchronously - see draftRef: deciding
         // it inside a setState updater left the board empty after every start (#1077).
-        const stillMine = draftRef.current !== null && draftRef.current.executionId === startedId;
-        if (stillMine) {
+        const onScreen = draftRef.current !== null && draftRef.current.executionId === startedId;
+        // A verified start consumed the sentence: it is the run's objective now, and restoring it
+        // into the next composer would offer to start the same task twice (#1098 D1). This holds
+        // whether the draft is still on screen or was PARKED by a selection that landed while the
+        // start was in flight - the old guard read only the live draft, so a selection mid-start
+        // left the consumed text waiting in the next composer (PR #1167 review, P1).
+        if (onScreen || parkedDraft.current?.executionId === startedId) {
+          setDraftObjective("");
+          parkedDraft.current = null;
+        }
+        if (onScreen) {
           setDraft(null);
+          draftRef.current = null;
           // The run it just made is the run on screen: selected, its overview open, the rail
           // row lit - not "pick a run, or start one" over the run that was just started.
           select(startedId);
@@ -683,16 +793,25 @@ export default function App({
         // The act-note is set AFTER the selection: `select` clears the previous run's evidence
         // (a note must never follow the operator across runs), and setting it first meant the
         // "Started — done" line was wiped by the very selection it announced (#1077 review).
-        setEvidence(evidenceOfStart);
+        if (onScreen) setEvidence(evidenceOfStart);
         await loadList();
       } catch (reason) {
         if (clientRef.current !== client) return;
-        setComposeError(messageOf(reason, "The task could not be started."));
+        reportToDraft(startedId, messageOf(reason, "The task could not be started."));
       } finally {
-        if (clientRef.current === client) setBusy(false);
+        if (
+          clientRef.current === client &&
+          draftBusyToken.current === busyToken &&
+          draftBusyVisible.current &&
+          draftRef.current?.executionId === startedId
+        ) {
+          draftBusyToken.current = null;
+          draftBusyVisible.current = false;
+          setBusy(false);
+        }
       }
     },
-    [draft, loadList, select],
+    [draft, loadList, select, reportToDraft],
   );
 
   /**
@@ -1007,6 +1126,15 @@ export default function App({
     // surviving it, restoring a half-typed draft from the "erased" session and able to serve
     // one store's words as another's (three round-4 reviewers).
     resetPanelCaches();
+    parkedDraft.current = null;
+    draftRef.current = null;
+    draftBusyToken.current = null;
+    draftBusyVisible.current = false;
+    setDraft(null);
+    setDraftObjective("");
+    setComposeError("");
+    setRoutes(null);
+    setBusy(false);
     setConnected(false);
     setProject(null);
     setProjectIdentity(null);
@@ -1716,6 +1844,8 @@ export default function App({
                 error={composeError}
                 onSend={(objective, route) => void sendDraft(objective, route)}
                 onCancel={discardDraft}
+                objective={draftObjective}
+                onObjectiveChange={setDraftObjective}
               />
             </aside>
             <div className="scene">
@@ -1956,6 +2086,7 @@ export default function App({
               }}
               onDrawConnections={() => void drawConnections()}
               focusGraphFile={fileFocusNonce}
+              ended={ended}
               busy={busy}
               runId={selected === "" ? undefined : selected}
               crew={crew}
@@ -2256,7 +2387,3 @@ export default function App({
     </div>
   );
 }
-
-
-
-

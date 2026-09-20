@@ -1776,3 +1776,260 @@ fn retained_fixture_cleanup_ends_both_children_during_unwind() {
     assert!(first.0.try_wait().unwrap().is_some());
     assert!(second.0.try_wait().unwrap().is_some());
 }
+
+/// #714: the ORDINARY exit path, with an orphan holding the pipe.
+///
+/// Every other descendant cell in this file kills the tree first -- the deadline or a cancel calls
+/// `terminate`, and the grandchild dies there. This one never reaches that code: the leader writes
+/// a line, spawns a `sleep` that inherited its stdout, and returns, so the poll loop breaks on
+/// `Ok(Some(status))` and nothing is terminated. What is left holding the write end is a process
+/// the host has no handle to and never signalled.
+///
+/// The drain is what must answer, and it is already built for this (#708): it waits on SILENCE
+/// rather than on elapsed time, so the orphan's five quiet seconds expire the grace, `release`
+/// runs, and the readers get `POST_RELEASE_GRACE` to answer the EOF it forced. The question this
+/// cell decides is the one thing in that sequence that has no Unix answer: whether `release` does
+/// anything. If `close` holds no group, nothing is closed, no EOF arrives, and the bytes the
+/// leader really wrote stay inside a reader that is given up on.
+///
+/// **The discriminator is the CAPTURE, not `readers_abandoned`.** That flag is set the moment a
+/// reader is still pending at the release, before the post-release wait, and deliberately so --
+/// a descendant DID escape here on either platform and the record says so even when the bytes come
+/// back. It is asserted below as a guard against a "fix" that quiets the report instead of
+/// releasing the pipe, never as the thing that differs.
+///
+/// `cfg(unix)` and NOT mirrored on Windows: there the job object's `KILL_ON_JOB_CLOSE` already
+/// makes `close` kill the holder, so the arrangement proves nothing about the platform whose
+/// answer is missing.
+#[cfg(unix)]
+#[test]
+fn a_silent_orphan_holding_stdout_after_the_leader_exits_does_not_cost_the_capture() {
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let root = workspace.path().to_path_buf();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
+
+    // Generous, and the point of the cell is that it is NOT what ends the call: the drain ends on
+    // the orphan's silence, well inside this. It is the ceiling the last assertion checks, so a
+    // regression that goes back to waiting out the clock is named rather than merely slow.
+    const TIMEOUT: Duration = Duration::from_secs(20);
+    let limits = ProcessLimits {
+        timeout: TIMEOUT,
+        max_output_bytes: 1024 * 1024,
+    };
+
+    let started = Instant::now();
+    let captured = run_in_workspace(
+        &root,
+        &fake_tool(),
+        &[
+            "leader-exits-holding-stdout".to_owned(),
+            report_address.clone(),
+        ],
+        &BTreeMap::new(),
+        &[],
+        None,
+        &limits,
+        None,
+    )
+    .expect("the call returns a capture");
+    let elapsed = started.elapsed();
+
+    // Read AFTER the call: the leader connected and closed before it exited, so the report is
+    // already sitting in the accept backlog and this never waits on a live peer. Capturing the
+    // identities also lets cleanup account for the orphan that held the pipe until group release.
+    const REPORT_PATIENCE: Duration = Duration::from_secs(5);
+    let reported = wait_for_reported_processes(listener, REPORT_PATIENCE);
+    let cleanup = FixtureCleanup::capture(reported);
+
+    let Some((_, grandchild)) = reported else {
+        panic!(
+            "HARNESS-BROKE: the fixture never reported a grandchild id within {REPORT_PATIENCE:?};              nothing here arranged an orphan and the capture below decides nothing"
+        );
+    };
+    assert_ne!(
+        grandchild, 0,
+        "HARNESS-BROKE: the reported grandchild id is zero"
+    );
+
+    let stdout = String::from_utf8_lossy(&captured.stdout).into_owned();
+
+    assert!(
+        stdout.contains("leader-line"),
+        "the leader wrote and flushed `leader-line` and exited, and a silent orphan kept the write          end of stdout. The capture came back as {stdout:?} after {elapsed:?}: the drain went          quiet, released the group, and then killed the orphan holding the pipe. The bytes          reached the pipe before release and the reader recorded its bounded outcome"
+    );
+    assert!(
+        captured.readers_abandoned,
+        "a descendant outlived the leader holding a pipe, which is a containment failure whether          or not the bytes were recovered afterwards; the record must keep saying so"
+    );
+    assert!(
+        elapsed < TIMEOUT,
+        "the call took {elapsed:?} against a {TIMEOUT:?} timeout, which is the whole drain budget:          the drain stopped waiting on the clock instead of on the orphan's silence"
+    );
+
+    cleanup.cleanup().expect("the fixture processes are gone");
+}
+
+/// #714, the identity-safety half: the leader must still be UNREAPED when the group is released.
+///
+/// The release on this platform is `kill(-pgid, SIGKILL)` at a number the crate cached at spawn.
+/// A pgid is only a name for its leader's pid, and a pid is only stable while some process holds
+/// it -- a live process, or an unreaped zombie. Once the host reaps the leader, the kernel may
+/// hand that pid, and therefore that pgid, to anything else the same user starts. Everything
+/// between the reap and the release is a window in which the cached number names a group this
+/// crate never created, and the release kills whatever is in it.
+///
+/// The window is not hypothetical and not five seconds wide by accident: it is the writer join
+/// plus the whole drain, which ends on the orphan's `READER_SILENCE_GRACE` (5 s) and not before.
+/// So this cell does not try to force a pid wrap -- that costs a full `pid_max` of forks and
+/// proves the same thing the ordering already decides. It STAGES THE MECHANISM instead and
+/// measures the ordering directly: an observer thread polls both identities for the whole call
+/// and records the instant each stops existing. The leader must not stop existing first.
+///
+/// Red on the head this repairs: the poll loop's `try_wait` reaps at the leader's exit, the
+/// grandchild dies ~5 s later at the release, and the gap between them is the reuse window.
+///
+/// **The two processes are asked DIFFERENT questions, and conflating them is how the first
+/// version of this cell read a false harness break.** The leader's question is OCCUPANCY: a
+/// zombie still holds its pid, and holding the pid is the whole anchor, so `kill(pid, 0)` --
+/// which succeeds for a zombie -- is the right probe. The grandchild's question is LIVENESS: once
+/// the release kills it, it can sit unreaped for as long as its adoptive reaper likes, and
+/// `kill(pid, 0)` says "occupied" the whole time (#715 names the same asymmetry one layer down).
+/// So the grandchild is read from `/proc/<pid>/stat` and a `Z` counts as gone.
+///
+/// `cfg(target_os = "linux")` for that `/proc` read, and because the cached-number problem is the
+/// Unix one to begin with: a Windows job object is a handle, and a handle is an identity the reap
+/// cannot invalidate. Linux is where this crate's gate runs its Unix cells.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_leader_is_not_reaped_before_the_group_is_released() {
+    /// A poll granularity fine enough that the ordering it decides is the code's, not the
+    /// sampler's, and a floor under the gap the assertion will call a reuse window. It is NOT a
+    /// safe window: any gap at all frees the pid. It is the smallest gap this instrument can tell
+    /// apart from the SIGKILL's own delivery latency, and the defect's gap is ~5 s.
+    const OBSERVER_POLL: Duration = Duration::from_millis(1);
+    const REUSE_WINDOW_FLOOR: Duration = Duration::from_millis(250);
+    const OBSERVER_CEILING: Duration = Duration::from_secs(40);
+    const TIMEOUT: Duration = Duration::from_secs(20);
+
+    let workspace = tempfile::tempdir().expect("a temp dir");
+    let root = workspace.path().to_path_buf();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the readiness listener binds loopback");
+    let report_address = listener
+        .local_addr()
+        .expect("the readiness listener has an address")
+        .to_string();
+
+    // A zombie answers `kill(pid, 0)` with success; only the reap makes it ESRCH. That is exactly
+    // the leader's property: whether the pid -- and so the pgid -- is still OCCUPIED, which is
+    // what stops the kernel reissuing it. Not `ProcessIdentity::is_running`: that one answers
+    // about liveness, and an anchor is allowed to be dead.
+    fn pid_occupied(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    // The grandchild's property instead: STILL RUNNING. It is an orphan, so whoever adopted it
+    // decides when the zombie is cleared, and `kill(pid, 0)` cannot tell "the release killed it"
+    // from "the release did nothing". The state char is the field after the last `)` in
+    // `/proc/<pid>/stat`, which is why the split is on `)` and not on whitespace: a comm can
+    // contain spaces.
+    fn pid_running(pid: u32) -> bool {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        let Some((_, after_comm)) = stat.rsplit_once(')') else {
+            return false;
+        };
+        !matches!(after_comm.split_whitespace().next(), None | Some("Z"))
+    }
+
+    let observer = std::thread::spawn(move || {
+        let reported = wait_for_reported_processes(listener, Duration::from_secs(10))?;
+        let (leader, grandchild) = reported;
+        let started = Instant::now();
+        let mut leader_gone = None;
+        let mut grandchild_gone = None;
+        while started.elapsed() < OBSERVER_CEILING {
+            // The grandchild is sampled FIRST each pass, so a single pass that sees both gone
+            // credits the grandchild with the earlier instant. That biases the instrument toward
+            // the GREEN verdict; a red here is therefore not an artefact of sampling order.
+            if grandchild_gone.is_none() && !pid_running(grandchild) {
+                grandchild_gone = Some(started.elapsed());
+            }
+            if leader_gone.is_none() && !pid_occupied(leader) {
+                leader_gone = Some(started.elapsed());
+            }
+            if leader_gone.is_some() && grandchild_gone.is_some() {
+                break;
+            }
+            std::thread::sleep(OBSERVER_POLL);
+        }
+        Some((reported, leader_gone, grandchild_gone))
+    });
+
+    let limits = ProcessLimits {
+        timeout: TIMEOUT,
+        max_output_bytes: 1024 * 1024,
+    };
+    let captured = run_in_workspace(
+        &root,
+        &fake_tool(),
+        &[
+            "leader-exits-holding-stdout".to_owned(),
+            report_address.clone(),
+        ],
+        &BTreeMap::new(),
+        &[],
+        None,
+        &limits,
+        None,
+    )
+    .expect("the call returns a capture");
+
+    let observed = observer.join().expect("the observer thread does not panic");
+    let Some((reported, leader_gone, grandchild_gone)) = observed else {
+        panic!(
+            "HARNESS-BROKE: the fixture never reported its two pids, so nothing was observed and \
+             this cell decides nothing"
+        );
+    };
+    let cleanup = FixtureCleanup::capture(Some(reported));
+
+    let Some(grandchild_gone) = grandchild_gone else {
+        panic!(
+            "HARNESS-BROKE: the grandchild ({}) was still occupying its pid when the observer \
+             gave up after {OBSERVER_CEILING:?}; the release never reached the group, so the \
+             ordering below has no second event to order against. Capture was {:?}",
+            reported.1,
+            String::from_utf8_lossy(&captured.stdout)
+        );
+    };
+    let Some(leader_gone) = leader_gone else {
+        panic!(
+            "the leader ({}) was STILL unreaped {OBSERVER_CEILING:?} after the call: the anchor \
+             was taken and never let go, which leaks a zombie per invocation",
+            reported.0
+        );
+    };
+
+    assert!(
+        leader_gone + REUSE_WINDOW_FLOOR >= grandchild_gone,
+        "the leader ({leader}) stopped occupying its pid at {leader_gone:?} and the group was \
+         still holding a live member at {grandchild_gone:?} -- a {gap:?} window in which the \
+         cached pgid {leader} named nothing this crate owns, and in which the kernel was free to \
+         hand that pid to any other job of the same user. The release that ran at the end of it \
+         sends SIGKILL to that number. The leader must stay unreaped until the release has run.",
+        leader = reported.0,
+        gap = grandchild_gone.saturating_sub(leader_gone),
+    );
+
+    cleanup.cleanup().expect("the fixture processes are gone");
+}

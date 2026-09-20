@@ -4126,6 +4126,16 @@ struct ProcessWatchdog {
     swept_incomplete: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     completed: bool,
+    lifecycle_probe: Option<Arc<Mutex<LifecycleProbe>>>,
+}
+
+#[derive(Default)]
+struct LifecycleProbe {
+    events: Vec<&'static str>,
+    #[cfg(unix)]
+    release_waitable: bool,
+    #[cfg(unix)]
+    reaped: bool,
 }
 
 impl ProcessWatchdog {
@@ -4193,7 +4203,43 @@ impl ProcessWatchdog {
             swept_incomplete,
             thread: Some(thread),
             completed: false,
+            lifecycle_probe: None,
         })
+    }
+
+    #[cfg(test)]
+    fn with_lifecycle_probe(mut self, probe: Arc<Mutex<LifecycleProbe>>) -> Self {
+        self.lifecycle_probe = Some(probe);
+        self
+    }
+
+    fn record_release(&mut self) {
+        if let Some(probe) = &self.lifecycle_probe {
+            let mut probe = probe.lock().unwrap();
+            probe.events.push("release");
+            #[cfg(unix)]
+            if let Some(child) = self.child.as_mut() {
+                // `leader_exited` uses waitid(WNOWAIT): success proves the leader is still an
+                // owned, waitable child at the exact release boundary. A pre-release wait would
+                // return ECHILD here and make this regression red.
+                probe.release_waitable = graphhelm_process_tree::leader_exited(child).is_ok();
+            }
+        }
+    }
+
+    fn record_reap(&self, child: &mut std::process::Child) {
+        if let Some(probe) = &self.lifecycle_probe {
+            let mut probe = probe.lock().unwrap();
+            probe.events.push("reap");
+            #[cfg(unix)]
+            {
+                // After Child::wait, the same waitid probe must report ECHILD. This observes the
+                // kernel's ownership state rather than trusting a test-only label.
+                probe.reaped = graphhelm_process_tree::leader_exited(child).is_err();
+            }
+            #[cfg(not(unix))]
+            let _ = child;
+        }
     }
 
     fn terminate(&mut self) {
@@ -4209,12 +4255,18 @@ impl ProcessWatchdog {
     }
 
     fn finish(mut self) -> Result<std::process::ExitStatus, BackupError> {
-        let status = wait_child(
+        // On Unix this must observe the leader without reaping it. The cached pgid is the
+        // leader's pid, so the anchor has to remain occupied until `finish_inner` releases the
+        // group. `Child::try_wait` would give the pid back before that release and reopen #714.
+        let waited = wait_for_leader(
             self.child
                 .as_mut()
                 .ok_or_else(|| unavailable(UnavailableStage::ProcessWait))?,
             Duration::from_secs(24 * 60 * 60),
         );
+        if waited.is_err() {
+            self.terminate();
+        }
         // A successful leader must not be allowed to leave pipe-owning descendants behind.
         if sweep_left_descendants(&terminate_process(
             self.process_id,
@@ -4222,8 +4274,20 @@ impl ProcessWatchdog {
         )) {
             self.swept_incomplete.store(true, Ordering::Release);
         }
-        self.child.take();
         self.finish_inner();
+        // Reap only after `close_process_group`: on Unix this is the point at which the cached
+        // pgid is no longer used. Windows has the same ordering through the platform-neutral
+        // process-tree API, although its job handle is not invalidated by a reap.
+        let mut child = self
+            .child
+            .take()
+            .ok_or_else(|| unavailable(UnavailableStage::ProcessWait))?;
+        let status = child
+            .wait()
+            .map_err(|_| unavailable(UnavailableStage::ProcessWait));
+        self.record_reap(&mut child);
+        let status = status?;
+        waited?;
         // #81: these two flags were fused into one value here, and the fusion is exactly
         // the defect class this issue names — a deliberate cancel and an elapsed deadline
         // are opposite facts to whoever holds the error. Cancelled stays an availability
@@ -4257,7 +4321,7 @@ impl ProcessWatchdog {
             // this one is a fact about what the stop left behind.
             Err(unavailable(UnavailableStage::ProcessTerminate))
         } else {
-            status
+            Ok(status)
         }
     }
 
@@ -4276,6 +4340,7 @@ impl ProcessWatchdog {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        self.record_release();
         close_process_group(&mut self.process_group);
         self.completed = true;
     }
@@ -4285,12 +4350,15 @@ impl Drop for ProcessWatchdog {
     fn drop(&mut self) {
         if !self.completed {
             self.terminate();
-            if let Some(child) = self.child.as_mut() {
+            self.finish_inner();
+            // The Unix pgid remains valid only until the release above. Reap after it, even on
+            // the drop path, so cancellation cannot leave either a reusable group identity or a
+            // zombie.
+            if let Some(mut child) = self.child.take() {
                 let _ = child.wait();
+                self.record_reap(&mut child);
             }
-            self.child.take();
         }
-        self.finish_inner();
     }
 }
 
@@ -4377,18 +4445,13 @@ fn process_is_running(process_id: u32) -> bool {
     graphhelm_process_tree::process_is_running(process_id)
 }
 
-fn wait_child(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> Result<std::process::ExitStatus, BackupError> {
+fn wait_for_leader(child: &mut std::process::Child, timeout: Duration) -> Result<(), BackupError> {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(status) = child.try_wait().map_err(|_| BackupError::InvalidBackup)? {
-            return Ok(status);
+        if graphhelm_process_tree::leader_exited(child).map_err(|_| BackupError::InvalidBackup)? {
+            return Ok(());
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
             return Err(unavailable(UnavailableStage::ProcessWait));
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -5534,6 +5597,45 @@ mod process_tests {
     }
 
     #[test]
+    fn process_watchdog_releases_before_reaping_a_normally_finished_child() {
+        use std::process::{Command, Stdio};
+
+        let executable = std::env::current_exe().unwrap();
+        let mut command = Command::new(executable);
+        command
+            .args([
+                "--exact",
+                "backup::process_tests::fake_process_child",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("GRAPHHELM_FAKE_PROCESS_MODE", "success")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_process_group(&mut command);
+        let child = command.spawn().unwrap();
+        let process_id = child.id();
+        let lifecycle = Arc::new(Mutex::new(LifecycleProbe::default()));
+
+        let status = ProcessWatchdog::start(child, Duration::from_secs(5))
+            .unwrap()
+            .with_lifecycle_probe(Arc::clone(&lifecycle))
+            .finish()
+            .unwrap();
+
+        assert!(status.success());
+        assert!(!process_is_running(process_id));
+        let lifecycle = lifecycle.lock().unwrap();
+        assert_eq!(lifecycle.events, ["release", "reap"]);
+        #[cfg(unix)]
+        {
+            assert!(lifecycle.release_waitable);
+            assert!(lifecycle.reaped);
+        }
+    }
+
+    #[test]
     fn abort_guard_signals_cancellation_before_aborting_the_task() {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -5645,7 +5747,10 @@ mod process_tests {
         configure_process_group(&mut command);
         let child = command.spawn().unwrap();
         let parent_id = child.id();
-        let watchdog = ProcessWatchdog::start(child, Duration::from_secs(10)).unwrap();
+        let lifecycle = Arc::new(Mutex::new(LifecycleProbe::default()));
+        let watchdog = ProcessWatchdog::start(child, Duration::from_secs(10))
+            .unwrap()
+            .with_lifecycle_probe(Arc::clone(&lifecycle));
         let deadline = Instant::now() + Duration::from_secs(3);
         while !pid_path.exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
@@ -5659,6 +5764,13 @@ mod process_tests {
 
         assert!(!process_is_running(parent_id));
         assert!(!process_is_running(descendant_id));
+        let lifecycle = lifecycle.lock().unwrap();
+        assert_eq!(lifecycle.events, ["release", "reap"]);
+        #[cfg(unix)]
+        {
+            assert!(lifecycle.release_waitable);
+            assert!(lifecycle.reaped);
+        }
         std::fs::remove_file(pid_path).unwrap();
     }
 

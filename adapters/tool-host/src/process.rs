@@ -273,12 +273,19 @@ pub(crate) fn run_supervised(
     };
 
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
+        // NOT `try_wait` (#714). `try_wait` reaps, and on Unix the group `close` releases is named
+        // by the leader's pid -- so reaping before the release hands that number back to the
+        // kernel and the release can land on someone else's job. This asks without reaping; the
+        // reap is below, after `close`.
+        match graphhelm_process_tree::leader_exited(&mut child) {
+            Ok(true) => {
                 graphhelm_process_tree::close(&mut group);
+                // The anchor is let go HERE, and not before. `leader_exited` already saw the exit,
+                // so this returns the status the child really had rather than waiting for one.
+                let status = child.wait().map_err(|source| HostError::Spawn { source })?;
                 return Ok(SupervisedOutcome::Finished(status));
             }
-            Ok(None) => {
+            Ok(false) => {
                 if interruptible && cancel.is_some_and(CancelSignal::is_cancelled) {
                     // STILL DROPPED BY NAME, and #748 did not change that here -- what changed
                     // is the reason. `run_in_workspace` now keeps this answer, because it builds a
@@ -296,22 +303,31 @@ pub(crate) fn run_supervised(
                     // available: that field means "something escaped the process group", and
                     // `reader_lost` was added BESIDE it rather than folded in, for the reason its
                     // own doc gives -- two causes under one name cannot be told apart afterwards.
-                    let _ = graphhelm_process_tree::terminate(
-                        child.id(),
-                        graphhelm_process_tree::for_thread(group),
+                    // Copy the identity before the helper mutably borrows the group to close it.
+                    let process_id = child.id();
+                    let termination_group = graphhelm_process_tree::for_thread(group);
+                    terminate_close_reap(
+                        || {
+                            let _ =
+                                graphhelm_process_tree::terminate(process_id, termination_group);
+                        },
+                        || graphhelm_process_tree::close(&mut group),
+                        || {
+                            let _ = child.wait();
+                        },
                     );
-                    let _ = child.wait();
                     return Ok(SupervisedOutcome::Cancelled);
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(source) => {
-                // KILLED AND REAPED, not merely released. `close` is not a kill on both
-                // platforms: on Windows the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so
-                // closing it does end the members, but on unix `close` is a NO-OP -- so the first
-                // version of this arm returned an error having left the child running, closed the
-                // only handle `terminate` could still have reached it through, and left nothing
-                // able to reap it. Neither platform got the `wait`, so unix also kept a zombie.
+                // KILLED AND REAPED, not merely released. `close` is destructive on both
+                // platforms: on Windows the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`,
+                // and on Unix it signals the cached process group while the leader remains the
+                // unreaped identity anchor. The first version of this arm returned an error
+                // having left the child running, closed the only handle `terminate` could still
+                // have reached it through, and left nothing able to reap it. Neither platform
+                // got the `wait`, so unix also kept a zombie.
                 //
                 // The two sibling arms both clean up -- the create-failure arm twelve lines up
                 // kills and waits, and `run_in_workspace`'s equivalent falls through to the common
@@ -324,15 +340,39 @@ pub(crate) fn run_supervised(
                 // the strength of it: it is fixed because the correct version is adjacent and the
                 // next reader would take the wrong one for coverage.
                 // Dropped by name, for the reason at the first call site.
-                let _ = graphhelm_process_tree::terminate(
-                    child.id(),
-                    graphhelm_process_tree::for_thread(group),
+                // Keep the same release-before-reap ordering as the cancellation arm. In
+                // particular, `close` is the owning operation for the Windows job handle, so
+                // returning on a poll error must not leak it.
+                let process_id = child.id();
+                let termination_group = graphhelm_process_tree::for_thread(group);
+                terminate_close_reap(
+                    || {
+                        let _ = graphhelm_process_tree::terminate(process_id, termination_group);
+                    },
+                    || graphhelm_process_tree::close(&mut group),
+                    || {
+                        let _ = child.wait();
+                    },
                 );
-                let _ = child.wait();
                 return Err(HostError::Spawn { source });
             }
         }
     }
+}
+
+/// Run the common tree cleanup sequence while keeping its ordering explicit and testable.
+///
+/// The group must be terminated before it is closed, and the leader must be reaped only after
+/// close has released the identity anchor. On Windows, close also releases the owning job handle.
+fn terminate_close_reap<Terminate, Close, Reap>(terminate: Terminate, close: Close, reap: Reap)
+where
+    Terminate: FnOnce(),
+    Close: FnOnce(),
+    Reap: FnOnce(),
+{
+    terminate();
+    close();
+    reap();
 }
 
 impl Clone for CancelSignal {
@@ -1560,10 +1600,20 @@ pub fn run_in_workspace(
     // `None` until a kill is ATTEMPTED. A child that exits on its own is never swept, and starting
     // this at `Complete` would report a measurement that never ran (#748).
     let mut tree_kill = None;
-    let exit_status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
+    // Set when the poll itself failed, which is the only way this loop leaves without having seen
+    // the child exit. It decides whether the reap far below is a MEASUREMENT or merely cleanup:
+    // the record must not report an exit code from a wait that answered a question nobody asked.
+    let mut poll_failed = false;
+    // NOT `try_wait`, and the whole of #714's identity half is in that substitution. `try_wait`
+    // reaps; the group released at the end of this function is named by the leader's pid; a reaped
+    // pid is one the kernel may hand to any other job of the same user. Between the exit and the
+    // release sits the writer join and the entire drain -- five seconds of READER_SILENCE_GRACE on
+    // the path this was measured on -- and a `SIGKILL` at the end of it. So the leader is held as
+    // an unreaped anchor for that whole span and reaped only after `close` has run.
+    loop {
+        match graphhelm_process_tree::leader_exited(&mut child) {
+            Ok(true) => break,
+            Ok(false) => {
                 let expired = Instant::now() >= deadline;
                 let cancelled = cancel.is_some_and(CancelSignal::is_cancelled);
                 // #180: cancellation kills through the SAME reaping path as the deadline. The
@@ -1586,7 +1636,11 @@ pub fn run_in_workspace(
                         child.id(),
                         graphhelm_process_tree::for_thread(group),
                     ));
-                    let status = child.wait().ok();
+                    // Waited out WITHOUT reaping, for the reason above: `terminate` has signalled
+                    // the tree, but the release at the end of this function still has to reach
+                    // whatever `terminate`'s subtree sweep could not, and it needs the pgid to
+                    // still be this child's.
+                    let _ = graphhelm_process_tree::await_leader_exit(&mut child);
                     // Cancellation WINS when both are true (Codex, #609). A cancel raised inside
                     // the last poll interval before the deadline leaves both conditions true at
                     // the same poll, and the two mistakes are not equally bad: blaming the clock
@@ -1598,13 +1652,16 @@ pub fn run_in_workspace(
                     // `timed_out` takes the false cause out of the record; without this the
                     // disposition then falls through to the exit code, which a killed child has.
                     was_cancelled = cancelled;
-                    break status;
+                    break;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(_) => break None,
+            Err(_) => {
+                poll_failed = true;
+                break;
+            }
         }
-    };
+    }
 
     if let Some(writer) = stdin_writer {
         let _ = writer.join();
@@ -1645,6 +1702,15 @@ pub fn run_in_workspace(
     if !drained.released {
         graphhelm_process_tree::close(&mut group);
     }
+    // THE REAP, and its position is the fix (#714). Every `close` above has run, so the pgid they
+    // signalled was still this child's pid throughout; only now is that number given back to the
+    // kernel. Moving this line earlier -- which is what `try_wait` in the poll loop used to do
+    // implicitly -- reopens the window in which the release can kill an unrelated process.
+    //
+    // `poll_failed` keeps the old record: that path never established an exit, and the wait here
+    // is cleanup rather than an answer, so it must not become an exit code.
+    let reaped = child.wait().ok();
+    let exit_status = if poll_failed { None } else { reaped };
     let (stdout, stdout_truncated) = drained.stdout;
     let (stderr, stderr_truncated) = drained.stderr;
     let readers_abandoned = drained.abandoned;
@@ -1681,6 +1747,7 @@ mod tests {
     use super::{
         CancelSignal, CapturedProcess, DrainedReaders, HostError, LIVE_READER_THREADS,
         MINIMUM_DRAIN, ReaderHandle, drain_deadline, drain_readers, reject_lost_capture,
+        terminate_close_reap,
     };
     use std::io::Read;
     use std::sync::Arc;
@@ -1740,6 +1807,20 @@ mod tests {
     const GRACE: Duration = Duration::from_millis(200);
     const POLL: Duration = Duration::from_millis(10);
     const POST: Duration = Duration::from_secs(2);
+
+    #[test]
+    fn tree_cleanup_terminates_closes_then_reaps() {
+        let operations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let terminate_operations = std::rc::Rc::clone(&operations);
+        let close_operations = std::rc::Rc::clone(&operations);
+        let reap_operations = std::rc::Rc::clone(&operations);
+        terminate_close_reap(
+            || terminate_operations.borrow_mut().push("terminate"),
+            || close_operations.borrow_mut().push("close"),
+            || reap_operations.borrow_mut().push("reap"),
+        );
+        assert_eq!(*operations.borrow(), ["terminate", "close", "reap"]);
+    }
 
     fn far_deadline() -> Instant {
         Instant::now() + Duration::from_secs(120)

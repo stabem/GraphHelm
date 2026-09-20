@@ -37,6 +37,13 @@
 //! - `big-stderr`: write 8 MiB of `x` to STDERR and one short line to stdout, exit 0.
 //!   The mirror of `big-output`: it exists so a cut on one stream can be told apart
 //!   from a cut on the other, which a single fused flag cannot express (#177).
+//! - `leader-exits-holding-stdout <addr>`: spawn `sleep` as a grandchild that INHERITS this
+//!   process's stdout, report `direct_pid,grandchild_pid` over `<addr>`, write one marker line and
+//!   EXIT. The fixture for #714: every other grandchild mode keeps the leader alive until the host
+//!   kills it, so none of them can reach the ordinary leader-exit path, where the poll loop breaks
+//!   on `Ok(Some(status))` and nothing is ever terminated. Here the leader is gone and a silent
+//!   orphan holds the write end of stdout, which is the only arrangement in which the drain's
+//!   release decides whether the capture arrives or is abandoned.
 //! - `exit-code <n>`: exit with `<n>` parsed as `i32`
 
 use std::collections::BTreeMap;
@@ -201,6 +208,46 @@ fn main() {
                 report.flush().expect("the grandchild id is flushed");
             }
             std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+        // #714, and Unix-only for the same reason the escaping fixture is: what this measures is
+        // whether `close` releases anything on a platform where the group is a process group and
+        // not a job object. On Windows the job already kills the holder, so the arrangement is
+        // not the open question there.
+        #[cfg(unix)]
+        "leader-exits-holding-stdout" => {
+            let report_to = arguments
+                .next()
+                .expect("leader-exits-holding-stdout needs a loopback address to report to");
+            // INHERITED stdout, deliberately, and it is the whole fixture. `spawn-grandchild`
+            // sets the grandchild's stdio to null and still leaks the pipes on Windows by
+            // handle inheritance; on Unix null stdio really does mean the grandchild holds no
+            // write end, so nothing would block. Asking for the parent's stdout is how a Unix
+            // orphan comes to hold the pipe -- and it is what a tests runner's worker does.
+            #[allow(clippy::zombie_processes)]
+            let grandchild = std::process::Command::new(std::env::current_exe().expect("own path"))
+                .arg("sleep")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("the grandchild spawns");
+            {
+                let mut report = std::net::TcpStream::connect(report_to.as_str())
+                    .expect("the readiness channel accepts a connection");
+                report
+                    .write_all(format!("{},{}", std::process::id(), grandchild.id()).as_bytes())
+                    .expect("the direct child and grandchild ids are reported");
+                report.flush().expect("the grandchild id is flushed");
+            }
+            // The marker goes out BEFORE the exit, so the capture this cell asks about is bytes
+            // that certainly reached the pipe. A cell that asserted on an empty expectation could
+            // not tell "released and got the bytes" from "released and there were none".
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            writeln!(out, "leader-line").expect("stdout");
+            out.flush().expect("the marker is flushed");
+            // And then this process RETURNS. No sleep: the poll loop must break on
+            // `Ok(Some(status))`, which is the arm #714 is about.
         }
         "sleep" => {
             std::thread::sleep(std::time::Duration::from_secs(3600));

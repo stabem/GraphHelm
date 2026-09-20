@@ -35,7 +35,7 @@
 //! |---|---|---|
 //! | the container | a process group | a job object |
 //! | can a descendant leave it? | **YES** — one `setsid` or `setpgid` call | **no** — breakaway needs `CREATE_BREAKAWAY_FROM_JOB` *and* a job that permits it, and this job does not set `JOB_OBJECT_LIMIT_BREAKAWAY_OK` |
-//! | what `close` does | nothing; there is no handle to release | kills the job's remaining MEMBERS (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) |
+//! | what `close` does | `SIGKILL` to the process group (#714), while the caller still holds the leader unreaped | kills the job's remaining MEMBERS (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) |
 //!
 //! **One caveat on the Windows column, because the table would otherwise overstate it** (Codex, on
 //! #746). "Cannot leave" is about breakaway, and there is a second way to be outside a job: never
@@ -81,9 +81,10 @@
 //! 2. **A reader thread that never returns** (#726). When a capture gives up on its readers, the
 //!    caller still runs [`close`]. On Windows that kills the job's remaining MEMBERS — which, when
 //!    [`configure`] ran before the spawn, includes every descendant — so the inherited pipe closes,
-//!    and the blocked reader returns microseconds later; on Unix `close` does nothing, so the
-//!    descendant lives, keeps the pipe, and the thread blocks forever — two stranded threads and
-//!    their buffers per invocation.
+//!    and the blocked reader returns microseconds later; on Unix `close` USED TO do nothing, so the
+//!    descendant lived, kept the pipe, and the thread blocked forever — two stranded threads and
+//!    their buffers per invocation. #714 closed that half: the Unix release now signals the group,
+//!    and the leader stays unreaped until it has, so the pgid it signals is still the group's.
 //!
 //! **A doc gap that generates dissimilar defects is a defect generator, not a formatting task.**
 //! Neither of those was findable by reading `terminate`; both were findable by asking what `close`
@@ -175,21 +176,25 @@ impl std::error::Error for IdentityUnavailable {}
 
 /// A handle to the group a child and its descendants belong to.
 ///
-/// Opaque, and one type name on both platforms so callers need no `cfg` of their own. On Unix the
-/// group is the child's own process group and there is nothing to hold; on Windows it is a job
-/// object handle, which is why [`close`] exists at all.
+/// Opaque, and one type name on both platforms so callers need no `cfg` of their own. On Unix it
+/// carries the child's own process group id; on Windows it is a job object handle. [`close`] is a
+/// destructive release on both (#714).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessGroup(GroupHandle);
 
+/// On Unix the handle is the child's own process group id, kept only when the child is that
+/// group's LEADER -- which is what [`configure`]'s `process_group(0)` makes it. `None` means the
+/// crate is holding nothing and [`close`] must do nothing: either the group was never established,
+/// or it has already been released.
 #[cfg(unix)]
-type GroupHandle = ();
+type GroupHandle = Option<u32>;
 
 #[cfg(windows)]
 type GroupHandle = usize;
 
 #[cfg(unix)]
 impl ProcessGroup {
-    const EMPTY: Self = Self(());
+    const EMPTY: Self = Self(None);
 }
 
 #[cfg(windows)]
@@ -255,8 +260,23 @@ pub fn configure(command: &mut std::process::Command) {
 /// Unix, where the grouping was settled by [`configure`] before the spawn.
 #[cfg(unix)]
 #[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
-pub fn create(_child: &std::process::Child) -> Result<ProcessGroup, ProcessTreeError> {
-    Ok(ProcessGroup::EMPTY)
+pub fn create(child: &std::process::Child) -> Result<ProcessGroup, ProcessTreeError> {
+    // The group is the child's own, and this ASKS THE KERNEL rather than assuming it (#714).
+    // Nothing in this API forces [`configure`] to run before the spawn -- the funnels do, but a
+    // caller that skipped it has a child sitting in the PARENT'S group, and `kill(-pid)` would
+    // then signal a group this crate never created, including the caller's own processes. So the
+    // pgid is kept only when it equals the child's pid, which is exactly "this child leads the
+    // group `configure` put it in". Anything else keeps `None`, and [`close`] does nothing on that
+    // path rather than signalling a group this crate does not own.
+    //
+    // Read HERE rather than at close time. The caller must keep the leader unreaped until close,
+    // and after the reap the pid no longer resolves.
+    let pid = child.id();
+    let leads_its_own_group = i32::try_from(pid).is_ok_and(|pid| {
+        let pgid = unsafe { libc::getpgid(pid) };
+        pgid == pid
+    });
+    Ok(ProcessGroup(leads_its_own_group.then_some(pid)))
 }
 
 /// The same group, usable from another thread.
@@ -265,18 +285,150 @@ pub fn for_thread(group: ProcessGroup) -> ProcessGroup {
     group
 }
 
-/// Release the group's handle. A no-op on Unix, which holds none.
+/// Has the leader finished, asked WITHOUT reaping it?
 ///
-/// **The no-op is not the same act as the Windows one, and the difference is load-bearing** (#717).
-/// There the job carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so closing it KILLS whatever is still
-/// inside; here there is nothing to close and nothing dies. A caller that treats `close` as cleanup
-/// gets cleanup on one platform and a comment on the other.
+/// The anchor [`close`] depends on (#714). `Child::try_wait` answers the same question and pays
+/// for the answer with the pid: it reaps, the kernel is free to reissue that number, and the pgid
+/// [`close`] holds stops naming the group it was read from. This asks and leaves the zombie in
+/// place, so the number stays taken until the caller reaps -- which it must do, AFTER [`close`].
 ///
-/// The measured consequence is #726: when a capture abandons its readers, `close` still runs. On
-/// Windows the escaped descendant dies, its inherited pipe handle closes, and the blocked reader
-/// thread returns; on Unix it lives, keeps the pipe, and that thread blocks forever.
+/// On Unix that is `waitid` with `WNOWAIT`, the one wait primitive that does not consume the
+/// child's exit state. On Windows it is `Child::try_wait` unchanged: there the group is a job
+/// HANDLE, the handle is the identity, and a reap invalidates nothing.
+///
+/// A caller that never reaps afterwards leaks a zombie per invocation; a caller that reaps before
+/// [`close`] gets the defect this exists to prevent. Both are visible to the exit ordering and one
+/// of them is asserted in `adapters/tool-host/tests/process_isolation.rs`.
+///
+/// # Errors
+///
+/// The platform wait failed. `EINTR` is retried rather than reported.
 #[cfg(unix)]
-pub fn close(_group: &mut ProcessGroup) {}
+pub fn leader_exited(child: &mut std::process::Child) -> std::io::Result<bool> {
+    wait_leaving_the_zombie(child, libc::WNOHANG)
+}
+
+/// Block until the leader has finished, WITHOUT reaping it. See [`leader_exited`].
+///
+/// # Errors
+///
+/// The platform wait failed. `EINTR` is retried rather than reported.
+#[cfg(unix)]
+pub fn await_leader_exit(child: &mut std::process::Child) -> std::io::Result<()> {
+    wait_leaving_the_zombie(child, 0).map(|_| ())
+}
+
+/// `waitid(P_PID, ..., WEXITED | WNOWAIT)`: reports the exit and leaves the child unreaped.
+///
+/// `si_signo` is the "did anything happen" flag. `waitid` returns 0 under `WNOHANG` whether or not
+/// the child changed state, and POSIX makes the zeroed `siginfo_t` the way to tell the two apart --
+/// so the struct is zeroed BEFORE the call and read after. A `si_pid()` accessor would say the same
+/// thing on Linux and is not portable across the Unixes this crate compiles for.
+#[cfg(unix)]
+fn wait_leaving_the_zombie(
+    child: &std::process::Child,
+    extra_options: libc::c_int,
+) -> std::io::Result<bool> {
+    let pid = libc::id_t::from(child.id());
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let answered = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid,
+                std::ptr::addr_of_mut!(info),
+                libc::WEXITED | libc::WNOWAIT | extra_options,
+            )
+        };
+        if answered == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        return Ok(info.si_signo != 0);
+    }
+}
+
+/// Has the leader finished? On Windows this is `Child::try_wait`, and the reap costs nothing.
+///
+/// See the Unix body for why the two platforms need the same call under one name: there the group
+/// is a pgid, which is only its leader's pid, so the reap has to wait for [`close`]. Here the group
+/// is a job handle, which no reap can invalidate.
+///
+/// # Errors
+///
+/// `Child::try_wait` failed.
+#[cfg(windows)]
+pub fn leader_exited(child: &mut std::process::Child) -> std::io::Result<bool> {
+    child.try_wait().map(|status| status.is_some())
+}
+
+/// Block until the leader has finished. See [`leader_exited`].
+///
+/// # Errors
+///
+/// `Child::wait` failed.
+#[cfg(windows)]
+pub fn await_leader_exit(child: &mut std::process::Child) -> std::io::Result<()> {
+    child.wait().map(|_| ())
+}
+
+/// Release the group: `SIGKILL` to the whole process group, once.
+///
+/// **This used to be a no-op, and the no-op was the defect** (#714). The Windows job carries
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so closing it KILLS whatever is still inside; here there
+/// was nothing to close and nothing died, so a caller that treated `close` as cleanup got cleanup
+/// on one platform and a comment on the other. The measured consequence was #726 and then #714:
+/// when a capture releases its readers, `close` runs -- on Windows the escaped descendant dies,
+/// its inherited pipe handle closes and the blocked reader returns; on Unix it lived, kept the
+/// pipe, and the capture was discarded with the bytes still inside the reader.
+///
+/// So the two platforms now mean the same thing by "release", and the Windows semantics are the
+/// reference: **this call is DESTRUCTIVE and it always was on one platform**. A caller that wants
+/// the group to keep running must not call it.
+///
+/// It reaches only what is still IN the group, which is the same qualifier [`terminate`] carries
+/// on this platform (#717): a descendant that called `setsid` has left, and only the subtree sweep
+/// in [`terminate`] can find it. Taking the pgid makes a second call a no-op, so a caller that
+/// closes twice does not signal twice.
+///
+/// # The pgid is only as stable as its leader's pid, and that is a CALLER obligation
+///
+/// A pgid is not an identity. It is the pid of the process that led the group, and a pid belongs
+/// to whoever the kernel last handed it to. Reap the leader and the number is free: the kernel may
+/// give it to any other job of the same user, and this `SIGKILL` then lands on a group this crate
+/// never created. That is not a five-second race on the cancel path -- it is every path, including
+/// the ordinary EOF one, and it is the reason the first version of this function was blocked
+/// (Codex, on PR #1170).
+///
+/// **So the anchor is the leader itself, held UNREAPED until this call has run.** A zombie still
+/// occupies its pid, and an occupied pid cannot be reissued, so the number below keeps naming the
+/// group [`create`] read it from. [`leader_exited`] and [`await_leader_exit`] exist so a caller can
+/// learn that the child is finished without giving that anchor up; the reap goes AFTER the release.
+/// A fresh `getpgid` here would not do instead -- it answers about the instant it runs and the
+/// signal is sent after it, which is the same TOCTOU one line narrower.
+///
+/// The obligation is the caller's because only the caller owns the [`std::process::Child`], and it
+/// is stated here because a caller who reaps first gets a function that still looks correct.
+#[cfg(unix)]
+pub fn close(group: &mut ProcessGroup) {
+    let Some(pgid) = group.0 else {
+        return;
+    };
+    // Emptied BEFORE the signal and by the same statement shape the Windows arm uses, so a second
+    // release is a no-op on either platform rather than a second `SIGKILL` at a pgid the kernel
+    // may have reissued.
+    *group = ProcessGroup::EMPTY;
+    let Ok(pgid) = i32::try_from(pgid) else {
+        return;
+    };
+    // Negative pid: the GROUP, not the leader. The leader is normally a zombie by now -- held as
+    // the anchor above -- and signalling it alone would leave exactly the descendant that is
+    // holding the pipe.
+    unsafe { libc::kill(-pgid, libc::SIGKILL) };
+}
 
 /// What a [`terminate`] actually achieved, because "it returned" is not the same as "the tree is
 /// gone" (#748).
@@ -768,15 +920,18 @@ fn resume_suspended_process(process_id: u32) -> Result<u32, ProcessTreeError> {
 /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the handle's lifetime the kill policy, so this is not
 /// merely cleanup: it is a second kill, and callers order it after their readers for that reason.
 ///
-/// **The Unix counterpart does none of that** (#717). There a process group has no handle to
-/// release and `close` is a no-op, so a descendant that escaped `terminate` survives this call
-/// instead of dying to it. Written on BOTH bodies deliberately: each is invisible in the other's
-/// rendered documentation, and the reader who most needs to know the two differ is the one reading
-/// only the platform they are on.
+/// **The Unix counterpart now does the same thing by a different mechanism** (#714). There a
+/// process group has no handle, so the release is an explicit `SIGKILL` to the group -- and
+/// because a pgid is only its leader's pid, that platform also asks its caller to keep the leader
+/// unreaped until the release has run. Written on BOTH bodies deliberately: each is invisible in
+/// the other's rendered documentation, and the reader who most needs to know how the two differ is
+/// the one reading only the platform they are on. What is still NOT symmetric is escape (#717): a
+/// descendant that called `setsid` has left the Unix group and survives this call; nothing leaves
+/// a job object.
 ///
 /// The measured consequence is #726: when a capture abandons its readers, `close` still runs. Here
 /// the job's remaining members die, their inherited pipe handles close, and the blocked reader thread
-/// returns within microseconds. On Unix that thread blocks forever.
+/// returns within microseconds. On Unix that now happens too, for members that did not leave.
 ///
 /// **"Members", not "everything that ran" — the distinction is real and this doc overstated it once**
 /// (Codex, on #746). Nothing in this API forces [`configure`] to be called before the spawn, and a

@@ -96,7 +96,9 @@ try {
     # INSIDE the block, not merely after it in the file: an index comparison would be satisfied by
     # the function DEFINITION sitting anywhere above, and by a join moved to any later stage. The
     # slice is the claim -- the work is accounted for under the name it has always had.
-    $joinIndex = $gateText.IndexOf("Invoke-Stage 'ci powershell suites' {", [System.StringComparison]::Ordinal)
+    # #1053 item 7 added `-AlwaysRun` to this call so a started background child is still reaped
+    # after a fail-fast abort. The anchor moved with the line; the claim it supports did not.
+    $joinIndex = $gateText.IndexOf("Invoke-Stage 'ci powershell suites' -AlwaysRun {", [System.StringComparison]::Ordinal)
     $joinBlock = ''
     if ($joinIndex -ge 0) {
         $blockEnd = $gateText.IndexOf("`n    } | Out-Null", $joinIndex, [System.StringComparison]::Ordinal)

@@ -55,7 +55,11 @@ $sliceHelpers = Get-GateSlice -Start '$failed = @()' -End '# #152: rewrites the 
 # The end anchor is the block terminator, indentation included. Anchoring on a bare '| Out-Null'
 # matched the FIRST one instead, so any pipe added INSIDE the stage body cut the slice mid-block and
 # the fixture became unparseable -- the harness breaking while wearing an ordinary red.
-$sliceStage = Get-GateSlice -Start "    Invoke-Stage 'ci powershell suites' {" -End "`n    } | Out-Null" -IncludeEnd
+# #1053 item 7 moved `-AlwaysRun` onto this call, so the START anchor moved with the line. The
+# assertions below are unchanged: this suite still slices the same stage and still asks whether it
+# reddens. An anchor tracks the text it names; it does not get to be stale and still be trusted --
+# and it proved that here by REFUSING (HARNESS-BROKE) rather than passing over an empty slice.
+$sliceStage = Get-GateSlice -Start "    Invoke-Stage 'ci powershell suites' -AlwaysRun {" -End "`n    } | Out-Null" -IncludeEnd
 $sliceVerdict = Get-GateSlice -Start 'if ($failed.Count -gt 0) {' -End "Write-Host '[gate] GREEN"
 
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-stage-reddens-$([guid]::NewGuid().ToString('N'))"

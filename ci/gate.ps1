@@ -110,7 +110,12 @@ param(
     # without publishing. Off by default -- the refusal exists because a detached run's manifest
     # can never be committed, and that must stay the loud default, not something a flag quietly
     # opts out of by omission.
-    [switch] $AllowDetachedHead
+    [switch] $AllowDetachedHead,
+    # #1053 item 7: run EVERY stage even after one fails, which is this gate's behaviour before
+    # item 7. Default OFF, so the common case -- 56 % of red runs fail exactly one stage -- stops
+    # paying a median 940 s for stages nobody will read. Pass it when you want the whole list of
+    # failures in one run instead of one failure per run.
+    [switch] $NoFailFast
 )
 
 Set-StrictMode -Version 2.0
@@ -371,6 +376,27 @@ $toolchain = '+1.97.1'
 # #896: the exit code a stage body reports when it set none. 99 is the sentinel this repository
 # already runs merge-proof behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
 $MuteStageExitCode = 99
+
+# #1053 item 7: FAIL-FAST IS A DECISION THE RUN MAKES ONCE, HERE -- not a property Invoke-Stage
+# acquires on its own. Armed ABOVE the failed-stage list initialiser below, which is the line every
+# ci/*.tests.ps1 uses as its slice-start anchor -- so a SLICE never inherits it. Do NOT write that
+# anchor's text into a comment above it: Get-GateSlice takes the FIRST match, so a comment quoting
+# it cuts the slice from the wrong place and the slice does not even parse. Measured; this comment
+# did exactly that on its first draft.
+#
+# That boundary is load-bearing and it was found the hard way. Keying the skip on the abort flag
+# alone made five suites red on their first gate -- gate-background-stage-evidence,
+# gate-postgres-evidence, gate-stage-overlap, gate-stage-reddens, gate-stage-stderr-evidence -- all
+# of which drive Invoke-Stage several times to observe several INDEPENDENT scenarios. A fixture
+# stage failing in scenario one silently skipped scenario two, and their assertions were about
+# stages that no longer ran. They were right and the change was wrong: a slice is not a run, and
+# fail-fast is a statement about a run.
+#
+# Read through `Test-Path variable:` in Invoke-Stage for the same reason, so an unarmed slice
+# answers "off" instead of throwing under StrictMode.
+$script:failFastEnabled = $true
+if (Test-Path 'variable:NoFailFast') { $script:failFastEnabled = -not [bool]$NoFailFast }
+
 $failed = @()
 # #909: what each PostgreSQL stage actually EXECUTED. Kept apart from $failed for the same reason
 # $staleBinaryCount is (#822/#856): "this stage ran nothing" is not a finding about the code, it is a
@@ -595,7 +621,7 @@ function Invoke-PostgresStage {
     $previousCountFile = $env:GRAPHHELM_PG_COUNT_FILE
     $env:GRAPHHELM_PG_COUNT_FILE = $countFile
     try {
-        Invoke-Stage $Name $Body | Out-Null
+        Invoke-Stage $Name $Body -AlwaysRun | Out-Null
     } finally {
         $env:GRAPHHELM_PG_COUNT_FILE = $previousCountFile
     }
@@ -853,7 +879,40 @@ function Test-GateCanaryProducedResult {
     return $false
 }
 function Invoke-Stage {
-    param([string] $Name, [scriptblock] $Body)
+    # #1053 item 7: -AlwaysRun exempts a stage from the fail-fast skip below. It is carried by the
+    # three JOINS of background children and by nothing else: a child that was already started must
+    # be reaped whatever the verdict, or the run leaks a process past its own lifetime -- the #1003
+    # defect, re-armed by the thing meant to save time.
+    param([string] $Name, [scriptblock] $Body, [switch] $AlwaysRun)
+
+    # #1053 item 7: A STAGE NOBODY WILL READ IS NOT WORTH PAYING FOR, AND ITS ABSENCE IS RECORDED.
+    #
+    # Measured over the 370 records in .factory/gate-runs: 39 % of runs are RED, a red run medians
+    # 1734 s against GREEN's 1664 s, and the FIRST failing stage ends at a median of 795 s -- so a
+    # red gate spends a further 940 s after its answer is already known. 56 % of red runs have
+    # exactly ONE failing stage, so for most of them this skips nothing a reader would have used;
+    # 37 % have more than one, and those pay a second gate, which is far cheaper now that a re-run
+    # reuses a vouched target.
+    #
+    # `passed = $null` IS LOAD-BEARING and is the whole reason this is not a silent early `return`.
+    # `$false` would fabricate a failure this run never observed, `$true` would fabricate a green,
+    # and OMITTING the entry makes "not run" indistinguishable from "does not exist in this build"
+    # -- the exact confusion every other refusal in this file exists to prevent. A reader that
+    # treats $null as falsy sees "not passed", which is true; one that treats it as a verdict is
+    # wrong, and `notRun` beside it says so in a word.
+    if ((-not $AlwaysRun) -and (Test-Path 'variable:script:failFastEnabled') -and $script:failFastEnabled -and (Test-Path 'variable:script:abortAfterStage') -and $script:abortAfterStage) {
+        Write-Host ''
+        Write-Host "[gate] SKIPPED: $Name -- the run already failed at '$($script:abortAfterStage)' (#1053; -NoFailFast runs every stage)" -ForegroundColor Yellow
+        $script:stageRecords.Add([ordered]@{
+                name        = $Name
+                passed      = $null
+                notRun      = $true
+                notRunCause = [string]$script:abortAfterStage
+                startedUtc  = [DateTime]::UtcNow.ToString('o')
+                endedUtc    = [DateTime]::UtcNow.ToString('o')
+            })
+        return 0
+    }
 
     Write-Host ''
     Write-Host "[gate] $Name" -ForegroundColor Cyan
@@ -969,6 +1028,18 @@ function Invoke-Stage {
     if ($code -ne 0) {
         Write-Host "[gate] FAILED: $Name (exit $code)" -ForegroundColor Red
         $script:failed += $Name
+        # #1053 item 7: ARM THE SKIP HERE, never abort from inside this function. The manifest write
+        # far below is what every other session reads, and it must still run in full -- a fail-fast
+        # that skipped the record would trade 940 s of compute for the evidence the run exists to
+        # produce. Setting a flag lets the remaining `Invoke-Stage` calls record themselves as
+        # `notRun` and lets the tail of the script finish normally.
+        # The run decided this once, above the slice boundary; this only records WHERE it tripped.
+        # An unarmed context (a slice) never sets the flag, so nothing downstream can skip.
+        if ((Test-Path 'variable:script:failFastEnabled') -and $script:failFastEnabled) {
+            if (-not (Test-Path 'variable:script:abortAfterStage') -or (-not $script:abortAfterStage)) {
+                $script:abortAfterStage = $Name
+            }
+        }
     }
     $record = [ordered]@{
         name         = $Name
@@ -5321,7 +5392,7 @@ try {
     # call keeps the shape it always had because ci/gate-stage-reddens.tests.ps1 slices this block
     # out of this file by anchor: a changed call shape breaks that suite's FIXTURE rather than its
     # subject, and a harness breaking while wearing an ordinary red is the thing it exists to catch.
-    Invoke-Stage 'ci powershell suites' {
+    Invoke-Stage 'ci powershell suites' -AlwaysRun {
         $joined = Complete-BackgroundStage -Started $script:psSuitesStarted
         if ($null -eq $joined) {
             # The early start failed. Same command, same place, exactly as long as before #956.

@@ -992,19 +992,35 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    context, authorship attaches to that subagent, not to the lane.** Two OTHER fresh-context
    subagents of the spawning session are then the two passes although all three share the lane.
    The presser accepts them only when ALL of these hold, read from the pull request itself: the
-   body names the implementing subagent; each pass carries the disclosure form
-   `Lane: X (subagent <name> of <session> [ref], non-author for this PR)` with a `<name>` that is
-   not the implementer's and not the other pass's; the gate was GREEN at the head before either
-   pass was written and each pass names that head; the briefs differ (each pass states its own
-   angle) and each pass states, in its own body, that its subagent was spawned new for that pass
-   after the gate and that its brief carried no finding from the implementer, the orchestrator or
-   the other pass - a pass without that statement is a reading; and a timestamped lane census
-   (`ListAgents`) posted on the pull request BEFORE the passes AND again immediately before the
-   press shows NO other non-author lane live on the board - the exception exists because the
-   lane set is one, it lapses the moment a second non-author lane can read, and the second census
-   is what catches a lane that appeared between the passes and the button. A diff the
+   body names the implementing subagent AND states in as many words that the session's own context
+   wrote no line of the diff (naming the implementer alone leaves the mixed case indistinguishable
+   from the exempt one); each pass carries the disclosure form `AGENTS.md` specifies AS ITS FIRST
+   LINE - not merely somewhere in the body, because that first line is what a census reads and a
+   form below it is a form a census is told to skip - with a subagent name that is not the
+   implementer's and not the other pass's; the gate was GREEN at the head before either pass was
+   written and each pass names that head; the briefs differ (each pass states its own angle) and
+   each pass carries the literal attestation line `AGENTS.md` specifies, verbatim and unparaphrased
+   - a pass without that line is a reading; and a timestamped lane census (`ListAgents`) posted on
+   the pull request BEFORE the passes AND again immediately before the press finds no other
+   non-author lane eligible to read this pull request, **under the predicate and the citation rule
+   `AGENTS.md` states for the exhaustion clause** - the exception exists because the lane set is
+   one, it lapses the moment a second non-author lane can read, and the second census is what
+   catches a lane that appeared between the passes and the button.
+   **NEITHER LITERAL IS REPRODUCED HERE, AND THAT IS THE RULE RATHER THAN AN OMISSION.** Both are
+   grepped for, so a second copy is a second thing to keep in step with a census - and the copy this
+   item used to carry had drifted before anyone read it, spelling the lane field `Lane: X` where the
+   form spells it `Lane: <letter>`. A presser checking a pass reads the form and the line out of
+   `AGENTS.md` and compares bytes. A diff the
    session's own context touched at all — even one line — is the mixed case
    and stays under the general rule: every subagent of that session is a reader, never a pass.
+   **WHICH COMMITS ARE EXEMPT from that sentence is stated in `AGENTS.md` and only there**; this
+   file does not enumerate them. The enumeration it used to carry is the argument: it said "merge"
+   where `AGENTS.md` says merge OR REBASE, so a rebased branch read as exempt in one document and
+   as mixed in the other - a copy that had drifted from its source at the moment it was written.
+   **WHETHER THE SPAWNING SESSION MAY THEN PRESS IS ITEM 12'S QUESTION, ANSWERED THERE AND NOT
+   HERE** - this item states further down that item 12 governs the census, and "who may press" is
+   the census's question. See item 12's reading of its own `verdict` class under this
+   exception.
    **AND A VERDICT DISQUALIFIES, A NOTE DOES NOT.** What bars a lane from the button is having
    REVIEWED — a body carrying a verdict word, which is the same thing this item already counts a
    pass by. A body that measures something, routes the work, reports a coupling, reports a dead gate
@@ -1173,6 +1189,17 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
      routing note) is not.** Measured on #939: a `**not a verdict**` body carrying "what is actually
      blocking" and "required before the press" is a merge judgement, and its lane may not press;
    - **no body** — eligible.
+   **AND THE SUBAGENT EXCEPTION IS A READING OF THE `verdict` CLASS, NOT A SIXTH CLASS.** Under
+   item 8's stated exception (`AGENTS.md`, the 2026-09-13 amendment) the two passes are
+   fresh-context subagents of the SPAWNING session, and the lane-is-the-unit rule above would put
+   that lane in `verdict` on the strength of its own subagents' passes - leaving a pull request the
+   exception exists to unblock with no eligible presser at all. The exception would create exactly
+   the deadlock it was written to break. So, narrowly: **a verdict whose first-line disclosure
+   declares it a subagent that is `non-author for this PR` under that exception classifies the
+   SUBAGENT and not the lane, and does not disqualify the spawning lane from pressing.** What still
+   disqualifies that lane is a verdict written by its OWN context, which is the ordinary rule
+   untouched. The bar is lifted for this case and no other; item 8's second census, immediately
+   before the button, is what shuts the case again the moment another non-author lane may read.
    Read BOTH surfaces, paginated, with a timestamp and enough of each body to see the verdict word —
    **two here, three in ITEM 6, and the difference is the QUESTION, not an oversight.** Item 6's
    census asks what was SAID about the change, and findings live in inline review threads (all
@@ -1302,7 +1329,42 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
   merge comment, a squash body, a review. No gate sees this, because nothing about it is code; the only
   damaged thing is the record. Write the file with `UTF8Encoding($false)` and read the bytes back
   before and after, which is what E did for both squash bodies and both merge comments today
-  (`e53e3e22`, `eb40bf0c`). **This rule lived ONLY on `.factory/orchestrator-board.md`** (line 39,
+  (`e53e3e22`, `eb40bf0c`). **A composed squash body is READ BACK immediately before `gh pr merge`
+  and the press does not run unless it is non-empty AND its closing set equals the stated intent.**
+  **WHAT THE SET MAY BE IS ITEM 5'S QUESTION, NOT THIS ONE'S:** item 5 decides closure by union ==
+  intent, and the parser it runs takes `-Closes` as a `System.String[]` with `none` for a pull
+  request that closes nothing - so ZERO closures (a `Refs #N` partial delivery, which this board
+  prescribes) and SEVERAL are both correct answers. This rule's first version said "exactly one
+  closing keyword" and would have refused both; it was testing the ARITY, which is a property of
+  the pull request's intent, while the defect it exists for is the composition step silently
+  losing or duplicating what the intent already fixed.
+  Measured on #1081 (2026-09-14): the body was composed through `sed`, a `#` inside the replacement
+  ended the expression, the file came out EMPTY, nothing reported a failure, and the squash on `main`
+  (`4c6ddde2`) carries its subject line and nothing else - a record that cannot be repaired, because
+  a pushed squash body is not editable into history. An empty file is the shape this failure takes,
+  so emptiness is the thing to test, and the closing SET is re-read in the same breath - against the
+  intent the presser has already stated - because the same substitution
+  that emptied the file can drop or duplicate a keyword while leaving it non-empty.
+  **THE PROGRAM ITEM 5 NAMES CANNOT READ THIS FILE, AND SAYING SO IS PART OF THE STEP (Codex, on
+  #1165).** `ci/closing-keywords.ps1` takes no file, text or stdin input -- `-Number` is mandatory
+  and it fetches the pull request through `gh` -- so an instruction to "run item 5's parser over the
+  composed body" names a run nobody can perform, and a checklist step that cannot be executed is not
+  a step. What IS executable is the PARSER inside that program, lifted exactly the way the block
+  ABOVE already lifts it for a landed squash message (`$ClosingKeywords` and `Get-ClosingReferences`
+  out of `git show origin/main:ci/closing-keywords.ps1`, from a NAMED tree), then pointed at the
+  composed file instead of at `git log`:
+  ```powershell
+  # run the two dot-source lines of the AST block above first; they define the list and the function
+  $bodyPath = 'D:\_agent-scratch\graphhelm\<lane>\squash-body-<N>.txt'   # absolute: [IO.File] does not follow Set-Location
+  if ([string]::IsNullOrWhiteSpace([System.IO.File]::ReadAllText($bodyPath))) {
+      throw 'composed squash body is empty -- do not press'
+  }
+  Get-ClosingReferences -Text ([System.IO.File]::ReadAllText($bodyPath))
+  ```
+  -- and that set must equal the intent the presser has already stated, by item 5's union == intent
+  rule. **The `-Number`/`-Closes` run against the pull request stays a SEPARATE step**, because it
+  answers a different question: item 5 gates on the UNION of the pull request's body, title and
+  commit messages, which is not the text this local file holds. Neither run retires the other. **This rule lived ONLY on `.factory/orchestrator-board.md`** (line 39,
   beside its M09 assignments) until it was moved here when that file was tombstoned - swept for by the
   DECISION it makes (how a body reaches a command), not by the flag name; the only other copy is in
   the M09/M10 archive, which is equally dead.

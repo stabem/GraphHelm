@@ -208,11 +208,33 @@ only other way it could have happened. The rule now:
   gate still calls `Get-TargetBuildState` before its first compile and aborts on `interrupted` or
   `concurrent` (#455), and still proves every reused binary on content. Measured over the 71 records
   carrying `buildPassSecs`: cold median 565.7 s against 65.459 s for the one FULL run that reused.
-  Whoever presses the
-  merge removes `<TargetRoot>\pr<N>` afterwards (measured 2026-09-15: four gates filled `E:` to
-  11 GB and the fifth went RED with `os error 112`). A hand-run gate bench (`.factory/lane-loop.md`
-  section 1, `E:/<lane>-<n>`) is a short-lived bench on the SSD for the same reason and is removed
-  by the lane that made it when the manifest is published.
+  The keep is bounded on both ends: `Test-TargetShouldBeKept` also evicts a finished target when its
+  root has fallen under the free-space floor this document sets, and the runner revisits the
+  decision once the run's receipt is on the server (below), so a target for a pull request that
+  never re-runs is not kept forever by a policy written for re-runs.
+- **A gate run deletes itself as it goes, and only after its receipt is visible.** The owner's
+  standing order, given 2026-09-20 after the runs had littered five disks, is that gate runs must
+  delete themselves as they run. `ci/gate-runner.ps1` removes `<TargetRoot>\pr<N>` as soon as the
+  run ends and its receipt is pushed - the build cache is not evidence, the manifest on the server
+  is - and removes its own benches under `-BenchRoot` once their pull request is no longer open;
+  whoever presses the merge removes `<TargetRoot>\pr<N>` afterwards, the backstop for a run the
+  runner could not clean (measured 2026-09-15: four gates filled `E:` to 11 GB and the fifth went
+  RED with `os error 112`; measured again 2026-09-20 ~00:20Z: `D:\runner-targets\hdd`,
+  `D:\runner-targets\ssd-typesafe` and `D:\orch-runner-targets` held about 150 per-PR targets,
+  almost all of them for MERGED or CLOSED pull requests and up to 21 GB each - pr992 18.6 GB,
+  pr1014 19.6 GB, pr1152 21.4 GB on `E:` alone - `D:\orch-runner-benches-ssd` held about 90 stale
+  benches, and `E:` had 13.8 GB free, below the 30 GB floor this document sets, so the second gate
+  slot could not be used at all). Since #1085 the runner's own removal is FAIL-CLOSED: it removes
+  nothing until it has a NEW commit whose direct parent is the queued head, whose every path is
+  under `.factory/gate-runs/`, and which `git ls-remote` shows as the server's head for the branch.
+  A push that returns 0 without moving the server head - the no-op push of an unchanged branch -
+  retains both target and bench as the backstop for diagnosis and retry. #1053's keep policy and
+  this rule compose in one order: the receipt buys the RIGHT to remove, and the keep policy then
+  decides whether removing is WORTH it, so a target that is still a warm, vouched, affordable cache
+  survives its own receipt while a target whose build never vouched is evicted there and then. A
+  hand-run gate bench (`.factory/lane-loop.md` section 1, `E:/<lane>-<n>`) is a short-lived bench on
+  the SSD for the same reason and is removed by the lane that made it when the manifest is published
+  or, if no manifest is ever published, when its pull request closes or merges.
 - **Worktrees live under `<repo>\.worktrees\<branch>`.** `.claude\worktrees\` (Claude Code's own
   root) and `D:\codex\worktrees\` (Codex's own root) are accepted because the tool chooses them, not
   the session; a throwaway detached worktree created and removed in the same command (the
@@ -384,8 +406,16 @@ behaved exactly like a missing one.
     and the spawning session's OTHER fresh-context subagents are governed by the amendment below and
     by nothing else in this bullet (the reconciliation Codex asked for on #1081). A MIXED diff — any
     line written by the session's own context, however small — is the first case, not the second.
+    **TWO COMMITS ARE EXEMPT from that sentence, because no reader wrote a line of the change in
+    them:** the gate runner's manifest commit under `.factory/gate-runs/`, and a conflict-free merge
+    or rebase of `origin/main` that introduces no line of its own. Without the exemption the letter
+    makes EVERY subagent-implemented pull request mixed — the runner publishes the manifest on the
+    branch under the orchestrator's account — and the amendment below would have no case left to
+    govern. A conflict RESOLVED by hand is not conflict-free and is the mixed case.
     The pull request body names the implementing subagent, so that a presser can tell the two cases
-    apart from the record and not from the session's word. Item 8 of `.factory/MERGE-CHECKLIST.md`
+    apart from the record and not from the session's word, and each implementing commit carries the
+    trailer `Implemented-By: subagent <name> of <session> [ref]`, so that the record is per commit
+    and survives an edit of the body. Item 8 of `.factory/MERGE-CHECKLIST.md`
     carries the same exception in the presser's terms.
   - **Amendment (owner order, 2026-09-13): an ORCHESTRATING session's subagents may produce the two
     passes on a pull request that other subagents of the same session implemented.** The owner's
@@ -401,12 +431,63 @@ behaved exactly like a missing one.
     pull request number, the gated head and its own reading angle, and NO finding from the
     implementing subagent, from the orchestrator's own reading or from the other pass - a brief
     that pastes a report is a seeded brief and its output is a reading. A reader spawned before
-    the gate is never resumed to write the pass. Because the lane set is one, the spawning session
+    the gate is never resumed to write the pass. **The attestation is a LITERAL LINE, not a content
+    requirement**, because a census greps for it and a paraphrase is invisible to a grep:
+
+    `Attestation: spawned new for this <pass|reading> after the gate at <sha8>; brief carried no finding from the implementer, the orchestrator or the other <pass|reading>; did not read this pull request's reviews before posting.`
+
+    **THAT IS ONE PHYSICAL LINE and is kept as one**, however far it runs past the margin. It is
+    copied, and it is grepped for; a template wrapped by an editor is pasted with a newline in the
+    middle of the string a census matches, and the census then answers zero on a pass that complied.
+
+    The last clause is there because the brief is not the only channel: the first pass is PUBLISHED
+    on the pull request, so a second reader can simply read it off the page and reproduce it. A
+    reader that did read them writes a reading, not a pass. **What the condition buys is independence
+    FROM THE BRIEF, not from the record** - a finding relayed through the pull request reaches every
+    later reader by design and is supposed to; what is forbidden is starting from another reader's
+    conclusions rather than from the diff.
+    **THOSE TWO SENTENCES WERE READ AS CONTRADICTING EACH OTHER (Codex on #1165), and they do unless
+    the boundary is written out.** The boundary is an INSTANT, and the cut is by what a body CARRIES
+    rather than by which surface it sits on:
+
+        OPEN at all times: the diff, the commit messages, the gate manifest and its receipt, and
+        the pull request body and title and the issue - except any passage of them carrying a
+        verdict word or another reader's findings on the head under review - and any body carrying
+        neither a verdict word nor another reader's findings on THIS diff: a routing note, a
+        census, a question, a dead-gate report, the author's own measurements.
+
+        CLOSED until this reader has posted its own pass at this head: every passage carrying a
+        verdict word on this pull request, and every passage in which another reader of this head
+        states findings on this diff, on whichever surface it was posted - a comment, a review, an
+        inline review thread, the pull request body, or an issue.
+
+    **THE CUT IS BY WHAT A PASSAGE CARRIES, NOT BY WHICH SURFACE IT SITS ON**, which is why the
+    body and the issue are named on both lists: a finding copied out of a review and pasted into
+    the pull request body would otherwise change class by being moved, and a bypass anyone can take
+    by accident is not a boundary.
+
+    Once its own pass is posted, the whole record is open to that reader. **AT A LATER HEAD THE CUT
+    MOVES WITH THE READER RATHER THAN LAPSING:** findings about EARLIER heads are open, and findings
+    and verdicts about the head this reader is itself reading stay CLOSED until it has posted its
+    own pass at that head. A reader that re-pins is a FIRST reader of the NEW head, and the version
+    of this paragraph that opened the whole record at any later head (Codex, on #1165) handed that
+    reader the other pass on the very head it was about to vouch for. A finding relayed through the
+    pull request is still meant to reach every later reader, and a re-pin is supposed to read it;
+    that is exactly what the earlier-head half preserves. So the clause forbids one thing and only
+    one: forming a FIRST reading of a head out of another reader's conclusions about THAT head.
+    The attestation's wording (`this pull request's reviews`) is the literal a census greps for and
+    does not change; it is shorthand for the CLOSED list above, which is what a reader applies.
+    Because the lane set is one, the spawning session
     is also the presser: the press is the checklist run, and the merge comment names the
     implementing subagent and both pass subagents so the whole chain is on the record. Every other
     condition above stands unchanged: different briefs, neither seeded with the other's findings, the
     disclosure line in the lane field naming the subagent and the spawning session, the gate GREEN at
-    the head before the passes, and the presser reading the head that carries the manifest. A reading
+    the head before the passes, and the presser reading the head that carries the manifest. **A pass
+    names the head it READ - the receipt commit - and the manifest inside that commit names the tree
+    the gate measured, which is the receipt's parent on a normally published receipt;** the two shas
+    differ by construction and THE TWO MANIFEST QUESTIONS (canonical block in
+    `.factory/MERGE-CHECKLIST.md`) is what links them. A pass that names the manifest's `headSha`
+    instead of the head it read is pinned one commit behind the pull request. A reading
     the orchestrator's subagent produced BEFORE the gate (to find defects early) is a reading, not a
     pass; the pass is written against the gated head. This clause exists because the previous bullet
     answered the question "which lane" with "not the one whose subagents wrote it", and a session
@@ -438,7 +519,12 @@ behaved exactly like a missing one.
     unblocks.** The invoking lane runs a census at the moment of invoking, and writes into the pull
     request every live lane, its role on that pull request, and the instant the census was run. A
     lane that is merely busy, or silent, or offline is NOT absent - that distinction is the whole
-    difference between an exhausted set and an unanswered one. **This form expires the moment a
+    difference between an exhausted set and an unanswered one. **What the census must find absent is
+    a non-author lane THAT MAY READ this pull request, not merely one that is alive.** A lane an
+    owner order confines to other work is live and answers a census, and counting it keeps a correct
+    exception shut; but "it may not read" is exactly the claim a lane benefiting from the exception
+    would like to make about every rival, so the census names the confining order - who gave it, to
+    whom, when - next to that lane, and a confinement nobody can cite does not exclude anyone. **This form expires the moment a
     census finds a second non-author lane**; the ordinary two-lane rule governs the next pull
     request, and nothing carries forward from the last invocation. A rule that exists because the
     board is small must say what makes it big again, or it outlives its reason unnoticed.

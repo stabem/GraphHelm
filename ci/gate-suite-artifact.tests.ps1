@@ -9,8 +9,9 @@
 # runs, into the SAME artefact list the freshness check already reads. This suite runs in the
 # background Cargo-free lane, so it checks that wiring with a deterministic collaborator.
 
-$ExpectedAssertionCount = 21
+$ExpectedAssertionCount = 22
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $script:total = 0
 $script:failures = 0
 
@@ -20,6 +21,17 @@ function Assert-True {
     if ($Condition) { Write-Host "  PASS: $Message" -ForegroundColor Green }
     else { $script:failures++; Write-Host "  FAIL: $Message" -ForegroundColor Red }
 }
+
+$hadModuleAutoLoadingPreference = Test-Path variable:PSModuleAutoLoadingPreference
+$savedModuleAutoLoading = if ($hadModuleAutoLoadingPreference) { Get-Variable PSModuleAutoLoadingPreference -ValueOnly } else { $null }
+try {
+    $PSModuleAutoLoadingPreference = 'None'
+    $fileHashProviderIsLoaded = $null -ne (Get-Command Get-FileHash -ErrorAction SilentlyContinue)
+} finally {
+    $PSModuleAutoLoadingPreference = if ($hadModuleAutoLoadingPreference) { $savedModuleAutoLoading } else { 'All' }
+}
+Assert-True $fileHashProviderIsLoaded `
+    'the file-hash provider is already loaded, so a pooled cold start cannot lose it to module auto-loading'
 
 $gatePath = Join-Path $PSScriptRoot 'gate.ps1'
 if (-not (Test-Path -LiteralPath $gatePath)) {

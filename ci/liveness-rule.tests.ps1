@@ -18,7 +18,7 @@
 # Prose that explains the removal deliberately spells them out in words instead, so this guard does
 # not have to carry an exemption list for the text that documents it.
 
-$ExpectedAssertionCount = 66
+$ExpectedAssertionCount = 98
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -33,12 +33,16 @@ function Assert-True {
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $checklistPath = Join-Path $repositoryRoot '.factory/MERGE-CHECKLIST.md'
 $agentsPath = Join-Path $repositoryRoot 'AGENTS.md'
+# #1085/#1165: the THIRD protocol document. It is read here because the one-rule-one-place cells
+# at the foot of this suite are about the same rule appearing in two of these three files, and a
+# sweep that cannot open the third cannot see half of its own population.
+$laneLoopPath = Join-Path $repositoryRoot '.factory/lane-loop.md'
 
 # This suite's own file is in the C0 sweep's population below, so it is READ like the other two
 # rather than assumed.
 $guardPath = Join-Path $repositoryRoot 'ci/liveness-rule.tests.ps1'
 
-foreach ($required in @($checklistPath, $agentsPath, $guardPath)) {
+foreach ($required in @($checklistPath, $agentsPath, $guardPath, $laneLoopPath)) {
     if (-not (Test-Path -LiteralPath $required)) {
         Write-Host "HARNESS-BROKE: $required is not where this suite expects it" -ForegroundColor Magenta
         exit 2
@@ -48,6 +52,7 @@ foreach ($required in @($checklistPath, $agentsPath, $guardPath)) {
 $checklist = [System.IO.File]::ReadAllText($checklistPath)
 $agents = [System.IO.File]::ReadAllText($agentsPath)
 $guard = [System.IO.File]::ReadAllText($guardPath)
+$laneLoop = [System.IO.File]::ReadAllText($laneLoopPath)
 
 # The floor is the other half of the harness check: a file that exists and reads as a few bytes
 # would satisfy every absence below.
@@ -382,6 +387,213 @@ $fences = @($checklist -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith
 Assert-True (($fences % 2) -eq 0) `
     "the checklist's code fences are balanced ($fences) -- an odd count silently turns the rest of the document into a code block"
 
+# ---------------------------------------------------------------------------------------------
+# #1165: ONE RULE, ONE PLACE -- the five contradictions Codex measured between these documents.
+#
+# Every one of them is the same defect shape this suite was built for: a rule stated twice, in two
+# files, in two wordings, with no mechanism keeping them in step. The repair is never "say it the
+# same way in both"; it is to state it ONCE and make the other file point. So each cell below is a
+# PAIR -- the second statement is gone, AND the pointer that replaced it is present -- because an
+# absence on its own is satisfied by a file that was renamed, emptied, or read from the wrong root.
+#
+# The `-not Contains` halves are the OPERATIVE spellings, not incidental ones: each is the literal
+# sentence that carried the contradiction, so a repair that merely reworded it stays red.
+
+# PROSE IS WRAPPED, AND A GUARD THAT MATCHES RAW BYTES AGES AGAINST THE WRAP. Every cell in this
+# section quotes a SENTENCE, and a sentence in a markdown document carries whatever newline the
+# margin put in it; matching the raw text makes a reflow look like a repair (on the absences) and a
+# repair look like a reflow (on the presences). Both directions were observed while writing this
+# section: two pointers landed across a wrap and read as missing. So the prose cells below read a
+# whitespace-NORMALISED copy, and only the literal-template cells at the end read physical lines --
+# there the newline IS the defect, which is why that pair is measured the other way on purpose.
+$checklistFlat = ($checklist -replace '\s+', ' ')
+$agentsFlat = ($agents -replace '\s+', ' ')
+
+Write-Host '#1165: one rule, one place'
+
+# ROOT 1. The canonical closing checker (`ci/closing-keywords.ps1`) takes `-Closes` as a
+# `System.String[]` and accepts the word `none`: ZERO and SEVERAL intended issues are both legal,
+# and item 5 of the checklist states the rule as union == intent. The squash-body read-back rule
+# demanded "exactly one closing keyword", which refuses a correct `Refs #N` partial delivery and a
+# correct two-issue close. Arity is not the property; agreement with the stated intent is.
+Assert-True (-not $checklistFlat.Contains('carries exactly one closing keyword')) `
+    'the squash-body read-back does not demand ONE closing keyword -- `-Closes none` and `-Closes 1 2` are both legal in the parser item 5 runs, so an arity test refuses correct pull requests'
+
+Assert-True ($checklistFlat.Contains('its closing set equals the stated intent')) `
+    'the squash-body read-back states the property that IS decisive (the set equals the intent, deferred to item 5) -- the control for the absence above'
+
+# ROOT 2. `AGENTS.md`'s exhaustion clause was narrowed to "a non-author lane THAT MAY READ", with a
+# citation rule attached (the census names the confining order, and a confinement nobody can cite
+# excludes nobody). Item 8's exception kept the OLD predicate -- "live on the board" -- so the same
+# census answered two ways depending on which file the presser had open.
+Assert-True (-not $checklistFlat.Contains('shows NO other non-author lane live on the board')) `
+    'item 8 does not carry its own liveness predicate -- `AGENTS.md` narrowed it to eligible-to-read, and a second copy is a second thing to correct'
+
+Assert-True ($checklistFlat.Contains('under the predicate and the citation rule `AGENTS.md` states for the exhaustion clause')) `
+    'item 8 defers the predicate AND its citation rule to `AGENTS.md` -- the control for the absence above'
+
+# ROOT 3. `AGENTS.md` exempts the runner's manifest commit and a conflict-free merge OR REBASE of
+# `origin/main` from the mixed-authorship sentence. The checklist enumerated the same list and
+# dropped the rebase, so a rebased branch was exempt in one file and mixed in the other. The copy
+# had ALREADY drifted at the moment it was written, which is the argument against copying it.
+Assert-True (-not $checklistFlat.Contains('are the two exemptions')) `
+    'the checklist does not enumerate the authorship exemptions -- its enumeration had already dropped `rebase` from the list it was copying'
+
+Assert-True ($checklistFlat.Contains('is stated in `AGENTS.md` and only there')) `
+    'the checklist points at the single statement of the exemptions -- the control for the absence above'
+
+# ROOT 4. Item 12 is the census, and item 8 says in as many words that ITEM 12 GOVERNS who presses.
+# But item 12's four classes put a lane in `verdict` by the lane-is-the-unit rule, and under the
+# subagent exception the two passes are subagents OF THE SPAWNING LANE -- so item 12 disqualified
+# the very session item 8's new sentence appointed as presser. The exception has to live in the
+# item that decides the question, and item 8 must not answer it a second time.
+Assert-True (-not $checklistFlat.Contains('Under THIS exception the spawning session presses')) `
+    'item 8 does not decide who presses under the exception -- item 8 itself says item 12 governs the census, so the answer belongs there, once'
+
+$item12Clause = 'classifies the SUBAGENT and not the lane, and does not disqualify the spawning lane'
+Assert-True ($checklistFlat.Contains($item12Clause)) `
+    'item 12 carries the subagent exception as a reading of its own `verdict` class -- without it the exception appoints a presser its own census disqualifies'
+
+# POSITION, not merely presence: a clause saying "item 12 governs" is worthless if the clause sits
+# in item 8. Proven by index against item 12's own heading, which occurs once in this file.
+$item12Heading = '12. **An empty third-lane set is a reading, not a wait.**'
+Assert-True (($checklistFlat.IndexOf($item12Heading) -ge 0) -and ($checklistFlat.IndexOf($item12Clause) -gt $checklistFlat.IndexOf($item12Heading))) `
+    'the subagent-exception clause sits AFTER item 12 begins, i.e. inside the item that governs the census -- presence alone would be satisfied by the same sentence left in item 8'
+
+# ROOT 5. The attestation forbids reading "this pull request's reviews", and the paragraph under it
+# said independence is not from the record and that findings are SUPPOSED to reach later readers
+# through the pull request. Both are right about different moments; neither said which moment. A
+# reader could satisfy either sentence while violating the other, so the boundary is written out.
+Assert-True ($agentsFlat.Contains('CLOSED until this reader has posted its own pass at this head')) `
+    '`AGENTS.md` names the instant at which the record opens -- without it the attestation and the not-from-the-record sentence are each a licence to break the other'
+
+Assert-True ($agentsFlat.Contains('OPEN at all times')) `
+    '`AGENTS.md` enumerates what a pass reader may read throughout -- the other half of the boundary, so the closed list reads as a cut and not as a blanket'
+
+# ONE STATEMENT OF EACH LITERAL FORM. The disclosure form and the attestation line are both grepped
+# for, and the checklist carried a retyped copy of one and a paraphrase of the other -- already
+# drifting (`Lane: X` against the `Lane: <letter>` the form specifies). A grep-stable literal that
+# exists in two files is a literal that will stop being one.
+Assert-True (-not $checklistFlat.Contains('Lane: X (subagent')) `
+    'the checklist does not retype the disclosure form -- its copy already spelled the lane field differently from the form `AGENTS.md` specifies'
+
+Assert-True (-not $checklistFlat.Contains('did not read this pull request')) `
+    'the checklist does not paraphrase the attestation line -- a census greps for the literal, and the literal must have exactly one home'
+
+Assert-True ($checklistFlat.Contains('the literal attestation line `AGENTS.md` specifies, verbatim and unparaphrased')) `
+    'the checklist requires the attestation by reference instead of reproducing it -- the control for the two absences above'
+
+# LITERAL TEMPLATES RENDER ON ONE PHYSICAL LINE. Both are meant to be COPIED, and both had been
+# wrapped by an editor mid-sentence: a reader who copies a wrapped template pastes a newline into
+# the line a census greps for, and the grep then answers zero on a compliant pass. `Contains` is
+# blind to this once the file is one string, so each is measured against the file's LINES.
+$agentsLines = $agents -split "`n"
+$attestationLines = @($agentsLines | Where-Object { $_.Contains('`Attestation: spawned new for this') })
+Assert-True (($attestationLines.Count -eq 1) -and ($attestationLines[0].Contains('before posting.`'))) `
+    "the attestation template opens and closes on ONE physical line ($($attestationLines.Count) opening line(s) found) -- a template wrapped mid-sentence is copied with a newline into the string a census greps for"
+
+$laneLoopLines = $laneLoop -split "`n"
+$identityLines = @($laneLoopLines | Where-Object { $_.Contains('`Lane: <letter> (subagent') })
+Assert-True (($identityLines.Count -eq 1) -and ($identityLines[0].Contains('Head: <sha8>`'))) `
+    "the subagent identity-line template opens and closes on ONE physical line ($($identityLines.Count) opening line(s) found) -- same defect, same measurement, in the file that tells a lane what to publish"
+
+# THE ONE LITERAL THAT LEGITIMATELY LIVES IN TWO FILES, AND THE CELL THAT KEEPS IT ONE LITERAL.
+# `AGENTS.md` states the LANE FIELD form; lane-loop.md composes that field into the whole identity
+# line a lane publishes, which is the thing lane-loop.md is for. So the bytes appear twice on
+# purpose - and until now nothing compared them, which is exactly how the `Lane: X` copy in the
+# checklist drifted. This cell holds NO third copy of the form: it lifts it out of `AGENTS.md` at
+# run time and asks whether lane-loop.md's template still contains those bytes. If `AGENTS.md`
+# restates the form, the extraction finds no single source and the cell says so rather than passing.
+$formMatches = @([regex]::Matches($agents, '`(Lane: <letter> \(subagent[^`]*)`'))
+Assert-True (($formMatches.Count -eq 1) -and $laneLoop.Contains($formMatches[0].Groups[1].Value)) `
+    "lane-loop.md's identity-line template embeds the lane-field form `AGENTS.md` states, byte for byte ($($formMatches.Count) form(s) found in AGENTS.md) -- the form is copied here on purpose and this is the only thing holding the two copies together"
+
+# The floor for the third document, matching the one the other two already carry: every cell above
+# that reads `$laneLoop` would be satisfied by a file that exists and holds nothing.
+Assert-True ($laneLoop.Length -gt 3000) `
+    "lane-loop.md was read and is of a plausible size ($($laneLoop.Length))"
+
+
+Write-Host '#1085: the gate deletes its own target as it runs'
+
+# OWNER ORDER, 2026-09-20: the gates must delete themselves as they run; the order names AGENTS.md
+# as where it has to be written. Measured that night: the three managed target roots held ~150
+# per-PR targets, almost all of them for MERGED or CLOSED pull requests, and `E:` sat below the
+# 30 GB floor this same document sets, so the second gate slot could not be used at all. The
+# section said only that the runner removes the PREVIOUS target of the SAME pull request before a
+# re-run and that the presser removes it after a merge -- so every gated PR that is never pressed,
+# and every closed one, leaves a target behind for good.
+Assert-True ($agentsFlat.Contains('removes `<TargetRoot>\pr<N>` as soon as the run ends and its receipt is pushed')) `
+    'the Disk hygiene section makes the RUNNER delete its own target at the end of the run -- removing only the same PR''s previous target leaves one behind for every PR that is gated and never re-run'
+
+Assert-True ($agentsFlat.Contains('the build cache is not evidence, the manifest on the server is')) `
+    'the section says why the target may go at once -- a reader who believes the target IS the evidence will not delete it, whatever the rule says'
+
+Assert-True ($agentsFlat.Contains('benches under `-BenchRoot` once their pull request is no longer open')) `
+    'the runner''s own benches are covered too -- the same measurement found ~90 stale benches under the board''s bench root, which no lane owns and no sentence named'
+
+# The presser line is the BACKSTOP, not a duplicate: a run the runner could not clean (killed,
+# crashed, disk full) still has an owner. A repair that deleted it would trade one leak for another.
+Assert-True ($agentsFlat.Contains('whoever presses the merge removes `<TargetRoot>\pr<N>` afterwards, the backstop for a run the runner could not clean')) `
+    'the presser''s removal survives, relabelled as the backstop -- the control for the three presences above, and the cell that catches a repair which moves the duty instead of adding to it'
+
+# The section dates every incident it carries. This one is the reason the rule changed.
+Assert-True ($agentsFlat.Contains('measured again 2026-09-20')) `
+    'the 2026-09-20 measurement is named with its date, the way the rest of this section names its incidents -- a rule whose incident is not written down is re-argued at the next gate'
+
+
+
+Write-Host '#1165 (Codex BLOCK): the boundary is per-head, and the parser has an executable file path'
+
+# HOLE 1, as measured by Codex on the published head. The boundary block cut the record by CONTENT
+# at the head under review, and then undid the cut one paragraph later: "at a LATER head nothing is
+# closed at all" is true of findings about EARLIER heads and false of the head the reader is
+# actually reading. A reader that re-pins to the newest head is a FIRST reader of THAT head, and
+# under the old sentence it could open the other pass on that same head and copy it -- the precise
+# thing the attestation exists to forbid. The repair keeps the relay (earlier heads stay open) and
+# holds the cut where it belongs (this reader's own head).
+Assert-True (-not $agentsFlat.Contains('at a LATER head nothing is closed at all')) `
+    'the boundary does not open the whole record at a later head -- a reader at a newer head is a FIRST reader of that head, and that sentence let it consume the other pass on the very head it was about to vouch for'
+
+Assert-True ($agentsFlat.Contains('findings about EARLIER heads are open, and findings and verdicts about the head this reader is itself reading stay CLOSED until it has posted its own pass at that head')) `
+    'the boundary states the per-head rule that replaces it -- the control for the absence above, and the half that keeps a relayed finding reaching every later reader'
+
+# HOLE 1b. The CLOSED list cut by content but named only review surfaces, while the OPEN list named
+# the pull request body and the issue UNCONDITIONALLY. A finding copied out of a review and into
+# the body or the issue therefore changed class by being moved, which is a bypass anyone can take
+# by accident. The cut is by what a passage CARRIES, so it has to hold on every surface.
+Assert-True ($agentsFlat.Contains('on whichever surface it was posted - a comment, a review, an inline review thread, the pull request body, or an issue')) `
+    'the CLOSED list binds every surface a finding can be copied to -- otherwise copying a finding from a review into the body or the issue launders it into the OPEN list'
+
+Assert-True ($agentsFlat.Contains('except any passage of them carrying a verdict word or another reader''s findings on the head under review')) `
+    'the OPEN list carries the same content restriction on the pull request body, the title and the issue -- the other half of the bypass, on the side that enumerates what may be read'
+
+# POSITION, not merely presence: the restriction is worthless sitting in the CLOSED paragraph. The
+# two list headings each occur once, so the index comparison is exact.
+$openHeading = 'OPEN at all times:'
+$closedHeading = 'CLOSED until this reader has posted its own pass at this head:'
+$openRestriction = 'except any passage of them carrying a verdict word or another reader''s findings on the head under review'
+Assert-True (($agentsFlat.IndexOf($openHeading) -ge 0) -and ($agentsFlat.IndexOf($openRestriction) -gt $agentsFlat.IndexOf($openHeading)) -and ($agentsFlat.IndexOf($openRestriction) -lt $agentsFlat.IndexOf($closedHeading))) `
+    'the restriction sits INSIDE the OPEN list, between its heading and the CLOSED one -- presence alone is satisfied by the same words left in the closed paragraph, where they restrict nothing'
+
+# HOLE 2. The squash-body read-back told the presser to re-read the composed LOCAL file "with item
+# 5's parser". Measured against the program: `ci/closing-keywords.ps1` declares `-Number` as a
+# MANDATORY `[int]` and fetches the pull request through `gh` -- it has no file, text or stdin
+# input at all, so the instruction named a run nobody can perform, on a checklist whose whole point
+# is that a step either executes or is not a step. The repair says that plainly and hands over the
+# invocation that DOES work: the AST lift this same file already carries for reading a landed
+# squash message, pointed at the composed file instead.
+Assert-True (-not $checklistFlat.Contains('with item 5''s parser, against the intent the presser has already stated')) `
+    'the squash-body read-back no longer prescribes a run of item 5''s parser over a local file -- `ci/closing-keywords.ps1` takes `-Number` and fetches the pull request, so that step could not be executed as written'
+
+Assert-True ($checklistFlat.Contains('takes no file, text or stdin input -- `-Number` is mandatory and it fetches the pull request through `gh`')) `
+    'the checklist states the limit of the program in as many words -- a presser who is told to "use item 5''s parser" and finds no `-File` switch guesses, and a guess is what this file exists to prevent'
+
+Assert-True ($checklistFlat.Contains('Get-ClosingReferences -Text ([System.IO.File]::ReadAllText($bodyPath))')) `
+    'the checklist hands over the executable invocation for the LOCAL composed file -- the AST lift it already prescribes for a landed squash message, with the composed body as its text'
+
+Assert-True ($checklistFlat.Contains('`-Number`/`-Closes` run against the pull request stays a SEPARATE step')) `
+    'the remote check is kept as its own step -- the two ask different questions (what the composed file carries, versus what the union of the pull request''s texts carries) and collapsing them would retire the one item 5 gates on'
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {
     Write-Host "HARNESS-BROKE: ran $($script:total) assertions, expected $ExpectedAssertionCount. A case vanished or was added without updating the declared total." -ForegroundColor Magenta

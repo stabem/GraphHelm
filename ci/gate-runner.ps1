@@ -66,7 +66,13 @@ param(
     [string] $StateDirectory,
     [switch] $Once,
     [int] $MaxIterations = 0,
-    [int] $PollSeconds = 20
+    [int] $PollSeconds = 20,
+    # HOW MANY PULL REQUEST DIRECTORIES THE STARTUP REAP MAY CONSIDER IN ONE PASS (#1085). The
+    # bound is here and not inside the loop because an unbounded walk of a root that held ~150
+    # per-PR targets would spend one `gh pr view` per directory before the first gate started, and
+    # a runner that looks hung at startup gets killed rather than waited for. A truncated pass is
+    # ANNOUNCED -- a silent cap reads as "nothing to clean", which is the state this exists to end.
+    [int] $ReapCeiling = 60
 )
 
 $ErrorActionPreference = 'Stop'
@@ -94,8 +100,9 @@ if (-not $BenchRoot) { $BenchRoot = if ($Slot -eq 'SSD') { 'D:\runner-ssd' } els
 # regime than an unenforced rule on seventeen lane targets.
 if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\ssd' } else { 'C:\runner-targets\hdd' } }
 
-# THE RUNNER DOES NOT CLAIM. It sets the per-spindle slot paths and lets `ci/gate.ps1` claim through
-# its own `Enter-GateSlot` (`:1953`), which is the single arbiter since #892 and #905.
+# THE RUNNER DOES NOT CLAIM FOR A BUILD. It sets the per-spindle slot paths and lets `ci/gate.ps1`
+# claim through its own `Enter-GateSlot` (`:1953`). The startup terminal reaper briefly uses this
+# SAME lock with CreateNew, because deleting a live gate's bench must share the gate exclusion.
 #
 # The first version of this file invented a second ledger (`E:\SLOT-SSD.claim`) and claimed it here.
 # That is worse than a wrong path: TWO CLAIMANTS WITH TWO LOCKS DO NOT EXCLUDE EACH OTHER. A runner
@@ -189,7 +196,7 @@ function Resolve-PullRequestBranch {
     # queue that spends a slot on a merged pull request and one that does not (#902). The head
     # comparison below cannot catch that case: a merged branch still exists and still points at the
     # head the lane enqueued, so the entry looks perfectly current.
-    $view = & $Invoker 'gh' @('pr', 'view', "$PullRequest", '--json', 'headRefName,headRefOid,state')
+    $view = & $Invoker 'gh' @('pr', 'view', "$PullRequest", '--json', 'headRefName,headRefOid,state,baseRefName,baseRefOid')
     if (-not $view -or $view.Code -ne 0 -or $view.Output.Count -eq 0) { return $null }
     $parsed = $null
     try { $parsed = (($view.Output -join "`n")) | ConvertFrom-Json } catch { return $null }
@@ -200,13 +207,48 @@ function Resolve-PullRequestBranch {
     # ABSENT rather than empty when the server did not say: an unknown state must not read as OPEN,
     # because the caller's decision on it is "spend a gate".
     $state = if ($parsed | Get-Member -Name 'state' -MemberType NoteProperty) { [string] $parsed.state } else { '' }
-    return [pscustomobject]@{ Branch = $branch; Head = $resolved; State = $state }
+    $baseRef = if ($parsed | Get-Member -Name 'baseRefName' -MemberType NoteProperty) { [string] $parsed.baseRefName } else { '' }
+    $baseSha = if ($parsed | Get-Member -Name 'baseRefOid' -MemberType NoteProperty) { [string] $parsed.baseRefOid } else { '' }
+    return [pscustomobject]@{ Branch = $branch; Head = $resolved; State = $state; BaseRef = $baseRef; BaseSha = $baseSha }
 }
 
 function Test-HeadSha {
     param([string] $Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
     return ($Value -cmatch '^[0-9a-f]{40}$')
+}
+
+function Test-PublicationEligibility {
+    param(
+        [object] $PullRequestState,
+        [Parameter(Mandatory)] [string] $ExpectedHead,
+        [string] $ExpectedBranch,
+        [string] $ExpectedBaseRef,
+        [string] $ExpectedBaseSha
+    )
+    if (-not $PullRequestState) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request state unavailable' }
+    }
+    $state = [string]$PullRequestState.State
+    if ($state -eq 'MERGED' -or $state -eq 'CLOSED') {
+        return [pscustomobject]@{ Allowed = $false; Reason = "pull request became terminal ($state)" }
+    }
+    if ($state -ne 'OPEN') {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request open state unavailable' }
+    }
+    if ([string]$PullRequestState.Head -cne $ExpectedHead) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request head moved during gate' }
+    }
+    if ($ExpectedBranch -and [string]$PullRequestState.Branch -cne $ExpectedBranch) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request branch renamed during gate' }
+    }
+    if ($ExpectedBaseRef -and [string]$PullRequestState.BaseRef -cne $ExpectedBaseRef) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request base branch changed during gate' }
+    }
+    if ($ExpectedBaseSha -and [string]$PullRequestState.BaseSha -cne $ExpectedBaseSha) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'pull request base revision changed during gate' }
+    }
+    return [pscustomobject]@{ Allowed = $true; Reason = 'open at expected head' }
 }
 
 function Set-EntryStatus {
@@ -275,9 +317,9 @@ function Get-NextEntry {
     return $ordered[0]
 }
 
-# WHO HOLDS THIS SPINDLE, read from the ONE lock the gate itself uses. This is a READ, never a
-# claim: `Enter-GateSlot` inside `ci/gate.ps1` is the only thing that writes `SLOT.lock`, and adding
-# a second writer here is what the first version of this file got wrong.
+# WHO HOLDS THIS SPINDLE, read from the ONE lock the gate itself uses. This helper only reads. The
+# build claim remains inside `ci/gate.ps1`; the startup reaper separately uses the same SLOT.lock
+# with CreateNew rather than inventing a second lock that would not exclude a gate.
 #
 # The answer is advisory. It exists so the runner can say "held, waiting" in a status file instead of
 # spending a bench preparation on a gate that will refuse -- not so it can decide. The decision is
@@ -327,6 +369,61 @@ function Get-SlotHolderLiveness {
     return Test-SlotHolderLiveness -HolderPid ([string]$pair.pid) -HolderStartUtc ([string]$pair.startUtc)
 }
 
+function Enter-TerminalReapSlot {
+    param([Parameter(Mandatory)] [string] $Path)
+
+    # Terminal cleanup removes gate benches and targets, so it participates in the same exclusion
+    # as a gate. A read-then-delete check is only advisory and races a new gate claim. CreateNew is
+    # the atomic boundary: either this cleanup owns the slot, or it changes nothing.
+    $parent = Split-Path -Path $Path -Parent
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        $null = New-Item -ItemType Directory -Path $parent -Force
+    }
+    $start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+    $content = @(
+        "HELD by gate runner terminal reaper | $([DateTime]::UtcNow.ToString('o')) | STATUS: terminal cleanup",
+        'Claimed through create-or-fail: the kernel refused every gate while cleanup owned this slot.',
+        "holder: pid=$PID start=$start"
+    ) -join "`n"
+    try {
+        $encoding = New-Object System.Text.UTF8Encoding($false)
+        $bytes = $encoding.GetBytes($content)
+        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096,
+            [System.IO.FileOptions]::WriteThrough)
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+        return [pscustomobject]@{ Acquired = $true; Content = $content }
+    } catch [System.IO.IOException] {
+        return [pscustomobject]@{ Acquired = $false; Content = '' }
+    } catch {
+        Write-Note "reaper: could not claim the slot ($($_.Exception.Message)); skipping destructive cleanup"
+        return [pscustomobject]@{ Acquired = $false; Content = '' }
+    }
+}
+
+function Exit-TerminalReapSlot {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $ExpectedContent
+    )
+    try {
+        if ((Test-Path -LiteralPath $Path) -and
+            [System.String]::Equals([System.IO.File]::ReadAllText($Path), $ExpectedContent,
+                [System.StringComparison]::Ordinal)) {
+            Remove-Item -LiteralPath $Path -Force
+        } else {
+            Write-Note 'reaper: slot content changed while cleanup owned it; refusing to remove the lock'
+        }
+    } catch {
+        Write-Note "reaper: could not release its slot claim ($($_.Exception.Message))"
+    }
+}
+
 function Test-BenchIsRegistered {
     <#
     .SYNOPSIS
@@ -340,13 +437,15 @@ function Test-BenchIsRegistered {
     #>
     param(
         [Parameter(Mandatory)] [string] $RepositoryRoot,
-        [Parameter(Mandatory)] [string] $BenchPath
+        [Parameter(Mandatory)] [string] $BenchPath,
+        [switch] $FailClosed
     )
     $listed = Invoke-External 'git' @('-C', $RepositoryRoot, 'worktree', 'list', '--porcelain')
     if ($listed.Code -ne 0) {
-        # UNREADABLE IS NOT UNREGISTERED. If the question cannot be answered, the safe answer is
-        # the one that deletes nothing.
-        return $true
+        # The legacy fallback treats an unreadable list as registered so it will not recursively
+        # delete an unowned directory. Terminal cleanup passes -FailClosed: unknown ownership must
+        # retain the bench, never become permission to remove it.
+        return (-not $FailClosed)
     }
     $normalise = { param($p) ($p.Replace([char]92, [char]47)).TrimEnd('/').ToLowerInvariant() }
     $wanted = & $normalise $BenchPath
@@ -363,8 +462,531 @@ function Test-BenchIsRegistered {
             if ((& $normalise $Matches[1].Trim()) -eq $wanted) { return $true }
         }
     }
-    if (-not $sawAnyWorktree) { return $true }
+    if (-not $sawAnyWorktree) { return (-not $FailClosed) }
     return $false
+}
+
+# THE GATE'S OWN CANARY, NAMED ONCE HERE AND COMPARED AGAINST gate.ps1 BY THE SUITE.
+# `ci/gate.ps1` builds this path at two sites and `Write-CanaryNonce` rewrites the TRACKED file
+# before every run by design (#152), so EVERY bench a gate has ever run in is permanently modified
+# in exactly this one file. Measured 2026-09-20 on the four real runner benches for merged pull
+# requests: three read ` M tools/ci-canary/src/nonce.rs` and nothing else, with zero unpushed
+# commits, and only the fourth -- which happened to be clean -- could be removed without --force.
+# That is why the terminal cleanup below had to learn this path before it could reclaim anything.
+# ONE CONSTANT, NOT A LITERAL AT EACH CALL SITE: a third copy would drift against gate.ps1's two in
+# silence, and the drift's direction is a reaper that retains every bench forever while reporting
+# success -- safe, and invisible.
+$script:GateOwnCanaryPath = 'tools/ci-canary/src/nonce.rs'
+
+function Test-BenchRemovalIsSafe {
+    <#
+    .SYNOPSIS
+        May this bench be force-removed, or does it hold something only its owner can judge?
+    .DESCRIPTION
+        BOTH HALVES MUST HOLD, and each answers a different way to lose work.
+
+        THE DIRT HALF. `git status --porcelain` must list nothing, or nothing except an UNSTAGED
+        modification to the gate's own canary. Any untracked file, any other modified path, any
+        staged change retains the bench. The canary excuse is exactly one path and exactly one
+        column wide: a STAGED canary ('M ' or 'MM') is not the gate's doing, because
+        `Write-CanaryNonce` writes the file and never touches the index.
+
+        THE COMMIT HALF. The bench must hold no commit the server does not. A tree can be spotless
+        and still carry an hour of work in a commit that was never pushed, and the dirt half is
+        blind to it -- so a bench on a branch is compared against `refs/remotes/origin/<branch>`
+        and must be zero commits ahead, and a DETACHED bench must have its HEAD reachable from some
+        remote-tracking branch. Anything this cannot establish -- git refusing, a missing remote
+        ref, a count that will not parse -- RETAINS. An unanswerable question is never permission
+        to force-delete somebody's worktree.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $BenchPath
+    )
+    $retain = { param($Why) [pscustomobject]@{ Safe = $false; Reason = $Why } }
+
+    $status = Invoke-External 'git' @('-C', $BenchPath, 'status', '--porcelain') -CaptureError
+    if ($status.Code -ne 0) {
+        $said = (@($status.Output) | Where-Object { $_ } | Select-Object -First 1)
+        return (& $retain "git status exited $($status.Code) in this bench ($said), so its contents are unknown")
+    }
+    $foreign = New-Object System.Collections.Generic.List[string]
+    $sawCanary = $false
+    foreach ($line in @($status.Output)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $foreign.Add($line.Trim())
+            continue
+        }
+        $index = $line[0]
+        $worktree = $line[1]
+        # A rename prints `XY <old> -> <new>`; both ends count, because a rename INTO the canary
+        # path from elsewhere is still not something this script wrote.
+        $paths = @(($line.Substring(3) -split ' -> ') | ForEach-Object { ($_.Trim('"')) -replace '\\', '/' })
+        $isGateOwn = ($index -eq ' ' -and $worktree -eq 'M' -and $paths.Count -eq 1 -and
+            [string]::Equals($paths[0], $script:GateOwnCanaryPath, [System.StringComparison]::Ordinal))
+        if ($isGateOwn) {
+            $sawCanary = $true
+            continue
+        }
+        foreach ($candidate in $paths) {
+            if (-not $foreign.Contains($candidate)) { $foreign.Add($candidate) }
+        }
+    }
+    if ($foreign.Count -gt 0) {
+        return (& $retain ("it holds changes that are not the gate's canary: " + (($foreign | Sort-Object) -join ', ')))
+    }
+
+    $symbolic = Invoke-External 'git' @('-C', $BenchPath, 'symbolic-ref', '--quiet', '--short', 'HEAD') -CaptureError
+    $branch = ''
+    if ($symbolic.Code -eq 0) {
+        $branch = [string] (@($symbolic.Output) | Where-Object { $_ } | Select-Object -First 1)
+        $branch = $branch.Trim()
+    }
+    $vouched = ''
+    if ($branch) {
+        $remoteRef = "refs/remotes/origin/$branch"
+        $verify = Invoke-External 'git' @('-C', $BenchPath, 'rev-parse', '--verify', '--quiet', $remoteRef) -CaptureError
+        if ($verify.Code -ne 0) {
+            return (& $retain "this clone has no $remoteRef to compare its commits against")
+        }
+        $ahead = Invoke-External 'git' @('-C', $BenchPath, 'rev-list', '--count', "$remoteRef..HEAD") -CaptureError
+        $count = 0
+        $counted = ($ahead.Code -eq 0 -and
+            [int]::TryParse([string] (@($ahead.Output) | Where-Object { $_ } | Select-Object -First 1), [ref] $count))
+        if (-not $counted) {
+            return (& $retain "git could not count what this bench holds past $remoteRef")
+        }
+        if ($count -gt 0) {
+            return (& $retain "it holds $count commit(s) that $remoteRef does not")
+        }
+        $vouched = "nothing ahead of $remoteRef"
+    } else {
+        $contains = Invoke-External 'git' @('-C', $BenchPath, 'branch', '--remotes', '--contains', 'HEAD') -CaptureError
+        $reachable = @(@($contains.Output) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($contains.Code -ne 0 -or $reachable.Count -eq 0) {
+            return (& $retain 'its HEAD is detached and sits on no remote-tracking branch, so the server may not have it')
+        }
+        $vouched = "detached HEAD reachable from $($reachable[0].Trim())"
+    }
+
+    $dirt = if ($sawCanary) { "its only difference from HEAD is the gate's own $script:GateOwnCanaryPath (#152)" } else { 'its working tree is clean' }
+    return [pscustomobject]@{ Safe = $true; Reason = "$dirt, and $vouched" }
+}
+
+# THE HAZARD THIS CHANGE INTRODUCED, AND THE GUARD THAT ANSWERS IT (#1085).
+# Before the startup reap, `Remove-TerminalRunnerBench` ran only when a queue entry for an already
+# terminal pull request was SELECTED, and that never collided with a live gate on the same bench,
+# because the selector was the same loop that would otherwise have been gating. The reap widened
+# that: EVERY runner startup now walks the roots, and a pull request can merge WHILE another runner
+# process is gating in `pr<N>`. A `git worktree remove --force` on that directory mid-compile
+# destroys the run and the receipt it was about to push.
+#
+# FOUR SHAPES WERE CONSIDERED.
+#   1. Skip a bench some live process is "working in", by walking processes and comparing working
+#      directories. REJECTED: the gate child's cwd is the bench, but its descendants -- cargo,
+#      rustc, link.exe -- are the ones that live longest; a process working directory is not
+#      readable for every process without elevation; and a read that fails would have to fail SAFE,
+#      which here means retaining every bench on any machine where the query is refused. A guard
+#      that cannot answer on the ordinary machine turns back into "retain everything", which is the
+#      defect #1085 exists to remove.
+#   2. Skip when the slot lock names a live holder whose cwd is that bench. REJECTED for the same
+#      cwd problem and for a worse one: the slot lock is per SPINDLE, one lock for many benches, so
+#      it can say "somebody is gating" and not "in this bench". It would either retain far too much
+#      (any live gate anywhere retaining every bench on that spindle) or, with a cwd read that
+#      failed open, retain nothing.
+#   3. Simply not reaping the bench THIS runner is about to use. REJECTED as insufficient rather
+#      than wrong: it is already true -- the reap runs before selection and never touches an OPEN
+#      pull request -- and it says nothing about the OTHER runner process, which is the whole
+#      hazard.
+#   4. A CLAIM FILE THE WORKING RUNNER WRITES. CHOSEN. The claim is authored by the only process
+#      that knows the answer, it is a plain file so reading it needs no privilege, and it carries a
+#      process identity -- a pid AND that pid's start time -- so a claim left behind by a crashed
+#      runner is provably stale rather than eternal.
+#
+# ONE CLAIM PER RUNNER PROCESS, NOT ONE PER BENCH. `Invoke-OneEntry` overwrites this process's claim
+# with the pull request it is about to work, so moving on to the next entry releases the previous
+# bench by itself. There is no disarm to forget and no `finally` to skip. A runner that is idle
+# leaves a claim naming a pull request that is still open, which nothing reaps anyway; a runner that
+# DIED leaves a claim whose pid is dead, which this reads as stale and deletes.
+#
+# IT LIVES BESIDE THE BENCH, NEVER INSIDE IT. A file under the worktree would appear in
+# `git status --porcelain` as an untracked path, and `Test-BenchRemovalIsSafe` would then retain
+# that bench forever -- safe, and permanently. The name is not `pr<digits>` and it is a file rather
+# than a directory, so the reaper's own walk never mistakes a claim for a candidate.
+$script:RunnerClaimPrefix = '.runner-claim-'
+
+function Get-RunnerProcessStamp {
+    <#
+    .SYNOPSIS
+        A process identity that survives pid reuse: the pid, and that pid's start time.
+    .DESCRIPTION
+        A bare pid is not an identity. Windows reuses pids, and a claim naming only a number would
+        eventually read a completely unrelated process as "the runner still gating here" and retain
+        the bench forever. The start time pins WHICH process wore that number.
+    #>
+    param([Parameter(Mandatory)] [int] $ProcessId)
+    $process = Get-Process -Id $ProcessId -ErrorAction Stop
+    return [pscustomobject]@{
+        ProcessId    = $ProcessId
+        StartedTicks = $process.StartTime.ToUniversalTime().Ticks
+    }
+}
+
+function Set-RunnerWorkClaim {
+    <#
+    .SYNOPSIS
+        Record that THIS runner process is working pull request N, in every managed root.
+    .DESCRIPTION
+        Written into each root that exists, because the bench and the target can live on different
+        spindles and a reaper pointed at only one of them must still see the claim. A claim that
+        cannot be written is NOTED and never fatal: this runner's job is to gate, and the cost of a
+        missing claim is a reap that may take this bench -- which is the state before this guard
+        existed, not a new one.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Roots
+    )
+    $stamp = $null
+    try { $stamp = Get-RunnerProcessStamp -ProcessId $PID } catch { $stamp = $null }
+    if (-not $stamp) {
+        Write-Note "could not read this runner's own process start time; the bench claim for #$PullRequest is not being written"
+        return
+    }
+    $payload = (ConvertTo-Json ([ordered]@{
+                pid          = $stamp.ProcessId
+                startedTicks = $stamp.StartedTicks
+                pullRequest  = "$PullRequest"
+                writtenUtc   = (Get-Date).ToUniversalTime().ToString('o')
+            }) -Compress)
+    foreach ($rootPath in @($Roots)) {
+        if ([string]::IsNullOrWhiteSpace($rootPath) -or -not (Test-Path -LiteralPath $rootPath)) { continue }
+        $claim = Join-Path $rootPath ("{0}{1}.json" -f $script:RunnerClaimPrefix, $PID)
+        try {
+            [System.IO.File]::WriteAllText($claim, $payload)
+        } catch {
+            Write-Note "could not write the bench claim $claim ($($_.Exception.Message)); a concurrent reap would not see this run"
+        }
+    }
+}
+
+function Test-PullRequestHasLiveWorker {
+    <#
+    .SYNOPSIS
+        Is some LIVE runner process working this pull request right now?
+    .DESCRIPTION
+        FAIL SAFE MEANS $true. Every answer this cannot establish -- a claim directory that will not
+        list, a claim file that will not read, JSON that will not parse, a field that is not there,
+        a pid whose start time the OS refuses to disclose -- returns "yes, somebody is working
+        here", and the caller retains. The only route to $false is to read every claim in every root
+        and find each one either naming a different pull request or naming a process that provably
+        no longer exists.
+
+        THE ONE ESTABLISHED NEGATIVE is `Get-Process -Id` reporting that the OS has no such process.
+        A claim whose process is gone is STALE, and stale claims are deleted as they are found, so a
+        machine that reboots mid-gate does not accumulate files that mean nothing.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Roots
+    )
+    $unknown = { param($Why) [pscustomobject]@{ Live = $true; Reason = $Why } }
+    foreach ($rootPath in @($Roots)) {
+        if ([string]::IsNullOrWhiteSpace($rootPath) -or -not (Test-Path -LiteralPath $rootPath)) { continue }
+        $claims = @()
+        try {
+            $claims = @(Get-ChildItem -LiteralPath $rootPath -File -Filter ("{0}*.json" -f $script:RunnerClaimPrefix) -ErrorAction Stop)
+        } catch {
+            return (& $unknown "the claims in $rootPath could not be listed ($($_.Exception.Message))")
+        }
+        foreach ($claimFile in $claims) {
+            $parsed = $null
+            try {
+                $parsed = (Get-Content -LiteralPath $claimFile.FullName -Raw -ErrorAction Stop) | ConvertFrom-Json
+            } catch {
+                return (& $unknown "$($claimFile.Name) could not be read or parsed ($($_.Exception.Message)), so what it claims is unknown")
+            }
+            $claimedPr = if ($parsed) { [string] $parsed.pullRequest } else { '' }
+            $claimedPid = 0
+            $claimedTicks = [int64] 0
+            $wellFormed = ($parsed -and
+                -not [string]::IsNullOrWhiteSpace($claimedPr) -and
+                [int]::TryParse([string] $parsed.pid, [ref] $claimedPid) -and
+                [int64]::TryParse([string] $parsed.startedTicks, [ref] $claimedTicks))
+            if (-not $wellFormed) {
+                return (& $unknown "$($claimFile.Name) does not carry both a pull request and a process identity, so it cannot be ruled stale")
+            }
+            $stamp = $null
+            $missing = $false
+            try {
+                $stamp = Get-RunnerProcessStamp -ProcessId $claimedPid
+            } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+                $missing = $true
+            } catch {
+                return (& $unknown "the process $claimedPid named by $($claimFile.Name) could not be interrogated ($($_.Exception.Message))")
+            }
+            if ($missing -or -not $stamp -or $stamp.StartedTicks -ne $claimedTicks) {
+                Remove-Item -LiteralPath $claimFile.FullName -Force -ErrorAction SilentlyContinue
+                continue
+            }
+            if ([string]::Equals($claimedPr.Trim(), "$PullRequest".Trim(), [System.StringComparison]::Ordinal)) {
+                return [pscustomobject]@{ Live = $true; Reason = "runner process $claimedPid is working #$PullRequest right now ($($claimFile.Name))" }
+            }
+        }
+    }
+    return [pscustomobject]@{ Live = $false; Reason = 'no live runner process claims this pull request' }
+}
+
+
+function Remove-PublishedRunnerTarget {
+    param(
+        [Parameter(Mandatory)] [string] $TargetRoot,
+        [Parameter(Mandatory)] [string] $PullRequest
+    )
+    # The PR number was validated before this function is called. Construct the only target this
+    # runner owns from that number; never accept a path from the queue or from a remote response.
+    $target = Join-Path $TargetRoot ("pr{0}" -f $PullRequest)
+    if (-not (Test-Path -LiteralPath $target)) { return }
+
+    # #1053 AND #1085 MEET HERE, AND NEITHER ONE WINS BY BEING LOUDER.
+    #   #1085 (this function) says: build artefacts may disappear ONLY after the receipt is
+    #     provably on the server. That is a PRECONDITION on removal, and the caller enforces it.
+    #   #1053 (`Test-TargetShouldBeKept`) says: a target whose last build FINISHED and vouched,
+    #     on a root that is still above its free-space floor, is a cache worth keeping -- measured
+    #     at ~565 s of cold build saved per re-run.
+    # Composed: the receipt buys the RIGHT to remove, the keep policy decides whether removing is
+    # WORTH it. Removing unconditionally here would make #1053's warm reuse dead code, because
+    # every successful run ends in this branch. Keeping unconditionally would bring back the litter
+    # the owner's standing order is about: a target for a pull request that never re-runs is never
+    # visited by the run-start eviction, so it is evicted here instead.
+    if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
+        Write-Note "published receipt for #$PullRequest; keeping the runner target $target -- its last build finished and vouched and $TargetRoot is above its floor (#1053)"
+        return
+    }
+    Write-Note "published receipt for #$PullRequest; removing the runner target $target (build cache is not evidence)"
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $target) {
+        Write-Note "WARNING $target could not be removed after the receipt push; the target remains as a backstop"
+    }
+}
+
+function Get-ReceiptCommitProof {
+    param(
+        [Parameter(Mandatory)] [string] $BenchPath,
+        [Parameter(Mandatory)] [string] $ExpectedParent
+    )
+    # A successful push is not evidence that this run produced a receipt: pushing an unchanged
+    # branch is a successful no-op. Require one new commit directly on the queued head, and require
+    # every path in that commit to be in the durable gate-run store.
+    $tip = Invoke-External 'git' @('-C', $BenchPath, 'rev-parse', '--verify', 'HEAD')
+    if ($tip.Code -ne 0 -or $tip.Output.Count -eq 0) { return $null }
+    $tipSha = ([string] $tip.Output[0]).Trim()
+    if (-not (Test-HeadSha $tipSha) -or $tipSha -eq $ExpectedParent) { return $null }
+    $parent = Invoke-External 'git' @('-C', $BenchPath, 'rev-parse', '--verify', "$tipSha^")
+    if ($parent.Code -ne 0 -or $parent.Output.Count -eq 0 -or ([string]$parent.Output[0]).Trim() -ne $ExpectedParent) { return $null }
+    $changed = Invoke-External 'git' @('-C', $BenchPath, 'diff-tree', '--no-commit-id', '--name-status', '-r', $tipSha)
+    if ($changed.Code -ne 0 -or $changed.Output.Count -eq 0) { return $null }
+    $paths = @()
+    foreach ($line in $changed.Output) {
+        $parts = ([string]$line).Split("`t")
+        if ($parts.Count -ne 2 -or $parts[0] -cne 'A' -or $parts[1] -notlike '.factory/gate-runs/*') { return $null }
+        $paths += $parts[1]
+    }
+    if ($paths.Count -eq 0) { return $null }
+    $receipt = Invoke-External 'git' @('-C', $BenchPath, 'ls-tree', '-r', '--name-only', $tipSha, '--', '.factory/gate-runs')
+    if ($receipt.Code -ne 0 -or @($receipt.Output | Where-Object { ([string]$_).Trim() -in $paths }).Count -eq 0) { return $null }
+    return $tipSha
+}
+
+function Publish-Receipt {
+    param(
+        [Parameter(Mandatory)] [string] $BenchPath,
+        [Parameter(Mandatory)] [string] $ExpectedParent,
+        [Parameter(Mandatory)] [string] $Branch
+    )
+    $receiptTip = Get-ReceiptCommitProof -BenchPath $BenchPath -ExpectedParent $ExpectedParent
+    if (-not $receiptTip) { return $false }
+    $push = Invoke-External 'git' @('-C', $BenchPath, 'push', 'origin', "HEAD:$Branch")
+    if ($push.Code -ne 0) { return $false }
+    $visible = Invoke-External 'git' @('-C', $BenchPath, 'ls-remote', 'origin', "refs/heads/$Branch")
+    $serverTip = if ($visible.Code -eq 0 -and $visible.Output.Count -gt 0) { (([string]$visible.Output[0]) -split "`t")[0].Trim() } else { '' }
+    if ($serverTip -ceq $receiptTip) { return $true }
+    Write-Note "receipt push returned 0 but server head was '$serverTip', expected receipt $receiptTip; retaining target"
+    return $false
+}
+
+function Remove-TerminalRunnerBench {
+    param(
+        [Parameter(Mandatory)] [string] $RepositoryRoot,
+        [Parameter(Mandatory)] [string] $BenchRoot,
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [Parameter(Mandatory)] [string] $State
+    )
+    if ($State -ne 'MERGED' -and $State -ne 'CLOSED') { return }
+    $bench = Join-Path $BenchRoot ("pr{0}" -f $PullRequest)
+    if (-not (Test-Path -LiteralPath $bench)) { return }
+
+    # A terminal PR is not permission to delete an arbitrary directory. Only remove a worktree
+    # that this clone can enumerate at this exact path, and do not force removal: a dirty or active
+    # worktree is retained for its owner to inspect.
+    if (-not (Test-BenchIsRegistered -RepositoryRoot $RepositoryRoot -BenchPath $bench -FailClosed)) {
+        Write-Note "terminal pull request #$PullRequest has an unregistered bench at $bench; leaving it alone"
+        return
+    }
+    # WITHOUT --force THIS FUNCTION RECLAIMED ALMOST NOTHING, AND THAT IS MEASURED, NOT FEARED.
+    # `git worktree remove` refuses any bench with a modified or untracked file, and the gate
+    # rewrites the tracked canary in EVERY bench it runs in (#152) -- so three of the four real
+    # benches for merged pull requests on this machine on 2026-09-20 were retained by a rule
+    # written for somebody's unfinished work, and only the one clean bench was taken. The
+    # discriminator above is what makes --force here narrower than the un-forced call it replaces:
+    # it refuses on the untracked file and on the unpushed commit that `worktree remove` cannot see
+    # at all, and it excuses exactly one path this script's sibling wrote itself.
+    $safety = Test-BenchRemovalIsSafe -BenchPath $bench
+    if (-not $safety.Safe) {
+        Write-Note "pull request #$PullRequest is $State but its bench was retained ($($safety.Reason))"
+        return
+    }
+    $remove = Invoke-External 'git' @('-C', $RepositoryRoot, 'worktree', 'remove', '--force', $bench) -CaptureError
+    if ($remove.Code -eq 0 -and -not (Test-Path -LiteralPath $bench)) {
+        # THE LOG NAMES WHICH CONDITION LICENSED THE FORCE, because "removed with --force" alone
+        # would be indistinguishable from the unconditional delete this must never become.
+        Write-Note "pull request #$PullRequest is $State; removed its runner bench $bench -- $($safety.Reason)"
+        return
+    }
+    $why = (@($remove.Output) | Where-Object { $_ } | Select-Object -First 2) -join ' | '
+    if ([string]::IsNullOrWhiteSpace($why)) { $why = "git exited $($remove.Code)" }
+    Write-Note "pull request #$PullRequest is $State but its bench was retained ($why)"
+}
+
+function Remove-TerminalRunnerTarget {
+    param(
+        [Parameter(Mandatory)] [string] $TargetRoot,
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [Parameter(Mandatory)] [string] $State
+    )
+    if ($State -ne 'MERGED' -and $State -ne 'CLOSED') { return }
+    # A terminal PR cannot be retried. Its target is therefore no longer a useful warm cache, and
+    # unlike a published receipt there is no future open run that can evict it. Derive the exact
+    # runner-owned path from the validated PR number; never accept a queue or server path here.
+    $target = Join-Path $TargetRoot ("pr{0}" -f $PullRequest)
+    if (-not (Test-Path -LiteralPath $target)) { return }
+    Write-Note "pull request #$PullRequest is $State; removing its terminal runner target $target (no retry can use this cache)"
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $target) {
+        Write-Note "WARNING $target could not be removed after terminal pull request cleanup; the target remains"
+    }
+}
+
+function Invoke-TerminalRunnerReap {
+    <#
+    .SYNOPSIS
+        Remove the benches and targets of pull requests that are already MERGED or CLOSED.
+    .DESCRIPTION
+        WHY A SEPARATE PASS EXISTS AT ALL. AGENTS.md says this runner "removes its own benches under
+        -BenchRoot once their pull request is no longer open". Until #1085 the only callers of
+        `Remove-TerminalRunnerBench` and `Remove-TerminalRunnerTarget` were inside `Invoke-OneEntry`'s
+        MERGED/CLOSED queue-drop path, which runs only when a queue entry for that pull request is
+        SELECTED AFTER it became terminal. The ordinary lifecycle -- the run publishes its receipt,
+        the entry is deleted, the pull request merges an hour later -- never re-enters that path, so
+        the bench and the target simply survived. Measured 2026-09-20 ~00:20Z: about 150 per-PR
+        targets, almost all terminal and up to 21 GB each, and about 90 stale benches, with `E:`
+        below the 30 GB floor this repository's own document sets. The sentence was true of the
+        document and false of the disk.
+
+        THE NUMBER COMES FROM THE DIRECTORY NAME AND FROM NOTHING ELSE. `pr<digits>`, directly under
+        a managed root, never recursively, never from a queue entry and never from the server: this
+        function force-removes worktrees, and the only defensible input to that is a name this
+        script's own code wrote.
+
+        AN OPEN PULL REQUEST IS NEVER TOUCHED -- the removers return early on any state that is not
+        MERGED or CLOSED -- and that is precisely why this may run BEFORE the selection loop: it
+        cannot take the bench or the target of the entry this run is about to pick. An unresolvable
+        pull request, or one whose state the server did not say, is SKIPPED rather than read as
+        terminal, which is the same choice `Resolve-PullRequestBranch` already documents for the
+        same reason: the decision on an unknown state must never be the destructive one.
+
+        ONE BAD DIRECTORY MUST NOT STOP THE PASS OR THE RUNNER. Every candidate is wrapped, because
+        the whole point of reaping at startup is that the gate runs afterwards.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $RepositoryRoot,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $BenchRoot,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $TargetRoot,
+        [int] $Ceiling = 60,
+        # A SEAM, matching `Resolve-PullRequestBranch`'s own `-Invoker`: the suite drives this
+        # against real directories with a resolver it controls, because a cell that had to reach
+        # GitHub would measure whatever those pull requests happen to be today.
+        [scriptblock] $Resolver
+    )
+    if (-not $Resolver) { $Resolver = { param($PullRequest) Resolve-PullRequestBranch -PullRequest "$PullRequest" } }
+
+    $found = New-Object System.Collections.Generic.List[int]
+    foreach ($rootPath in @($BenchRoot, $TargetRoot)) {
+        if ([string]::IsNullOrWhiteSpace($rootPath) -or -not (Test-Path -LiteralPath $rootPath)) { continue }
+        $children = @()
+        try {
+            $children = @(Get-ChildItem -LiteralPath $rootPath -Directory -ErrorAction Stop)
+        } catch {
+            Write-Note "reaper: could not list $rootPath ($($_.Exception.Message)); leaving that root alone this pass"
+            continue
+        }
+        foreach ($child in $children) {
+            $named = [regex]::Match($child.Name, '^pr(\d+)$')
+            if (-not $named.Success) { continue }
+            $number = 0
+            if (-not [int]::TryParse($named.Groups[1].Value, [ref] $number)) { continue }
+            if (-not $found.Contains($number)) { $found.Add($number) }
+        }
+    }
+
+    $sorted = @($found | Sort-Object)
+    $truncated = ($Ceiling -gt 0 -and $sorted.Count -gt $Ceiling)
+    $considered = if ($truncated) { @($sorted | Select-Object -First $Ceiling) } else { $sorted }
+    if ($truncated) {
+        Write-Note ("reaper: $($sorted.Count) pr<N> directories under the managed roots against a ceiling of " +
+            "$Ceiling; reaping the $Ceiling lowest-numbered this pass and leaving $($sorted.Count - $Ceiling) " +
+            'for the next startup -- this pass is TRUNCATED, not empty')
+    }
+
+    $removed = 0
+    $skipped = 0
+    foreach ($number in @($considered)) {
+        try {
+            $resolved = & $Resolver "$number"
+            $state = if ($resolved) { [string] $resolved.State } else { '' }
+            if ([string]::IsNullOrWhiteSpace($state)) {
+                $skipped++
+                Write-Note "reaper: the server did not say what #$number is; skipping it, because an unknown state must not read as terminal"
+                continue
+            }
+            if ($state -ne 'MERGED' -and $state -ne 'CLOSED') {
+                $skipped++
+                continue
+            }
+            # A TERMINAL PULL REQUEST CAN STILL HAVE A GATE RUNNING IN ITS BENCH. The merge happens
+            # on the server while the compile happens here, and this pass is the frequent path to a
+            # `--force` on that directory. Unknown answers retain (`Test-PullRequestHasLiveWorker`
+            # returns live on everything it cannot establish), so a claim this cannot read costs a
+            # reap and never a run.
+            $worker = Test-PullRequestHasLiveWorker -PullRequest "$number" -Roots @($BenchRoot, $TargetRoot)
+            if ($worker.Live) {
+                $skipped++
+                Write-Note "reaper: #$number is $state but its bench is in use ($($worker.Reason)); leaving bench and target alone this pass"
+                continue
+            }
+            $bench = Join-Path $BenchRoot ("pr{0}" -f $number)
+            $target = Join-Path $TargetRoot ("pr{0}" -f $number)
+            $had = @($bench, $target) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+            Remove-TerminalRunnerBench -RepositoryRoot $RepositoryRoot -BenchRoot $BenchRoot -PullRequest "$number" -State $state
+            Remove-TerminalRunnerTarget -TargetRoot $TargetRoot -PullRequest "$number" -State $state
+            $removed += @(@($had) | Where-Object { -not (Test-Path -LiteralPath $_) }).Count
+        } catch {
+            $skipped++
+            Write-Note "reaper: #$number could not be reaped ($($_.Exception.Message)); the pass continues"
+        }
+    }
+    Write-Note "reaper: $($sorted.Count) pr<N> directories found, $(@($considered).Count) considered, $removed directory/directories reclaimed, $skipped skipped"
+    return [pscustomobject]@{ Found = $sorted.Count; Considered = @($considered).Count; Removed = $removed; Skipped = $skipped; Truncated = [bool] $truncated }
 }
 
 function Test-TargetBuildFinished {
@@ -577,6 +1199,8 @@ function Invoke-OneEntry {
     if ($resolvedPr.State -eq 'MERGED' -or $resolvedPr.State -eq 'CLOSED') {
         Write-Note "entry $($Candidate.File.Name): pull request $pr is $($resolvedPr.State); dropping"
         Set-EntryStatus -EntryPath $entryPath -State "dropped: pull request is $($resolvedPr.State)"
+        Remove-TerminalRunnerBench -RepositoryRoot $repoRoot -BenchRoot $BenchRoot -PullRequest "$pr" -State $resolvedPr.State
+        Remove-TerminalRunnerTarget -TargetRoot $TargetRoot -PullRequest "$pr" -State $resolvedPr.State
         Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
         return 'dropped'
     }
@@ -606,6 +1230,12 @@ function Invoke-OneEntry {
 
     $bench = Join-Path $BenchRoot ("pr{0}" -f $pr)
     $target = Join-Path $TargetRoot ("pr{0}" -f $pr)
+    # ARM THE CLAIM AT THE ARMING SITE, NOT AT THE FIRING SITE. It goes here, the instant this
+    # process commits to a bench path, rather than beside `Start-Process` below: the window a
+    # concurrent reap must not enter starts when the worktree is prepared, not when the compiler
+    # starts. Overwriting this process's single claim is also what RELEASES the previous entry's
+    # bench, so there is no disarm that a `return` further down could skip.
+    Set-RunnerWorkClaim -PullRequest "$pr" -Roots @($BenchRoot, $TargetRoot)
     $runId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmss')
     $logFile = Join-Path $StateDirectory ("$pr-$runId.log")
     $rcFile = Join-Path $StateDirectory ("$pr-$runId.rc")
@@ -613,54 +1243,6 @@ function Invoke-OneEntry {
 
     foreach ($d in @($StateDirectory, $BenchRoot, $TargetRoot)) {
         if (-not (Test-Path -LiteralPath $d)) { $null = New-Item -ItemType Directory -Path $d -Force }
-    }
-
-    # #943: EVERY RUN GETS A COLD TARGET, and this runner is the one place that can guarantee it.
-    #
-    # `$target` is `pr<N>` -- stable across every run of the same pull request, and removed by
-    # nothing. So the second gate on any PR built into the first one's artefacts, and a warm target
-    # reddens `workspace tests` on the gate's OWN canary: the canary rewrites
-    # `tools/ci-canary/src/nonce.rs` as the FIRST stage, `graphhelm.exe` does not depend on
-    # ci-canary so nothing forces it to relink, and on a warm target the binary still on disk is the
-    # PREVIOUS run's. That is a source newer than the binary, which the staleness instrument
-    # correctly refuses. On a cold target the binary does not exist yet, so the window never opens.
-    #
-    # Four lanes reached "use a fresh target for the second run" independently and left the evidence
-    # in their directory names -- `issues1-920b-targets`, `g-220b-targets`, `c-753-target2` -- with
-    # no note saying why, so each rediscovery cost a wasted gate. A hand-run can rename its target.
-    # THE RUNNER CANNOT: without this it hits the bug on every re-run, deterministically, and the
-    # only symptom is a red that is not about the tree.
-    #
-    # REPORTED, NEVER SILENT, AND THE RUN CONTINUES EITHER WAY. A removal that cannot finish leaves
-    # a target warmer than nothing, and the honest thing is to say so and let the gate speak: a red
-    # carrying this note in its log is diagnosable, whereas failing the entry here would trade a
-    # wasted run for no run at all.
-    # #1053: THE REMOVAL IS NOW CONDITIONAL, and the condition is the marker the gate itself writes.
-    # See Test-TargetBuildFinished above for why #943's unconditional form outlived its cause, and
-    # for why every answer except a parsed `complete` still removes. Measured: cold build passes
-    # median 565.7 s over 68 runs; the one FULL run in the population that reused read 65.459 s.
-    if (Test-Path -LiteralPath $target) {
-        if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
-            Write-Note "entry $($Candidate.File.Name): keeping $target -- its last build finished and vouched, so the gate proves each binary on content (#1053, #904)"
-        } elseif (Test-TargetBuildFinished -TargetDir $target) {
-            # THE REASON IS NAMED, because these two deletions want different responses: a target
-            # dropped for space says the disk needs attention, and a target dropped for provenance
-            # says the previous run died. Collapsing them into one line would hide the first behind
-            # the second, which is the one a reader already expects to see.
-            $freeNote = Get-TargetRootFreeGB -Path $TargetRoot
-            $freeText = if ($null -eq $freeNote) { 'unknown' } else { "$freeNote GB" }
-            Write-Note "entry $($Candidate.File.Name): removing $target -- its last build DID finish, but $TargetRoot has $freeText free against a floor of $(Get-TargetRootFloorGB -Path $TargetRoot) GB, so the reuse is evicted rather than grown (#1053)"
-            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $target) {
-                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
-            }
-        } else {
-            Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target (#943: the last build did not finish and vouch, so this run must be cold)"
-            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $target) {
-                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
-            }
-        }
     }
 
     # THE BENCH IS THE PULL REQUEST'S REAL BRANCH. Not an alias: the manifest commit is written to
@@ -898,11 +1480,91 @@ function Invoke-OneEntry {
         Write-Note "entry $($Candidate.File.Name): scope derivation failed ($($_.Exception.Message)); running FULL"
     }
 
+    # PR-BASE PROOF IS AN INPUT TO THE GATE, NOT SOMETHING A PRESS CAN RECONSTRUCT LATER. Capture
+    # GitHub's baseRefOid from the same live PR view as the head, fetch that ref, and prove the
+    # exact object exists before handing the snapshot to gate.ps1. Any unanswered step widens to
+    # local-only evidence and says so in the runner log; it never invents a base from origin/main.
+    $snapshotArgument = ''
+    $snapshotCaptured = $false
+    $snapshotFile = Join-Path $StateDirectory ("$pr-$runId.landing.json")
+    $baseRef = [string]$resolvedPr.BaseRef
+    $baseSha = [string]$resolvedPr.BaseSha
+    try {
+        $baseFormat = if ([string]::IsNullOrWhiteSpace($baseRef)) {
+            [pscustomobject]@{ Code = 1; Output = @() }
+        } else {
+            Invoke-External 'git' @('-C', $bench, 'check-ref-format', "refs/heads/$baseRef")
+        }
+        $fetchBase = if ($baseFormat.Code -eq 0) {
+            Invoke-External 'git' @('-C', $bench, 'fetch', '--quiet', 'origin', "+refs/heads/$baseRef`:refs/remotes/origin/$baseRef")
+        } else {
+            [pscustomobject]@{ Code = 1; Output = @() }
+        }
+        $baseObject = if ($fetchBase.Code -eq 0 -and (Test-HeadSha $baseSha)) {
+            Invoke-External 'git' @('-C', $bench, 'cat-file', '-e', "${baseSha}^{commit}")
+        } else {
+            [pscustomobject]@{ Code = 1; Output = @() }
+        }
+        if ($baseFormat.Code -eq 0 -and $fetchBase.Code -eq 0 -and $baseObject.Code -eq 0 -and
+            (Test-HeadSha $baseSha)) {
+            $snapshot = [ordered]@{
+                head = [string]$resolvedPr.Head
+                sha = $baseSha
+                ref = $baseRef
+                pullRequest = [int]$pr
+            } | ConvertTo-Json -Compress
+            [System.IO.File]::WriteAllText($snapshotFile, $snapshot, (New-Object System.Text.UTF8Encoding($false)))
+            $snapshotArgument = " -LandingSnapshotPath '$snapshotFile'"
+            $snapshotCaptured = $true
+            Write-Note "entry $($Candidate.File.Name): landing snapshot -> $snapshotFile $snapshot"
+        } else {
+            Write-Note "entry $($Candidate.File.Name): landing snapshot not captured (ref $($baseFormat.Code), fetch $($fetchBase.Code), object $($baseObject.Code)); refusing to start the gate"
+        }
+    } catch {
+        Write-Note "entry $($Candidate.File.Name): landing snapshot failed ($($_.Exception.Message)); refusing to start the gate"
+    }
+    if (-not $snapshotCaptured) {
+        Set-EntryStatus -EntryPath $entryPath -State 'waiting: landing snapshot unavailable'
+        return 'stalled'
+    }
+
+    # Touch the build cache only after the PR-base evidence is complete. A missing landing snapshot
+    # must leave the previous target intact for retry and diagnosis; deleting it before this point
+    # turns a network/provenance refusal into needless cold work.
+    if (Test-Path -LiteralPath $target) {
+        if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
+            Write-Note "entry $($Candidate.File.Name): keeping $target -- its last build finished and vouched, so the gate proves each binary on content (#1053, #904)"
+        } elseif (Test-TargetBuildFinished -TargetDir $target) {
+            $freeNote = Get-TargetRootFreeGB -Path $TargetRoot
+            $freeText = if ($null -eq $freeNote) { 'unknown' } else { "$freeNote GB" }
+            Write-Note "entry $($Candidate.File.Name): removing $target -- its last build DID finish, but $TargetRoot has $freeText free against a floor of $(Get-TargetRootFloorGB -Path $TargetRoot) GB, so the reuse is evicted rather than grown (#1053)"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+            }
+        } else {
+            Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target (#943: the last build did not finish and vouch, so this run must be cold)"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+            }
+        }
+    }
+
+    # The gate is an untrusted child from the runner's point of view. A terminating PowerShell
+    # error used to skip the final `$LASTEXITCODE` write, leaving the parent with `rc=unknown` and
+    # no way to tell a wrapper failure from a still-running child. Keep the wrapper verdict
+    # explicit, append the exception to the same bounded transcript, and write the rc in `finally`
+    # so every child outcome has a durable answer.
     $inner = "Set-Location '$bench'; " +
         "`$env:CARGO_TARGET_DIR='$target'; " +
         "`$env:GRAPHHELM_SLOT_LOCK_PATH='$slotLock'; " +
-        "& ./ci/gate.ps1$scopeArgument *> '$logFile'; " +
-        "`$LASTEXITCODE | Set-Content '$rcFile'"
+        "`$wrapperRc = 99; " +
+        "try { & ./ci/gate.ps1$scopeArgument$snapshotArgument *> '$logFile'; " +
+        "`$wrapperRc = if (`$null -eq `$LASTEXITCODE) { 99 } else { [int]`$LASTEXITCODE } } " +
+        "catch { Add-Content -LiteralPath '$logFile' -Value ('[runner] gate child threw: ' + `$_.Exception.Message); `$wrapperRc = 99 } " +
+        "finally { if (`$null -eq `$wrapperRc) { `$wrapperRc = 99 }; " +
+        "Set-Content -LiteralPath '$rcFile' -Value ([string]`$wrapperRc) }"
     # -NonInteractive here is the worst case of #925, not merely another instance of it: this child
     # runs in a HIDDEN window, so a prompt from a missing `[Parameter(Mandatory)]` in ci/gate.ps1 --
     # which has seventeen of them -- would be waiting on a console no operator can see or answer. The
@@ -910,6 +1572,9 @@ function Invoke-OneEntry {
     # suspicion after twenty minutes. The selector call above already carried this flag; the run it
     # launches did not.
     $proc = Start-Process powershell -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $inner -PassThru -WindowStyle Hidden
+    # Cache the native handle immediately while the process is live. Without this touch, .NET can
+    # return an empty ExitCode after a fast wrapper exits, which would hide the child result.
+    $procHandle = $proc.Handle
     "$($proc.Id)" | Set-Content -LiteralPath $pidFile
 
     # PROOF OF LIFE IS THE LOG GROWING, and "wedged" is never a short reading. A healthy gate sits
@@ -931,14 +1596,67 @@ function Invoke-OneEntry {
         if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) { break }
     }
     Start-Sleep -Seconds 2
-    $rc = if (Test-Path -LiteralPath $rcFile) { (Get-Content -LiteralPath $rcFile -Raw).Trim() } else { 'unknown' }
+    $childExit = $null
+    try {
+        if ($proc.HasExited) { $childExit = $proc.ExitCode }
+    } catch {
+        $childExit = $null
+    }
+    $rc = if (Test-Path -LiteralPath $rcFile) { (Get-Content -LiteralPath $rcFile -Raw).Trim() } else { '99' }
+    if ([string]::IsNullOrWhiteSpace($rc) -or $rc -eq 'unknown') { $rc = '99' }
+    $childExitText = if ($null -eq $childExit) { 'null' } else { [string]$childExit }
+
+    # Re-read the live PR immediately before publication. A receipt pushed after the PR became
+    # terminal is unreachable from the merged main; a receipt pushed after the head moved certifies
+    # a commit the branch no longer names. Retain the queue, bench, target and local receipt in both
+    # races so the evidence remains diagnosable instead of being deleted as if publication worked.
+    $publicationState = Resolve-PullRequestBranch -PullRequest "$pr"
+    $publicationEligibility = Test-PublicationEligibility -PullRequestState $publicationState -ExpectedHead $head `
+        -ExpectedBranch $branch -ExpectedBaseRef $baseRef -ExpectedBaseSha $baseSha
+    if (-not $publicationEligibility.Allowed) {
+        Write-Note "entry $($Candidate.File.Name): receipt not published: $($publicationEligibility.Reason); retaining queue, bench and target"
+        Set-EntryStatus -EntryPath $entryPath -State ("waiting: receipt publication refused: {0}" -f $publicationEligibility.Reason)
+        return 'stalled'
+    }
 
     # PUSH THE MANIFEST THE INSTANT IT EXISTS. What survives an app restart is what is on the server.
-    $push = Invoke-External 'git' @('-C', $bench, 'push', 'origin', "HEAD:$branch")
-    $pushed = ($push.Code -eq 0)
+    $pushed = Publish-Receipt -BenchPath $bench -ExpectedParent $head -Branch $branch
 
-    Set-EntryStatus -EntryPath $entryPath -State ("finished rc=$rc pushed=$pushed log=$logFile")
-    Write-Note "pr $pr finished rc=$rc pushed=$pushed"
+    # THE RECEIPT MUST BE ON THE SERVER BEFORE BUILD ARTEFACTS DISAPPEAR. A failed push leaves both
+    # target and bench available as the backstop for diagnosis and retry. Re-read after the push as
+    # well: the PR may merge in the narrow interval between the pre-push read and the network write.
+    # In that race the receipt exists on the branch but not in merged main, so it is not publication
+    # for cleanup purposes and every local retry/debug artefact must remain.
+    if ($pushed) {
+        $publishedTip = Get-ReceiptCommitProof -BenchPath $bench -ExpectedParent $head
+        $postPublicationState = Resolve-PullRequestBranch -PullRequest "$pr"
+        $postPublicationEligibility = if ($publishedTip) {
+            Test-PublicationEligibility -PullRequestState $postPublicationState -ExpectedHead $publishedTip `
+                -ExpectedBranch $branch -ExpectedBaseRef $baseRef -ExpectedBaseSha $baseSha
+        } else {
+            [pscustomobject]@{ Allowed = $false; Reason = 'published receipt tip could not be reproved' }
+        }
+        # GitHub may briefly return the pre-push head while the PR remains OPEN. Publish-Receipt
+        # already proved the remote branch is exactly $publishedTip, so that one stale head value is
+        # safe to tolerate; any third head, unknown state, or terminal state still refuses cleanup.
+        if (-not $postPublicationEligibility.Allowed -and $postPublicationState -and
+            $postPublicationState.Head -ceq $head) {
+            $postPublicationEligibility = Test-PublicationEligibility -PullRequestState $postPublicationState `
+                -ExpectedHead $head -ExpectedBranch $branch -ExpectedBaseRef $baseRef -ExpectedBaseSha $baseSha
+            if ($postPublicationEligibility.Allowed) {
+                $postPublicationEligibility = [pscustomobject]@{ Allowed = $true; Reason = 'open; PR head propagation still shows queued head' }
+            }
+        }
+        if (-not $postPublicationEligibility.Allowed) {
+            Write-Note "entry $($Candidate.File.Name): receipt push raced with $($postPublicationEligibility.Reason); retaining queue, bench and target"
+            Set-EntryStatus -EntryPath $entryPath -State ("waiting: pushed receipt is not merge-reachable: {0}" -f $postPublicationEligibility.Reason)
+            return 'stalled'
+        }
+        Remove-PublishedRunnerTarget -TargetRoot $TargetRoot -PullRequest "$pr"
+    }
+
+    Set-EntryStatus -EntryPath $entryPath -State ("finished rc=$rc childExit=$childExitText pushed=$pushed log=$logFile")
+    Write-Note "pr $pr finished rc=$rc childExit=$childExitText pushed=$pushed"
     Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
     return 'built'
 }
@@ -955,7 +1673,21 @@ $repoRoot = ([string]$probe.Output[0]).Trim()
 
 if (-not (Test-Path -LiteralPath $StateDirectory)) { $null = New-Item -ItemType Directory -Path $StateDirectory -Force }
 
-Write-Note "repository $repoRoot; queue $QueueDirectory; slot lock $slotLock (claimed by the gate, not by this)"
+Write-Note "repository $repoRoot; queue $QueueDirectory; slot lock $slotLock (temporarily claimed only for terminal cleanup; gate owns it during builds)"
+
+# ONCE PER RUNNER PROCESS, AT STARTUP, BEFORE THE FIRST SELECTION. Cleanup first atomically owns the
+# same slot a gate must own. A pull request can become terminal while its gate is still running;
+# OPEN-state filtering alone cannot protect that live gate's bench or target.
+$reapClaim = Enter-TerminalReapSlot -Path $slotLock
+if ($reapClaim.Acquired) {
+    try {
+        $null = Invoke-TerminalRunnerReap -RepositoryRoot $repoRoot -BenchRoot $BenchRoot -TargetRoot $TargetRoot -Ceiling $ReapCeiling
+    } finally {
+        Exit-TerminalReapSlot -Path $slotLock -ExpectedContent $reapClaim.Content
+    }
+} else {
+    Write-Note 'terminal reaper skipped: the gate slot is already held or could not be claimed safely'
+}
 
 $iterations = 0
 # A `-Once` RUN CANNOT LOOP MORE TIMES THAN THE QUEUE HAS ENTRIES, PLUS ONE.

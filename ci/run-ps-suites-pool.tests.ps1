@@ -33,6 +33,10 @@
 #   1  2 BEATS 1 when both happen in one pool   1  and BOTH names appear
 #   1  a stub that outlives the deadline is KILLED and gives exit 2, not 1 and not 0
 #   1  and the refusal names the suite and the ceiling it was given
+#   1  the timeout also kills a descendant before it can outlive the suite wrapper
+#   1  a wrapper that exits during taskkill's race window is already safely stopped
+#   1  a failed tree snapshot stays a cleanup refusal even when the wrapper kill succeeds
+#   1  a CIM PID whose creation identity changed is rejected before cleanup can kill it
 #   1  SOURCE: an unreadable exit code is mapped to 'unreadable', not to 0
 #   1  and 'unreadable' lands in HARNESS-BROKE rather than in the failed list
 #   1  the ledger is set-compared against the discovered set in BOTH directions
@@ -40,7 +44,7 @@
 #   1  the replay carries a per-suite wall time
 #   1  an unparseable throttle runs SERIALLY, never wider
 #   1  and says so
-$ExpectedAssertionCount = 17
+$ExpectedAssertionCount = 21
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -59,6 +63,111 @@ $runnerPath = Join-Path $PSScriptRoot 'run-ps-suites.ps1'
 $runnerText = [System.IO.File]::ReadAllText($runnerPath)
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+# The timeout branch first observes HasExited=false and only then launches taskkill. Reproduce the
+# race between those two observations: the real wrapper exits while a controlled taskkill boundary
+# reports PID-not-found (128), but its long-lived child remains. The root killer is controlled; the
+# descendant kill is real, so success requires the production helper to remember and reap the tree.
+$stopStart = $runnerText.IndexOf('function Get-SuiteProcessTreeSnapshot', [System.StringComparison]::Ordinal)
+$stopEnd = $runnerText.IndexOf('$dispatchOrder', $stopStart, [System.StringComparison]::Ordinal)
+if ($stopStart -ge 0 -and $stopEnd -gt $stopStart) {
+    Invoke-Expression $runnerText.Substring($stopStart, $stopEnd - $stopStart)
+}
+$racePidFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-child-$([guid]::NewGuid().ToString('N')).pid"
+$raceReleaseFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-release-$([guid]::NewGuid().ToString('N')).signal"
+# Hold the wrapper behind an explicit release file. The old 400 ms sleep made this cell a timing
+# lottery: on a loaded host the wrapper could exit before Stop-SuiteProcessTree reached taskkill,
+# so the intended PID-not-found branch was never exercised. The fake taskkill below releases the
+# wrapper only after the process-tree snapshot has run, preserving the race shape with no clock race.
+$raceCommand = "`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30'; Set-Content -LiteralPath '$racePidFile' -Value `$child.Id; while (-not (Test-Path -LiteralPath '$raceReleaseFile')) { Start-Sleep -Milliseconds 25 }"
+$raceProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+    -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $raceCommand
+$deadline = (Get-Date).AddSeconds(10)
+while (-not (Test-Path -LiteralPath $racePidFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
+$raceChildId = [int](Get-Content -LiteralPath $racePidFile -Raw)
+$raceChildProcess = Microsoft.PowerShell.Management\Get-Process -Id $raceChildId
+$null = $raceChildProcess.Handle
+$script:raceProcess = $raceProcess
+function Start-Process {
+    param([string] $FilePath, [switch] $PassThru, [System.Diagnostics.ProcessWindowStyle] $WindowStyle, [object[]] $ArgumentList)
+    if ([string]$ArgumentList[1] -eq [string]$script:raceProcess.Id) {
+        Set-Content -LiteralPath $raceReleaseFile -Value 'release' -Encoding ASCII
+        $null = $script:raceProcess.WaitForExit(5000)
+        $fake = [pscustomobject]@{ Handle = 1; ExitCode = 128 }
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) return $true }
+        $fake | Add-Member -MemberType ScriptMethod -Name Kill -Value { }
+        return $fake
+    }
+    return Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -PassThru -WindowStyle $WindowStyle -ArgumentList $ArgumentList
+}
+try {
+    $raceStopped = Stop-SuiteProcessTree -Process $raceProcess
+} finally {
+    Remove-Item function:Start-Process -Force
+}
+$raceChildExited = try { $raceChildProcess.HasExited } catch { $false }
+if (-not $raceChildExited) {
+    # Cleanup only. The process may exit between the liveness read and taskkill; that benign race
+    # must not abort the harness before the assertion reports the production result.
+    try { taskkill.exe /PID $raceChildId /T /F 2>$null | Out-Null } catch { }
+}
+Remove-Item -LiteralPath $racePidFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $raceReleaseFile -Force -ErrorAction SilentlyContinue
+Assert-True ($raceStopped -and $raceChildExited) `
+    "a wrapper that exits while taskkill reports PID-not-found still has every remembered descendant stopped (stopped=$raceStopped childExited=$raceChildExited)"
+
+# Stage a PID whose CIM identity and current Process identity disagree. Numeric equality alone must
+# not authorize a kill: it can describe a descendant that exited and an unrelated process that
+# inherited the same number before Get-Process pinned the handle.
+$identityProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+    -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30'
+$script:identityProcess = $identityProcess
+$script:identityRoot = 424242
+function Get-CimInstance {
+    param([string] $ClassName, [string[]] $Property, [object] $ErrorAction)
+    return @(
+        [pscustomobject]@{ ProcessId = $script:identityRoot; ParentProcessId = 0; CreationDate = [DateTime]::UtcNow.AddMinutes(-2) },
+        [pscustomobject]@{ ProcessId = $script:identityProcess.Id; ParentProcessId = $script:identityRoot; CreationDate = [DateTime]::UtcNow.AddMinutes(-1) }
+    )
+}
+function Get-Process {
+    param([int] $Id, [object] $ErrorAction)
+    return Microsoft.PowerShell.Management\Get-Process -Id $Id -ErrorAction SilentlyContinue
+}
+try {
+    $identitySnapshot = Get-SuiteProcessTreeSnapshot -RootProcessId $script:identityRoot
+} finally {
+    Remove-Item function:Get-CimInstance -Force
+    Remove-Item function:Get-Process -Force
+    try { $identityProcess.Kill() } catch { }
+    $null = $identityProcess.WaitForExit(5000)
+}
+Assert-True (-not $identitySnapshot.Succeeded) `
+    'a reused PID is rejected when the CIM creation identity differs from the handle-backed Process start time'
+
+# If the initial tree snapshot fails, killing only the wrapper proves nothing about descendants.
+# The cleanup result must stay false even when taskkill reports that the wrapper itself was killed.
+$snapshotFailureProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+    -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30'
+$script:snapshotFailureProcess = $snapshotFailureProcess
+function Get-SuiteProcessTreeSnapshot {
+    param([int] $RootProcessId)
+    return [pscustomobject]@{ Succeeded = $false; Descendants = @() }
+}
+function Invoke-SuiteTaskkill {
+    param([int] $ProcessId)
+    try { $script:snapshotFailureProcess.Kill() } catch { }
+    $null = $script:snapshotFailureProcess.WaitForExit(5000)
+    return $true
+}
+try {
+    $snapshotFailureStopped = Stop-SuiteProcessTree -Process $snapshotFailureProcess
+} finally {
+    Remove-Item function:Get-SuiteProcessTreeSnapshot -Force
+    Remove-Item function:Invoke-SuiteTaskkill -Force
+}
+Assert-True (-not $snapshotFailureStopped) `
+    'a failed descendant snapshot fails closed even when the wrapper kill succeeds, because surviving children were never observed'
+
 # The stub names come from the runner's own inventory, never retyped: a hand-written name that
 # drifted from the pin would make every cell below red for the inventory check instead of for the
 # thing it is testing.
@@ -76,6 +185,7 @@ function Invoke-Pool {
     param(
         [hashtable] $ExitCodes = @{},
         [hashtable] $SleepSeconds = @{},
+        [hashtable] $DescendantMarkers = @{},
         [hashtable] $StderrText = @{},
         [string] $Throttle = '6',
         [string] $TimeoutSeconds = '1800'
@@ -84,6 +194,14 @@ function Invoke-Pool {
     Copy-Item -LiteralPath $runnerPath -Destination (Join-Path $fixtureRoot 'run-ps-suites.ps1') -Force
     foreach ($name in $pinned) {
         $lines = New-Object System.Collections.Generic.List[string]
+        if ($DescendantMarkers.ContainsKey($name)) {
+            $marker = [string]$DescendantMarkers[$name]
+            $childPath = Join-Path $fixtureRoot "$name.child.ps1"
+            $child = "Start-Sleep -Seconds 3`n[System.IO.File]::WriteAllText('$($marker.Replace("'", "''"))', 'descendant survived')"
+            [System.IO.File]::WriteAllText($childPath, $child, $utf8NoBom)
+            $lines.Add("`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '$($childPath.Replace("'", "''"))'")
+            $lines.Add("[System.IO.File]::WriteAllText('$($marker.Replace("'", "''")).pid', [string]`$child.Id)")
+        }
         if ($SleepSeconds.ContainsKey($name)) { $lines.Add("Start-Sleep -Seconds $($SleepSeconds[$name])") }
         if ($StderrText.ContainsKey($name)) { $lines.Add("[Console]::Error.WriteLine('$($StderrText[$name])')") }
         $lines.Add("Write-Host 'stub $name speaking'")
@@ -144,6 +262,13 @@ try {
         "a stub that outlives its deadline is killed and gives exit 2 (got $($timed.exitCode)) -- a hung suite has no colour, and silence must not read as green"
     Assert-True ($timed.text -match [regex]::Escape($slow) -and $timed.text -match 'exceeded 1 s') `
         'and the refusal names the suite and the ceiling it was given'
+
+    $descendantMarker = Join-Path $fixtureRoot 'timed-descendant.marker'
+    $timedTree = Invoke-Pool -SleepSeconds @{ $slow = 30 } `
+        -DescendantMarkers @{ $slow = $descendantMarker } -TimeoutSeconds '1'
+    Start-Sleep -Seconds 4
+    Assert-True (-not (Test-Path -LiteralPath $descendantMarker)) `
+        'the timeout kills the whole process tree before a descendant can outlive its suite wrapper'
 
     # THE MEASURED PROTOTYPE DEFECT. Staged by reading, because a stub can choose its exit code but
     # not whether Windows reports one; the timeout cell above proves the string-typed path executes.

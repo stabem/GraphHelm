@@ -32,9 +32,10 @@
 # half-written file to the concurrent compile. The same claim is measured here by redirecting ONE
 # package's directory in the REAL graph at a copy, which changes no byte under version control.
 
-$ExpectedAssertionCount = 117
+$ExpectedAssertionCount = 118
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $script:total = 0
 $script:failures = 0
 
@@ -48,6 +49,17 @@ function Assert-True {
         Write-Host "  FAIL: $Message" -ForegroundColor Red
     }
 }
+
+$hadModuleAutoLoadingPreference = Test-Path variable:PSModuleAutoLoadingPreference
+$savedModuleAutoLoading = if ($hadModuleAutoLoadingPreference) { Get-Variable PSModuleAutoLoadingPreference -ValueOnly } else { $null }
+try {
+    $PSModuleAutoLoadingPreference = 'None'
+    $fileHashProviderIsLoaded = $null -ne (Get-Command Get-FileHash -ErrorAction SilentlyContinue)
+} finally {
+    $PSModuleAutoLoadingPreference = if ($hadModuleAutoLoadingPreference) { $savedModuleAutoLoading } else { 'All' }
+}
+Assert-True $fileHashProviderIsLoaded `
+    'the file-hash provider is already loaded, so a pooled cold start cannot lose it to module auto-loading'
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $gatePath = Join-Path $PSScriptRoot 'gate.ps1'

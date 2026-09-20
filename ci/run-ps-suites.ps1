@@ -173,6 +173,129 @@ foreach ($name in $discovered) { $ledger[$name] = $null }
 # now the floor -- otherwise the next person to ask has to re-instrument this file to find out.
 $durations = @{}
 
+function Get-SuiteProcessTreeSnapshot {
+    param([Parameter(Mandatory)] [int] $RootProcessId)
+
+    try {
+        $processes = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction Stop)
+        $known = @($RootProcessId)
+        $descendants = @()
+        do {
+            $added = $false
+            foreach ($candidate in $processes) {
+                $pidValue = [int]$candidate.ProcessId
+                $parentValue = [int]$candidate.ParentProcessId
+                if ($known -contains $parentValue -and $known -notcontains $pidValue) {
+                    $known += $pidValue
+                    $descendants += $candidate
+                    $added = $true
+                }
+            }
+        } while ($added)
+        # Resolve and pin each identity while the tree still exists. A numeric PID is not an
+        # identity: Windows may reuse it before cleanup reaches a second Get-Process call.
+        $observed = @()
+        foreach ($descendant in $descendants) {
+            $descendantId = [int]$descendant.ProcessId
+            $process = Get-Process -Id $descendantId -ErrorAction SilentlyContinue
+            if ($null -eq $process) { continue }
+            $null = $process.Handle
+            $processStartTicks = [long]$process.StartTime.ToUniversalTime().Ticks
+            if ($null -eq $descendant.CreationDate) {
+                throw "process $descendantId has no CIM creation identity"
+            }
+            $cimStartTicks = [long]([datetime]$descendant.CreationDate).ToUniversalTime().Ticks
+            # Win32_Process CreationDate is exposed at microsecond precision while Process.StartTime
+            # retains 100 ns ticks (measured delta: 0-9 ticks for the same process). More than that
+            # means the numeric PID changed owners between the CIM walk and handle capture.
+            if ([math]::Abs($processStartTicks - $cimStartTicks) -gt 9) {
+                throw "process $descendantId changed identity during tree capture"
+            }
+            $observed += $process
+        }
+        return [pscustomobject]@{ Succeeded = $true; Descendants = @($observed) }
+    } catch {
+        return [pscustomobject]@{ Succeeded = $false; Descendants = @() }
+    }
+}
+
+function Invoke-SuiteTaskkill {
+    param([Parameter(Mandatory)] [int] $ProcessId)
+
+    try {
+        $killer = Start-Process -FilePath 'taskkill.exe' -PassThru -WindowStyle Hidden `
+            -ArgumentList @('/PID', [string]$ProcessId, '/T', '/F')
+        $null = $killer.Handle
+        if (-not $killer.WaitForExit(10000)) {
+            try { $killer.Kill() } catch { }
+            return $false
+        }
+        return $killer.ExitCode -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Stop-RememberedSuiteDescendants {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [System.Diagnostics.Process[]] $Processes)
+
+    # These are the handle-backed Process objects captured with the tree, not a second lookup by
+    # PID. Kill every observed descendant through that retained handle. The snapshot already
+    # includes every generation in the tree, so taskkill's PID-based /T walk is unnecessary here
+    # and could target an unrelated process after reuse.
+    foreach ($process in $Processes) {
+        try {
+            if (-not $process.HasExited) { $process.Kill() }
+        } catch {
+            return $false
+        }
+    }
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        $remaining = @()
+        foreach ($process in $Processes) {
+            try {
+                if (-not $process.HasExited) { $remaining += $process }
+            } catch {
+                return $false
+            }
+        }
+        if ($remaining.Count -eq 0) { return $true }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+function Stop-SuiteProcessTree {
+    param([Parameter(Mandatory)] [System.Diagnostics.Process] $Process)
+
+    # Remember the descendants while the wrapper still names them. If the wrapper exits before
+    # taskkill attaches, Windows can no longer use the root PID to find that tree; the remembered
+    # child process identities are the only bounded way to finish the timeout without leaking work
+    # or acting on a numeric PID that Windows has already reused.
+    $tree = Get-SuiteProcessTreeSnapshot -RootProcessId $Process.Id
+    if (-not $tree.Succeeded) {
+        # Best-effort stop the wrapper, but never call that sufficient: without the snapshot there
+        # is no evidence that descendants were found or stopped.
+        try {
+            if (-not $Process.HasExited) { $null = Invoke-SuiteTaskkill -ProcessId $Process.Id }
+            $null = $Process.HasExited -or $Process.WaitForExit(1000)
+        } catch { }
+        return $false
+    }
+    if ($Process.HasExited) {
+        return Stop-RememberedSuiteDescendants -Processes @($tree.Descendants)
+    }
+
+    $rootKilled = Invoke-SuiteTaskkill -ProcessId $Process.Id
+    try { $wrapperExited = $Process.HasExited -or $Process.WaitForExit(1000) } catch { $wrapperExited = $false }
+    if (-not $wrapperExited) { return $false }
+    if (-not (Stop-RememberedSuiteDescendants -Processes @($tree.Descendants))) {
+        return $false
+    }
+    return $true
+}
+
 $dispatchOrder = @(
     Get-ChildItem -LiteralPath $SuiteDirectory -Filter '*.tests.ps1' -File -ErrorAction SilentlyContinue |
         Sort-Object -Property Length -Descending |
@@ -224,7 +347,10 @@ try {
                 else { $ledger[$entry.Name] = [int]$code }
             } elseif (([DateTime]::UtcNow - $entry.Started).TotalSeconds -gt $SuiteTimeoutSeconds) {
                 $done = $true
-                try { $entry.Process.Kill() } catch { }
+                if (-not (Stop-SuiteProcessTree -Process $entry.Process)) {
+                    Write-Host "HARNESS-BROKE: could not confirm termination of the process tree for $($entry.Name)." -ForegroundColor Magenta
+                    exit 2
+                }
                 $ledger[$entry.Name] = 'timeout'
             }
             if ($done) {

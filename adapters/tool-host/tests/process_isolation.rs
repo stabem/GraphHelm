@@ -1848,7 +1848,8 @@ fn a_silent_orphan_holding_stdout_after_the_leader_exits_does_not_cost_the_captu
 
     let Some((_, grandchild)) = reported else {
         panic!(
-            "HARNESS-BROKE: the fixture never reported a grandchild id within {REPORT_PATIENCE:?};              nothing here arranged an orphan and the capture below decides nothing"
+            "HARNESS-BROKE: the fixture never reported a grandchild id within \
+             {REPORT_PATIENCE:?}; nothing here arranged an orphan and the capture below decides nothing"
         );
     };
     assert_ne!(
@@ -1860,15 +1861,20 @@ fn a_silent_orphan_holding_stdout_after_the_leader_exits_does_not_cost_the_captu
 
     assert!(
         stdout.contains("leader-line"),
-        "the leader wrote and flushed `leader-line` and exited, and a silent orphan kept the write          end of stdout. The capture came back as {stdout:?} after {elapsed:?}: the drain went          quiet, released the group, and then killed the orphan holding the pipe. The bytes          reached the pipe before release and the reader recorded its bounded outcome"
+        "the leader wrote and flushed `leader-line` and exited, and a silent orphan kept the write \
+         end of stdout. The capture came back as {stdout:?} after {elapsed:?}: the drain went \
+         quiet, released the group, and then killed the orphan holding the pipe. The bytes \
+         reached the pipe before release and the reader recorded its bounded outcome"
     );
     assert!(
         captured.readers_abandoned,
-        "a descendant outlived the leader holding a pipe, which is a containment failure whether          or not the bytes were recovered afterwards; the record must keep saying so"
+        "a descendant outlived the leader holding a pipe, which is a containment failure whether \
+         or not the bytes were recovered afterwards; the record must keep saying so"
     );
     assert!(
         elapsed < TIMEOUT,
-        "the call took {elapsed:?} against a {TIMEOUT:?} timeout, which is the whole drain budget:          the drain stopped waiting on the clock instead of on the orphan's silence"
+        "the call took {elapsed:?} against a {TIMEOUT:?} timeout, which is the whole drain budget: \
+         the drain stopped waiting on the clock instead of on the orphan's silence"
     );
 
     cleanup.cleanup().expect("the fixture processes are gone");

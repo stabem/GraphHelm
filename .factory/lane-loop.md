@@ -63,10 +63,16 @@ an effective veto over the merge unless this rule is applied.
 context, spawned by an orchestrating session: the implementer subagents are the AUTHOR, two
 reviewer subagents with no implementation context are the two PASSES, the registered runner is
 the GATE, and the spawning session — which planned and wrote no code — PRESSES. The identity
-line names the subagent and its spawning session so the comment is addressable:
-`Lane: <letter> · Session: subagent-<name> of <ListAgents name> [ref] · Head: <sha8>`. The
-spawning session may not review what its subagents wrote; it may press, because a planner who
-wrote no line of the diff is a third lane under the rule above.
+line names the subagent and its spawning session so the comment is addressable, in the ONE form
+`AGENTS.md` specifies - the parenthetical sits in the LANE field, because a census reads that field
+and is told to treat `Session:` as an address rather than an identity:
+
+`Lane: <letter> (subagent <name> of <session> [ref], <author|non-author> for this PR) · Session: <ListAgents name> [ref] · Head: <sha8>`
+
+**One physical line, and kept as one** - this template is copied and it is grepped for, and a wrap
+inserted by an editor is pasted into the middle of the string a census matches.
+The spawning session may not review what its subagents wrote; whether it may PRESS is decided by
+item 12 of `.factory/MERGE-CHECKLIST.md` under the subagent exception, and is not restated here.
 
 **Two classes of finding, and they close differently.** A SPELLING finding closes **by form**: one
 normalization in front of the predicates, and a new spelling is answered by citing the form rather than

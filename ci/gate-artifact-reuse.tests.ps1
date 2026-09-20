@@ -88,6 +88,10 @@ foreach ($name in @(
         'Get-CrateDirectoryDigest',
         'Get-EmbeddedInputReferences',
         'Get-CrateEmbeddedInputDigests',
+        # Get-CargoDependencyGraph delegates its verdict to these two; a suite that loads the
+        # reader without them dot-sources a call to a function that is not there.
+        'Test-NativeCallFailed',
+        'Get-NativeStderrText',
         'Get-CargoDependencyGraph',
         'Get-CrateInputHashesFromGraph',
         'Get-ArtifactLedgerPath',

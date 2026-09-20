@@ -26,7 +26,7 @@ fn acceptance_map_is_grounded() {
     // permanently vacuous the day that landed. This recomputes the gate's own suite set
     // (discovery, minus the gate's own named exclusions) instead of string-matching text
     // the gate no longer carries.
-    let gate_suites = gate_cli_suites(&root, &gate);
+    let gate_suites = gate_cli_suites(&root);
 
     assert_eq!(clauses.clause.len(), 7, "the seven §8 clauses, exactly");
 
@@ -141,13 +141,22 @@ fn acceptance_map_is_grounded() {
     assert!(gate.contains("GREEN - every stage passed"));
     assert!(gate.contains("PostgreSQL ignored matrix"));
     assert!(gate.contains("PostgreSQL matrix under a non-C collation"));
-    // The suite list must stay DISCOVERED, not revert to a hand-maintained literal array
-    // (#98's own fix) - otherwise `gate_cli_suites` above would silently stop describing
-    // what the gate actually runs.
+    // The suite set must stay DISCOVERED, not revert to a hand-maintained literal array
+    // (#98's own fix) - otherwise `gate_cli_suites` above would silently stop describing what
+    // the gate actually runs.
+    //
+    // #1053 changed WHERE the discovery happens, and this assertion moved with it. The gate used
+    // to walk `apps/cli/tests/*.rs` itself and run one `cargo test --test <suite>` per name; it
+    // now runs `cargo nextest run -p graphhelm-cli` once, so the enumeration is cargo's. That is
+    // a STRONGER form of #98's property, not a weaker one: there is no loop, no list and no
+    // exclusion map left that an edit could narrow -- a new integration target is compiled and
+    // run because it EXISTS. What this pins is that the gate keeps running the whole PACKAGE.
+    // Narrow it to `--test <something>` and `gate_cli_suites` starts over-describing coverage.
     assert!(
-        gate.contains("Get-ChildItem") && gate.contains("apps\\cli\\tests"),
-        "the gate must still discover CLI suites from apps/cli/tests/*.rs rather than a \
-         hardcoded list"
+        gate.contains("nextest run -p graphhelm-cli"),
+        "the gate must still run the whole graphhelm-cli package in one nextest \
+         invocation, so every apps/cli/tests/*.rs target is gated by existing rather than \
+         by being listed"
     );
 
     // The refused scope: every citation resolves in the decision register, verbatim.

@@ -31,6 +31,7 @@ $PinnedSuites = @(
     'exit-code-shape.tests.ps1',
     'liveness-rule.tests.ps1',
     'gate-incremental.tests.ps1',
+    'gate-native-stderr.tests.ps1',
     'gate-abort-rules.tests.ps1',
     'gate-artifact-reuse.tests.ps1',
     'gate-background-stage-evidence.tests.ps1',

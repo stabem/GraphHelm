@@ -9,7 +9,7 @@
 # runs, into the SAME artefact list the freshness check already reads. This suite runs in the
 # background Cargo-free lane, so it checks that wiring with a deterministic collaborator.
 
-$ExpectedAssertionCount = 20
+$ExpectedAssertionCount = 21
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -38,21 +38,48 @@ function Get-GateSlice {
 }
 
 try {
-    # THE LINK, BY CONTAINMENT. The per-suite loop must fingerprint ITS OWN stage's scope, in the
-    # same iteration and BEFORE the stage runs -- a call anywhere else in the file, or one scoped
-    # to the workspace, names a different binary than the one the stage is about to execute.
-    $loop = Get-GateSlice -Start 'foreach ($suite in $suites) {' -End "`n    }" -IncludeEnd
+    # THE LINK, BY CONTAINMENT. The cli stage must fingerprint ITS OWN scope, BEFORE it runs -- a
+    # call anywhere else in the file, or one scoped to the workspace, names a different binary than
+    # the one the stage is about to execute.
+    #
+    # #1053 replaced 58 serial `cargo test --test <suite>` stages with ONE `nextest run
+    # -p graphhelm-cli`, so this link is now expressed PER PACKAGE rather than per suite. The
+    # property #243 named is unchanged and so are these cells' claims: the fingerprint covers
+    # exactly the unit the stage runs, it is taken first, and it lands in the one list the
+    # freshness check reads. What changed is that one call now covers all 58 binaries, because one
+    # stage now runs all 58. This suite REFUSED outright when the anchors moved -- 0 assertions,
+    # HARNESS-BROKE -- rather than passing over an empty slice, which is why the rewrite is
+    # deliberate rather than discovered later.
+    # ANCHORED ON THE BLOCK'S FIRST STATEMENT, not on the fingerprint call. Starting at the call
+    # left `$cliFingerprintStartedUtc` outside the slice, so the failed-fingerprint branch computed
+    # `wallTimeSecs` by subtracting a $null and the suite died with op_Subtraction. Measured.
+    $cliBlockStart = $gateText.IndexOf('$cliFingerprintStartedUtc = [DateTime]::UtcNow', [System.StringComparison]::Ordinal)
+    # THE TERMINATOR IS INCLUDED, and it is not a detail: this slice is handed to
+    # `Invoke-Expression` below, so cutting before the block's closing brace yields unbalanced
+    # braces and the suite dies on its own harness instead of on its subject. Measured.
+    $cliBlockTerminator = '} | Out-Null'
+    $cliBlockEnd = if ($cliBlockStart -ge 0) { $gateText.IndexOf($cliBlockTerminator, $cliBlockStart, [System.StringComparison]::Ordinal) } else { -1 }
+    if ($cliBlockStart -lt 0 -or $cliBlockEnd -le $cliBlockStart) {
+        throw 'HARNESS-BROKE: the cli fingerprint-and-stage block could not be located in gate.ps1'
+    }
+    $loop = $gateText.Substring($cliBlockStart, ($cliBlockEnd + $cliBlockTerminator.Length) - $cliBlockStart)
 
-    Assert-True ($loop.Contains("Get-TestArtifactManifest -CargoArgs @('-p', 'graphhelm-cli', '--test', `$suite)")) `
-        'the per-suite loop fingerprints ITS OWN stage scope (-p graphhelm-cli --test $suite), not the workspace-wide one'
+    Assert-True ($loop.Contains("Get-TestArtifactManifest -CargoArgs @('-p', 'graphhelm-cli')")) `
+        'the cli stage fingerprints ITS OWN scope (-p graphhelm-cli, no --all-features), not the workspace-wide one that feature unification makes a different compiled unit'
 
     $fingerprintAt = $loop.IndexOf('Get-TestArtifactManifest -CargoArgs', [System.StringComparison]::Ordinal)
-    $stageAt = $loop.IndexOf('Invoke-Stage "cli: $suite"', [System.StringComparison]::Ordinal)
+    $stageAt = $loop.IndexOf("Invoke-Stage 'cli suites'", [System.StringComparison]::Ordinal)
     Assert-True ($fingerprintAt -ge 0 -and $stageAt -gt $fingerprintAt) `
-        'the fingerprint is taken BEFORE the stage runs, so it names the binary the stage is about to execute rather than one it already replaced'
+        'the fingerprint is taken BEFORE the stage runs, so it names the binaries the stage is about to execute rather than ones it already replaced'
+
+    # AND THE STAGE RUNS THE SCOPE THAT WAS FINGERPRINTED. Without this the two could drift apart
+    # -- a fingerprint of `-p graphhelm-cli` beside a stage that ran `--workspace` would satisfy
+    # every cell above while measuring a different compiled unit, which is #243 restored.
+    Assert-True ($loop.Contains('nextest run -p graphhelm-cli --locked')) `
+        'and the stage runs exactly that scope, so the fingerprinted unit and the executed unit cannot drift apart'
 
     Assert-True ($loop.Contains('$artifactManifest.artifacts.Add(')) `
-        'the per-suite artefact lands in the SAME list staleArtifacts/instrumentSuspect already read, not a second population nothing judges'
+        'the cli artefacts land in the SAME list staleArtifacts/instrumentSuspect already read, not a second population nothing judges'
 
     # M's named gap (PR #1007): nothing PINS that Write-RunManifest -- which computes
     # staleArtifacts from $ArtifactManifest.artifacts -- runs AFTER the per-suite append. On line
@@ -61,10 +88,10 @@ try {
     # nothing here held that. Moving the Write-RunManifest CALL above the loop, or computing
     # staleArtifacts eagerly, would leave every cell above green while the per-suite binaries
     # silently left the population before anything judged them.
-    $loopEnd = $gateText.IndexOf('Invoke-Stage "cli: $suite"', [System.StringComparison]::Ordinal)
+    $loopEnd = $gateText.IndexOf("Invoke-Stage 'cli suites'", [System.StringComparison]::Ordinal)
     $writeAt = $gateText.IndexOf('Write-RunManifest -Status $status', [System.StringComparison]::Ordinal)
     Assert-True ($loopEnd -ge 0 -and $writeAt -gt $loopEnd) `
-        'the manifest (and the staleArtifacts verdict inside it) is written AFTER the per-suite appends, or the appends reach nothing that judges them'
+        'the manifest (and the staleArtifacts verdict inside it) is written AFTER the cli appends, or the appends reach nothing that judges them'
 
     # Exercise the real fingerprint reader against controlled Cargo output, without a build.
     . (Join-Path $PSScriptRoot 'gate-evidence.ps1')
@@ -147,12 +174,11 @@ $runStartUtc = [DateTime]::UtcNow
 
     $script:callLog = New-Object System.Collections.Generic.List[string]
     $script:stubBuildExitCode = 0
-    $suites = @('fake_suite')
     $artifactManifest = [ordered]@{ artifacts = New-Object System.Collections.Generic.List[object] }
     $script:stageRecords = New-Object System.Collections.Generic.List[object]
     $script:failed = @()
     Invoke-Expression $loop
-    Assert-True (($script:callLog -join ',') -eq 'fingerprint,stage:cli: fake_suite') `
+    Assert-True (($script:callLog -join ',') -eq 'fingerprint,stage:cli suites') `
         'the fingerprint genuinely EXECUTES before the stage runs, observed through instrumented collaborators rather than assumed from source position -- a fingerprint disabled by dead code would leave no mark here'
     Assert-True ($script:failed.Count -eq 0) `
         'control: a successful fingerprint build does not fail the gate'
@@ -165,13 +191,13 @@ $runStartUtc = [DateTime]::UtcNow
     $script:stubBuildExitCode = 1
     $script:failed = @()
     Invoke-Expression $loop
-    Assert-True (@($script:failed) -contains 'cli: fake_suite (fingerprint)') `
-        'a per-suite fingerprint build failure is recorded as a gate failure, not discarded while the stage below is left to succeed or fail on its own'
+    Assert-True (@($script:failed) -contains 'cli suites (fingerprint)') `
+        'a cli fingerprint build failure is recorded as a gate failure, not discarded while the stage below is left to succeed or fail on its own'
 
-    Assert-True (@($script:stageRecords | Where-Object { $_.name -eq 'cli: fake_suite (fingerprint)' -and $_.passed -eq $false -and $_.exitCode -eq 1 }).Count -eq 1) `
+    Assert-True (@($script:stageRecords | Where-Object { $_.name -eq 'cli suites (fingerprint)' -and $_.passed -eq $false -and $_.exitCode -eq 1 }).Count -eq 1) `
         'a failed fingerprint has its own durable failed-stage record, with the fingerprint exit code'
 
-    $failedRecord = @($script:stageRecords | Where-Object { $_.name -eq 'cli: fake_suite (fingerprint)' })[0]
+    $failedRecord = @($script:stageRecords | Where-Object { $_.name -eq 'cli suites (fingerprint)' })[0]
     Assert-True (($failedRecord.outputTail -join "`n") -ceq $evidenceText -and $evidenceText.Contains('fingerprint-fixture')) `
         'the durable failed stage retains the fingerprint diagnostics even when the following suite succeeds'
 
@@ -310,14 +336,14 @@ $runStartUtc = [DateTime]::UtcNow
     # its own first and last statements and run against two hand-built manifests: a run manifest
     # with zero counts and a cold build, and a suite manifest carrying one unproven row, one
     # enrolment and a warm build. Delete the block and the run manifest's counts stay 0 -- red.
-    $countsBlock = Get-GateSlice -Start 'foreach ($suiteArtifact in $suiteManifest.artifacts) {' -End 'Invoke-Stage "cli: $suite" {'
+    $countsBlock = Get-GateSlice -Start 'foreach ($cliArtifact in $cliManifest.artifacts) {' -End "Invoke-Stage 'cli suites' {"
     $artifactManifest = [ordered]@{ artifacts = (New-Object System.Collections.Generic.List[object]); artifactsRebuilt = 0; artifactsProvenReuse = 0; artifactsUnprovenReuse = 0; artifactsContaminated = 0; artifactsEnrolled = 0; buildMode = 'cold' }
     $suiteRows = New-Object System.Collections.Generic.List[object]
     $suiteRows.Add([ordered]@{ executable = 'suite.exe'; reuseProof = 'unproven-reuse' })
-    $suiteManifest = [ordered]@{ artifacts = $suiteRows; artifactsRebuilt = 0; artifactsProvenReuse = 0; artifactsUnprovenReuse = 1; artifactsContaminated = 0; artifactsEnrolled = 1; buildMode = 'warm' }
+    $cliManifest = [ordered]@{ artifacts = $suiteRows; artifactsRebuilt = 0; artifactsProvenReuse = 0; artifactsUnprovenReuse = 1; artifactsContaminated = 0; artifactsEnrolled = 1; buildMode = 'warm' }
     Invoke-Expression $countsBlock
     Assert-True ($artifactManifest['artifacts'].Count -eq 1 -and $artifactManifest['artifactsUnprovenReuse'] -eq 1 -and $artifactManifest['artifactsEnrolled'] -eq 1 -and $artifactManifest['buildMode'] -eq 'warm') `
-        "the per-suite append grows the run manifest's COUNTS with its list: unproven $($artifactManifest['artifactsUnprovenReuse']), enrolled $($artifactManifest['artifactsEnrolled']), buildMode $($artifactManifest['buildMode']) after one warm suite with one unproven row"
+        "the cli append grows the run manifest's COUNTS with its list: unproven $($artifactManifest['artifactsUnprovenReuse']), enrolled $($artifactManifest['artifactsEnrolled']), buildMode $($artifactManifest['buildMode']) after one warm suite with one unproven row"
     Assert-True ($gateText -cmatch ('artifactsEnrolled\s*=\s*Read-ArtifactManifestField -Manifest \$ArtifactManifest -Name ' + "'artifactsEnrolled'")) `
         'and the run manifest PUBLISHES artifactsEnrolled (a count summed but never written is a claim the body cannot make)'
 

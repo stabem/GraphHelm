@@ -2006,10 +2006,95 @@ function Get-GateToolchainId {
     } finally {
         $ErrorActionPreference = $previous
     }
-    if (-not $ran -or $exit -ne 0) {
-        throw "cannot read the toolchain id: 'rustup run $version rustc -Vv' did not succeed (ran=$ran, exit=$exit): $(@($verbose) -join ' ')"
+    # NOT `-not $ran`, which is also false for a rustup that merely wrote an `info:` line to stderr
+    # and exited 0. See Test-NativeCallFailed for the measurement that separates the two.
+    if (Test-NativeCallFailed -Ran $ran -ExitCode $exit -Capture $verbose) {
+        throw "cannot read the toolchain id: 'rustup run $version rustc -Vv' did not succeed (ran=$ran, exit=$exit): $(Get-NativeStderrText -Capture $verbose)"
     }
-    return ((@($verbose) -join "`n") -replace "`r", '').Trim()
+    # THE STDERR IS NOT PART OF THE ID. While a chatty rustup threw, its lines could never reach this
+    # join. Now that one exits 0, an unfiltered join would fold `info: downloading component` INTO
+    # the id -- and that id keys the artifact ledger, so it would name a compiler generation no
+    # other run reproduces, in silence, in the one field built to prevent exactly that collision.
+    $identity = ((@($verbose |
+                    Where-Object { -not ($_ -is [System.Management.Automation.ErrorRecord]) } |
+                    ForEach-Object { [string]$_ }) -join "`n") -replace "`r", '').Trim()
+    # THE SHAPE, not a claim about which lines rustup chose to write: `rustc -Vv` opens with
+    # `rustc `. Without this the filter above could hand back an EMPTY id and every guard asking
+    # "is the stderr absent from the id" would pass on the absence of an id.
+    if (-not $identity.StartsWith('rustc ', [System.StringComparison]::Ordinal)) {
+        throw "cannot read the toolchain id: 'rustup run $version rustc -Vv' exited 0 without printing a rustc version (got: $identity)"
+    }
+    return $identity
+}
+
+function Test-NativeCallFailed {
+    <#
+      .SYNOPSIS
+        Whether a native call that has just run actually FAILED, as opposed to merely having spoken.
+
+      .DESCRIPTION
+        `$?` ANSWERS TWO QUESTIONS AT ONCE and only one of them is about failure. Under `2>&1` in
+        PowerShell 5.1 every stderr line a native process writes becomes a NativeCommandError record
+        in the capture and clears `$?` -- even when the process exited 0.
+
+        MEASURED, in a real gate on 2026-09-20: `cargo metadata` queued on ~/.cargo/.package-cache
+        while this gate's own cargo held it, printed `Blocking waiting for file lock on package
+        cache`, and exited 0. The caller published `did not succeed (ran=False, exit=0)` about a
+        cargo that had SUCCEEDED, and took ci/gate-artifact-reuse.tests.ps1 red with it. The
+        expensive half is silent: ci/gate.ps1 calls the same reader for its own crate input hashes
+        inside a catch that degrades to a yellow NOTE, so a cargo that merely waited on a lock costs
+        the run every reused artefact -- a 12 s build pass against a 566 s one.
+
+        SO A FALSE `$?` IS EVIDENCE OF FAILURE ONLY WHEN THE CAPTURE DOES NOT EXPLAIN IT. Measured
+        on PowerShell 5.1:
+          stderr + exit 0     -> $? False, capture HOLDS NativeCommandError records, $LASTEXITCODE 0
+          not on PATH         -> $? False, capture holds NO such record (the CommandNotFoundException
+                                 goes to the console, not into the `2>&1` capture), and $LASTEXITCODE
+                                 keeps whatever the PREVIOUS command left -- a stale zero that reads
+                                 as success
+        `$?` therefore remains the only thing that catches an absent command, and it is kept for
+        exactly that. What changes is that a process which spoke is no longer mistaken for one that
+        never ran.
+
+        ONE FUNCTION, TWO CALLERS. Inlining the rule beside each `$?` would make the gate's two
+        native readers two oracles that can drift apart, and the direction they drift in is the
+        permissive one. ci/gate-native-stderr.tests.ps1 drives both callers through real `.cmd`
+        shims -- chatty, silent, failing, and absent -- and pins that each routes its verdict here.
+    #>
+    param(
+        [Parameter(Mandatory)][bool] $Ran,
+        [AllowNull()][object] $ExitCode,
+        [AllowNull()][object] $Capture
+    )
+    # A non-zero exit is failure whatever else happened, and covers the absent command whose
+    # $LASTEXITCODE was left non-zero by something earlier.
+    if ($ExitCode -ne 0) { return $true }
+    if ($Ran) { return $false }
+    $spoke = @($Capture | Where-Object {
+            $_ -is [System.Management.Automation.ErrorRecord] -and
+            $_.FullyQualifiedErrorId -like 'NativeCommand*'
+        }).Count -gt 0
+    return (-not $spoke)
+}
+
+function Get-NativeStderrText {
+    <#
+      .SYNOPSIS
+        Only the stderr a native call wrote, joined, with its stdout left behind.
+
+      .DESCRIPTION
+        A refusal must name what it saw. The throw that exposed all of this printed `ran=False,
+        exit=0` and dropped the capture, so cargo's own one-line explanation reached nobody and the
+        next reader was sent to look for a defect in the wrong subject.
+
+        STDERR ALONE, because the stdout here is a `cargo metadata` document: joining the capture
+        whole would put megabytes of JSON inside an exception message.
+    #>
+    param([AllowNull()][object] $Capture)
+    return (@($Capture |
+                Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } |
+                ForEach-Object { ([string]$_).Trim() } |
+                Where-Object { $_ }) -join '; ')
 }
 
 function Get-CargoDependencyGraph {
@@ -2054,8 +2139,11 @@ function Get-CargoDependencyGraph {
     } finally {
         $ErrorActionPreference = $previous
     }
-    if (-not $ran -or $exit -ne 0) {
-        throw "cannot read the dependency graph: 'cargo $($arguments -join ' ')' did not succeed (ran=$ran, exit=$exit)"
+    # NOT `-not $ran`. `cargo metadata` writes to stderr whenever it queues on the package cache,
+    # which is ROUTINE while this gate's own cargo holds it -- and that read as a cargo that never
+    # launched. See Test-NativeCallFailed.
+    if (Test-NativeCallFailed -Ran $ran -ExitCode $exit -Capture $output) {
+        throw "cannot read the dependency graph: 'cargo $($arguments -join ' ')' did not succeed (ran=$ran, exit=$exit): $(Get-NativeStderrText -Capture $output)"
     }
     # `cargo metadata` emits its document as ONE line and everything else it says is stderr. The
     # document is picked by SHAPE rather than by position, because a progress line printed first
@@ -5317,79 +5405,75 @@ try {
         }
     } | Out-Null
 
-    # DERIVED, not hand-maintained (#98): a hardcoded allowlist under-gates every new suite by
-    # DEFAULT and silently - a new tests/*.rs file still runs inside `workspace tests` above, but
-    # misses the isolated `--test <suite>` pass this loop exists to give, which is exactly what
-    # catches cross-test interference (server-spawning/port-binding/tempdir suites, the common
-    # shape here). Enumerating the directory means a new suite is gated the day it is born.
+    # #1053: ONE `nextest run` OVER THE PACKAGE, replacing 58 serial `cargo test --test <suite>`
+    # invocations. This was 284 s of a 681 s gate -- 42 %, the single largest item on the critical
+    # path -- and it was running the SAME tests a second time: `workspace tests` above already runs
+    # them, under `--all-features`, since #1176 put nextest there.
     #
-    # Any exclusion must be a NAMED entry here, with a reason, so it is visible in the gate's own
-    # output (below) rather than only inferable from a diff against the filesystem - an allowlist
-    # that rots silently becomes a denylist nobody chose, which is the exact defect this replaces.
-    $excludedSuites = @{
-        # (none today - add 'suite_name' = 'reason' here if one is ever needed)
-    }
-    $suiteFiles = Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\cli\tests') -Filter '*.rs' |
-        Sort-Object -Property Name
-    $suites = $suiteFiles | ForEach-Object { $_.BaseName } | Where-Object { -not $excludedSuites.ContainsKey($_) }
-    Write-Host ''
-    Write-Host "[gate] cli suites: $($suites.Count) discovered in apps/cli/tests/*.rs" -ForegroundColor Cyan
-    foreach ($excluded in $excludedSuites.Keys) {
-        Write-Host "[gate] cli suite EXCLUDED: $excluded - $($excludedSuites[$excluded])" -ForegroundColor Yellow
-    }
-    foreach ($suite in $suites) {
-        # #243: fingerprint the binary THIS stage is about to run, scoped exactly like the stage
-        # itself (`-p graphhelm-cli --test $suite`, no `--all-features`) -- not the workspace-wide
-        # one already captured above, which cargo's feature unification makes a DIFFERENT compiled
-        # unit. Appended into the SAME artefact list the freshness check (`staleArtifacts`,
-        # `instrumentSuspect`) already reads, so a stale per-suite binary is no longer invisible to
-        # the guard built for exactly that (#455's class, named by ISSUES 1 on #987).
-        $fingerprintStartedUtc = [DateTime]::UtcNow
-        $suiteManifest = Get-TestArtifactManifest -CargoArgs @('-p', 'graphhelm-cli', '--test', $suite)
-        $fingerprintEndedUtc = [DateTime]::UtcNow
-        # Codex P1 on this commit: a fingerprint pass that fails to build (transient or not) used
-        # to be discarded here, and the stage below runs its OWN `cargo test` regardless -- if THAT
-        # invocation happens to succeed, the gate finishes GREEN while `$suiteManifest.artifacts` is
-        # incomplete or empty, recreating the exact blind spot this fix exists to close, silently.
-        # A fingerprint that could not build is a gate failure in its own right, not a value to
-        # drop and move past.
-        if ($suiteManifest.buildExitCode -ne 0) {
-            Write-Host "[gate] cli: $suite - per-suite fingerprint build FAILED (exit $($suiteManifest.buildExitCode)); the freshness population for this suite is incomplete" -ForegroundColor Red
-            foreach ($evidenceLine in $suiteManifest.outputTail) { Write-Host $evidenceLine }
-            $script:failed = @($script:failed) + "cli: $suite (fingerprint)"
-            # A fingerprint is an operation with its own verdict. Keep it in the durable stage
-            # ledger as well as the summary list, so the published manifest cannot report only the
-            # later cargo stage and lose the failed freshness measurement.
-            $fingerprintStartedText = $fingerprintStartedUtc.ToString('o')
-            $fingerprintEndedText = $fingerprintEndedUtc.ToString('o')
-            $script:stageRecords.Add([ordered]@{
-                name         = "cli: $suite (fingerprint)"
+    # WHY REPLACED AND NOT DELETED, which is the whole design. Deleting would have dropped the
+    # DEFAULT-FEATURE execution of these tests: the loop ran `-p graphhelm-cli` (no
+    # `--all-features`), and cargo's feature unification makes that a DIFFERENT compiled unit from
+    # the workspace pass. That difference is not incidental -- it is literally #243. Running
+    # `nextest run -p graphhelm-cli` keeps that unit and that execution.
+    #
+    # MEASURED, alternating on one warm target under the same load:
+    #   58 serial `cargo test --test <suite>`   175 s, 169 s
+    #   one `nextest run -p graphhelm-cli`       62 s,  63 s     845 tests passed, both times
+    #
+    # AND IT IS A STRICT SUPERSET, which is what makes the time number mean anything. The loop
+    # enumerates 691 integration tests; nextest enumerates the SAME 691 -- a name-by-name multiset
+    # diff in BOTH directions is empty -- plus 156 lib and bin tests of this package that the loop
+    # never ran at all, because `--test <suite>` reaches only the integration targets.
+    #
+    # ISOLATION IS STRONGER, NOT WEAKER. #98 gave each suite its own process to catch cross-test
+    # interference -- servers, ports, temp dirs. nextest gives each TEST its own process, so the
+    # interference the loop could only catch BETWEEN binaries is now caught between tests as well.
+    #
+    # WHAT IS LOST, stated plainly: 58 stage names become one. No automated consumer reads them --
+    # `ci/merge-proof.ps1` reads no stage name at all and `.factory/MERGE-CHECKLIST.md` reads only
+    # the set of FAILED stage names, which survives. On a red, nextest names the failing TEST, which
+    # is a finer address than the binary the loop would have named.
+    #
+    # #243's PROPERTY SURVIVES, expressed per package instead of per suite: fingerprint the unit
+    # this stage is about to run, BEFORE it runs, into the SAME artefact list the freshness check
+    # (`staleArtifacts`, `instrumentSuspect`) reads. One call now covers all 58 binaries because one
+    # stage now runs all 58.
+    $cliFingerprintStartedUtc = [DateTime]::UtcNow
+    $cliManifest = Get-TestArtifactManifest -CargoArgs @('-p', 'graphhelm-cli')
+    $cliFingerprintEndedUtc = [DateTime]::UtcNow
+    # A fingerprint pass that could not build is a gate failure in its own right, not a value to
+    # drop and move past: the stage below would run its own tests regardless, and if THAT succeeded
+    # the gate would finish GREEN while the freshness population was incomplete -- the exact blind
+    # spot #243 exists to close, silently restored.
+    if ($cliManifest.buildExitCode -ne 0) {
+        Write-Host "[gate] cli suites - fingerprint build FAILED (exit $($cliManifest.buildExitCode)); the freshness population for this package is incomplete" -ForegroundColor Red
+        foreach ($evidenceLine in $cliManifest.outputTail) { Write-Host $evidenceLine }
+        $script:failed = @($script:failed) + 'cli suites (fingerprint)'
+        $script:stageRecords.Add([ordered]@{
+                name         = 'cli suites (fingerprint)'
                 passed       = $false
-                exitCode     = [int]$suiteManifest.buildExitCode
-                wallTimeSecs = [math]::Round(($fingerprintEndedUtc - $fingerprintStartedUtc).TotalSeconds, 3)
-                startedUtc   = $fingerprintStartedText
-                endedUtc     = $fingerprintEndedText
-                outputTail   = @($suiteManifest.outputTail)
+                exitCode     = [int]$cliManifest.buildExitCode
+                wallTimeSecs = [math]::Round(($cliFingerprintEndedUtc - $cliFingerprintStartedUtc).TotalSeconds, 3)
+                startedUtc   = $cliFingerprintStartedUtc.ToString('o')
+                endedUtc     = $cliFingerprintEndedUtc.ToString('o')
+                outputTail   = @($cliManifest.outputTail)
             })
-        }
-        foreach ($suiteArtifact in $suiteManifest.artifacts) {
-            $artifactManifest.artifacts.Add($suiteArtifact)
-        }
-        # #1007 (both reviewer lanes, independently): the run manifest publishes the four reuse
-        # counts "read off the artefact manifest rather than recomputed", and the append above grew
-        # the LIST without growing the COUNTS -- so a receipt read `testArtifacts: 2`,
-        # `artifactsUnprovenReuse: 0`, `instrumentSuspect: true`, which the merge checklist's
-        # receipt-signature paragraph reads as a PROVEN reuse. The counts follow the list.
-        foreach ($countName in @('artifactsRebuilt', 'artifactsProvenReuse', 'artifactsUnprovenReuse', 'artifactsContaminated', 'artifactsEnrolled')) {
-            $artifactManifest[$countName] = [int]$artifactManifest[$countName] + [int]$suiteManifest[$countName]
-        }
-        if ($suiteManifest.artifacts.Count -gt 0 -and [string]$artifactManifest['buildMode'] -ne 'unknown' -and [string]$suiteManifest['buildMode'] -eq 'warm') {
-            $artifactManifest['buildMode'] = 'warm'
-        }
-        Invoke-Stage "cli: $suite" {
-            cargo $toolchain test -p graphhelm-cli --test $suite --locked
-        } | Out-Null
     }
+    foreach ($cliArtifact in $cliManifest.artifacts) {
+        $artifactManifest.artifacts.Add($cliArtifact)
+    }
+    # #1007: the counts follow the list. Growing the LIST without growing the COUNTS published a
+    # receipt reading `artifactsUnprovenReuse: 0` over an unproven population, which the merge
+    # checklist's receipt-signature paragraph reads as a PROVEN reuse.
+    foreach ($countName in @('artifactsRebuilt', 'artifactsProvenReuse', 'artifactsUnprovenReuse', 'artifactsContaminated', 'artifactsEnrolled')) {
+        $artifactManifest[$countName] = [int]$artifactManifest[$countName] + [int]$cliManifest[$countName]
+    }
+    if ($cliManifest.artifacts.Count -gt 0 -and [string]$artifactManifest['buildMode'] -ne 'unknown' -and [string]$cliManifest['buildMode'] -eq 'warm') {
+        $artifactManifest['buildMode'] = 'warm'
+    }
+    Invoke-Stage 'cli suites' {
+        cargo $toolchain nextest run -p graphhelm-cli --locked --no-fail-fast
+    } | Out-Null
 
     # `--profile test` ON ALL THREE, AND IT IS A BUILD FLAG, NOT A TEST ONE (#1053).
     #

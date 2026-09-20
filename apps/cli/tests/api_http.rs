@@ -1690,6 +1690,19 @@ fn post_request(
     extra_headers: &[(&str, &str)],
     body: &Value,
 ) -> RawResponse {
+    request_with_body("POST", url, token, extra_headers, body)
+}
+
+/// The same request path for every method that carries a body. `PUT` joined it with #1171's
+/// `PUT /v1/gateway/routes`; nothing else about the connect, deadline or parse behaviour changes,
+/// so a PUT cell inherits the same hang guards the POST cells already rely on.
+fn request_with_body(
+    method: &str,
+    url: &str,
+    token: &str,
+    extra_headers: &[(&str, &str)],
+    body: &Value,
+) -> RawResponse {
     let started = Instant::now();
     let (host, port, path) = split_url(url);
     // The second connect site, and the one the storm actually leans on: three of its four
@@ -1717,7 +1730,7 @@ fn post_request(
 
     let payload = serde_json::to_vec(body).unwrap();
     let mut request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
         payload.len()
     );
     for (name, value) in extra_headers {
@@ -1752,6 +1765,17 @@ fn post_request(
     )
     .unwrap_or_else(|error| panic!("{error}"));
     parse_response(&String::from_utf8_lossy(&raw)).unwrap()
+}
+
+fn put_json(url: &str, token: &str, body: &Value) -> (u16, Value) {
+    let response = request_with_body("PUT", url, token, &[], body);
+    let parsed = serde_json::from_str(&response.body).unwrap_or_else(|error| {
+        panic!(
+            "response body from {url} was not JSON ({error}): {:?}",
+            response.body
+        )
+    });
+    (response.status, parsed)
 }
 
 fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Value) -> (u16, Value) {
@@ -4111,6 +4135,37 @@ fn cli_envelope(args: &[&str]) -> Value {
     })
 }
 
+fn serve_gateway_writer(
+    directory: &Path,
+    events: &Path,
+    extra: &[&str],
+) -> (ServerGuard, String, String, PathBuf, PathBuf) {
+    let manifest = write_json(directory, "manifest.json", &gateway_manifest_value());
+    let broker = directory.join("broker");
+    let keyring = directory.join("keyring");
+    std::fs::create_dir(&keyring).unwrap();
+    let mut args = vec![
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--broker",
+        broker.to_str().unwrap(),
+        "--route",
+        "anthropic_byok",
+        "--keyring",
+        keyring.to_str().unwrap(),
+        "--key-id",
+        "studio",
+    ];
+    args.extend_from_slice(extra);
+    let passphrase = gateway_passphrase();
+    let (guard, base, token) = serve_with_env(
+        events,
+        &args,
+        &[("GRAPHHELM_GATEWAY_KEY", passphrase.as_str())],
+    );
+    (guard, base, token, manifest, broker)
+}
+
 #[test]
 fn gateway_routes_over_http_matches_the_cli_report_for_the_same_manifest() {
     let directory = tempfile::tempdir().unwrap();
@@ -4249,6 +4304,26 @@ fn gateway_reads_refuse_a_missing_or_wrong_token_with_401() {
             "{path} with a wrong token"
         );
     }
+
+    // #1171 put a WRITE on this surface, and the middleware that guards the reads is the same one
+    // — but "same middleware" is a fact about today's wiring, not a property anyone asserted. An
+    // unauthenticated write is the one that costs something, so it is pinned rather than inferred.
+    let unauthenticated = request_with_body(
+        "PUT",
+        &format!("{base}/v1/gateway/routes"),
+        "not-the-token",
+        &[],
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+        }),
+    );
+    assert_eq!(
+        unauthenticated.status, 401,
+        "an unauthenticated write must be refused before it reaches the manifest"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -8597,4 +8672,275 @@ fn a_present_but_empty_or_undecodable_effort_header_is_refused() {
     // CONTROL 2: a good effort still rides through.
     let (status, reply) = server.declare("claude-opus-5", "high");
     assert_eq!(status, 200, "{reply}");
+}
+
+/// #1171: a route written over HTTP is the same write the CLI makes, and the listing both
+/// surfaces serve afterwards is the same listing. The parity rule (D-039) applied to the first
+/// gateway MUTATION — until now this surface could only read.
+#[test]
+fn a_route_written_over_http_is_the_write_the_cli_would_have_made() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let manifest_str = manifest.to_str().unwrap();
+    let (status, written) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+        }),
+    );
+    assert_eq!(status, 200, "{written}");
+    assert_eq!(written["data"]["manifest"]["state"], "merged");
+    assert_eq!(
+        written["data"]["route"]["credentialRef"],
+        "secret_deepseek_official"
+    );
+
+    // The file the CLI reads is the file HTTP wrote: same loader, same listing, no second path.
+    let cli = cli_envelope(&["gateway", "routes", "--manifest", manifest_str]);
+    assert_eq!(cli["ok"], true, "{cli}");
+    assert!(
+        cli["data"]["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|route| route["id"] == "deepseek_official")
+    );
+    let http = get_json(&format!("{base}/v1/gateway/routes"), Some(&token));
+    assert_eq!(
+        http["data"], cli["data"],
+        "the listing must be identical on both doors after an HTTP write"
+    );
+}
+
+#[test]
+fn gateway_mutations_cannot_override_the_resources_configured_at_startup() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let configured = write_json(
+        directory.path(),
+        "configured.json",
+        &gateway_manifest_value(),
+    );
+    let outside = directory.path().join("outside.json");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir(&keyring).unwrap();
+    let passphrase = gateway_passphrase();
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--manifest",
+            configured.to_str().unwrap(),
+            "--broker",
+            broker.to_str().unwrap(),
+            "--route",
+            "anthropic_byok",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "studio",
+        ],
+        &[("GRAPHHELM_GATEWAY_KEY", passphrase.as_str())],
+    );
+
+    let (status, refused) = put_json(
+        &format!(
+            "{base}/v1/gateway/routes?manifest={}",
+            outside.to_str().unwrap()
+        ),
+        &token,
+        &serde_json::json!({
+            "id": "outside",
+            "provider": "openai",
+            "baseUrl": "https://example.invalid",
+            "model": "outside",
+        }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert!(
+        !outside.exists(),
+        "the request-selected path must stay untouched"
+    );
+
+    let outside_broker = directory.path().join("outside-broker");
+    let outside_keyring = directory.path().join("outside-keyring");
+    let (status, refused) = put_json(
+        &format!(
+            "{base}/v1/gateway/credentials/outside?broker={}&keyring={}&keyId=outside",
+            outside_broker.to_str().unwrap(),
+            outside_keyring.to_str().unwrap()
+        ),
+        &token,
+        &serde_json::json!({
+            "value": HTTP_KEY_SENTINEL,
+            "provider": "openai",
+            "usableBy": ["outside"],
+        }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert!(!outside_broker.exists());
+    assert!(!outside_keyring.exists());
+}
+
+/// A body field of the wrong TYPE is refused, and the manifest keeps the bytes it had. The trap
+/// this pins is the tempting `and_then(Value::as_bool)`, which folds "absent" and "present but not
+/// a boolean" into the same answer and would quietly write the default the operator did not ask
+/// for. The manifest comparison is what makes the refusal meaningful rather than cosmetic.
+#[test]
+fn a_wrongly_typed_body_field_is_refused_and_the_manifest_is_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let before = std::fs::read(&manifest).unwrap();
+
+    let (status, refused) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+            "enabled": "yes",
+        }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["diagnostics"][0]["path"], "/enabled");
+    assert_eq!(
+        std::fs::read(&manifest).unwrap(),
+        before,
+        "a refused write must leave the manifest byte-identical"
+    );
+}
+
+/// A distinctive credential value for #1171's HTTP write. It must appear in no response and in no
+/// file this server writes.
+const HTTP_KEY_SENTINEL: &str = "sk-SENTINEL-1171-0123456789abcdef";
+
+/// #1171 end to end over HTTP alone: write the route, store its key, and prove the pair by
+/// probing. Until this, the API could list and probe routes it had no way to create — the Studio
+/// could show a provider card and never add one.
+#[test]
+fn a_route_and_its_key_written_over_http_probe_available() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, _manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let (status, written) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+        }),
+    );
+    assert_eq!(status, 200, "{written}");
+    let reference = written["data"]["route"]["credentialRef"].as_str().unwrap();
+
+    let (status, stored) = put_json(
+        &format!("{base}/v1/gateway/credentials/{reference}"),
+        &token,
+        &serde_json::json!({
+            "value": HTTP_KEY_SENTINEL,
+            "provider": "openai",
+            "usableBy": ["deepseek_official"],
+        }),
+    );
+    assert_eq!(status, 200, "{stored}");
+    assert_eq!(stored["data"]["id"], reference);
+    assert_eq!(stored["data"]["routes"][0], "deepseek_official");
+    assert!(
+        !stored.to_string().contains(HTTP_KEY_SENTINEL),
+        "the reply must never carry the value: {stored}"
+    );
+
+    // The proof is the probe: it leases the credential out of the broker for that route and says
+    // nothing about the provider, because it places no model call.
+    let probed = get_json(
+        &format!("{base}/v1/gateway/probe?route=deepseek_official"),
+        Some(&token),
+    );
+    assert_eq!(probed["ok"], true, "{probed}");
+    assert_eq!(probed["data"]["health"], "available", "{probed}");
+}
+
+/// The body's own bounds. `usableBy` is the one worth a cell of its own: a credential nobody may
+/// lease is a secret on disk that no route can ever use, and the broker would have accepted the
+/// empty list as a legal reference.
+#[test]
+fn a_credential_write_refuses_a_missing_value_and_an_empty_route_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, _manifest, broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let url = format!("{base}/v1/gateway/credentials/secret_deepseek_official");
+
+    let (status, refused) = put_json(
+        &url,
+        &token,
+        &serde_json::json!({ "provider": "openai", "usableBy": ["deepseek_official"] }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(refused["diagnostics"][0]["path"], "/value");
+
+    let (status, refused) = put_json(
+        &url,
+        &token,
+        &serde_json::json!({ "value": HTTP_KEY_SENTINEL, "provider": "openai", "usableBy": [] }),
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(refused["diagnostics"][0]["path"], "/usableBy");
+    assert!(
+        !broker.exists(),
+        "a refused write must not create the broker it was about to write into"
+    );
+}
+
+/// The read audit records the method, the path, the query and the RESPONSE body. A key written
+/// through this surface must therefore be absent from it — which is why the value travels in the
+/// request body and never in the path or the query.
+///
+/// THE SWEEP CARRIES ITS OWN CONTROL: the credential reference IS expected in the audit, so a
+/// search that could never match anything cannot pass this cell by finding nothing.
+#[test]
+fn the_written_key_reaches_neither_the_reply_nor_the_read_audit() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let audit = directory.path().join("read-audit.jsonl");
+    let (_guard, base, token, _manifest, _broker) = serve_gateway_writer(
+        directory.path(),
+        &events,
+        &["--read-audit", audit.to_str().unwrap()],
+    );
+
+    let (status, stored) = put_json(
+        &format!("{base}/v1/gateway/credentials/secret_deepseek_official"),
+        &token,
+        &serde_json::json!({
+            "value": HTTP_KEY_SENTINEL,
+            "provider": "openai",
+            "usableBy": ["deepseek_official"],
+        }),
+    );
+    assert_eq!(status, 200, "{stored}");
+
+    let recorded = std::fs::read_to_string(&audit).unwrap_or_default();
+    assert!(
+        recorded.contains("secret_deepseek_official"),
+        "the audit must have recorded this request at all, or the sweep below proves nothing: {recorded}"
+    );
+    assert!(
+        !recorded.contains(HTTP_KEY_SENTINEL),
+        "the credential value reached the read audit: {recorded}"
+    );
 }

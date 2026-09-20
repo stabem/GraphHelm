@@ -26,6 +26,7 @@
 pub(super) mod credential;
 pub(super) mod keyring;
 pub(super) mod probe;
+pub(super) mod route;
 pub(super) mod routes;
 pub(super) mod setup;
 
@@ -131,23 +132,24 @@ pub(super) fn load_manifest(path: &Path) -> Result<RouteManifest, Failure> {
 /// `apps/cli/src/commands/events/config.rs:154`). `RouteManifest::from_json` itself only enforces
 /// the bound after its caller has already handed it a whole in-memory string; a malformed or
 /// hostile file that is merely large must never be read into memory at all just to be refused.
-/// The metadata check is the actual guard; `Read::take(MAX_MANIFEST_BYTES + 1)` is defense in
-/// depth against a file that grows between the metadata call and the read.
+/// The metadata check is made on the OPEN HANDLE; `Read::take(MAX_MANIFEST_BYTES + 1)` is defense
+/// in depth against a file that grows while it is read.
 ///
-/// REGULAR FILES ONLY, decided before the open (#559): a FIFO reports length 0 and then blocks
-/// at `File::open` on Unix until a writer appears, so the size bound alone never protected the
-/// caller from it. Typed rather than a `Failure` so `serve`, which reads this same file at
-/// startup and again per request, can say each refusal in its own words.
+/// REGULAR FILES ONLY, opened without following a final symlink/reparse point (#559): a FIFO
+/// reports length 0 and then blocks at a normal `File::open` on Unix until a writer appears, and a
+/// path check followed by a normal open leaves a swap window. Typed rather than a `Failure` so
+/// `serve`, which reads this same file at startup and again per request, can say each refusal in
+/// its own words.
 pub(super) fn read_bounded_manifest(path: &Path) -> Result<Vec<u8>, ManifestReadError> {
-    let metadata = std::fs::metadata(path).map_err(|_| ManifestReadError::Unreadable)?;
-    if !metadata.is_file() {
+    let file = open_manifest_no_follow(path)?;
+    let metadata = file.metadata().map_err(|_| ManifestReadError::Unreadable)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ManifestReadError::Unreadable);
     }
     if metadata.len() > MAX_MANIFEST_BYTES as u64 {
         return Err(ManifestReadError::TooLarge);
     }
 
-    let file = std::fs::File::open(path).map_err(|_| ManifestReadError::Unreadable)?;
     let mut bytes = Vec::new();
     file.take(MAX_MANIFEST_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -156,6 +158,30 @@ pub(super) fn read_bounded_manifest(path: &Path) -> Result<Vec<u8>, ManifestRead
         return Err(ManifestReadError::TooLarge);
     }
     Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_manifest_no_follow(path: &Path) -> Result<std::fs::File, ManifestReadError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| ManifestReadError::Unreadable)
+}
+
+#[cfg(windows)]
+fn open_manifest_no_follow(path: &Path) -> Result<std::fs::File, ManifestReadError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| ManifestReadError::Unreadable)
 }
 
 /// Why a manifest could not be read as bytes.

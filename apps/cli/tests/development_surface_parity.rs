@@ -145,7 +145,7 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 22] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 23] = [
     "start",
     "list",
     "topology",
@@ -160,6 +160,7 @@ const NON_DEVELOPMENT_TOOLS: [&str; 22] = [
     "resume",
     "cancel",
     "routes",
+    "route_set",
     "wake_arm",
     "wake_status",
     "amend_budget",

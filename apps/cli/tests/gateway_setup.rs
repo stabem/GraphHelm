@@ -8,8 +8,10 @@
 //! from the broker and never dials the provider. Its `/v1/systemone` (typesafe) and
 //! `/v1/messages` (anthropic) paths are what the real adapters would post to.
 
+use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -105,6 +107,66 @@ fn manifest_bytes(project: &Path) -> Vec<u8> {
 fn routes(project: &Path) -> Vec<Value> {
     let value: Value = serde_json::from_slice(&manifest_bytes(project)).unwrap();
     value["routes"].as_array().unwrap().clone()
+}
+
+#[test]
+fn setup_and_route_set_serialize_the_same_manifest_transaction() {
+    let project = git_project();
+    init(project.path());
+    let provider = fake_provider();
+    let binary = assert_cmd::cargo::cargo_bin!("graphhelm");
+    let mut setup = std::process::Command::new(binary)
+        .args(["gateway", "setup", "--provider", "typesafe", "--project"])
+        .arg(project.path())
+        .args(["--base-url", &provider.base_url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let keyring = project.path().join(".graphhelm").join("keyring");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !keyring.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(keyring.exists(), "setup never reached its stdin wait");
+
+    let manifest = manifest_path(project.path());
+    let route = std::process::Command::new(binary)
+        .args(["gateway", "route", "set", "--manifest"])
+        .arg(&manifest)
+        .args([
+            "--id",
+            "deepseek_official",
+            "--provider",
+            "openai",
+            "--base-url",
+            "https://api.deepseek.com",
+            "--model",
+            "deepseek-v4-pro",
+        ])
+        .output()
+        .unwrap();
+    assert!(route.status.success(), "{}", combined_output(&route));
+
+    setup
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{SENTINEL}\n").as_bytes())
+        .unwrap();
+    let setup = setup.wait_with_output().unwrap();
+    assert!(setup.status.success(), "{}", combined_output(&setup));
+
+    let ids = routes(project.path())
+        .into_iter()
+        .map(|route| route["id"].as_str().unwrap().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        ids,
+        ["deepseek_official".to_owned(), "judge".to_owned()].into()
+    );
 }
 
 /// Every file under `root`, recursively, with its raw bytes.

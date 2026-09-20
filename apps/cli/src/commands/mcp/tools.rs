@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 30] = [
+const TOOLS: [ToolSpec; 31] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
@@ -153,6 +153,11 @@ const TOOLS: [ToolSpec; 30] = [
         name: "wake_wait",
         description: "Block until THIS session's armed lease rings, or until the deadline that lease declared. Reads GET /v1/executions/{executionId}/wake-lease first and takes BOTH the rendezvous and the deadline from it -- the caller supplies an identity, never a duration, so arming with one horizon and waiting on another cannot be expressed. Then it blocks locally; the block itself is NOT an API call, which is why this tool alone names the request it consults rather than the one it performs. Content-free by construction: the reply says THAT something happened, never what -- re-read the log to learn anything.",
         schema: wake_wait_schema,
+    },
+    ToolSpec {
+        name: "route_set",
+        description: "Add or replace one direct_api route in the gateway manifest (PUT /v1/gateway/routes). Writes the route's declaration only -- its API key is never an argument here, because a value passed as a tool argument lands in the harness's own transcript; key the route with `gateway credential set` or the HTTP body.",
+        schema: route_set_schema,
     },
     ToolSpec {
         name: "probe",
@@ -613,6 +618,29 @@ fn clear_schema() -> serde_json::Value {
 
 fn routes_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"manifest": {"type": "string"}}), &[])
+}
+
+fn route_set_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "id": {"type": "string",
+                "description": "The route id callers name. Unique in the manifest: an existing id needs replace."},
+            "provider": {"type": "string",
+                "description": "The WIRE FORMAT the adapter speaks -- anthropic, openai or typesafe -- not the vendor. A DeepSeek endpoint is an openai route with its own baseUrl."},
+            "baseUrl": {"type": "string",
+                "description": "https://..., or http:// to a loopback address. No trailing slash."},
+            "model": {"type": "string"},
+            "credentialRef": {"type": "string",
+                "description": "The broker reference holding this route's key. Absent: secret_<id>."},
+            "enabled": {"type": "boolean",
+                "description": "Absent: true. False parks the route: listed, and refused at dispatch."},
+            "replace": {"type": "boolean",
+                "description": "Absent: false, and an existing id is refused with the manifest left byte-identical."},
+            "manifest": {"type": "string",
+                "description": "Manifest path override; absent, the Runtime's own."},
+        }),
+        &["id", "provider", "baseUrl", "model"],
+    )
 }
 
 fn wake_arm_schema() -> serde_json::Value {
@@ -1280,6 +1308,36 @@ pub(crate) fn call(
                 None,
             ),
             None => api.request("GET", "/v1/gateway/routes", None, None, None),
+        }),
+        "route_set" => require(arguments, "id").and_then(|id| {
+            let provider = require(arguments, "provider")?;
+            let base_url = require(arguments, "baseUrl")?;
+            let model = require(arguments, "model")?;
+            let mut body = serde_json::json!({
+                "id": id,
+                "provider": provider,
+                "baseUrl": base_url,
+                "model": model,
+            });
+            // Absent stays ABSENT rather than becoming a default here: the HTTP handler owns the
+            // defaults, and a tool that filled them in would be a second place they are decided.
+            for field in ["credentialRef"] {
+                if let Some(value) = str_arg(arguments, field) {
+                    body[field] = serde_json::Value::String(value.to_owned());
+                }
+            }
+            for field in ["enabled", "replace"] {
+                if let Some(value) = arguments.get(field) {
+                    body[field] = value.clone();
+                }
+            }
+            let path = match str_arg(arguments, "manifest") {
+                Some(manifest) => {
+                    format!("/v1/gateway/routes?manifest={}", url::query_value(manifest))
+                }
+                None => "/v1/gateway/routes".to_owned(),
+            };
+            Ok(api.request("PUT", &path, Some(&body), Some(&key), if_match))
         }),
         "probe" => require(arguments, "route").map(|route| {
             let mut path = format!("/v1/gateway/probe?route={}", url::query_value(route));

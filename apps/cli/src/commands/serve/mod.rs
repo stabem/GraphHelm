@@ -17,7 +17,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use graphhelm_events::PreparedAppend;
 use graphhelm_gateway::manifest::RouteManifest;
@@ -512,8 +512,15 @@ fn build_router(state: ServeState) -> Router {
         )
         .route("/v1/graph/topology", post(routes::graph_topology))
         .route("/v1/graphs/synthesize", post(routes::synthesize))
-        .route("/v1/gateway/routes", get(routes::gateway_routes))
+        .route(
+            "/v1/gateway/routes",
+            get(routes::gateway_routes).put(routes::gateway_route_set),
+        )
         .route("/v1/gateway/probe", get(routes::gateway_probe))
+        .route(
+            "/v1/gateway/credentials/{reference}",
+            put(routes::gateway_credential_set),
+        )
         .route(
             "/v1/development/contract",
             post(routes::development_resolve_contract),

@@ -2677,6 +2677,8 @@ async fn drive(
 
 const GATEWAY_ROUTES_COMMAND: &str = "gateway.routes";
 const GATEWAY_PROBE_COMMAND: &str = "gateway.probe";
+const GATEWAY_ROUTE_SET_COMMAND: &str = "gateway.route.set";
+const GATEWAY_CREDENTIAL_SET_COMMAND: &str = "gateway.credential.set";
 
 /// The Task 0 reconciled decision: a server launched with `--manifest` serves that manifest
 /// by default and treats the `manifest` query param as an explicit override. A fixture-only
@@ -3632,5 +3634,264 @@ mod pause_outcome_tests {
             !text.contains(retired),
             "the old driver-failure wording is still in this file"
         );
+    }
+}
+
+/// `PUT /v1/gateway/routes`: the HTTP half of `gateway route set` (#1171).
+///
+/// D-039's rule is why this exists at all: a mutation reachable from the CLI and not from the API
+/// is a second operational path, and the Studio can only reach the API. The handler owns the
+/// request's shape and nothing else — the write, its refusals and its atomicity are
+/// `commands::gateway::route`'s, the same function the CLI verb calls.
+///
+/// **A wrongly-typed field is refused, never coerced.** `payload.get("enabled").and_then(as_bool)`
+/// folds "absent" and "present but not a boolean" into one answer, and the second is an operator
+/// who asked for something this surface would then silently do differently — the same trap
+/// `resolve_requested_route` names for `"route"`. Absent means the documented default; present and
+/// wrong means 400.
+///
+/// **No manifest is a refusal here, unlike the listing.** `GET /v1/gateway/routes` answers "no
+/// routes" for a server with no manifest configured, because that is the true answer to its
+/// question. A write has no such answer: there is no file to write into, and inventing one would
+/// put an operator's provider in a path nobody asked for.
+pub(super) async fn gateway_route_set(
+    State(state): State<ServeState>,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> Response {
+    // A bearer authorizes the operation, not a filesystem namespace. The destination remains a
+    // deployment fact selected by `serve --manifest`; accepting it from the request would turn
+    // this local API into an arbitrary-path write primitive.
+    let query = query.unwrap_or_default();
+    if query_pairs(&query).any(|(key, _)| key == "manifest") {
+        return bad_request(
+            GATEWAY_ROUTE_SET_COMMAND,
+            "a mutation cannot override the manifest configured when the server started",
+            "/manifest",
+        );
+    }
+    let Some(manifest) = state
+        .runtime
+        .as_ref()
+        .and_then(|wiring| wiring.model.as_ref())
+        .map(|model| model.manifest_path.clone())
+    else {
+        return bad_request(
+            GATEWAY_ROUTE_SET_COMMAND,
+            "this server has no gateway manifest configured",
+            "/manifest",
+        );
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                GATEWAY_ROUTE_SET_COMMAND,
+                "the request body is not valid JSON",
+                "/",
+            );
+        }
+    };
+
+    let mut fields = Vec::new();
+    for field in ["id", "provider", "baseUrl", "model"] {
+        match payload.get(field) {
+            Some(serde_json::Value::String(value)) => fields.push(value.clone()),
+            _ => {
+                return bad_request(
+                    GATEWAY_ROUTE_SET_COMMAND,
+                    &format!("the request body must carry \"{field}\" as a string"),
+                    &format!("/{field}"),
+                );
+            }
+        }
+    }
+    let credential_ref = match payload.get("credentialRef") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(_) => {
+            return bad_request(
+                GATEWAY_ROUTE_SET_COMMAND,
+                "\"credentialRef\" must be a string when it is given",
+                "/credentialRef",
+            );
+        }
+    };
+    let (Some(enabled), Some(replace)) = (
+        optional_flag(&payload, "enabled", true),
+        optional_flag(&payload, "replace", false),
+    ) else {
+        let field = if optional_flag(&payload, "enabled", true).is_none() {
+            "enabled"
+        } else {
+            "replace"
+        };
+        return bad_request(
+            GATEWAY_ROUTE_SET_COMMAND,
+            &format!("\"{field}\" must be a boolean when it is given"),
+            &format!("/{field}"),
+        );
+    };
+
+    let write = crate::commands::gateway::route::RouteWrite {
+        id: fields[0].clone(),
+        provider: fields[1].clone(),
+        base_url: fields[2].clone(),
+        model: fields[3].clone(),
+        credential_ref,
+        enabled,
+        replace,
+    };
+    // Reading the manifest, composing it and renaming the temporary file is blocking filesystem
+    // work, so it runs off the reactor like every other file path on this surface (#559).
+    match tokio::task::spawn_blocking(move || {
+        crate::commands::gateway::route::set(&manifest, &write)
+    })
+    .await
+    {
+        Ok(outcome) => respond_outcome(outcome),
+        Err(_) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(GATEWAY_ROUTE_SET_COMMAND, "the write task failed").output,
+        ),
+    }
+}
+
+/// An optional boolean body field: absent is the default, present-and-not-a-boolean is `None`.
+///
+/// It answers `Option` rather than carrying a built `Response` in an `Err`: a `Response` is at
+/// least 128 bytes and `clippy::result_large_err` refuses that shape, which matters here because
+/// the gate runs Clippy with `-D warnings`. The caller turns `None` into the refusal, which also
+/// keeps this function free of any opinion about status codes.
+fn optional_flag(payload: &serde_json::Value, field: &str, default: bool) -> Option<bool> {
+    match payload.get(field) {
+        None | Some(serde_json::Value::Null) => Some(default),
+        Some(serde_json::Value::Bool(value)) => Some(*value),
+        Some(_) => None,
+    }
+}
+
+/// `PUT /v1/gateway/credentials/{reference}`: the HTTP half of `gateway credential set` (#1171).
+///
+/// **The value travels in the BODY, and that is a security decision, not a style one.** The read
+/// audit (`--read-audit`, `record_read`) writes the method, the path, the QUERY and the response
+/// body to a plaintext file; it never sees a request body. A key in the path or the query would
+/// therefore land on disk in the clear for any operator who turned the audit on, which is the
+/// composition defect #467's review caught once already on the evidence route. The reply names the
+/// reference and its routes and never the value, so the audit line stays as empty of the secret as
+/// the rest of this surface.
+///
+/// **The passphrase is not a request field.** It stays `GRAPHHELM_GATEWAY_KEY` in the serve
+/// process, read by the command layer at the moment of the store, exactly as the CLI reads it. A
+/// caller who could name the passphrase could open a broker this server was never given.
+pub(super) async fn gateway_credential_set(
+    State(state): State<ServeState>,
+    UrlPath(reference): UrlPath<String>,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> Response {
+    // As above, the request supplies credential CONTENT only. Broker and keyring coordinates are
+    // deployment facts; letting a bearer replace them would cross the server's resource boundary.
+    let query = query.unwrap_or_default();
+    if query_pairs(&query).any(|(key, _)| matches!(key, "broker" | "keyring" | "keyId")) {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "a mutation cannot override the broker or keyring configured when the server started",
+            "/broker",
+        );
+    }
+    let Some(wiring) = state.runtime.as_ref() else {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "this server has no broker and keyring configured",
+            "/broker",
+        );
+    };
+    let Some(model) = wiring.model.as_ref() else {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "this server has no broker configured",
+            "/broker",
+        );
+    };
+    let broker = model.broker_dir.clone();
+    let keyring = wiring.keyring_dir.clone();
+    let key_id = wiring.key_id.clone();
+
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                GATEWAY_CREDENTIAL_SET_COMMAND,
+                "the request body is not valid JSON",
+                "/",
+            );
+        }
+    };
+    let Some(provider) = payload.get("provider").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "the request body must carry \"provider\" as a string",
+            "/provider",
+        );
+    };
+    let Some(usable_by) = payload
+        .get("usableBy")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "the request body must carry \"usableBy\" as an array of route ids",
+            "/usableBy",
+        );
+    };
+    let mut routes = Vec::with_capacity(usable_by.len());
+    for route in usable_by {
+        match route.as_str() {
+            Some(id) if !id.trim().is_empty() => routes.push(id.to_owned()),
+            _ => {
+                return bad_request(
+                    GATEWAY_CREDENTIAL_SET_COMMAND,
+                    "every entry of \"usableBy\" must be a non-empty route id",
+                    "/usableBy",
+                );
+            }
+        }
+    }
+    if routes.is_empty() {
+        return bad_request(
+            GATEWAY_CREDENTIAL_SET_COMMAND,
+            "\"usableBy\" must name at least one route: a credential nobody may lease is one nobody can use",
+            "/usableBy",
+        );
+    }
+    // The value is read LAST, so a malformed request is refused before the secret is copied out of
+    // the body at all, and the refusal paths above never had it in scope.
+    let value = match payload.get("value").and_then(serde_json::Value::as_str) {
+        Some(value) if !value.trim().is_empty() => {
+            graphhelm_events::SecretBytes::new(value.trim().as_bytes().to_vec())
+        }
+        _ => {
+            return bad_request(
+                GATEWAY_CREDENTIAL_SET_COMMAND,
+                "the request body must carry \"value\" as a non-empty string",
+                "/value",
+            );
+        }
+    };
+    let provider = provider.to_owned();
+
+    match tokio::task::spawn_blocking(move || {
+        crate::commands::gateway::credential::set_value(
+            &broker, &keyring, &key_id, &reference, &provider, routes, value,
+        )
+    })
+    .await
+    {
+        Ok(outcome) => respond_outcome(outcome),
+        Err(_) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(GATEWAY_CREDENTIAL_SET_COMMAND, "the store task failed").output,
+        ),
     }
 }

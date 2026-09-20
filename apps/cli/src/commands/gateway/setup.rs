@@ -36,7 +36,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     Failure, ManifestReadError, broker_failure, credential_error, finish, invalid, probe,
-    read_bounded_manifest, runtime,
+    read_bounded_manifest, route, runtime,
 };
 use crate::args::{SetupArgs, SetupProvider};
 use crate::commands::init::{
@@ -168,7 +168,7 @@ fn execute(args: &SetupArgs) -> Result<Value, Failure> {
     // is not asked for a key the command is about to discard.
     let manifest_path = root.join(MANIFEST_FILE);
     init::refuse_symlink(&manifest_path, "/manifest").map_err(from_init)?;
-    let (manifest_text, manifest_state) = merged_manifest(&manifest_path, &route, args.replace)?;
+    let _ = merged_manifest(&manifest_path, &route, args.replace)?;
 
     let sealing = init::ensure_sealing_keyring(&root, &args.key_id).map_err(from_init)?;
     let keyring = root.join(KEYRING_DIRECTORY);
@@ -179,6 +179,10 @@ fn execute(args: &SetupArgs) -> Result<Value, Failure> {
     let probe_passphrase = sealing
         .passphrase
         .expose(|bytes| SecretBytes::new(bytes.to_vec()));
+    // The key read can wait on a person, so it happens before the bounded manifest lock. Once the
+    // key is present, re-read and compose under the same cross-process lock `route set` uses.
+    let _manifest_lock = route::acquire_manifest_lock(&manifest_path)?;
+    let (manifest_text, manifest_state) = merged_manifest(&manifest_path, &route, args.replace)?;
     store_credential(
         &broker_dir,
         &keyring,
@@ -192,7 +196,7 @@ fn execute(args: &SetupArgs) -> Result<Value, Failure> {
         value,
     )?;
 
-    write_atomically(&manifest_path, &manifest_text)?;
+    route::write_atomically(&manifest_path, &manifest_text)?;
 
     let gitignore_state =
         init::ensure_gitignore(&project, &project.join(GITIGNORE_FILE)).map_err(from_init)?;
@@ -344,24 +348,6 @@ fn load_document(path: &Path) -> Result<(Map<String, Value>, bool), Failure> {
         Value::Object(map) => Ok((map, true)),
         _ => Err(unusable_manifest()),
     }
-}
-
-/// Temporary file beside the target, then a rename over it: a reader (a Runtime already started
-/// on this manifest) sees the old document or the new one, never a truncated one. LF, no BOM —
-/// the bytes are exactly the validated `text`.
-fn write_atomically(path: &Path, text: &str) -> Result<(), Failure> {
-    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    let written = std::fs::File::create(&temporary)
-        .and_then(|mut file| {
-            file.write_all(text.as_bytes())
-                .and_then(|()| file.sync_all())
-        })
-        .and_then(|()| std::fs::rename(&temporary, path));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(invalid("manifest.json could not be written", "/manifest"));
-    }
-    Ok(())
 }
 
 /// The broker path `gateway credential set` takes (`credential.rs::execute_set`), with the

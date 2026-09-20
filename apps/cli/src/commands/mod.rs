@@ -32,7 +32,7 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
     ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand,
-    SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
+    RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -419,6 +419,32 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring.as_deref(),
                 key_id.as_deref(),
             ),
+            GatewayCommand::Route(route_args) => match route_args.command {
+                RouteCommand::Set {
+                    manifest,
+                    id,
+                    provider,
+                    base_url,
+                    model,
+                    credential_ref,
+                    disabled,
+                    replace,
+                } => gateway::route::set(
+                    &manifest,
+                    &gateway::route::RouteWrite {
+                        id,
+                        provider,
+                        base_url,
+                        model,
+                        credential_ref,
+                        // The flag is `--disabled` and the field is `enabled`, so the DEFAULT is
+                        // the safe one to type: a route written without saying anything about its
+                        // state is on, which is what an operator adding a provider means.
+                        enabled: !disabled,
+                        replace,
+                    },
+                ),
+            },
             GatewayCommand::Credential(credential_args) => match credential_args.command {
                 CredentialCommand::Set {
                     broker,

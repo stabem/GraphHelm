@@ -853,6 +853,10 @@ pub enum GatewayCommand {
         #[arg(long = "key-id")]
         key_id: Option<String>,
     },
+    /// Writes one `direct_api` route into a manifest (#1171): the edit `setup` cannot do, and the
+    /// CLI half of `PUT /v1/gateway/routes`. Never touches a credential value, and never rewrites
+    /// a `native_runtime` route.
+    Route(RouteArgs),
     /// Manages BYOK credentials held in the broker.
     Credential(CredentialArgs),
     /// Manages the sealing keyring itself, independently of any credential.
@@ -901,6 +905,48 @@ pub struct SetupArgs {
     /// The sealing key's id inside the keyring, as given to `init`.
     #[arg(long = "key-id", default_value = "studio")]
     pub key_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RouteArgs {
+    #[command(subcommand)]
+    pub command: RouteCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RouteCommand {
+    /// Adds or replaces one `direct_api` route in the manifest. The whole document is validated
+    /// before anything is written, and the write is a temporary file renamed into place, because
+    /// `serve` re-reads the manifest on every request that resolves a route.
+    Set {
+        #[arg(long)]
+        manifest: PathBuf,
+        /// The route id callers will name (`--route`, `"route"` in a request body). Unique within
+        /// the manifest: an id already present is refused unless `--replace` is given.
+        #[arg(long)]
+        id: String,
+        /// The WIRE FORMAT the adapter selects on, not the vendor: `anthropic`, `openai` or
+        /// `typesafe` today. A DeepSeek endpoint is an `openai` route with its own base URL.
+        #[arg(long)]
+        provider: String,
+        /// `https://…`, or `http://` to a loopback address. No trailing slash.
+        #[arg(long = "base-url")]
+        base_url: String,
+        #[arg(long)]
+        model: String,
+        /// The broker reference holding this route's key. Absent: `secret_<id>`, which cannot
+        /// collide the way a provider-keyed name does when two vendors share one wire format.
+        #[arg(long = "credential-ref")]
+        credential_ref: Option<String>,
+        /// Write the route disabled. A disabled route is listed and refused at dispatch, which is
+        /// how an operator parks a provider without deleting what it took to configure.
+        #[arg(long)]
+        disabled: bool,
+        /// Replace an existing route with this id. Without it, an existing id is refused and the
+        /// manifest is left byte-identical.
+        #[arg(long)]
+        replace: bool,
+    },
 }
 
 #[derive(Debug, Args)]

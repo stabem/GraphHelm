@@ -30,13 +30,49 @@ pub(in crate::commands) fn set(
 ) -> Outcome {
     finish(
         SET_COMMAND,
-        execute_set(
+        parse_usable_by(usable_by).and_then(|routes| {
+            let value = read_stdin_secret()?;
+            store(
+                broker_dir,
+                keyring_dir,
+                key_id,
+                reference,
+                provider,
+                routes,
+                value,
+            )
+        }),
+        |summary| summary,
+    )
+}
+
+/// The same store, with the value handed in rather than read from stdin (#1171).
+///
+/// STDIN IS A PROPERTY OF THE CLI, NOT OF THE STORE. `PUT /v1/gateway/credentials/{ref}` has no
+/// stdin to read and must reach the same broker through the same call, or the two doors are two
+/// stores that can drift — D-039's rule again. Everything that makes `set` safe lives below this
+/// line and is shared: the keyring precondition, the passphrase from the process environment, the
+/// reference's own charset and bound inside `CredentialBroker::store`, and a reply that names the
+/// reference and never the value.
+pub(in crate::commands) fn set_value(
+    broker_dir: &Path,
+    keyring_dir: &Path,
+    key_id: &str,
+    reference: &str,
+    provider: &str,
+    usable_by: Vec<String>,
+    value: SecretBytes,
+) -> Outcome {
+    finish(
+        SET_COMMAND,
+        store(
             broker_dir,
             keyring_dir,
             key_id,
             reference,
             provider,
             usable_by,
+            value,
         ),
         |summary| summary,
     )
@@ -55,18 +91,17 @@ pub(in crate::commands) fn remove(
     )
 }
 
-fn execute_set(
+fn store(
     broker_dir: &Path,
     keyring_dir: &Path,
     key_id: &str,
     reference: &str,
     provider: &str,
-    usable_by: &str,
+    usable_by: Vec<String>,
+    value: SecretBytes,
 ) -> Result<serde_json::Value, Failure> {
     require_keyring_directory(keyring_dir)?;
     let passphrase = passphrase_from_env()?;
-    let value = read_stdin_secret()?;
-    let usable_by = parse_usable_by(usable_by)?;
 
     let reference = SecretReference {
         id: reference.to_owned(),

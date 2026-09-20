@@ -686,3 +686,358 @@ fn routes_refuses_an_oversize_manifest_via_its_metadata_length() {
         "expected the metadata-based size refusal, not a parse error: {message}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// #1171: `gateway route set` — the write `setup` cannot do, and the CLI half of
+// `PUT /v1/gateway/routes`. Every cell here asserts on the FILE as well as on the envelope: a
+// reply that says "written" while the manifest still holds the old bytes is the failure this
+// surface can actually produce, and an envelope-only assertion cannot see it.
+// ---------------------------------------------------------------------------------------------
+
+fn route_set(manifest: &Path, extra: &[&str]) -> std::process::Output {
+    command()
+        .args(["gateway", "route", "set", "--manifest"])
+        .arg(manifest)
+        .args(extra)
+        .output()
+        .unwrap()
+}
+
+/// The arguments of one well-formed DeepSeek-shaped route: an `openai` WIRE FORMAT pointed at a
+/// different vendor's endpoint, which is the case a provider-keyed credential default gets wrong.
+fn deepseek_arguments(id: &str) -> Vec<String> {
+    vec![
+        "--id".to_owned(),
+        id.to_owned(),
+        "--provider".to_owned(),
+        "openai".to_owned(),
+        "--base-url".to_owned(),
+        "https://api.deepseek.com".to_owned(),
+        "--model".to_owned(),
+        "deepseek-v4-pro".to_owned(),
+    ]
+}
+
+fn as_str_arguments(arguments: &[String]) -> Vec<&str> {
+    arguments.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn a_route_set_creates_the_manifest_and_the_listing_names_the_route() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let arguments = deepseek_arguments("deepseek_official");
+
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    let value = json(&output.stdout);
+    assert_eq!(value["ok"], true, "{value}");
+    assert_eq!(value["data"]["manifest"]["state"], "created");
+    assert_eq!(
+        value["data"]["route"]["credentialRef"],
+        "secret_deepseek_official"
+    );
+    assert_eq!(value["data"]["route"]["enabled"], true);
+    assert_eq!(value["data"]["routes"][0]["id"], "deepseek_official");
+
+    // The file is the claim, not the reply: `gateway routes` reads it back through the loader
+    // every other surface uses, so a document only this command can parse would fail here.
+    let listed = command()
+        .args(["gateway", "routes", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", combined_output(&listed));
+    let listed = json(&listed.stdout);
+    assert_eq!(listed["data"]["routes"][0]["id"], "deepseek_official");
+    assert_eq!(listed["data"]["routes"][0]["model"], "deepseek-v4-pro");
+}
+
+#[test]
+fn route_set_refuses_an_oversize_manifest_before_parsing_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    std::fs::write(&manifest, vec![b'x'; 256 * 1024 + 1]).unwrap();
+
+    let arguments = deepseek_arguments("deepseek_official");
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(!output.status.success(), "{}", combined_output(&output));
+    let value = json(&output.stdout);
+    assert!(
+        value["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("maximum supported size"),
+        "the write must use the bounded manifest reader: {value}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn route_set_never_follows_a_preexisting_temporary_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let victim = directory.path().join("victim.txt");
+    std::fs::write(&victim, b"sentinel").unwrap();
+    symlink(&victim, directory.path().join(".manifest.json.tmp")).unwrap();
+
+    let arguments = deepseek_arguments("deepseek_official");
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(std::fs::read(&victim).unwrap(), b"sentinel");
+    assert!(!std::fs::symlink_metadata(&manifest).unwrap().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn gateway_manifest_reads_refuse_a_final_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let target = write_manifest(directory.path(), &valid_manifest_value());
+    let link = directory.path().join("linked-manifest.json");
+    symlink(&target, &link).unwrap();
+
+    let output = command()
+        .args(["gateway", "routes", "--manifest"])
+        .arg(&link)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{}", combined_output(&output));
+    assert_eq!(json(&output.stdout)["diagnostics"][0]["path"], "/manifest");
+}
+
+#[cfg(unix)]
+#[test]
+fn route_set_refuses_a_symlinked_lock_file() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let victim = directory.path().join("victim.txt");
+    std::fs::write(&victim, b"sentinel").unwrap();
+    symlink(&victim, directory.path().join(".manifest.json.lock")).unwrap();
+
+    let arguments = deepseek_arguments("deepseek_official");
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(!output.status.success(), "{}", combined_output(&output));
+    assert_eq!(std::fs::read(&victim).unwrap(), b"sentinel");
+    assert!(!manifest.exists());
+}
+
+#[test]
+fn concurrent_route_sets_preserve_every_distinct_route() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let mut children = Vec::new();
+    for index in 0..12 {
+        let id = format!("route_{index}");
+        let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        child
+            .args(["gateway", "route", "set", "--manifest"])
+            .arg(&manifest)
+            .args(deepseek_arguments(&id));
+        children.push(child.spawn().unwrap());
+    }
+    for child in &mut children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    let document: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let routes = document["routes"].as_array().unwrap();
+    assert_eq!(
+        routes.len(),
+        12,
+        "no concurrent update may be lost: {document}"
+    );
+}
+
+#[test]
+fn a_second_write_with_the_same_id_is_refused_and_the_file_is_byte_identical() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let arguments = deepseek_arguments("deepseek_official");
+    let first = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(first.status.success(), "{}", combined_output(&first));
+    let before = std::fs::read(&manifest).unwrap();
+
+    let second = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(!second.status.success(), "{}", combined_output(&second));
+    let value = json(&second.stdout);
+    assert_eq!(value["ok"], false, "{value}");
+    assert_eq!(value["diagnostics"][0]["path"], "/id");
+    assert_eq!(
+        std::fs::read(&manifest).unwrap(),
+        before,
+        "a refused write must leave the manifest byte-identical"
+    );
+}
+
+#[test]
+fn a_replace_rewrites_the_whole_entry_and_does_not_patch_the_fields_it_was_given() {
+    let directory = tempfile::tempdir().unwrap();
+    // The seeded route carries a field this command never writes. A replace that PATCHED the
+    // named fields would leave it behind; one that rewrites the entry cannot. Without this field
+    // the cell would pass against either implementation.
+    let manifest = write_manifest(
+        directory.path(),
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": "deepseek_official",
+                "provider": "openai",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "credentialRef": "secret_deepseek_official",
+                "profiles": ["balanced_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 900
+            }]
+        }),
+    );
+
+    let output = route_set(
+        &manifest,
+        &[
+            "--id",
+            "deepseek_official",
+            "--provider",
+            "openai",
+            "--base-url",
+            "https://api.deepseek.com",
+            "--model",
+            "deepseek-flash",
+            "--replace",
+        ],
+    );
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        json(&output.stdout)["data"]["manifest"]["state"],
+        "replaced"
+    );
+
+    let written: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let route = &written["routes"][0];
+    assert_eq!(route["model"], "deepseek-flash");
+    assert!(
+        route.get("timeoutSeconds").is_none(),
+        "a replace must rewrite the entry, not patch the named fields: {route}"
+    );
+}
+
+#[test]
+fn the_credential_reference_is_keyed_to_the_route_id_not_the_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    for id in ["deepseek_official", "openai_direct"] {
+        let arguments = deepseek_arguments(id);
+        let output = route_set(&manifest, &as_str_arguments(&arguments));
+        assert!(output.status.success(), "{}", combined_output(&output));
+    }
+
+    let written: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let routes = written["routes"].as_array().unwrap();
+    let references: Vec<&str> = routes
+        .iter()
+        .map(|route| route["credentialRef"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        references,
+        ["secret_deepseek_official", "secret_openai_direct"]
+    );
+    // Both routes declare `provider: "openai"`. A provider-keyed default would have named one
+    // secret twice, and the second key stored under it would have replaced the first one's.
+    let providers: Vec<&str> = routes
+        .iter()
+        .map(|route| route["provider"].as_str().unwrap())
+        .collect();
+    assert_eq!(providers, ["openai", "openai"]);
+}
+
+#[test]
+fn a_native_runtime_route_is_never_rewritten_as_a_direct_api_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = write_manifest(directory.path(), &valid_manifest_value());
+    let before = std::fs::read(&manifest).unwrap();
+
+    let output = route_set(
+        &manifest,
+        &[
+            "--id",
+            "native_probe",
+            "--provider",
+            "openai",
+            "--base-url",
+            "https://api.openai.com",
+            "--model",
+            "gpt-5",
+            "--replace",
+        ],
+    );
+    assert!(!output.status.success(), "{}", combined_output(&output));
+    let value = json(&output.stdout);
+    assert!(
+        value["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("native_runtime"),
+        "the refusal must name the transport it refused: {value}"
+    );
+    assert_eq!(
+        std::fs::read(&manifest).unwrap(),
+        before,
+        "a refused replace must leave the manifest byte-identical"
+    );
+}
+
+#[test]
+fn a_route_the_loader_would_reject_never_reaches_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+
+    // `deepseek` is the VENDOR, not a wire format the BYOK adapters speak, so the loader refuses
+    // it. What this cell pins is WHERE that refusal happens: before the write, not after.
+    let output = route_set(
+        &manifest,
+        &[
+            "--id",
+            "deepseek_official",
+            "--provider",
+            "deepseek",
+            "--base-url",
+            "https://api.deepseek.com",
+            "--model",
+            "deepseek-v4-pro",
+        ],
+    );
+    assert!(!output.status.success(), "{}", combined_output(&output));
+    assert!(
+        !manifest.exists(),
+        "a refused write must not create the manifest it was about to hold"
+    );
+}
+
+#[test]
+fn a_route_written_disabled_is_listed_and_says_so() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let mut arguments = deepseek_arguments("deepseek_official");
+    arguments.push("--disabled".to_owned());
+
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(json(&output.stdout)["data"]["route"]["enabled"], false);
+
+    let listed = command()
+        .args(["gateway", "routes", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", combined_output(&listed));
+    assert_eq!(json(&listed.stdout)["data"]["routes"][0]["enabled"], false);
+}

@@ -258,11 +258,13 @@ pub enum LocalFailpoint {
     PhysicalBatchAppend,
     JournalSync,
     ActiveMarker,
+    InitializeRootLockShared,
+    InitializeRootLockExclusive,
 }
 
 impl LocalFailpoint {
     #[must_use]
-    pub const fn all() -> [Self; 7] {
+    pub const fn all() -> [Self; 9] {
         [
             Self::Validation,
             Self::EvidenceStaging,
@@ -271,7 +273,29 @@ impl LocalFailpoint {
             Self::PhysicalBatchAppend,
             Self::JournalSync,
             Self::ActiveMarker,
+            Self::InitializeRootLockShared,
+            Self::InitializeRootLockExclusive,
         ]
+    }
+
+    /// When the fault fires: during `open`, or later on the append/publish path.
+    ///
+    /// The seven original kinds are armed by an open that SUCCEEDS and fire on a later
+    /// append; the two root-lock kinds fail the open itself. Every loop that arms a kind
+    /// has to know which of the two it is holding, and asking the catalog is the only
+    /// form that a new variant cannot silently join on the wrong side.
+    #[must_use]
+    pub const fn fires_during_open(self) -> bool {
+        match self {
+            Self::InitializeRootLockShared | Self::InitializeRootLockExclusive => true,
+            Self::Validation
+            | Self::EvidenceStaging
+            | Self::BlobSync
+            | Self::BlobPublish
+            | Self::PhysicalBatchAppend
+            | Self::JournalSync
+            | Self::ActiveMarker => false,
+        }
     }
 }
 
@@ -557,9 +581,10 @@ impl LocalEventRepository {
         // clean opens must not wait on each other (the readers-wait-for-readers guard).
         // Anything less than provably-clean falls back to the exclusive path below,
         // byte-for-byte today's recovery.
-        let (lock, shared_open) = match initialize_root_shared_fast(&root, &root_handle) {
+        let (lock, shared_open) = match initialize_root_shared_fast(&root, &root_handle, failpoint)
+        {
             Ok(Some(lock)) => (lock, true),
-            Ok(None) => match initialize_root_locked(&root, &root_handle) {
+            Ok(None) => match initialize_root_locked(&root, &root_handle, failpoint) {
                 Ok(lock) => (lock, false),
                 Err(error) => {
                     let _ = unlock_root(&root_handle);
@@ -3274,6 +3299,7 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
 fn initialize_root_shared_fast(
     root: &Path,
     root_handle: &File,
+    failpoint: Option<LocalFailpoint>,
 ) -> Result<Option<File>, EventRepositoryError> {
     if classify_layout(root, root_handle)? != LayoutState::Complete {
         return Ok(None);
@@ -3284,6 +3310,16 @@ fn initialize_root_shared_fast(
         return Ok(None);
     }
     let lock = open_child_file(root_handle, root, "repository.lock", true, false)?;
+    // #824: a conflicting lock makes `lock_shared` BLOCK rather than fail, so contention
+    // cannot redden this site -- it would hang, and a hang has no colour. The injected fault
+    // carries the site's own name with `os: None`, which is what marks it as plumbing: it
+    // proves the name survives the `open()` boundary, not that a real lock failure lands here.
+    if failpoint == Some(LocalFailpoint::InitializeRootLockShared) {
+        return Err(EventRepositoryError::StorageAt {
+            site: "initialize-root:lock-shared",
+            os: None,
+        });
+    }
     if let Err(error) = FileExt::lock_shared(&lock) {
         return Err(EventRepositoryError::StorageAt {
             site: "initialize-root:lock-shared",
@@ -3297,7 +3333,11 @@ fn initialize_root_shared_fast(
     Ok(Some(lock))
 }
 
-fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, EventRepositoryError> {
+fn initialize_root_locked(
+    root: &Path,
+    root_handle: &File,
+    failpoint: Option<LocalFailpoint>,
+) -> Result<File, EventRepositoryError> {
     let initial = classify_layout(root, root_handle)?;
     let lock_present = collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
         .contains("repository.lock");
@@ -3309,6 +3349,13 @@ fn initialize_root_locked(root: &Path, root_handle: &File) -> Result<File, Event
         }
         open_or_create_repository_lock(root_handle, root)?
     };
+    // #824: same shape as the shared acquisition above -- the real failure mode is a WAIT.
+    if failpoint == Some(LocalFailpoint::InitializeRootLockExclusive) {
+        return Err(EventRepositoryError::StorageAt {
+            site: "initialize-root:lock-exclusive",
+            os: None,
+        });
+    }
     lock.lock_exclusive()
         .map_err(|error| EventRepositoryError::StorageAt {
             site: "initialize-root:lock-exclusive",
@@ -5538,8 +5585,8 @@ mod limit_tests {
     use super::*;
 
     #[test]
-    fn public_local_failpoint_catalog_keeps_seven_stable_faults() {
-        let _: [LocalFailpoint; 7] = LocalFailpoint::all();
+    fn public_local_failpoint_catalog_keeps_nine_stable_faults() {
+        let _: [LocalFailpoint; 9] = LocalFailpoint::all();
     }
 
     /// `open_failure`'s OTHER arm, reached directly — because nothing else reaches it.

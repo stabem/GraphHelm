@@ -1297,10 +1297,51 @@ fn unknown_partial_initialization_is_rejected_without_mutation() {
     assert!(!root.join("format.json").exists());
 }
 
+/// #824: the two open-time kinds sit on DIFFERENT acquisition paths, so one arrangement cannot
+/// reach both. The shared fast path runs only over a layout that is already Complete; the
+/// exclusive bootstrap runs only over one that is not. A loop that armed either kind on a bare
+/// tempdir would reach the shared site never and call that "no failure", which is a green bought
+/// by the arrangement rather than by the code.
+fn root_reaching_the_open_time_site(
+    directory: &std::path::Path,
+    failpoint: LocalFailpoint,
+) -> std::path::PathBuf {
+    let root = directory.join("repository");
+    if failpoint == LocalFailpoint::InitializeRootLockShared {
+        drop(
+            LocalEventRepository::open(
+                &root,
+                Arc::new(FixedClock),
+                Arc::new(SequenceIds::default()),
+            )
+            .expect("ARRANGEMENT: the shared fast path needs a Complete layout to reach"),
+        );
+    }
+    root
+}
+
 #[test]
 fn injected_publication_failures_never_expose_dangling_committed_references() {
     for failpoint in LocalFailpoint::all() {
         let directory = tempfile::tempdir().unwrap();
+        if failpoint.fires_during_open() {
+            // A kind that fails the OPEN never reaches a publication, so there is nothing here
+            // to leave dangling. The refusal is asserted rather than skipped: a kind that
+            // wrongly opened would fall through to the append path unarmed and this loop would
+            // certify it green without ever provoking anything.
+            let error = LocalEventRepository::open_with_failpoint(
+                root_reaching_the_open_time_site(directory.path(), failpoint),
+                Arc::new(FixedClock),
+                Arc::new(SequenceIds::default()),
+                failpoint,
+            )
+            .err()
+            .unwrap_or_else(|| {
+                panic!("{failpoint:?}: an open-time failpoint must refuse the open")
+            });
+            assert_eq!(error.code(), "GHE008_STORAGE_FAILURE");
+            continue;
+        }
         let repo = LocalEventRepository::open_with_failpoint(
             directory.path(),
             Arc::new(FixedClock),
@@ -2053,18 +2094,36 @@ fn every_provoked_storage_failure_names_its_own_kind_and_no_two_kinds_share_a_na
         let kind = format!("{failpoint:?}");
         let slug = kebab_case(&kind);
         let directory = tempfile::tempdir().unwrap();
-        let repository = LocalEventRepository::open_with_failpoint(
-            directory.path(),
-            Arc::new(FixedClock),
-            Arc::new(SequenceIds::default()),
-            failpoint,
-        )
-        .unwrap();
-        let sealed = sealed_evidence();
-        let reference = sealed.reference().clone();
-        let error = repository
-            .append_atomic(&prepared(Some(reference), vec![sealed]))
-            .expect_err("an armed failpoint must produce a failure");
+        let error = if failpoint.fires_during_open() {
+            // An open-time kind answers on the OPEN. Its site is the production literal of the
+            // check that would have run -- not a `failpoint:` name -- so the identity assertion
+            // below does not apply to it; `core/events/tests/root_lock_failpoints.rs` pins each
+            // of these two to its exact site. What this cell still owes them is the shared code
+            // and the distinctness census, which is what the loop carries them here for.
+            LocalEventRepository::open_with_failpoint(
+                root_reaching_the_open_time_site(directory.path(), failpoint),
+                Arc::new(FixedClock),
+                Arc::new(SequenceIds::default()),
+                failpoint,
+            )
+            .err()
+            .unwrap_or_else(|| {
+                panic!("{kind}: an armed open-time failpoint must produce a failure")
+            })
+        } else {
+            let repository = LocalEventRepository::open_with_failpoint(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(SequenceIds::default()),
+                failpoint,
+            )
+            .unwrap();
+            let sealed = sealed_evidence();
+            let reference = sealed.reference().clone();
+            repository
+                .append_atomic(&prepared(Some(reference), vec![sealed]))
+                .expect_err("an armed failpoint must produce a failure")
+        };
 
         assert_eq!(
             error.code(),
@@ -2083,7 +2142,7 @@ fn every_provoked_storage_failure_names_its_own_kind_and_no_two_kinds_share_a_na
         };
 
         assert!(
-            site.contains(&format!("failpoint:{slug}@")),
+            failpoint.fires_during_open() || site.contains(&format!("failpoint:{slug}@")),
             "{kind} must name ITSELF, not merely carry some name: got {site:?}, expected a site \
              containing \"failpoint:{slug}@\". Distinctness alone would let two arms be SWAPPED \
              and stay green, so the cell checks identity as well."
@@ -2290,7 +2349,7 @@ fn the_nameless_storage_sites_are_a_visible_class_pinned_by_count_and_by_file() 
     );
 }
 
-/// `LocalFailpoint::all()` is a hand-written `[Self; 7]`, so a new variant could be added without
+/// `LocalFailpoint::all()` is a hand-written `[Self; 9]`, so a new variant could be added without
 /// joining it -- and the loop above would silently stop being exhaustive while staying green.
 ///
 /// This match has no wildcard arm. A new variant does not make it fail; it makes it **not
@@ -2306,6 +2365,8 @@ fn every_failpoint_variant_reaches_the_provocation_loop() {
         LocalFailpoint::PhysicalBatchAppend,
         LocalFailpoint::JournalSync,
         LocalFailpoint::ActiveMarker,
+        LocalFailpoint::InitializeRootLockShared,
+        LocalFailpoint::InitializeRootLockExclusive,
     ];
     for failpoint in named {
         // The wildcard-free match is the compile-time half: a new variant makes THIS not compile.
@@ -2316,7 +2377,9 @@ fn every_failpoint_variant_reaches_the_provocation_loop() {
             | LocalFailpoint::BlobPublish
             | LocalFailpoint::PhysicalBatchAppend
             | LocalFailpoint::JournalSync
-            | LocalFailpoint::ActiveMarker => {}
+            | LocalFailpoint::ActiveMarker
+            | LocalFailpoint::InitializeRootLockShared
+            | LocalFailpoint::InitializeRootLockExclusive => {}
         }
         assert!(
             LocalFailpoint::all().contains(&failpoint),

@@ -205,7 +205,11 @@ try {
     # THE FEATURE UNION IS NOT THE SELECTION'S BUSINESS. A scoped run that also narrowed features
     # would skip exactly the code a feature-gated change alters, and report the same green. Asserted
     # against the gate's own text so the invocation cannot drift away from the claim.
-    $scopedInvocation = $gateText.IndexOf('cargo $toolchain test @scopeArgs', [System.StringComparison]::Ordinal)
+    # #1053 item 4 renamed the runner on this line -- `test` became `nextest run` -- so the ANCHOR
+    # moved with it. The claim it supports did not: a scoped run still narrows packages and never
+    # cfg, whichever tool executes it. The anchor caught the rename by going red rather than by
+    # quietly finding -1, which is what `$scopedInvocation -ge 0` in the cell below is for.
+    $scopedInvocation = $gateText.IndexOf('cargo $toolchain nextest run @scopeArgs', [System.StringComparison]::Ordinal)
     Assert-True ($scopedInvocation -ge 0 -and `
             $gateText.Substring($scopedInvocation, 120).IndexOf('--all-features', [System.StringComparison]::Ordinal) -ge 0) `
         'the SCOPED cargo invocation still passes --all-features: the selection narrows packages, never cfg'

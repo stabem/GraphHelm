@@ -141,6 +141,49 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 # compiled under a different configuration than everything it vouches for.
 $env:CARGO_INCREMENTAL = '0'
 
+# #1053 item 4: THE TEST RUNNER IS PINNED, AND ITS ABSENCE IS A REFUSAL -- NEVER A FALLBACK.
+#
+# `workspace tests` runs `cargo nextest run`. A gate that quietly ran `cargo test` instead when the
+# runner was missing would publish a green from a DIFFERENT INSTRUMENT than the one this repository
+# measured, on a machine nobody would think to ask about. That is the failure this refusal exists
+# for, and it is why there is no else-branch anywhere below that reaches for `cargo test`.
+#
+# EXACT MATCH, like the Rust toolchain. Two nextest versions can disagree about defaults that decide
+# a verdict -- `--no-tests`, retries, slow-timeout termination -- so "close enough" is a version
+# nobody named. Refused BEFORE the canary, because every stage after it is measured by this tool.
+$toolVersionsPath = Join-Path $PSScriptRoot 'tool-versions.json'
+$pinnedNextest = $null
+try {
+    $pinnedNextest = [string](([System.IO.File]::ReadAllText($toolVersionsPath) | ConvertFrom-Json).'cargo-nextest')
+} catch {
+    Write-Host "[gate] REFUSED: ci/tool-versions.json is unreadable ($($_.Exception.Message))." -ForegroundColor Red
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($pinnedNextest)) {
+    Write-Host '[gate] REFUSED: ci/tool-versions.json names no cargo-nextest version.' -ForegroundColor Red
+    exit 1
+}
+# `2>&1` and the exit code, not the text alone: a missing subcommand prints to stderr and exits
+# non-zero, and both readings must reach the refusal rather than one of them being swallowed.
+$nextestVersionOutput = (& cargo nextest --version 2>&1 | Out-String)
+$nextestProbeCode = $LASTEXITCODE
+$nextestFound = ''
+$nextestMatch = [regex]::Match([string]$nextestVersionOutput, 'cargo-nextest\s+([0-9]+\.[0-9]+\.[0-9]+)')
+if ($nextestMatch.Success) { $nextestFound = $nextestMatch.Groups[1].Value }
+if ($nextestProbeCode -ne 0 -or -not $nextestMatch.Success) {
+    Write-Host '[gate] REFUSED: cargo-nextest is not installed, and this gate does not fall back to' -ForegroundColor Red
+    Write-Host '[gate] `cargo test`: that would publish a green from an instrument nobody named.' -ForegroundColor Red
+    Write-Host "[gate]   cargo install cargo-nextest --locked --version $pinnedNextest" -ForegroundColor Red
+    exit 1
+}
+if (-not [string]::Equals($nextestFound, $pinnedNextest, [System.StringComparison]::Ordinal)) {
+    Write-Host "[gate] REFUSED: cargo-nextest $nextestFound is installed; ci/tool-versions.json pins $pinnedNextest." -ForegroundColor Red
+    Write-Host '[gate] The runner decides which tests ran, so it is pinned exactly, like the toolchain.' -ForegroundColor Red
+    Write-Host "[gate]   cargo install cargo-nextest --locked --version $pinnedNextest" -ForegroundColor Red
+    exit 1
+}
+Write-Host "[gate] test runner: cargo-nextest $nextestFound (pinned)" -ForegroundColor DarkGray
+
 $actualTargetDir = $env:CARGO_TARGET_DIR
 if ([string]::IsNullOrWhiteSpace($actualTargetDir)) {
     Write-Host '[gate] REFUSED: CARGO_TARGET_DIR is unset or blank.' -ForegroundColor Red
@@ -5241,11 +5284,36 @@ try {
         # #903: `--workspace` when the run is FULL, `-p <crate>` per selected crate when it is not.
         # `--all-features` is UNCHANGED in both: the selection narrows WHAT is compiled, never which
         # cfg the code is compiled under.
+        #
+        # #1053 item 4: `nextest run` instead of `cargo test`. `cargo test` executes one test binary
+        # at a time, each internally threaded, so a workspace of many small crates never fills the
+        # box; nextest schedules every test from one pool, each in its own process.
+        #
+        # MEASURED before it was written, alternating on ONE warm target, idle box:
+        #   cargo test      364 s, 346 s
+        #   nextest run      90 s,  99 s      then five consecutive burn-in runs: 91/92/85/88/93 s
+        # Seven runs, 3049 tests passed every time, zero flakes -- so no `.config/nextest.toml`
+        # test-group exists here. A group nothing has been seen to need is a guard that only fires
+        # because of a defect nobody measured.
+        #
+        # THE POPULATION IS IDENTICAL, which is the claim that makes the time claim mean anything.
+        # `cargo nextest list --message-format json` and `cargo test -- --list` both enumerate
+        # 3098 tests, and a name-by-name multiset diff in BOTH directions is empty. 3049 run plus
+        # 49 ignored on each side. nextest loses nothing.
+        #
+        # WHAT IT DOES NOT RUN: doctests. This workspace has none -- every doc-comment fence opens
+        # ```text -- and `ci/gate-nextest.tests.ps1` fails if a Rust one is ever added, because that
+        # is the one way this change could silently stop running something.
+        #
+        # THE FLOOR IS NOW A SLEEP. nextest names it: six `wake_http` tests each sit >60 s on
+        # `RACING_WAKE_LEASE_SECONDS`, so ~85 s of a ~90 s stage is one constant. Plan item L10
+        # refused lowering it when it was worth ~20 s of a 1644 s gate; against a 90 s stage that
+        # arithmetic is different and the refusal should be re-read, not inherited.
         $scopeArgs = @(Get-ScopePackageArgs -Scope $script:gateScope)
         if ($scopeArgs.Count -eq 0) {
-            cargo $toolchain test --workspace --all-features --locked --no-fail-fast
+            cargo $toolchain nextest run --workspace --all-features --locked --no-fail-fast
         } else {
-            cargo $toolchain test @scopeArgs --all-features --locked --no-fail-fast
+            cargo $toolchain nextest run @scopeArgs --all-features --locked --no-fail-fast
         }
     } | Out-Null
 

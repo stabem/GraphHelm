@@ -39,6 +39,7 @@ $PinnedSuites = @(
     'gate-evidence.tests.ps1',
     'gate-fail-fast.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
+    'gate-nextest.tests.ps1',
     'gate-passes.tests.ps1',
     'gate-postgres-count.tests.ps1',
     'gate-postgres-early.tests.ps1',

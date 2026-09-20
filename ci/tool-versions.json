@@ -1,0 +1,19 @@
+{
+  "$comment": [
+    "#1053 item 4: tools the gate REFUSES to run without, pinned exactly.",
+    "",
+    "The Rust toolchain is pinned to a single version in rust-toolchain.toml and nobody argues about",
+    "it. A test RUNNER deserves the same treatment for a stronger reason: it decides which tests ran.",
+    "Two nextest versions can disagree about defaults that change a verdict -- --no-tests, retries,",
+    "slow-timeout termination -- so a green produced by an unpinned runner is a green from an",
+    "instrument nobody named.",
+    "",
+    "ci/gate.ps1 reads this file before its first stage and REFUSES on absent-or-mismatched. It never",
+    "falls back to `cargo test`: a fallback would publish a green from a different instrument than the",
+    "one this repository measured, which is the whole class ci/gate-nextest.tests.ps1 guards.",
+    "",
+    "To install the pinned runner:",
+    "  cargo install cargo-nextest --locked --version <the version below>"
+  ],
+  "cargo-nextest": "0.9.145"
+}

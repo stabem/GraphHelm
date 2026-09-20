@@ -190,10 +190,29 @@ fn production_sources(root: &Path) -> Vec<PathBuf> {
 ///
 ///   (a) it is preceded by a DOT: `captured.tree_kill`, `self.tree_kill`, and the right-hand side
 ///       of `tree_kill: captured.tree_kill`; or
-///   (b) the line DESTRUCTURES the record: it names `CapturedProcess {` in a pattern position --
-///       a `let`/`match`/`if let`/`while let` line, or a match arm (`=>`). That covers
-///       `{ tree_kill, .. }`, `{ tree_kill: tk, .. }` and `{ tree_kill: Some(t), .. }`, where the
-///       colon means RENAME rather than assignment and the first version read it backwards.
+///   (b) the line DESTRUCTURES the record: `record_pattern_ranges` asks `syn` for the `Pat` nodes
+///       that name `CapturedProcess`, so pattern position is DECIDED by the parser and is not
+///       enumerated here. That covers `{ tree_kill, .. }`, `{ tree_kill: tk, .. }` and
+///       `{ tree_kill: Some(t), .. }` wherever a pattern is legal, and the colon means RENAME
+///       rather than assignment -- which the first version read backwards.
+///
+///       The four-spelling text comparison (`let`/`if let`/`while let`, or a match arm's `=>`)
+///       is what is left of that first version, and it is now a FALLBACK reached only when the
+///       line does not parse even as a function body, where there is no pattern to ask about.
+///       Read as the rule it is strictly narrower than the parser, and the gap has two shapes
+///       rather than one:
+///
+///       - POSITION. A `for` pattern and a closure parameter are two places a pattern is legal
+///         that none of the four spellings names, and `record_pattern_ranges` sees both.
+///       - NESTING, and this is the distinction the first wording of this paragraph blurred. The
+///         three `let` spellings are matched with `starts_with`, so they recognise only the DIRECT
+///         form, where the record is the whole pattern: `let CapturedProcess { tree_kill, .. }`.
+///         A record nested inside another pattern -- `let Some(CapturedProcess { tree_kill, .. })`
+///         -- begins `let Some(`, matches none of the three, and carries no `=>`, so the fallback
+///         misses it although `contains("CapturedProcess {")` is true. `record_pattern_ranges`
+///         walks every `Pat` node and sees it at any depth. So "the line destructures the record"
+///         is the PARSER's rule; the fallback approximates it only for an unnested pattern in one
+///         of four positions, and it is reached only where there is no parse at all.
 ///
 /// Everything else is a write or a same-named local, which is what the defining module holds --
 /// `pub tree_kill:`, `let mut tree_kill = None`, `tree_kill = Some(..)`, the `tree_kill,`

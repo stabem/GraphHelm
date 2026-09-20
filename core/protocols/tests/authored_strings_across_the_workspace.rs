@@ -151,9 +151,10 @@ const EXEMPT: [(&str, &str); 9] = [
          lexical projection must see. The census projects Rust source while PRESERVING byte \
          offsets and line numbers, so a snippet's leading run is the input its truth table and its \
          BOM/shebang offset cells are measured against -- re-indenting one would change the answer \
-         it asserts. NOTE: `adapters/tool-host` has no per-crate `source_invariants.rs`, so unlike \
-         the six guard files above, an authored-string defect elsewhere in this file is outside \
-         every sweep",
+         it asserts. Since #1132 that crate HAS a per-crate `source_invariants.rs` and it reads \
+         this file: its exemption is per-LITERAL and by ROLE -- a literal naming \
+         `CapturedProcess` or `tree_kill` is census input -- so authored prose here is covered \
+         there. What is exempt is this sweep, no longer every sweep",
     ),
 ];
 

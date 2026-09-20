@@ -3531,8 +3531,34 @@ fn reported_refusal(child: &mut Child) -> String {
 /// a safe maximum on every healthy Windows machine.
 #[cfg(windows)]
 const PIPE_STARTUP_HANG_CATCHER_SECONDS: u64 = 30;
+/// #1053: 60 -> 40, and the CATCHER ABOVE IS DELIBERATELY UNCHANGED.
+///
+/// These six racing tests are a pure wait: the sidecar sits until the lease deadline, reads its
+/// receipt once, and exits, so each test costs almost exactly this constant. Measured with
+/// `cargo nextest run -p graphhelm-cli --test wake_http`, which reports per-test wall time:
+///
+///   61.524 / 61.440 / 61.369 / 61.276 / 61.217 / 61.206 s
+///
+/// Against a 60-second lease that is **~1.3 s for everything else the scenario does** -- spawning
+/// the sidecar, `wait_for_pipe`, arming the decoy, consuming the lease, reading the result. The
+/// startup this file's catcher guards is a fraction of that 1.3 s, so 30 s is roughly a 23x margin
+/// on an idle box and the lease was carrying 20 s nobody was using.
+///
+/// WHAT DID NOT CHANGE, AND WHY THAT IS THE POINT. #413 was not about the lease being long; it was
+/// about parallel sidecar startup eating a lease that was too SHORT to cover startup at all. The
+/// defence against that is the invariant `lease > catcher`, and lowering only the lease keeps it
+/// with 10 s to spare while leaving the catcher's own 30 s worst-case budget untouched. Lowering
+/// the catcher as well would have traded the actual safety margin for another 10 s of gate time,
+/// which is the trade #413 already paid for once.
+///
+/// THE INVARIANT IS ALREADY GUARDED, and this change narrows the margin it allows rather than
+/// removing it. `the_pipe_wait_is_bounded_below_the_leases_it_races` reads this very file, collects
+/// every lease bound armed by a test that then calls `wait_for_pipe`, and asserts BOTH
+/// `pipe_bound >= 30` and `pipe_bound < tightest` -- with a refusal first if it extracted nothing,
+/// so it cannot pass vacuously. At 60 the slack was 30 s; at 40 it is 10 s. The guard's own
+/// message is what a future reader gets if someone takes the last 10 s.
 #[cfg(windows)]
-const RACING_WAKE_LEASE_SECONDS: u64 = 60;
+const RACING_WAKE_LEASE_SECONDS: u64 = 40;
 
 #[cfg(windows)]
 /// Is this rendezvous currently an instance in the machine's pipe namespace?

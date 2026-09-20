@@ -15,7 +15,7 @@
 # holds some commit this one descends from, which is true of every unpushed commit on a tracked
 # branch -- precisely the state the field exists to detect.
 
-$ExpectedAssertionCount = 197
+$ExpectedAssertionCount = 211
 # 'Continue', not 'Stop': these cells run git against fixtures that deliberately have no upstream
 # and no pull request, and under Windows PowerShell 5.1 a native command's redirected stderr
 # becomes a NativeCommandError that 'Stop' promotes to a terminating error. Judge by exit code and
@@ -59,6 +59,109 @@ if ($pubStart -lt 0 -or $pubEnd -le $pubStart) {
     exit 2
 }
 $publisher = $gateText.Substring($pubStart, $pubEnd - $pubStart)
+
+# #950: the preamble the gate gives `Publish-RunManifest`, DERIVED from `ci/gate.ps1`'s own text and
+# never restated here. A hand-copied `Set-StrictMode -Version 2.0` would be correct today and stale
+# the next time the gate's line changes, and the harness would go on measuring a strictness nothing
+# ships under -- which is the defect this addresses.
+#
+# The statements come out IN THE ORDER `ci/gate.ps1` ITSELF PUTS THEM -- not an order chosen here.
+# Order is semantics, but NOT for the reason this comment gave until #1169. It said the dot-source
+# of `ci/manifest-name.ps1` carries its own `Set-StrictMode -Version Latest` into the CALLER's
+# scope, "so whether the gate's own `Set-StrictMode` precedes or follows it decides which
+# strictness the run ends up under". That sentence is FALSE, and measurably so: `ci/gate.ps1`
+# dot-sources `manifest-name.ps1` (:1339) AND `crate-input-hash.ps1` (:1345), and
+# `ci/crate-input-hash.ps1:21` sets `Set-StrictMode -Version Latest` in the caller's scope too.
+# Moving the gate's own line across manifest-name ALONE therefore decides nothing -- the LAST
+# strictness-setting statement still wins, and that is crate-input-hash. What order decides is
+# which statement is last across ALL of them.
+#
+# So the imports reproduced here are not one hard-coded file. `manifest-name.ps1` is required
+# because the publisher CALLS `Sync-ManifestCopies` out of it; on top of that, EVERY column-zero
+# `. (Join-Path $PSScriptRoot '...')` in `ci/gate.ps1` whose target sets `Set-StrictMode` at column
+# zero is reproduced as well. A library that starts setting strictness joins this preamble with no
+# edit here; one that stops, leaves. A builder that emitted a fixed sequence, or that reproduced
+# only the FIRST such import, would answer identically for a source whose LAST setter had changed,
+# and the harness would go on running under a strictness production no longer has. That is not
+# hypothetical: with only manifest-name reproduced, mutating `ci/crate-input-hash.ps1` from
+# `Latest` to `2.0` changed the strictness `Publish-RunManifest` runs under in production and this
+# suite still answered 207/207 passed, exit 0. Nothing reddened. Measured on a detached bench at
+# 5d0414df before this was written.
+#
+# WHAT THIS VOUCHES FOR, AND WHAT IT DOES NOT, stated at the claim.
+#   COVERED: column-zero statements in `ci/gate.ps1`, and column-zero `Set-StrictMode` in the
+#     libraries `ci/gate.ps1` dot-sources at column zero. The cell "#950/#1169: the derived
+#     preamble carries EVERY strictness-setting import" pins that boundary by name.
+#   NOT COVERED: strictness set inside a function; strictness set by a library that a reproduced
+#     library itself dot-sources (one level is read here, not the transitive closure); and
+#     anything `ci/gate.ps1` reaches other than a column-zero dot-source. In those cases
+#     production's strictness can move while this preamble does not, and no cell below will
+#     redden. That half is stated, not guarded.
+#
+# Only column-zero lines are eligible: an indented copy inside a function is a different statement
+# with a different scope, and a comment mentioning one is not a statement at all. Each of the four
+# must match EXACTLY ONCE. Two column-zero `Set-StrictMode` lines is not a thing to pick from --
+# the gate would run under the last, a reader here has no way to know that is what was meant, and
+# an answer chosen from an ambiguous read is worse than no answer.
+function Get-GateRunnerPreamble {
+    param([Parameter(Mandatory)] [string] $GateText, [Parameter(Mandatory)] [string] $CiRoot)
+    $lines = $GateText -split "`r?`n"
+    $manifestNamePattern = "^\. \(Join-Path \`$PSScriptRoot 'manifest-name\.ps1'\)$"
+    # Discovered, never listed: every OTHER column-zero dot-source whose target sets strictness at
+    # column zero. A hard-coded list is exactly what went stale and let `crate-input-hash.ps1` --
+    # the last setter, so the deciding one -- sit outside this preamble unnoticed.
+    $strictImports = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in $lines) {
+        if ($line -cmatch $manifestNamePattern) { continue }
+        if ($line -cmatch "^\. \(Join-Path \`$PSScriptRoot '([^']+)'\)$") {
+            $libPath = Join-Path $CiRoot $Matches[1]
+            # A dot-source naming a file that is not there is an UNREADABLE source, not a library
+            # that happens to set nothing. Refusing beats answering from a guess.
+            if (-not (Test-Path -LiteralPath $libPath)) { return $null }
+            $libLines = ([System.IO.File]::ReadAllText($libPath)) -split "`r?`n"
+            if (@($libLines | Where-Object { $_ -cmatch '^Set-StrictMode -Version \S+$' }).Count -ge 1) {
+                $strictImports.Add('^' + [regex]::Escape($line) + '$')
+            }
+        }
+    }
+    $patterns = @(
+        '^Set-StrictMode -Version \S+$',
+        "^\`$ErrorActionPreference = '\w+'$",
+        $manifestNamePattern
+    ) + @($strictImports.ToArray()) + @(
+        # The publisher READS `$script:headMovedDuringRun` (ci/gate.ps1:4758), and under StrictMode
+        # an unset variable THROWS rather than reading as $false. The gate initialises it at top
+        # level before any stage runs, so a runner that omits it is not giving the publisher
+        # production's state -- it is giving it a state production never has.
+        "^\`$script:headMovedDuringRun = \`$(true|false)$"
+    )
+    # Missing OR duplicated: both are refusals, and both are counted per pattern before anything is
+    # returned, so a caller never receives a preamble assembled from a source it could not read.
+    foreach ($pattern in $patterns) {
+        if (@($lines | Where-Object { $_ -cmatch $pattern }).Count -ne 1) { return $null }
+    }
+    # One walk of the source, in the source's own order. The statements come out ordered by where
+    # they sit in `ci/gate.ps1`, never by their position in `$patterns`.
+    $preamble = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in $lines) {
+        foreach ($pattern in $patterns) {
+            if ($line -cmatch $pattern) {
+                # The runner is written into the fixture directory, so `$PSScriptRoot` there is NOT
+                # `ci/`. The path is substituted; the statement is otherwise the gate's own bytes.
+                $preamble.Add($line.Replace('$PSScriptRoot', "'" + $CiRoot + "'"))
+                break
+            }
+        }
+    }
+    return @($preamble.ToArray())
+}
+
+$runnerPreambleLines = Get-GateRunnerPreamble -GateText $gateText -CiRoot $PSScriptRoot
+if ($null -eq $runnerPreambleLines) {
+    Write-Host 'HARNESS-BROKE: the gate preamble (StrictMode, ErrorActionPreference, the manifest-name dot-source and every other strictness-setting dot-source, headMovedDuringRun) was not readable at column zero in ci/gate.ps1: a statement is missing, or duplicated so the read is ambiguous' -ForegroundColor Magenta
+    exit 2
+}
+$runnerPreamble = ($runnerPreambleLines -join "`n") + "`n"
 
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-provenance-$([guid]::NewGuid().ToString('N'))"
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
@@ -110,7 +213,9 @@ function Invoke-NonceThenPublish {
         [Parameter(Mandatory)] [string] $HeadSha
     )
     $runner = Join-Path $fixtureRoot 'run-journey.ps1'
-    $script = "`$repositoryRoot = '$Repo'`n" + $nonceWriter + "`n" + $publisher +
+    # #950: the journey runner reaches the same publisher, so it gets the same environment the gate
+    # gives it -- derived, never restated.
+    $script = (Get-PublisherRunnerPreamble) + "`$repositoryRoot = '$Repo'`n" + $nonceWriter + "`n" + $publisher +
         "`nWrite-CanaryNonce`nPublish-RunManifest -ManifestPath '$ManifestPath' -HeadSha '$HeadSha' -PullRequest 7 " +
         "-BranchRef '$((& git -C $Repo symbolic-ref --quiet HEAD).Trim())'`n"
     [System.IO.File]::WriteAllText($runner, $script, $utf8NoBom)
@@ -119,6 +224,17 @@ function Invoke-NonceThenPublish {
         $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner 2>&1 | ForEach-Object { [string]$_ })
     } finally { Pop-Location }
     return ($out -join "`n")
+}
+
+function Get-PublisherRunnerPreamble {
+    <#
+        The environment the extracted publisher runs under. #950: it is the gate's, derived.
+    #>
+    # #949 left a workaround here -- the library dot-source plus an explicit `Set-StrictMode -Off`,
+    # which is neither production's strictness nor production's error preference. This is the gate's
+    # own preamble instead, read out of `ci/gate.ps1` (see `Get-GateRunnerPreamble`), so the two
+    # cannot drift: a change at the gate's column-zero lines travels here with no edit.
+    return $runnerPreamble
 }
 
 function Invoke-Publisher {
@@ -156,13 +272,17 @@ function Invoke-Publisher {
     # Measured: two head-provenance cells that pass without the library fail with it, and they have
     # nothing to do with reconciliation.
     #
-    # `-Off` restores what this harness has always run under, rather than half of production's
-    # preamble: `ci/gate.ps1:88-89` sets 2.0 AND `$ErrorActionPreference = 'Stop'`, and importing
-    # the strictness without the error preference is a combination that exists nowhere. Making the
-    # runner reproduce the gate's whole preamble is worth doing and is not this change.
-    $library = ". '" + (Join-Path $PSScriptRoot 'manifest-name.ps1') + "'`nSet-StrictMode -Off`n"
+    # #950 CLOSED THAT: `-Off` (half of production's preamble, a combination that exists nowhere)
+    # is gone, and the runner now reproduces the gate's WHOLE preamble, read out of `ci/gate.ps1`
+    # in the gate's own order by `Get-GateRunnerPreamble`. The earlier note here saying that was
+    # "worth doing and is not this change" described the state before that function existed.
+    $library = Get-PublisherRunnerPreamble
     $script = $library + $publisher + "`nPublish-RunManifest -ManifestPath '$ManifestPath' -HeadSha '$HeadSha' -PullRequest $pr -BranchRef '$branch'$contentArg$copiesArg" +
         "`nWrite-Output ('HEADMOVEDFLAG=' + [bool]`$script:headMovedDuringRun)`n"
+    # The bytes the subprocess is actually handed, kept so a cell can assert what environment the
+    # publisher ran under. Asserting the BUILDER instead would pass while the runner got something
+    # else.
+    $script:lastPublisherScript = $script
     [System.IO.File]::WriteAllText($runner, $script, $utf8NoBom)
     Push-Location $Repo
     try {
@@ -2081,6 +2201,163 @@ try {
     try{$null=& $native -Program powershell.exe -Root $repo -Arguments @('-NoProfile','-Command','exit 0') -TimeoutMilliseconds 0}catch{$refused=$true}
     Assert-True $refused 'zero budget refuses native admission'
 }
+Write-Host ''
+Write-Host '#950: the extracted publisher runs under the environment the gate gives it' -ForegroundColor Cyan
+{
+    # Not a fresh construction: the bytes the LAST publisher subprocess of this run was handed. A
+    # builder asserted on its own is a claim about a function nobody has to call.
+    $seen = [string]$script:lastPublisherScript
+    if (-not $seen) {
+        Write-Host 'HARNESS-BROKE: no publisher runner script was captured; the cells above did not run.' -ForegroundColor Magenta
+        exit 2
+    }
+    foreach ($line in $runnerPreambleLines) {
+        Assert-True ($seen.Contains($line)) "the runner carries the gate's own statement: $line"
+    }
+}.Invoke() | Out-Null
+
+Write-Host ''
+Write-Host '#950/#1169: the derived preamble carries EVERY strictness-setting import, not just the first' -ForegroundColor Cyan
+{
+    # THE HOLE THIS CLOSES, reproduced before it was closed. This preamble used to reproduce one
+    # hard-coded import, `ci/manifest-name.ps1`. `ci/gate.ps1` dot-sources a SECOND library that
+    # also sets `Set-StrictMode -Version Latest` in the caller's scope, `ci/crate-input-hash.ps1`,
+    # and it is dot-sourced LAST, so it is the one that decides what `Publish-RunManifest` runs
+    # under. Mutating that file from `Latest` to `2.0` -- a change to production -- left this
+    # suite at 207/207 passed, exit 0, nothing red.
+    #
+    # Asserted by NAME. Re-running the subject's own discovery loop here would produce a cell that
+    # cannot disagree with the subject.
+    $derived = @(Get-GateRunnerPreamble -GateText $gateText -CiRoot $PSScriptRoot)
+    $setsStrictness = @('manifest-name.ps1', 'crate-input-hash.ps1')
+    # THE DECOY. `run-class.ps1` is dot-sourced at column zero and sets NO strictness. Without it
+    # this cell would pass just as well for a subject that reproduced every dot-source
+    # indiscriminately -- a different program, one that drags libraries this preamble does not
+    # need into the fixture runner.
+    $setsNothing = @('run-class.ps1')
+
+    # The repository IS the fixture here, so assert the fixture before the subject: if one of these
+    # files changes which side it is on, this cell must SAY that, not fail as though the subject
+    # had regressed.
+    $fixtureOk = $true
+    foreach ($group in @(@{ names = $setsStrictness; want = $true }, @{ names = $setsNothing; want = $false })) {
+        foreach ($name in $group.names) {
+            $libPath = Join-Path $PSScriptRoot $name
+            if (-not (Test-Path -LiteralPath $libPath)) {
+                Write-Host "HARNESS-BROKE: ci/$name, which this cell classifies, is not in ci/" -ForegroundColor Magenta
+                $fixtureOk = $false
+                continue
+            }
+            $has = @((([System.IO.File]::ReadAllText($libPath)) -split "`r?`n") |
+                Where-Object { $_ -cmatch '^Set-StrictMode -Version \S+$' }).Count -ge 1
+            if ($has -ne $group.want) {
+                Write-Host "HARNESS-BROKE: ci/$name sets column-zero Set-StrictMode = $has; this cell assumed $($group.want)" -ForegroundColor Magenta
+                $fixtureOk = $false
+            }
+        }
+    }
+    # And the decoy has to actually BE dot-sourced, or it is not a decoy -- just an unrelated file
+    # nobody would have expected in the preamble.
+    foreach ($name in ($setsStrictness + $setsNothing)) {
+        $dot = ". (Join-Path `$PSScriptRoot '$name')"
+        if (-not (@($gateText -split "`r?`n") -ccontains $dot)) {
+            Write-Host "HARNESS-BROKE: ci/gate.ps1 no longer dot-sources $name at column zero" -ForegroundColor Magenta
+            $fixtureOk = $false
+        }
+    }
+    if (-not $fixtureOk) { exit 2 }
+
+    foreach ($name in $setsStrictness) {
+        $expected = ". (Join-Path '$PSScriptRoot' '$name')"
+        Assert-True ($derived -ccontains $expected) "the derived preamble reproduces the strictness-setting import ci/$name (production's strictness is decided by the LAST such import, not the first)"
+    }
+    foreach ($name in $setsNothing) {
+        $expected = ". (Join-Path '$PSScriptRoot' '$name')"
+        Assert-True (-not ($derived -ccontains $expected)) "the derived preamble does NOT reproduce ci/$name, which sets no strictness"
+    }
+}.Invoke() | Out-Null
+
+Write-Host ''
+Write-Host '#950: the preamble observer reads ci/gate.ps1 in SOURCE ORDER and refuses an ambiguous read' -ForegroundColor Cyan
+{
+    # A read-only mutation of the source -- moving the only `Set-StrictMode` to immediately before
+    # `headMovedDuringRun`, after every import -- changes what production does: the library's
+    # `Latest` would now be overridden by the gate's `2.0`. A builder that emits the four statements in an order of its
+    # own answers byte-identically to that mutation, so the harness would go on running under a
+    # strictness the gate no longer has. These cells measure the ORDER, not just the membership,
+    # and they measure the refusal when the read is not unambiguous.
+    $gateLines = $gateText -split "`r?`n"
+    # Named here, not recomputed by the subject's own discovery loop: a cell that re-derived
+    # membership the way the subject derives it would agree with the subject however wrong both
+    # were. The names are guarded against the repository by the cell above.
+    $importPattern = "^\. \(Join-Path \`$PSScriptRoot '(manifest-name|crate-input-hash)\.ps1'\)$"
+    $isPreamble = {
+        param([string] $Line)
+        ($Line -cmatch '^Set-StrictMode -Version \S+$') -or
+        ($Line -cmatch "^\`$ErrorActionPreference = '\w+'$") -or
+        ($Line -cmatch $importPattern) -or
+        ($Line -cmatch "^\`$script:headMovedDuringRun = \`$(true|false)$")
+    }
+    # The dot-source is the one statement the builder is allowed to rewrite (the fixture runner's
+    # `$PSScriptRoot` is not `ci/`). Expectation applies the same substitution, so the comparison
+    # is about ORDER and nothing else.
+    $expectFrom = {
+        param([string[]] $Lines)
+        @($Lines | ForEach-Object {
+            if ($_ -cmatch $importPattern) {
+                $_.Replace('$PSScriptRoot', "'" + $PSScriptRoot + "'")
+            } else { $_ }
+        })
+    }
+
+    $unchanged = Get-GateRunnerPreamble -GateText $gateText -CiRoot $PSScriptRoot
+    $wantUnchanged = & $expectFrom @($gateLines | Where-Object { & $isPreamble $_ })
+    Assert-True ($null -ne $unchanged -and ((($unchanged) -join "`n") -ceq (($wantUnchanged) -join "`n"))) 'the unmutated gate is read in the order its own lines appear'
+
+    $strictLine = @($gateLines | Where-Object { $_ -cmatch '^Set-StrictMode -Version \S+$' })[0]
+    $dotLine = @($gateLines | Where-Object { $_ -cmatch "^\. \(Join-Path \`$PSScriptRoot 'manifest-name\.ps1'\)$" })[0]
+    $eapLine = @($gateLines | Where-Object { $_ -cmatch "^\`$ErrorActionPreference = '\w+'$" })[0]
+    $movedLine = @($gateLines | Where-Object { $_ -cmatch "^\`$script:headMovedDuringRun = \`$(true|false)$" })[0]
+
+    # THE REGRESSION. Legal PowerShell, a different program: strictness now lands after every
+    # import, so it overrides the library's `Latest` in this scope.
+    $reordered = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in $gateLines) {
+        if ($line -ceq $strictLine) { continue }
+        $reordered.Add($line)
+        if ($line -ceq $movedLine) { $reordered.Add($strictLine) }
+    }
+    $reorderedLines = @($reordered.ToArray())
+    $gotReordered = Get-GateRunnerPreamble -GateText ($reorderedLines -join "`n") -CiRoot $PSScriptRoot
+    $wantReordered = & $expectFrom @($reorderedLines | Where-Object { & $isPreamble $_ })
+    Assert-True ($null -ne $gotReordered -and ((($gotReordered) -join "`n") -ceq (($wantReordered) -join "`n"))) 'a source whose only Set-StrictMode moves after the dot-source is read in THAT order, not a fixed one'
+
+    # Ambiguity, not tolerance: with two column-zero `Set-StrictMode` lines the gate runs under the
+    # LAST one, and a builder that silently takes the first would hand the runner the losing
+    # statement. There is no correct pick here, so there is no answer to return.
+    foreach ($dup in @(
+        @{ name = 'Set-StrictMode'; after = $strictLine; line = 'Set-StrictMode -Version Latest' },
+        @{ name = '$ErrorActionPreference'; after = $eapLine; line = "`$ErrorActionPreference = 'Continue'" }
+    )) {
+        $mutated = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($line in $gateLines) {
+            $mutated.Add($line)
+            if ($line -ceq $dup.after) { $mutated.Add($dup.line) }
+        }
+        $got = Get-GateRunnerPreamble -GateText (($mutated.ToArray()) -join "`n") -CiRoot $PSScriptRoot
+        Assert-True ($null -eq $got) ("a second column-zero " + $dup.name + " makes the read ambiguous and is refused")
+    }
+
+    foreach ($missing in @(
+        @{ name = 'the manifest-name dot-source'; line = $dotLine },
+        @{ name = '$script:headMovedDuringRun'; line = $movedLine }
+    )) {
+        $mutated = @($gateLines | Where-Object { -not ($_ -ceq $missing.line) })
+        $got = Get-GateRunnerPreamble -GateText ($mutated -join "`n") -CiRoot $PSScriptRoot
+        Assert-True ($null -eq $got) ("a source with no " + $missing.name + " at column zero is refused")
+    }
+}.Invoke() | Out-Null
+
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -74,7 +74,25 @@ $ErrorActionPreference = 'Stop'
 if (-not $QueueDirectory) { $QueueDirectory = 'D:\graphhelm-slot\queue' }
 if (-not $StateDirectory) { $StateDirectory = 'D:\graphhelm-slot\runner' }
 if (-not $BenchRoot) { $BenchRoot = if ($Slot -eq 'SSD') { 'D:\runner-ssd' } else { 'D:\runner-hdd' } }
-if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\ssd' } else { 'D:\runner-targets\hdd' } }
+# #1053 item 3: NEITHER SLOT BUILDS ON THE PLATTER ANY MORE. `D:` is a WDC WD20PURZ -- a
+# surveillance-class mechanical disk -- and it held one of the two gate targets. Measured over the
+# 370 records in .factory/gate-runs: runs whose `cargoTargetDir` was on `D:` median 1866 s (n=156)
+# against 1427 s on `E:` (n=183), and the per-stage split lands where it should, with compile-bound
+# stages roughly halving (clippy 52 -> 25 s, schema catalog 116 -> 61 s) while execution-bound
+# `workspace tests` barely moves (373 -> 366 s). Sampled live with two gates running: `D:` at
+# 1005 % disk time with a queue depth of 8, `E:` at 3.8 %, `C:` at 14.3 %.
+#
+# The slot is still NAMED 'HDD'. The name is the QUEUE's, not the spindle's, and renaming it would
+# move `GRAPHHELM_SLOT_DIR` and `$slotRoot` -- paths `.factory/tools/slot-claim.sh` and ci/gate.ps1
+# read -- for no gain. AGENTS.md says so in the same paragraph that records this change.
+#
+# `C:` IS THE SYSTEM DISK AND THAT IS NOT TAKEN LIGHTLY. AGENTS.md read "never a gate target" until
+# #1053, on the argument that a full `C:` takes the machine down. The argument stands; what changed
+# is that the floor now has a caller (`Get-TargetRootFloorGB`, 100 GB) instead of being prose --
+# and prose was not holding, because at the time this landed `C:` carried SEVENTEEN lane target
+# directories against a rule saying at most two. An enforced floor on one gate target is a stricter
+# regime than an unenforced rule on seventeen lane targets.
+if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\ssd' } else { 'C:\runner-targets\hdd' } }
 
 # THE RUNNER DOES NOT CLAIM. It sets the per-spindle slot paths and lets `ci/gate.ps1` claim through
 # its own `Enter-GateSlot` (`:1953`), which is the single arbiter since #892 and #905.
@@ -349,6 +367,144 @@ function Test-BenchIsRegistered {
     return $false
 }
 
+function Test-TargetBuildFinished {
+    <#
+    .SYNOPSIS
+        Did the last gate build in this target directory FINISH, so the next run may keep it?
+    .DESCRIPTION
+        #943 gave every run a cold target because the freshness instrument of the day was
+        TIMESTAMP-based: a reused binary predates the run that reuses it, so every warm target read
+        as stale and the runner -- which, unlike a human, cannot rename its way out -- hit it on
+        every re-run. Its CONTENT-based replacement landed on 2026-09-16 (#904/#1038, "a reused test
+        binary passes on content, never on cargo's fingerprint") and was extended on 2026-09-19
+        (#1007). The cold-target workaround outlived its cause by three days, and it is expensive:
+        across the 71 records in .factory/gate-runs carrying `buildPassSecs`, 67 read "no target
+        directory yet, so nothing is being reused" and the cold median is 565.7 s, against 65.459 s
+        for the one FULL run in that population that did reuse (324 artefacts proven, 1 rebuilt).
+
+        FAIL-CLOSED, AND CLOSED MEANS TODAY'S BEHAVIOUR. Only one answer preserves a directory: a
+        marker that exists, parses, and records `complete`. Absent, unreadable, unparseable, missing
+        the field, `building`, `unproven`, or any word this function does not know all answer
+        $false, and $false is the unconditional removal this repository has been doing since #943.
+        A new state added to the gate therefore costs a cold build until someone teaches this
+        function about it -- which is the safe direction for an instrument whose other direction is
+        "keep a target whose build died half-written".
+
+        WHY `unproven` IS NOT PRESERVED even though the gate does not abort on it. The gate treats
+        it as contaminated-but-not-suspect and proves or rebuilds each binary itself, so keeping the
+        directory would be sound. It is still removed here, because the predicate a cell can state
+        in one sentence -- "the last build finished AND vouched" -- is the one that stays true as
+        the state vocabulary grows.
+
+        WHAT THIS FUNCTION DELIBERATELY DOES NOT DO: decide whether the preserved target is SAFE to
+        build in. That is `Get-TargetBuildState` in ci/gate.ps1, which the gate calls before its
+        first compile and which aborts the run on `interrupted` and `concurrent` (#455). This
+        function only answers whether the runner should spend minutes deleting tens of gigabytes
+        first. The two must not be collapsed: this one runs in a different process, cannot see
+        gate.ps1's functions, and errs toward deleting; that one errs toward refusing to build.
+
+        The marker's name is repeated here rather than shared, for the reason ci/gate.ps1 gives for
+        repeating it between its own reader and writer: each function is lifted out of its file
+        alone by a suite. `ci/gate-runner.tests.ps1` reads the literal out of gate.ps1 and asserts
+        this file carries the same one, so the two copies cannot drift apart in silence.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $TargetDir)
+
+    if ([string]::IsNullOrWhiteSpace($TargetDir)) { return $false }
+    $markerPath = Join-Path $TargetDir '.graphhelm-build-state.json'
+    if (-not (Test-Path -LiteralPath $markerPath)) { return $false }
+
+    $marker = $null
+    try {
+        $marker = [System.IO.File]::ReadAllText($markerPath) | ConvertFrom-Json
+    } catch {
+        # A marker this runner cannot read is not a marker saying `complete`.
+        return $false
+    }
+    if ($null -eq $marker) { return $false }
+
+    # BY INDEX, never `$marker.state`. Under `Set-StrictMode` a dotted read of an absent property
+    # THROWS, and a throw here would kill the runner over a malformed file written by something
+    # else -- turning "delete this target" into "stop processing the queue".
+    $stateProperty = $marker.PSObject.Properties['state']
+    if ($null -eq $stateProperty) { return $false }
+    return [string]::Equals([string]$stateProperty.Value, 'complete', [System.StringComparison]::Ordinal)
+}
+
+function Get-TargetRootFloorGB {
+    <#
+    .SYNOPSIS
+        How much free space must remain on the disk holding this target root.
+    .DESCRIPTION
+        The numbers are AGENTS.md's own, not new ones: `C:` (the system disk) keeps 100 GB, every
+        other spindle keeps 30 GB. Until #1053 those floors were prose, and prose does not hold --
+        at the time this landed `C:` carried SEVENTEEN lane target directories against a rule that
+        says at most two. This is the same rule with a caller.
+
+        AN UNRECOGNISED ROOT GETS THE NON-ZERO FLOOR, never 0. A floor of 0 is "fill the disk",
+        which is the one outcome this function exists to prevent, and it must not be what an
+        unexpected path silently buys.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Path)
+
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and
+        $Path.TrimStart().StartsWith('C:', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return 100
+    }
+    return 30
+}
+
+function Get-TargetRootFreeGB {
+    <#
+    .SYNOPSIS
+        Free gigabytes on the drive holding this path, or $null when that cannot be answered.
+    .DESCRIPTION
+        $null IS A THIRD ANSWER AND EVERY CALLER MUST TREAT IT AS ONE. Returning 0 for "unknown"
+        would read as a full disk, and returning a large number would read as an empty one; both
+        are claims this function has not earned. The caller below turns $null into "do not keep the
+        target", which is the pre-#1053 behaviour and therefore the safe direction.
+    #>
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    try {
+        $qualifier = Split-Path -Qualifier $Path -ErrorAction Stop
+    } catch {
+        return $null
+    }
+    $name = $qualifier.TrimEnd(':')
+    $drive = Get-PSDrive -Name $name -PSProvider FileSystem -ErrorAction SilentlyContinue
+    # `Free` is $null on a provider that does not report it, and that is not zero either.
+    if ($null -eq $drive -or $null -eq $drive.Free) { return $null }
+    return [math]::Round(([double]$drive.Free) / 1GB, 2)
+}
+
+function Test-TargetShouldBeKept {
+    <#
+    .SYNOPSIS
+        Both halves of the keep decision: the last build finished AND the disk can afford to keep it.
+    .DESCRIPTION
+        #1053 stopped the runner deleting a target before every run, which is worth ~500 s on a
+        re-run. It also removed the only thing that bounded a target's size, because cargo never
+        collects stale artefacts: one target measured 23.1 GB across 68 364 files, and a pull
+        request re-run ten times would keep growing it. That bound is restored HERE rather than by
+        going back to the unconditional delete -- under disk pressure the preserved target is a
+        cache, and a cache gets evicted.
+
+        The two halves fail in the same direction on purpose: any doubt about either one deletes,
+        and deleting is exactly what this runner did before #1053.
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $TargetDir,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $TargetRoot
+    )
+
+    if (-not (Test-TargetBuildFinished -TargetDir $TargetDir)) { return $false }
+    $free = Get-TargetRootFreeGB -Path $TargetRoot
+    if ($null -eq $free) { return $false }
+    return ($free -ge (Get-TargetRootFloorGB -Path $TargetRoot))
+}
+
 function Invoke-OneEntry {
     param([Parameter(Mandatory)] $Candidate)
 
@@ -373,7 +529,9 @@ function Invoke-OneEntry {
     #
     # Measured on this machine, because `-LiteralPath` sounds like it forbids traversal and DOES NOT:
     #
-    #     pr = '\..\..\..'    Join-Path -> D:\runner-targets\hdd\pr\..\..\..   GetFullPath -> D:\
+    #     pr = '\..\..\..'    Join-Path -> C:\runner-targets\hdd\pr\..\..\..   GetFullPath -> C:\
+    #   Since #1053 item 3 that escape lands on the SYSTEM disk's root, so this refusal is more
+    #   load-bearing now, not less, than when the target sat on the platter.
     #     Remove-Item -LiteralPath <that> -Recurse -Force -WhatIf
     #         -> "Performing the operation "Remove Directory" on target "<the resolved parent>"
     #
@@ -477,11 +635,31 @@ function Invoke-OneEntry {
     # a target warmer than nothing, and the honest thing is to say so and let the gate speak: a red
     # carrying this note in its log is diagnosable, whereas failing the entry here would trade a
     # wasted run for no run at all.
+    # #1053: THE REMOVAL IS NOW CONDITIONAL, and the condition is the marker the gate itself writes.
+    # See Test-TargetBuildFinished above for why #943's unconditional form outlived its cause, and
+    # for why every answer except a parsed `complete` still removes. Measured: cold build passes
+    # median 565.7 s over 68 runs; the one FULL run in the population that reused read 65.459 s.
     if (Test-Path -LiteralPath $target) {
-        Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target (#943: a re-run must be cold)"
-        Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $target) {
-            Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+        if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
+            Write-Note "entry $($Candidate.File.Name): keeping $target -- its last build finished and vouched, so the gate proves each binary on content (#1053, #904)"
+        } elseif (Test-TargetBuildFinished -TargetDir $target) {
+            # THE REASON IS NAMED, because these two deletions want different responses: a target
+            # dropped for space says the disk needs attention, and a target dropped for provenance
+            # says the previous run died. Collapsing them into one line would hide the first behind
+            # the second, which is the one a reader already expects to see.
+            $freeNote = Get-TargetRootFreeGB -Path $TargetRoot
+            $freeText = if ($null -eq $freeNote) { 'unknown' } else { "$freeNote GB" }
+            Write-Note "entry $($Candidate.File.Name): removing $target -- its last build DID finish, but $TargetRoot has $freeText free against a floor of $(Get-TargetRootFloorGB -Path $TargetRoot) GB, so the reuse is evicted rather than grown (#1053)"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+            }
+        } else {
+            Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target (#943: the last build did not finish and vouch, so this run must be cold)"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+            }
         }
     }
 

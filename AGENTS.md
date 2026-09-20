@@ -75,14 +75,25 @@ C locale cannot reveal collation-dependent ordering defects. `-SkipPostgres` exi
 cannot touch persistence; a run using it is not a full gate and must be reported as such. The slot
 lock (`SLOT.lock`) exists for a **shared** `CARGO_TARGET_DIR`; with an isolated target directory
 per lane there is nothing to contaminate — but `D:` is one platter and five concurrent gates stalled the
-machine (measured 2026-09-05), so the ceiling is **one gate on the HDD plus one on the SSD** (`E:\_agent-scratch\graphhelm\<lane>\target`
-while `E:` keeps >30 GB free — `Get-PSDrive E` first); `C:` (the system SSD) may hold ONE build or review
-target per lane, at most TWO on the board, only while ≥ 100 GB stay free, removed by its creator, never a gate
-target — a full `C:` takes the machine down, so the floor is the rule; and never `F:` (the repository disk,
-15 GB free). The long form is `.factory/MERGE-CHECKLIST.md` item 2. Before launching, count LAUNCHES, not cargos — one
+machine (measured 2026-09-05), so the ceiling is still **two concurrent gates, no more**. **Since #1053 item 3
+neither of the two QUEUED gate slots targets `D:` at all** (`ci/gate-runner.ps1` defaults: SSD slot
+`E:\runner-targets\ssd`, HDD slot `C:\runner-targets\hdd` — the slot is still *named* HDD because the name is
+the queue's, not the spindle's, and renaming it would move `GRAPHHELM_SLOT_DIR` and `$slotRoot` for no gain).
+Why: over the 370 records in `.factory/gate-runs`, runs targeting `D:` median **1866 s** (n=156) against
+**1427 s** on `E:` (n=183), and a live two-gate sample read `D:` at **1005 % disk time, queue depth 8** while
+`E:` sat at 3.8 % and `C:` at 14.3 %. `D:` is a WDC WD20PURZ, a surveillance-class platter. A hand-run gate
+still uses `E:\_agent-scratch\graphhelm\<lane>\target` while `E:` keeps >30 GB free — `Get-PSDrive E` first.
+`C:` (the system SSD) may hold ONE build or review target per lane, at most TWO on the board, plus **the one
+queued gate target named above**, only while ≥ 100 GB stay free, removed by its creator — a full `C:` takes the
+machine down, so the floor is the rule. That floor is no longer only prose: `Get-TargetRootFloorGB` enforces
+100 GB for `C:` and 30 GB elsewhere, and `Test-TargetShouldBeKept` **evicts** the preserved target rather than
+growing a disk under its floor, which is what bounds the reuse #1053 item 1 introduced (cargo never collects
+stale artefacts; one target measured 23.1 GB across 68 364 files). The prose alone was not holding — when item 3
+landed, `C:` carried seventeen lane target directories against this rule's "at most two". Never `F:` (the
+repository disk). The long form is `.factory/MERGE-CHECKLIST.md` item 2. Before launching, count LAUNCHES, not cargos — one
 gate is 2–9 cargo processes: live `powershell.exe` launching `ci/gate.ps1` (by `-File` or by `-Command … &`;
 the regex in `.factory/MERGE-CHECKLIST.md`, tested against real command lines) with at least one descendant;
-at most one other live gate, on the other spindle. **Proof of life is the log GROWING** — monotone,
+at most one other live gate (since #1053 item 3 both queued slots target SSDs, so the ceiling is CPU and RAM, not the spindle). **Proof of life is the log GROWING** — monotone,
 so it is the primary positive signal; descendant count and descendant CPU are weaker, because children
 die and leave the sum (70.1 s → 6.1 s in 15 s, measured), and a healthy gate sits 45 s flat between
 stages. **Wedged is never a 30 s reading: require ≥ 5 min with log size, descendant count and descendant
@@ -186,9 +197,18 @@ only other way it could have happened. The rule now:
   and `C:\<lane>-targets` allowances keep their conditions but move under the same shape:
   `<drive>\_agent-scratch\graphhelm\<lane>\...`. The queued runner's managed roots are the one
   exemption (Codex on #1068): `ci/gate-runner.ps1` takes `-BenchRoot`/`-TargetRoot` (defaults
-  `D:\runner-ssd|hdd`, `E:\runner-targets\ssd`, `D:\runner-targets\hdd`; the board runs it with
+  `D:\runner-ssd|hdd`, `E:\runner-targets\ssd`, `C:\runner-targets\hdd` since #1053 item 3; the board runs it with
   `D:\orch-runner-benches-ssd` and `E:\orch-runner-targets`), creates `<TargetRoot>\pr<N>` per pull
-  request and removes the previous run's target of the same PR before a re-run; whoever presses the
+  request and, **since #1053, removes the previous run's target only when its last build did not
+  finish and vouch** — `Test-TargetBuildFinished` reads the `.graphhelm-build-state.json` marker the
+  gate itself writes and keeps the directory only on a parsed `complete`; every other answer
+  (absent, unreadable, unparseable, `building`, `unproven`, a word it does not know) still deletes,
+  which is #943's unconditional behaviour. #943 existed for a TIMESTAMP-based freshness instrument
+  that #904/#1038 replaced with a content-based one on 2026-09-16; the reuse is safe because the
+  gate still calls `Get-TargetBuildState` before its first compile and aborts on `interrupted` or
+  `concurrent` (#455), and still proves every reused binary on content. Measured over the 71 records
+  carrying `buildPassSecs`: cold median 565.7 s against 65.459 s for the one FULL run that reused.
+  Whoever presses the
   merge removes `<TargetRoot>\pr<N>` afterwards (measured 2026-09-15: four gates filled `E:` to
   11 GB and the fifth went RED with `os error 112`). A hand-run gate bench (`.factory/lane-loop.md`
   section 1, `E:/<lane>-<n>`) is a short-lived bench on the SSD for the same reason and is removed

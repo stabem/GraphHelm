@@ -36,7 +36,24 @@
 #   1  THE FAILURE MODE IS A FAILURE: with the exclusion removed, the run EXITS rather than spins
 #   1  and it exits 3, the code that says the skip list stopped excluding
 #   1  #943 arrangement: the target assignment and the launch are both found, in order
-#   1  the target is removed between them          1  and the runner says so in the log
+#   1  #1053: the removal is guarded by Test-TargetBuildFinished   1  and the removal still exists
+#   1  and the removal sits in the guard's ELSE branch             1  and the runner says so in the log
+#   1  #1053 arrangement: Test-TargetBuildFinished is locatable, so the cells below drive the real one
+#   1  the runner names the same marker file gate.ps1 does (no silent drift into a permanent cold build)
+#   1  `complete` is KEPT        1  `building` in the same directory is removed
+#   1  `unproven` is removed     1  an unknown state word is removed
+#   1  a marker with no `state` field is removed   1  a marker that does not parse is removed
+#   1  a directory with build output and no marker is removed (the pre-#1053 state of every target)
+#   1  #1053 item 3 arrangement: the floor, the free probe and the keep decision are all locatable
+#   1  the system disk keeps a 100 GB floor   1  a non-system spindle keeps 30 GB
+#   1  an unrecognised root still gets a non-zero floor (never "fill the disk")
+#   1  the free probe answers a positive number for a real path
+#   1  a non-existent drive answers $null -- a third state, neither 0 nor a number
+#   1  a finished target with room is KEPT
+#   1  the SAME target is EVICTED under the floor (the bound item 1 removed, restored)
+#   1  unreadable free space is treated as no headroom
+#   1  an unfinished build is removed even with room to spare (the provenance half still governs)
+#   1  NEITHER slot defaults to a target on D:   1  CONTROL: the SSD slot still defaults to E:
 #   1  a traversing `pr` is refused as malformed    1  and the directory it aimed at survives
 #   1  CONTROL: the runner clone has no tracking config for the branch (#902 upstream cell)
 #   1  the bench is prepared, not dropped     1  it sits at the entry head
@@ -62,7 +79,7 @@
 #   1  CONTROL: the abbreviation really is remotes/origin/<branch>     1  the full symbolic name has one spelling
 #   1  CONTROL: .git/config is locked     1  a failed config write stalls, naming the upstream     1  and the bench is removed
 #   1  CONTROL: the log names both heads     1  two live passes are picked before twenty verdict-less objects (#1133)
-$ExpectedAssertionCount = 77
+$ExpectedAssertionCount = 100
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -520,14 +537,166 @@ exit /b %ERRORLEVEL%
 
     $beforeLaunch = if ($anchorsFound) { $runnerText.Substring($assignAt, $launchAt - $assignAt) } else { '' }
 
+    # #1053 REWROTE THIS CELL, AND THE REWRITE IS THE POINT. It used to read "the previous run's
+    # target is REMOVED ... so a re-run is cold", which certified the unconditional delete. That
+    # delete was #943's workaround for a TIMESTAMP-based freshness instrument, replaced on
+    # 2026-09-16 by the content-based one (#904/#1038, extended #1007) -- so the sentence this cell
+    # was asserting had become false about the repository's own intent, while the cell stayed green.
+    # A cell whose message survives the change it was written to detect is a cell asserting the
+    # defect; the claim is now the CONDITION, and the delete's continued existence is its sibling.
+    Assert-True -Condition ($beforeLaunch -match 'Test-TargetBuildFinished -TargetDir \$target') `
+        -Message 'the removal is GUARDED by Test-TargetBuildFinished, so a target whose last build finished and vouched survives into the next run of the same pull request (#1053)'
+
     Assert-True -Condition ($beforeLaunch -match 'Remove-Item[^\r\n]*\$target') `
-        -Message 'the previous run''s target is REMOVED between its allocation and the gate launch, so a re-run of the same pull request is cold (#943)'
+        -Message 'and the removal itself is still there, so every other state -- unfinished, unvouched, unreadable, unknown -- is still deleted (#943)'
+
+    # THE DELETE IS ON THE NEGATIVE BRANCH, stated as CONTAINMENT rather than as two offsets: the
+    # region could hold the guard and the delete as independent statements and satisfy a pair of
+    # `-match` cells while deleting unconditionally. What cannot be satisfied that way is the
+    # delete sitting inside the `else` of the guard.
+    Assert-True -Condition ($beforeLaunch -match '(?s)Test-TargetBuildFinished -TargetDir \$target.*?\}\s*else\s*\{.*?Remove-Item[^\r\n]*\$target') `
+        -Message 'and it sits in the guard''s ELSE branch, so the two cells above cannot both pass on a runner that deletes whatever the guard answered'
 
     # AND IT SAYS SO IN THE LOG. Deleting tens of gigabytes takes minutes on the HDD, and a runner
     # that goes quiet for minutes with no line explaining why is indistinguishable from a wedged one
     # -- which is exactly the reading the liveness watchdog below is built to avoid making.
     Assert-True -Condition ($beforeLaunch -match 'Write-Note[^\r\n]*943') `
         -Message 'and the runner records that it did it, naming the issue, so a quiet minute in the log is explained rather than suspicious'
+
+    # ---------------------------------------------------------------------------------------------
+    # #1053: THE GUARD ITSELF, DRIVEN ON REAL DIRECTORIES.
+    #
+    # The cells above are source claims about WIRING; these are behaviour. The danger is the same
+    # shape as Test-BenchIsRegistered's below: a predicate that answered $true for everything would
+    # keep a half-written target and hand the next gate cargo fingerprints claiming freshness for
+    # binaries whose source has moved -- #455's defect, re-armed by the thing meant to speed it up.
+    # So every cell but the first asserts $false, and the first one exists to prove the predicate
+    # can answer $true at all.
+    $stateMatch = [regex]::Match($runnerText, '(?ms)^function Test-TargetBuildFinished \{.*?^\}')
+    Assert-True -Condition $stateMatch.Success `
+        -Message 'ARRANGEMENT: Test-TargetBuildFinished is locatable in gate-runner.ps1, so the cells below drive the real one and not a copy'
+    . ([scriptblock]::Create($stateMatch.Value))
+
+    # THE NAME OF THE MARKER IS READ OUT OF gate.ps1, NOT RETYPED HERE. The runner repeats the
+    # literal because it cannot call the gate's reader, and two copies of a filename drift in
+    # silence: a rename in gate.ps1 alone would make the runner answer $false forever -- safe, but a
+    # permanent cold build nobody would think to look for. This is the round-trip that holds them
+    # together, and it is why the fixtures below write the name this cell just read.
+    $gateTextForMarker = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'gate.ps1'))
+    $markerNameMatch = [regex]::Match($gateTextForMarker, '(?m)^\s*\$markerName = ''([^'']+)''')
+    $runnerUsesSameName = ($markerNameMatch.Success -and
+        $runnerText.IndexOf("'$($markerNameMatch.Groups[1].Value)'", [System.StringComparison]::Ordinal) -ge 0)
+    Assert-True -Condition $runnerUsesSameName `
+        -Message "the runner names the same build-state marker gate.ps1 does ('$(if ($markerNameMatch.Success) { $markerNameMatch.Groups[1].Value } else { 'UNREADABLE' })'), so the two copies of the filename cannot drift into a permanent cold build"
+
+    $markerName = if ($markerNameMatch.Success) { $markerNameMatch.Groups[1].Value } else { '.graphhelm-build-state.json' }
+    $stateDir = Join-Path $root 'targetstate'
+    $null = New-Item -ItemType Directory -Path $stateDir -Force
+    # A file that is not the marker, so "the directory holds build output" is true for every cell
+    # below and the answers differ only by the marker's content.
+    [System.IO.File]::WriteAllText((Join-Path $stateDir 'libthing.rlib'), 'not empty')
+    $markerPath = Join-Path $stateDir $markerName
+    function Set-Marker { param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Content)
+        [System.IO.File]::WriteAllText($markerPath, $Content)
+    }
+
+    Set-Marker -Content '{"state":"complete","processId":4242,"head":"abc","startedUtc":"2026-09-19T00:00:00.0000000Z"}'
+    Assert-True -Condition (Test-TargetBuildFinished -TargetDir $stateDir) `
+        -Message 'a target whose marker says `complete` is KEPT -- the one answer that preserves, and the reason this change exists'
+
+    # SAME DIRECTORY, ONE WORD CHANGED. Flipping only the state isolates the property: a cell using
+    # a fresh directory per case would also be measuring the fixture.
+    Set-Marker -Content '{"state":"building","processId":4242,"head":"abc","startedUtc":"2026-09-19T00:00:00.0000000Z"}'
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message 'the SAME directory with only the state word changed to `building` is removed, so the answer tracks the marker and not the fixture'
+
+    Set-Marker -Content '{"state":"unproven","processId":4242,"head":"abc","startedUtc":"2026-09-19T00:00:00.0000000Z"}'
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message '`unproven` -- a pass that finished but could not vouch for every binary -- is removed, because the predicate is "finished AND vouched"'
+
+    Set-Marker -Content '{"state":"aNewStateFromANewerGate","processId":4242,"head":"abc"}'
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message 'a state word this runner does not know is removed, so a vocabulary added to gate.ps1 costs a cold build rather than preserving a target nobody here can judge'
+
+    Set-Marker -Content '{"processId":4242,"head":"abc"}'
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message 'a marker with no `state` field at all is removed, and reading it by index rather than by dot means StrictMode does not kill the runner over someone else''s file'
+
+    Set-Marker -Content '{"state":"complete", this is not json'
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message 'a marker that does not parse is removed even though the bytes `complete` are in it, so the answer comes from a parsed field and not from a substring'
+
+    Remove-Item -LiteralPath $markerPath -Force
+    Assert-True -Condition (-not (Test-TargetBuildFinished -TargetDir $stateDir)) `
+        -Message 'a directory holding build output with NO marker is removed -- the pre-#1053 state of every target on this machine, and the answer that keeps this change fail-closed'
+
+    # ---------------------------------------------------------------------------------------------
+    # #1053 item 3: the gate targets come off the mechanical disk, and the preserved target gains
+    # the size bound that item 1 removed.
+    #
+    # Measured before this change: gate runs whose `cargoTargetDir` was on D: median 1866 s (n=156)
+    # against 1427 s on E: (n=183), and a live sample with two gates running read D: at 1005 %
+    # disk time with a queue depth of 8 while E: sat at 3.8 % and C: at 14.3 %. D: is a WDC
+    # WD20PURZ -- a surveillance-class platter -- and it held one of the two gate slots.
+    #
+    # Moving a gate target onto C:, the SYSTEM disk, is only defensible with an enforced floor,
+    # and it is doubly so now that item 1 preserves targets: cargo never collects stale artefacts,
+    # so a preserved target grows without bound. These cells are that floor's only proof.
+    $floorMatch = [regex]::Match($runnerText, '(?ms)^function Get-TargetRootFloorGB \{.*?^\}')
+    $freeMatch = [regex]::Match($runnerText, '(?ms)^function Get-TargetRootFreeGB \{.*?^\}')
+    $keepMatch = [regex]::Match($runnerText, '(?ms)^function Test-TargetShouldBeKept \{.*?^\}')
+    Assert-True -Condition ($floorMatch.Success -and $freeMatch.Success -and $keepMatch.Success) `
+        -Message 'ARRANGEMENT: the floor, the free-space probe and the keep decision are all locatable in gate-runner.ps1, so the cells below drive the real ones'
+    . ([scriptblock]::Create($floorMatch.Value))
+    . ([scriptblock]::Create($freeMatch.Value))
+    . ([scriptblock]::Create($keepMatch.Value))
+
+    Assert-True -Condition ((Get-TargetRootFloorGB -Path 'C:\runner-targets\hdd') -eq 100) `
+        -Message 'the system disk keeps a 100 GB floor, which is AGENTS.md''s own number and the reason a gate target may live there at all'
+    Assert-True -Condition ((Get-TargetRootFloorGB -Path 'E:\runner-targets\ssd') -eq 30) `
+        -Message 'a non-system spindle keeps 30 GB, so the cell above is about C: and not about every path'
+    # A FLOOR OF 0 IS "FILL THE DISK". An unrecognised root must not silently buy it.
+    Assert-True -Condition ((Get-TargetRootFloorGB -Path '') -eq 30) `
+        -Message 'an unrecognised or empty root still gets a non-zero floor, so an unexpected path cannot buy permission to fill a disk'
+
+    Assert-True -Condition ((Get-TargetRootFreeGB -Path $root) -gt 0) `
+        -Message 'the free-space probe answers a positive number for a path that really exists, so the cells below are not passing on a probe that answers nothing'
+    # UNKNOWN IS NOT ZERO AND NOT INFINITY. Both of those are claims the probe has not earned.
+    Assert-True -Condition ($null -eq (Get-TargetRootFreeGB -Path 'Q:\no\such\drive')) `
+        -Message 'a path on a drive that does not exist answers $null -- a third state -- rather than 0, which would read as a full disk, or a number, which would read as an empty one'
+
+    # THE PROBE IS OVERRIDDEN so disk pressure can be staged; the same shape this suite already uses
+    # for `Invoke-External` when it drives Test-BenchIsRegistered.
+    $script:fakeFreeGB = 500.0
+    function Get-TargetRootFreeGB { param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Path) return $script:fakeFreeGB }
+
+    Set-Marker -Content '{"state":"complete","processId":4242,"head":"abc"}'
+    $script:fakeFreeGB = 500.0
+    Assert-True -Condition (Test-TargetShouldBeKept -TargetDir $stateDir -TargetRoot 'C:\runner-targets\hdd') `
+        -Message 'a finished target on a disk with 500 GB free against a 100 GB floor is KEPT -- both halves satisfied'
+
+    # THE NEW PROPERTY, and the one that makes a gate target on the system disk defensible.
+    $script:fakeFreeGB = 50.0
+    Assert-True -Condition (-not (Test-TargetShouldBeKept -TargetDir $stateDir -TargetRoot 'C:\runner-targets\hdd')) `
+        -Message 'the SAME finished target is EVICTED when the disk is under its floor, so item 1''s preserved target cannot grow a system disk into the ground'
+
+    $script:fakeFreeGB = $null
+    Assert-True -Condition (-not (Test-TargetShouldBeKept -TargetDir $stateDir -TargetRoot 'C:\runner-targets\hdd')) `
+        -Message 'a disk whose free space cannot be read is treated as no headroom, so an unanswerable question deletes rather than keeps'
+
+    # AND THE PROVENANCE HALF STILL GOVERNS ON ITS OWN: all the space in the world does not save a
+    # target whose build never finished.
+    Set-Marker -Content '{"state":"building","processId":4242,"head":"abc"}'
+    $script:fakeFreeGB = 500.0
+    Assert-True -Condition (-not (Test-TargetShouldBeKept -TargetDir $stateDir -TargetRoot 'C:\runner-targets\hdd')) `
+        -Message 'an unfinished build is still removed on a disk with room to spare, so the space half did not quietly replace the provenance half'
+
+    # THE DEFAULTS THEMSELVES -- the whole of item 3, stated where a reader of this suite sees it.
+    $rootLine = @(($runnerText -split "`r?`n") | Where-Object { $_ -match '\$TargetRoot = if \(\$Slot -eq' })
+    Assert-True -Condition ($rootLine.Count -eq 1 -and $rootLine[0] -notmatch "'D:") `
+        -Message 'NEITHER gate slot defaults to a target on D: -- the WD20PURZ platter that measured 1005 % disk time with a queue of 8 while both SSDs idled'
+    Assert-True -Condition ($rootLine.Count -eq 1 -and $rootLine[0] -match "'E:\\runner-targets\\ssd'") `
+        -Message 'CONTROL: the SSD slot still defaults to E:, so the cell above is about moving the OTHER slot and not about the line having been emptied'
 
 
     # ---------------------------------------------------------------------------------------------
@@ -540,7 +709,7 @@ exit /b %ERRORLEVEL%
     # WHY IT IS WORTH A CELL AT ALL. `$pr` is interpolated into a path that is then removed
     # recursively and forcibly, and `-LiteralPath` does NOT forbid traversal. Measured:
     #
-    #   pr = '\..\..\..'   Join-Path 'D:\runner-targets\hdd' -> D:\runner-targets\hdd\pr\..\..\..
+    #   pr = '\..\..\..'   Join-Path 'C:\runner-targets\hdd' -> C:\runner-targets\hdd\pr\..\..\..
     #                      GetFullPath                       -> D:\
     #   Remove-Item -LiteralPath <a traversing path> -Recurse -Force -WhatIf
     #                      -> "Remove Directory" on the RESOLVED parent, not on the literal text

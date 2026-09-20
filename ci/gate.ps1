@@ -122,6 +122,20 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 # callers use isolated fresh targets to prevent cross-lane contamination, and the run manifest
 # records the chosen path. This precondition prevents the silent worktree-local DEFAULT caused by
 # an unset variable; it does not replace the runner's target allocation policy with a path regex.
+# #1053 item 4: INCREMENTAL IS OFF FOR THE GATE, AND ONLY FOR THE GATE.
+#
+# Incremental compilation buys a second build of a tree that CHANGED. This gate builds a tree that
+# will not change again -- one pass, then the run ends -- so every incremental artefact it writes is
+# work done for a reuse that never comes, plus a large number of small files on a disk the target
+# inventory already measures at 23.1 GB and 68 364 files. Set HERE and not in `.cargo/config.toml`,
+# so a developer's interactive edit loop keeps the setting it genuinely benefits from. The linker
+# choice goes the other way and lives in `.cargo/config.toml`; that file says why.
+#
+# BEFORE THE FIRST CARGO CALL, which is the canary far below. A value set after it would leave the
+# canary -- the one stage that decides whether this build environment can be trusted at all --
+# compiled under a different configuration than everything it vouches for.
+$env:CARGO_INCREMENTAL = '0'
+
 $actualTargetDir = $env:CARGO_TARGET_DIR
 if ([string]::IsNullOrWhiteSpace($actualTargetDir)) {
     Write-Host '[gate] REFUSED: CARGO_TARGET_DIR is unset or blank.' -ForegroundColor Red
@@ -5238,15 +5252,38 @@ try {
         } | Out-Null
     }
 
+    # `--profile test` ON ALL THREE, AND IT IS A BUILD FLAG, NOT A TEST ONE (#1053).
+    #
+    # `cargo run` builds under the DEV profile. `Cargo.toml` declares `[profile.test] debug = 1`
+    # against dev's default `debug = 2`, and a differing `-C debuginfo` is a different compiled unit
+    # to cargo -- so these three stages, running immediately after a `cli:` loop that just built this
+    # crate's entire dependency chain under the TEST profile, recompiled all of it to change one
+    # debuginfo level.
+    #
+    # THE MEASUREMENT THAT NAMES IT A BUILD, from the 370 records in .factory/gate-runs: `schema
+    # catalog` n=358, p10 51.7 s, median 73.2 s, p90 153.3 s -- while the two stages below it, which
+    # reuse the binary it just built, cost 0.7 s and 0.5 s. One program answering three questions
+    # cannot be a hundred times slower on the first for any reason but compiling.
+    #
+    # WHAT IT DOES NOT CHANGE: feature resolution, opt-level, debug-assertions, overflow-checks and
+    # panic are identical between the two profiles here; the flag moves exactly `-C debuginfo`.
+    # That equality is the whole licence for this flag, and it is not left to this comment --
+    # `ci/schema-stage-profile.tests.ps1` fails if `[profile.test]` ever carries a key other than
+    # `debug`, naming it, because on that day these three stages would be running a DIFFERENT
+    # program than the one the gate tested and the flag must come back out.
+    #
+    # NOT FIXED BY `[profile.dev] debug = 1` INSTEAD. That would also collapse the two units, and it
+    # would silently degrade the debuginfo every developer gets from a plain `cargo build` in order
+    # to solve a gate-only problem. The flag puts the coupling where a reader of the stage sees it.
     Invoke-Stage 'schema catalog' {
-        cargo $toolchain run --locked -q -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
+        cargo $toolchain run --profile test --locked -q -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
     } | Out-Null
     Invoke-Stage 'schema baseline compatibility' {
-        cargo $toolchain run --locked -q -p graphhelm-cli -- schema check `
+        cargo $toolchain run --profile test --locked -q -p graphhelm-cli -- schema check `
             --baseline schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json
     } | Out-Null
     Invoke-Stage 'schema conformance' {
-        cargo $toolchain run --locked -q -p graphhelm-cli -- schema conformance `
+        cargo $toolchain run --profile test --locked -q -p graphhelm-cli -- schema conformance `
             --catalog schemas/catalog.json --fixtures conformance/manifest.json
     } | Out-Null
     Invoke-Stage 'locked metadata' {

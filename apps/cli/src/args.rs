@@ -11,6 +11,10 @@ use clap::{Args, Parser, Subcommand};
 pub struct Cli {
     #[arg(long, global = true)]
     pub pretty: bool,
+    /// Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the
+    /// rendered summary, and everything that is not a terminal gets the envelope either way.
+    #[arg(long, global = true)]
+    pub json: bool,
     #[command(subcommand)]
     pub command: TopLevel,
 }

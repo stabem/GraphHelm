@@ -58,6 +58,8 @@ fn malformed_schema_invocations_return_one_json_envelope_on_stdout() {
         vec!["schema", "catalog", "--unknown"],
         vec!["schema", "not-a-command"],
         vec!["--pretty", "schema", "catalog"],
+        vec!["--json", "schema", "catalog"],
+        vec!["schema", "--json", "catalog"],
     ] {
         let output = command().args(arguments).output().unwrap();
         assert_eq!(output.status.code(), Some(2));

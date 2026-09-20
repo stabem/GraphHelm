@@ -283,3 +283,108 @@ fn the_key_reaches_neither_stdout_nor_stderr_and_the_sweep_can_find_what_is_ther
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// #1172: the terminal face, proven from the side the harness can occupy.
+// ---------------------------------------------------------------------------
+
+/// Whether the stream carries an ANSI escape introducer.
+///
+/// THE DETECTOR HAS ITS CONTROL ELSEWHERE, and it is named here so this negative is not read as
+/// stronger than it is: `palette::tests::a_plain_palette_writes_no_escape_and_a_coloured_one_does`
+/// asserts that a coloured palette DOES produce `\x1b`, so a byte search that could never match is
+/// not what these cells are passing on.
+fn carries_an_escape(bytes: &[u8]) -> bool {
+    bytes.contains(&0x1b)
+}
+
+/// A piped run writes no escape byte, and `CLICOLOR_FORCE` cannot change that.
+///
+/// The variable forces colour where a palette is chosen; without a terminal no palette is chosen
+/// at all, because the face is the JSON contract and the summary is not written. A run that
+/// honoured the variable here would be a run that put decoration inside a document every other
+/// test in this directory parses.
+#[test]
+fn a_piped_run_writes_no_escape_byte_even_with_clicolor_force() {
+    let project = git_project();
+    let initialized = command()
+        .args(["init", "--project"])
+        .arg(project.path())
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .unwrap();
+    assert!(initialized.status.success(), "{}", combined(&initialized));
+    assert!(
+        !carries_an_escape(&initialized.stdout),
+        "stdout carried an escape: {:?}",
+        String::from_utf8_lossy(&initialized.stdout)
+    );
+    assert!(
+        !carries_an_escape(&initialized.stderr),
+        "stderr carried an escape: {:?}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    assert_stdout_is_the_json_contract(&initialized);
+}
+
+/// `--json` is inert without a terminal: the same command produces the same stdout bytes with and
+/// without it. The flag exists to force the machine face AT a terminal, and a flag that also
+/// changed the piped answer would be a second contract.
+#[test]
+fn the_json_flag_is_inert_without_a_terminal() {
+    let project = git_project();
+    let missing = project.path().join("no-such-manifest.json");
+    let probe = |extra: &[&str]| {
+        command()
+            .args(["gateway", "probe", "--manifest"])
+            .arg(&missing)
+            .args(["--route", "judge"])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let plain = probe(&[]);
+    let forced = probe(&["--json"]);
+    assert_eq!(
+        plain.status.code(),
+        forced.status.code(),
+        "the flag changed the exit code"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&plain.stdout),
+        String::from_utf8_lossy(&forced.stdout),
+        "the flag changed piped stdout"
+    );
+    assert!(
+        !plain.status.success(),
+        "a missing manifest must refuse, or this cell compares two successes: {}",
+        combined(&plain)
+    );
+    assert_no_stderr(&plain);
+    assert_no_stderr(&forced);
+}
+
+/// Every root command keeps the structured argument-error contract when a global presentation
+/// flag appears before or after it. These four placements cover both faces and both command
+/// families that previously fell through to clap's raw stderr error.
+#[test]
+fn malformed_global_flag_invocations_keep_one_json_envelope_for_all_command_families() {
+    for arguments in [
+        vec!["--json", "gateway", "setup", "--bad"],
+        vec!["gateway", "--json", "setup", "--bad"],
+        vec!["--pretty", "init", "--bad"],
+        vec!["init", "--pretty", "--bad"],
+    ] {
+        let output = command().args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert_no_stderr(&output);
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["ok"], false);
+        assert!(matches!(
+            value["command"].as_str(),
+            Some("gateway" | "init")
+        ));
+        assert_eq!(value["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
+    }
+}

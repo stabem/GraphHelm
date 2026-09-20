@@ -659,7 +659,7 @@ fn every_content_exemption_is_load_bearing_and_bounded() {
     // here: pinning by CONTENT (one exemption, in this file, at the canonical-JSON literal) is the
     // durable shape, and rewriting another lane's guard inside a 59-commit branch is not this
     // fix's job.
-    assert_eq!(canonical_json, ["tests/schema_cli.rs:1308"]);
+    assert_eq!(canonical_json, ["tests/schema_cli.rs:1310"]);
     assert_eq!(detector_fixtures.len(), 6);
     assert!(
         detector_fixtures

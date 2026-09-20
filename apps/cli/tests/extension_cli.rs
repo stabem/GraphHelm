@@ -1105,6 +1105,8 @@ fn malformed_extension_invocations_return_one_json_envelope() {
         vec!["extension", "validate"],
         vec!["extension", "unknown"],
         vec!["--pretty", "extension", "validate"],
+        vec!["--json", "extension", "validate"],
+        vec!["extension", "--json", "validate"],
     ] {
         let output = command().args(arguments).output().unwrap();
         assert_eq!(output.status.code(), Some(2));

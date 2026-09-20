@@ -1,15 +1,22 @@
-//! #1150: a human summary on STDERR for the three commands a stranger runs first.
+//! #1150, amended by #1172: the human face of the three commands a stranger runs first.
 //!
 //! The owner ran `gateway setup`, the command whose whole premise is "the operator fills in only
 //! the key", and got 1.5 KB of JSON on one line as the entire answer. It had worked — route
 //! created, key sealed, probe green — and the person who typed it had to find that out by reading
 //! a machine document.
 //!
-//! `AGENTS.md:49` keeps `apps/cli` at JSON presentation only and 47 test cells parse
-//! `output.stdout` as JSON, so the answer is NOT prose on stdout. It is this: **stdout keeps the
-//! contract byte for byte, and a summary goes to stderr when stdout is a terminal**. A pipe, a
-//! test, the MCP tool and every harness see exactly what they saw before; a person at a prompt
-//! sees what is now true.
+//! `AGENTS.md` keeps `apps/cli` at JSON presentation for every reader that is not a terminal, and
+//! 47 test cells parse `output.stdout` as JSON, so the answer is NOT prose on a pipe. It is this:
+//! **a pipe keeps the contract byte for byte, and a person gets this rendering instead**.
+//!
+//! #1172 (D-056) moved where the rendering lands. #1150 put it on stderr beside the envelope,
+//! which meant a console showed both at once — the complaint that produced #1172. Now
+//! `output::face` decides ONE face per run: at a terminal, a command with a renderer prints this
+//! text on stdout and the envelope is not printed at all; with `--json`/`--pretty`, or anywhere
+//! that is not a terminal, the envelope is printed and this rendering goes back to stderr when the
+//! caller is at a terminal. The [`Palette`] argument is how colour stays a property of the stream:
+//! a run that may not colour is handed `Palette::plain()`, whose every method is the identity
+//! function, so no caller can emit an escape by forgetting to ask.
 //!
 //! Three properties this rendering has, and they are the reason it exists rather than decoration:
 //!
@@ -36,28 +43,47 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::output::CommandOutput;
+use crate::palette::Palette;
+
+/// Whether this command can render itself at all, asked WITHOUT rendering anything.
+///
+/// `main` needs the answer before it decides which face to print (`output::face`), and the
+/// decision must not be spelled twice: this function and [`render`] read the same `match`, so a
+/// command added to one is added to the other or the compiler is the one that notices.
+#[must_use]
+pub fn has_renderer(command: &str) -> bool {
+    renderer_for(command).is_some()
+}
+
+fn renderer_for(command: &str) -> Option<fn(&Value, Palette) -> String> {
+    match command {
+        "gateway.setup" => Some(setup),
+        "gateway.probe" => Some(probe),
+        "init" => Some(init),
+        _ => None,
+    }
+}
 
 /// The human summary for this envelope, or `None` when this command has no renderer.
 ///
 /// A failed outcome renders its diagnostics as plain lines instead of the success shape: a person
 /// who typed the command wrong must see why, not a blob with `"ok":false` somewhere inside it.
-pub fn render(output: &CommandOutput) -> Option<String> {
-    let renderer: fn(&Value) -> String = match output.command {
-        "gateway.setup" => setup,
-        "gateway.probe" => probe,
-        "init" => init,
-        _ => return None,
-    };
+pub fn render(output: &CommandOutput, palette: Palette) -> Option<String> {
+    let renderer = renderer_for(output.command)?;
     if !output.ok {
-        return Some(failure(output));
+        return Some(failure(output, palette));
     }
-    output.data.as_ref().map(renderer)
+    output.data.as_ref().map(|data| renderer(data, palette))
 }
 
 /// A refusal, as the person who typed the command needs it: the command that did not run, then
 /// one line per diagnostic with the pointer that names where the input was wrong.
-fn failure(output: &CommandOutput) -> String {
-    let mut text = format!("{} did not run.\n\n", output.command);
+fn failure(output: &CommandOutput, palette: Palette) -> String {
+    let mut text = format!(
+        "{} {}\n\n",
+        palette.name(output.command),
+        palette.bad("did not run.")
+    );
     for diagnostic in &output.diagnostics {
         let _ = writeln!(
             text,
@@ -71,9 +97,15 @@ fn failure(output: &CommandOutput) -> String {
 /// One labelled line of the "what is now true" block. The padding is BUILT rather than spelled:
 /// a run of three or more spaces inside a string literal is what `source_invariants.rs` refuses,
 /// because that is the shape a lost continuation escape leaves behind.
-fn field(label: &str, value: &str) -> String {
-    format!("  {label:<10}{value}")
+fn field(label: &str, value: &str, palette: Palette) -> String {
+    let padding = " ".repeat(FIELD_WIDTH.saturating_sub(label.chars().count()));
+    format!("  {}{padding}{value}", palette.label(label))
 }
+
+/// The column the values line up at. It is a number rather than a `{:<10}` inside the format
+/// string because a coloured label carries escape bytes that a width specifier would count as
+/// characters, pushing every value of a coloured run out of line.
+const FIELD_WIDTH: usize = 10;
 
 /// A string field, or a placeholder. Every caller names a field the command's own `execute` puts
 /// in `data`; the placeholder is what a future envelope that dropped one would show, rather than
@@ -84,7 +116,7 @@ fn text(value: &Value) -> &str {
 
 /// The `next` block, with the spelling for the shell this binary was built for. The `step` is the
 /// explanation above its own command, which is where the JSON buries it.
-fn next_steps(data: &Value, out: &mut String) {
+fn next_steps(data: &Value, out: &mut String, palette: Palette) {
     let Some(entries) = data.get("next").and_then(Value::as_array) else {
         return;
     };
@@ -94,41 +126,53 @@ fn next_steps(data: &Value, out: &mut String) {
     out.push_str("\nNext, in this shell:\n");
     let key = if cfg!(windows) { "powershell" } else { "bash" };
     for entry in entries {
-        let _ = writeln!(out, "  # {}", text(&entry["step"]));
-        let _ = writeln!(out, "  {}", text(&entry[key]));
+        let _ = writeln!(
+            out,
+            "  {}",
+            palette.label(&format!("# {}", text(&entry["step"])))
+        );
+        let _ = writeln!(out, "  {}", palette.command(text(&entry[key])));
     }
 }
 
 /// `gateway setup`, the envelope that raised #1150. The key line is the load-bearing one: the
 /// operator pasted a secret and has to know where it went and that it went nowhere readable.
-fn setup(data: &Value) -> String {
+fn setup(data: &Value, palette: Palette) -> String {
     let route = &data["route"];
-    let mut out = format!("Route '{}' is ready.\n\n", text(&route["id"]));
+    let mut out = format!(
+        "Route '{}' {}\n\n",
+        palette.name(text(&route["id"])),
+        palette.good("is ready.")
+    );
     let provider = format!(
         "{} ({} at {})",
         text(&route["provider"]),
         text(&route["model"]),
         text(&route["baseUrl"])
     );
-    let _ = writeln!(out, "{}", field("provider", &provider));
+    let _ = writeln!(out, "{}", field("provider", &provider, palette));
     let key = format!(
         "sealed in {} as {}, and in no file you can read",
         text(&data["credential"]["broker"]),
         text(&route["credentialRef"])
     );
-    let _ = writeln!(out, "{}", field("key", &key));
+    let _ = writeln!(out, "{}", field("key", &key, palette));
     let manifest = &data["manifest"];
     let manifest_line = format!("{} ({})", text(&manifest["path"]), text(&manifest["state"]));
-    let _ = writeln!(out, "{}", field("manifest", &manifest_line));
-    let _ = writeln!(out, "{}", field("probe", &probe_line(&data["probe"])));
-    next_steps(data, &mut out);
+    let _ = writeln!(out, "{}", field("manifest", &manifest_line, palette));
+    let _ = writeln!(
+        out,
+        "{}",
+        field("probe", &probe_line(&data["probe"], palette), palette)
+    );
+    next_steps(data, &mut out, palette);
     out
 }
 
 /// The probe's own reply as a sentence, INCLUDING what it did not do. A green probe proves the
 /// credential leases from the broker; it places no model call, so a person who reads "available"
 /// and concludes the provider answered has concluded something nobody measured.
-fn probe_line(probe: &Value) -> String {
+fn probe_line(probe: &Value, palette: Palette) -> String {
     let checks = probe
         .get("checks")
         .and_then(Value::as_array)
@@ -137,9 +181,9 @@ fn probe_line(probe: &Value) -> String {
                 .iter()
                 .map(|check| {
                     let verdict = if check["ok"].as_bool() == Some(true) {
-                        "ok"
+                        palette.good("ok")
                     } else {
-                        "FAILED"
+                        palette.bad("FAILED")
                     };
                     format!("{} {verdict}", text(&check["name"]))
                 })
@@ -154,21 +198,29 @@ fn probe_line(probe: &Value) -> String {
 }
 
 /// `gateway probe` standalone. Its envelope names no next step, so none is invented.
-fn probe(data: &Value) -> String {
-    let mut out = format!("Route '{}' probed.\n\n", text(&data["route"]));
-    let _ = writeln!(out, "{}", field("health", &probe_line(data)));
+fn probe(data: &Value, palette: Palette) -> String {
+    let mut out = format!("Route '{}' probed.\n\n", palette.name(text(&data["route"])));
+    let _ = writeln!(
+        out,
+        "{}",
+        field("health", &probe_line(data, palette), palette)
+    );
     out
 }
 
 /// `init`. What the project now has, then the commands that take the operator from an empty
 /// directory to a running execution.
-fn init(data: &Value) -> String {
-    let mut out = format!("Project '{}' is initialized.\n\n", text(&data["project"]));
+fn init(data: &Value, palette: Palette) -> String {
+    let mut out = format!(
+        "Project '{}' {}\n\n",
+        palette.name(text(&data["project"])),
+        palette.good("is initialized.")
+    );
     let runtime = format!("{} (bind {})", text(&data["root"]), text(&data["bind"]));
-    let _ = writeln!(out, "{}", field("runtime", &runtime));
+    let _ = writeln!(out, "{}", field("runtime", &runtime, palette));
     for (label, artifact) in [("events", &data["events"]), ("token", &data["token"])] {
         let line = format!("{} ({})", text(&artifact["path"]), text(&artifact["state"]));
-        let _ = writeln!(out, "{}", field(label, &line));
+        let _ = writeln!(out, "{}", field(label, &line, palette));
     }
     let key = &data["key"];
     let key_line = format!(
@@ -177,7 +229,7 @@ fn init(data: &Value) -> String {
         text(&key["state"]),
         text(&key["environment"])
     );
-    let _ = writeln!(out, "{}", field("key", &key_line));
+    let _ = writeln!(out, "{}", field("key", &key_line, palette));
     let keyring = &data["keyring"];
     let keyring_line = format!(
         "{} ({}, key id {})",
@@ -185,7 +237,7 @@ fn init(data: &Value) -> String {
         text(&keyring["state"]),
         text(&keyring["keyId"])
     );
-    let _ = writeln!(out, "{}", field("keyring", &keyring_line));
+    let _ = writeln!(out, "{}", field("keyring", &keyring_line, palette));
     if let Some(harnesses) = data.get("harnesses").and_then(Value::as_array)
         && !harnesses.is_empty()
     {
@@ -194,9 +246,9 @@ fn init(data: &Value) -> String {
             .map(|entry| format!("{} in {}", text(&entry["harness"]), text(&entry["path"])))
             .collect::<Vec<_>>()
             .join(", ");
-        let _ = writeln!(out, "{}", field("harnesses", &registered));
+        let _ = writeln!(out, "{}", field("harnesses", &registered, palette));
     }
-    next_steps(data, &mut out);
+    next_steps(data, &mut out, palette);
     out
 }
 
@@ -250,19 +302,26 @@ mod tests {
     fn a_command_without_a_renderer_renders_nothing() {
         for command in ["schema", "graph.synthesize", "execution.start", "gateway"] {
             assert!(
-                render(&success(command, json!({"anything": true}))).is_none(),
+                render(
+                    &success(command, json!({"anything": true})),
+                    Palette::plain()
+                )
+                .is_none(),
                 "{command}"
             );
         }
         // The failure shape is scoped the same way: a command with no renderer stays silent even
         // when it refuses, so adopting this changed nothing outside the three.
         assert!(
-            render(&CommandOutput {
-                ok: false,
-                command: "schema",
-                data: None,
-                diagnostics: vec![Diagnostic::error("GHX", "no", "/x", "schema")],
-            })
+            render(
+                &CommandOutput {
+                    ok: false,
+                    command: "schema",
+                    data: None,
+                    diagnostics: vec![Diagnostic::error("GHX", "no", "/x", "schema")],
+                },
+                Palette::plain()
+            )
             .is_none()
         );
     }
@@ -280,7 +339,7 @@ mod tests {
                 "gateway-cli",
             )],
         };
-        let rendered = render(&output).expect("gateway.setup has a renderer");
+        let rendered = render(&output, Palette::plain()).expect("gateway.setup has a renderer");
         assert!(
             rendered.contains("gateway.setup did not run."),
             "{rendered}"
@@ -297,7 +356,8 @@ mod tests {
 
     #[test]
     fn the_setup_rendering_names_the_route_the_manifest_state_and_the_absent_model_call() {
-        let rendered = render(&success("gateway.setup", setup_data())).expect("rendered");
+        let rendered =
+            render(&success("gateway.setup", setup_data()), Palette::plain()).expect("rendered");
         assert!(
             rendered.starts_with("Route 'judge' is ready."),
             "{rendered}"
@@ -341,7 +401,7 @@ mod tests {
             data["apiKey"], "sk-SENTINEL-1150-must-never-render",
             "the fixture must carry the planted secret or the absences below prove nothing"
         );
-        let rendered = render(&success("gateway.setup", data)).expect("rendered");
+        let rendered = render(&success("gateway.setup", data), Palette::plain()).expect("rendered");
         assert!(
             !rendered.contains("sk-SENTINEL-1150-must-never-render"),
             "{rendered}"
@@ -352,7 +412,8 @@ mod tests {
 
     #[test]
     fn the_next_command_is_the_spelling_for_this_platform() {
-        let rendered = render(&success("gateway.setup", setup_data())).expect("rendered");
+        let rendered =
+            render(&success("gateway.setup", setup_data()), Palette::plain()).expect("rendered");
         assert!(
             rendered.contains("export the broker passphrase from serve.key"),
             "the step explains the command above it: {rendered}"
@@ -385,7 +446,7 @@ mod tests {
             "checks": [{"name": "credential", "ok": true}],
             "health": "available",
         });
-        let rendered = render(&success("gateway.probe", data)).expect("rendered");
+        let rendered = render(&success("gateway.probe", data), Palette::plain()).expect("rendered");
         assert!(rendered.contains("Route 'judge' probed."), "{rendered}");
         assert!(rendered.contains("available"), "{rendered}");
         assert!(rendered.contains("credential ok"), "{rendered}");
@@ -401,7 +462,7 @@ mod tests {
             "checks": [{"name": "credential", "ok": false}],
             "health": "degraded",
         });
-        let rendered = render(&success("gateway.probe", data)).expect("rendered");
+        let rendered = render(&success("gateway.probe", data), Palette::plain()).expect("rendered");
         assert!(rendered.contains("credential FAILED"), "{rendered}");
         assert!(rendered.contains("degraded"), "{rendered}");
     }
@@ -436,7 +497,7 @@ mod tests {
                 "bash": "graphhelm serve --bind 127.0.0.1:8099",
             }],
         });
-        let rendered = render(&success("init", data)).expect("rendered");
+        let rendered = render(&success("init", data), Palette::plain()).expect("rendered");
         assert!(
             rendered.starts_with("Project '.' is initialized."),
             "{rendered}"

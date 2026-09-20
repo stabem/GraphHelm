@@ -46,7 +46,7 @@ Use a Rust workspace with small responsibility-focused crates:
 - `core/events`: Event Store interface, complete local append-only adapter, and replay projection.
 - `core/governor`: transactional Graph Draft analysis/application and waiver generation.
 - `core/simulation`: deterministic graph simulation without tools, models, shell, deploy, or network effects.
-- `apps/cli`: cross-platform `graphhelm` CLI and JSON presentation only; business rules remain in core crates.
+- `apps/cli`: cross-platform `graphhelm` CLI; business rules remain in core crates. It presents TWO faces and exactly one per run (D-056, #1172): the JSON envelope is the contract, and it is what every reader that is not a terminal gets — pipes, test harnesses, the MCP tool, CI — byte for byte; a terminal gets the rendered summary instead, unless `--json` or `--pretty` asks for the envelope there. A renderer reads only fields the envelope already carries, so the two faces cannot disagree.
 
 Provider SDKs, database clients, sandbox backends, Studio dependencies, and external integrations belong in later adapter plans. Do not scaffold empty modules, public stubs, fake success handlers, or future directories.
 

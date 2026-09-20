@@ -290,6 +290,29 @@ pub fn verify_tracked(root: &Path, directory: &str) -> Vec<String> {
     let Ok(output) = output else {
         return vec![format!("git ls-files failed for {directory}")];
     };
+    // A GIT THAT RAN AND REFUSED IS NOT A GIT THAT ANSWERED "nothing is tracked". `output()`
+    // returns `Ok` for a process that exited non-zero, so the guard above catches only a git that
+    // never launched. Measured: outside a work tree `git -C <dir> ls-files` exits 128 and prints
+    // nothing, `tracked` collects to the EMPTY SET, and the loop below then turns every file on
+    // disk into "on disk but not tracked by git (gitignored?)" — the gate goes red accusing the
+    // repository of gitignoring its own committed evidence, when the real cause is that git could
+    // not answer the question. `git` refusing is not hypothetical here: a work tree whose owner
+    // differs from the account the gate runs as gets "detected dubious ownership", exit 128.
+    //
+    // `core/quality/tests/freeze.rs` already asserts `status.success()` on this same call, because
+    // "an unanswerable population reported as empty would fail the assertions below with an
+    // accusation about the wrong thing". This reader now says the same thing the same way.
+    if !output.status.success() {
+        return vec![format!(
+            "git ls-files failed for {directory} (exit {}), so the tracked set is UNDEFINED rather \
+             than empty: {}",
+            output
+                .status
+                .code()
+                .map_or_else(|| "signal".to_string(), |code| code.to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )];
+    }
     let tracked: std::collections::BTreeSet<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| line.trim().replace('\\', "/"))
@@ -480,4 +503,90 @@ pub fn generate(clauses: &Clauses) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// A directory that is NOT inside a git work tree, holding one file under `directory`.
+    fn scratch_outside_git(directory: &str, file: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "acceptance-map-nongit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let root = std::env::temp_dir().join(unique);
+        let dir = root.join(directory);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        let mut handle = std::fs::File::create(dir.join(file)).expect("scratch file");
+        handle.write_all(b"evidence\n").expect("scratch file body");
+        root
+    }
+
+    /// A git that REFUSES must not read back as "nothing is tracked here".
+    ///
+    /// `Command::output()` returns `Ok` for a process that ran and FAILED, so checking only for
+    /// `Ok(..)` leaves an exit-128 git indistinguishable from a git that answered with an empty
+    /// list — and an empty tracked set turns every file on disk into an accusation about the
+    /// repository. `core/quality/tests/freeze.rs` already asserts `status.success()` on this same
+    /// call, under the comment "an unanswerable population reported as empty would fail the
+    /// assertions below with an accusation about the wrong thing". This is the site that did not.
+    #[test]
+    fn a_git_that_refuses_is_a_failed_read_not_a_list_of_untracked_files() {
+        let root = scratch_outside_git("evidence", "kept.txt");
+
+        // ARRANGEMENT FIRST: git must actually refuse here. If some ancestor of the temp directory
+        // were a work tree, git would answer and this test would be about a repository instead of
+        // about a refusal — passing for a reason that has nothing to do with the property.
+        let probe = std::process::Command::new("git")
+            .args(["-C", &root.to_string_lossy(), "ls-files", "--", "evidence"])
+            .output()
+            .expect("git runs");
+        assert!(
+            !probe.status.success(),
+            "ARRANGEMENT: git answered successfully in {}, so this test is not about a refusal",
+            root.display()
+        );
+
+        let problems = verify_tracked(&root, "evidence");
+        let cleanup = std::fs::remove_dir_all(&root);
+
+        assert!(
+            problems.iter().any(|p| p.contains("git ls-files failed")),
+            "a git that exited {:?} must be reported as a failed read; got {problems:?}",
+            probe.status.code()
+        );
+        assert!(
+            !problems.iter().any(|p| p.contains("not tracked by git")),
+            "a file on disk must not be accused of being untracked when git never answered; \
+             got {problems:?}"
+        );
+        cleanup.expect("scratch directory removed");
+    }
+
+    /// CONTROL: inside a real work tree the reader still answers, so the refusal above is a
+    /// discrimination and not a blanket failure that would redden every caller.
+    #[test]
+    fn inside_a_work_tree_the_reader_still_answers() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("tools/acceptance-map sits two levels below the repository root");
+
+        let problems = verify_tracked(root, "tools/acceptance-map/src");
+
+        assert!(
+            !problems.iter().any(|p| p.contains("git ls-files failed")),
+            "git answers inside this repository; got {problems:?}"
+        );
+        assert!(
+            !problems.iter().any(|p| p.contains("lib.rs")),
+            "lib.rs is tracked, so the reader must not accuse it; got {problems:?}"
+        );
+    }
 }

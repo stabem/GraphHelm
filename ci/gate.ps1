@@ -165,8 +165,82 @@ if ([string]::IsNullOrWhiteSpace($pinnedNextest)) {
 }
 # `2>&1` and the exit code, not the text alone: a missing subcommand prints to stderr and exits
 # non-zero, and both readings must reach the refusal rather than one of them being swallowed.
-$nextestVersionOutput = (& cargo nextest --version 2>&1 | Out-String)
-$nextestProbeCode = $LASTEXITCODE
+# A 'Continue' WINDOW, like every other native `2>&1` in this file. This one ran at SCRIPT SCOPE
+# under the 'Stop' set at :122, and measured on PowerShell 5.1 that is fatal twice over: a process
+# that writes ANY stderr line raises a TERMINATING NativeCommandError, and a command that is not on
+# PATH raises a terminating CommandNotFoundException. Both killed the gate on THIS line.
+#
+# WHICH MADE BOTH REFUSALS BELOW UNREACHABLE FOR THE CASES THEY EXIST FOR. `cargo` here is the
+# rustup shim (rust-toolchain.toml pins the channel), and rustup writes `info: syncing channel
+# updates for '1.97.1-...'` to stderr while the command it proxies prints the right version and
+# exits 0 -- so a CORRECTLY installed, correctly pinned runner killed the gate. An ABSENT
+# cargo-nextest died on the not-found error instead of printing the install command. The only
+# failure that ever reached the refusal was a SILENT non-zero exit, which is the failure that does
+# not happen. Reproduced both ways in ci/gate-native-stderr.tests.ps1, section H, which runs this
+# very block in a child process against real `.cmd` shims.
+function Read-NextestVersionProbe {
+    <#
+      .SYNOPSIS
+        `cargo nextest --version`, as an exit code and its text, without taking the gate down.
+
+      .DESCRIPTION
+        A FUNCTION, so that the two `$ErrorActionPreference` assignments it needs are INDENTED.
+        ci/gate-manifest-provenance.tests.ps1 derives the preamble it hands Publish-RunManifest by
+        reading this file's strictness statements AT COLUMN ZERO, and refuses when one of them is
+        "duplicated so the read is ambiguous". A top-level 'Continue' window here made that read
+        ambiguous and took that suite down -- the guard was right and the shape was wrong.
+
+        WHY A WINDOW AT ALL. This probe ran at script scope under the 'Stop' set above, and measured
+        on PowerShell 5.1 that is fatal twice over: a process that writes ANY stderr line raises a
+        TERMINATING NativeCommandError, and a command that is not on PATH raises a terminating
+        CommandNotFoundException. Both killed the gate on the invocation below, BEFORE either
+        refusal that follows could print, before the CARGO_TARGET_DIR precondition and before the
+        canary -- with a raw PowerShell error instead of the install instructions.
+
+        SO BOTH REFUSALS WERE UNREACHABLE FOR THE CASES THEY EXIST FOR. `cargo` here is the rustup
+        shim (rust-toolchain.toml pins the channel), and rustup writes `info: syncing channel
+        updates for '1.97.1-...'` to stderr while the command it proxies prints the right version
+        and exits 0 -- so a CORRECTLY installed, correctly pinned runner killed the gate. An ABSENT
+        cargo-nextest died on the not-found error instead of naming the install command. The only
+        failure that ever reached the refusal was a SILENT non-zero exit, which is the failure that
+        does not happen. ci/gate-native-stderr.tests.ps1 section H runs this very block in a child
+        process against real `.cmd` shims, chatty, silent, failing and absent.
+
+        NO `| Out-String`, and deliberately no `$?`. A pipe makes `$?` report the LAST element --
+        `Out-String`, which always succeeds -- so `$?` could never speak for cargo here. The caller's
+        regex carries that weight instead: a command that never ran leaves `$LASTEXITCODE` holding
+        whatever ran before it, and no `cargo-nextest <version>` can be matched out of a capture that
+        command never produced.
+    #>
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    # ASSIGNED BEFORE THE TRY. `Set-StrictMode -Version 2.0` above throws on a variable nothing has
+    # assigned, and a failed assignment leaves one in exactly that state.
+    $probe = @()
+    $code = $null
+    try {
+        $probe = & cargo nextest --version 2>&1
+        # Read through Get-Variable because StrictMode throws on an automatic variable nothing has
+        # assigned yet, which is the state an absent command leaves it in.
+        $code = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
+    } catch {
+        # A CATCH, NOT A PREFERENCE, and the difference is measured: with the preference already at
+        # 'Continue' a command that does not exist still stopped the script, because
+        # CommandNotFoundException is raised at DISCOVERY and the preference does not downgrade it.
+        # The absent runner is the first thing the refusal exists to report, so it has to survive.
+        $probe = @([string]$_.Exception.Message)
+        $code = $null
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    return [pscustomobject]@{
+        ExitCode = $code
+        Text     = (@($probe) | ForEach-Object { [string]$_ }) -join "`n"
+    }
+}
+$nextestProbeResult = Read-NextestVersionProbe
+$nextestProbeCode = $nextestProbeResult.ExitCode
+$nextestVersionOutput = $nextestProbeResult.Text
 $nextestFound = ''
 $nextestMatch = [regex]::Match([string]$nextestVersionOutput, 'cargo-nextest\s+([0-9]+\.[0-9]+\.[0-9]+)')
 if ($nextestMatch.Success) { $nextestFound = $nextestMatch.Groups[1].Value }

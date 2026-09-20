@@ -39,7 +39,7 @@
 # which are the two things this suite is about. Cell A2 asserts the shim really does produce the
 # record, so a shim that quietly stopped being native cannot leave section B green.
 
-$ExpectedAssertionCount = 23
+$ExpectedAssertionCount = 29
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:total = 0
@@ -57,6 +57,7 @@ function Assert-True {
 }
 
 $gatePath = Join-Path $PSScriptRoot 'gate.ps1'
+$gateText = [System.IO.File]::ReadAllText($gatePath)
 
 # ARRANGEMENT FIRST. A file that stopped parsing, or a function that was renamed, yields no subject
 # at all -- and every assertion below would then be about a program that was never read.
@@ -162,8 +163,81 @@ function Get-Failure {
     }
 }
 
+function Get-GateSlice {
+    param([Parameter(Mandatory)] [string] $Start, [Parameter(Mandatory)] [string] $End)
+    $i = $gateText.IndexOf($Start, [System.StringComparison]::Ordinal)
+    $j = if ($i -ge 0) { $gateText.IndexOf($End, $i + $Start.Length, [System.StringComparison]::Ordinal) } else { -1 }
+    if ($i -lt 0 -or $j -le $i) {
+        # An anchor that stopped matching must NOT read as a passing test: the slice would be empty
+        # and every assertion below would be about nothing.
+        throw "HARNESS-BROKE: gate.ps1 slice anchors did not match for [$Start]"
+    }
+    return $gateText.Substring($i, $j - $i)
+}
+
+function Invoke-ProbeSlice {
+    <#
+      .SYNOPSIS
+        Runs the gate's nextest probe in a CHILD PowerShell, and reports its exit code and output.
+
+      .DESCRIPTION
+        A CHILD PROCESS, not Invoke-Expression, for two reasons that are both about honesty. The
+        block ends in `exit 1` on every refusal, and `exit` inside Invoke-Expression would take this
+        suite down with it — the refusals would be untestable. And the defect under test is a
+        TERMINATING error at SCRIPT SCOPE under `$ErrorActionPreference = 'Stop'`; only a real
+        script scope reproduces it, which is also why the preamble sets 'Stop' exactly as
+        ci/gate.ps1 does before reaching this block.
+
+        The marker after the slice is the instrument: a block that dies mid-way does not print it,
+        and that is precisely how this defect presents — no refusal, no message, just a gate that
+        stopped.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $ShimDirectory,
+        [Parameter(Mandatory)] [string] $Pin
+    )
+    $script = Join-Path $shimRoot ("probe-" + [guid]::NewGuid().ToString('N') + '.ps1')
+    $body = @(
+        "`$ErrorActionPreference = 'Stop'",
+        "`$pinnedNextest = '$Pin'",
+        $probeSlice,
+        "Write-Host 'PROBE-REACHED-END'"
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText($script, $body)
+    $saved = $env:PATH
+    $savedPreference = $ErrorActionPreference
+    try {
+        # THE DEFECT UNDER TEST, ONE LEVEL UP. The first draft of this helper omitted the 'Continue'
+        # window and the suite died with `HARNESS-BROKE: RemoteException` -- because the child's
+        # NativeCommandError arrives in THIS capture, and this file also runs under 'Stop'. Every
+        # cell below is about a child that is supposed to write to stderr, so reading it without
+        # this window means the suite can never observe the case it exists for.
+        $ErrorActionPreference = 'Continue'
+        $env:PATH = "$ShimDirectory;$env:SystemRoot\system32;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+        $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedPreference
+        $env:PATH = $saved
+    }
+    return [pscustomobject]@{
+        ExitCode = $code
+        Output   = (@($out | ForEach-Object { [string]$_ }) -join "`n")
+    }
+}
+
 $lockLine = 'Blocking waiting for file lock on package cache'
 $rustcOutput = "rustc 1.97.1 (0000000000 2026-01-01)`r`nbinary: rustc`r`nhost: x86_64-pc-windows-msvc`r`n"
+
+# The gate's startup probe for the pinned test runner, from the file itself. Sliced rather than
+# retyped: a copy of this block would keep passing after the original changed.
+# THE END ANCHOR STARTS AT THE STATEMENT, not inside its string. The first draft ended at
+# `[gate] test runner: cargo-nextest`, which lands INSIDE the literal of the Write-Host that follows
+# the block -- the slice ended with a dangling `Write-Host "` and every child died on
+# `The string is missing the terminator`. The arrangement cell below now parses the slice, because
+# the substring checks it used to make are all satisfied by a slice that does not compile.
+$probeSlice = Get-GateSlice -Start 'function Read-NextestVersionProbe {' -End 'Write-Host "[gate] test runner:'
+$probePin = '0.9.145'
 
 try {
     # ================================================================ A
@@ -371,6 +445,57 @@ try {
             }, $true) | Where-Object { $_.Value -match 'NativeCommand' })
     Assert-True ($helperLiterals.Count -gt 0) `
         'and Test-NativeCallFailed tells them apart by the NativeCommandError record, not by $? alone'
+    # ================================================================ H
+    Write-Host ''
+    Write-Host '=== H. the startup probe must SURVIVE a chatty toolchain ===' -ForegroundColor Cyan
+    # THE ONE NATIVE `2>&1` IN THIS FILE THAT RUNS AT SCRIPT SCOPE. Every other one opens an
+    # $ErrorActionPreference='Continue' window first; this one inherits the 'Stop' set at the top of
+    # ci/gate.ps1. Measured on PS 5.1: under 'Stop', at script scope, a native call whose process
+    # writes ANY stderr line raises a TERMINATING NativeCommandError -- the next statement never
+    # runs and the process exits 1.
+    #
+    # WHICH MAKES A SUCCESSFUL PROBE FATAL. `cargo` here is the rustup shim (rust-toolchain.toml
+    # pins the channel), and rustup writes `info: syncing channel updates ...` to stderr while the
+    # command it proxies still prints the right version and exits 0. The gate then dies before this
+    # refusal can print, before the CARGO_TARGET_DIR precondition and before the canary -- with a
+    # raw PowerShell error, for a correctly installed and correctly pinned runner.
+    #
+    # THE TEXT-LEVEL SUITE CANNOT SEE THIS. ci/gate-nextest.tests.ps1 asserts the refusal strings
+    # and their order are PRESENT in gate.ps1, and they are present whether or not they are
+    # reachable. Reachability needs the block to actually run, which is what these cells do.
+    $sliceErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($probeSlice, [ref] $null, [ref] $sliceErrors)
+    Assert-True ($sliceErrors.Count -eq 0 -and $probeSlice.Contains('cargo nextest --version') -and
+        $probeSlice.Contains('is not installed') -and $probeSlice.Contains('ci/tool-versions.json pins')) `
+        "ARRANGEMENT: the slice PARSES ($($sliceErrors.Count) errors) and carries the probe and BOTH refusals ($($probeSlice.Length) chars)"
+
+    $goodVersion = "cargo-nextest-cargo-nextest $probePin`r`n"
+    $silentCargo2 = New-NativeShim -Name 'cargo' -Stdout $goodVersion -ExitCode 0
+    $silentProbe = Invoke-ProbeSlice -ShimDirectory $silentCargo2 -Pin $probePin
+    Assert-True ($silentProbe.ExitCode -eq 0 -and $silentProbe.Output.Contains('PROBE-REACHED-END')) `
+        'ARRANGEMENT: a silent, correctly-pinned cargo gets through the probe, so this harness can be green at all'
+
+    # RED BEFORE THE FIX. The runner is installed and correctly pinned; rustup merely spoke.
+    $chattyCargo2 = New-NativeShim -Name 'cargo' -StderrLine 'info: syncing channel updates for 1.97.1' -Stdout $goodVersion -ExitCode 0
+    $chattyProbeRun = Invoke-ProbeSlice -ShimDirectory $chattyCargo2 -Pin $probePin
+    Assert-True ($chattyProbeRun.ExitCode -eq 0 -and $chattyProbeRun.Output.Contains('PROBE-REACHED-END')) `
+        'a cargo that wrote to stderr and exited 0 with the PINNED version does not kill the gate at startup'
+
+    $absentProbe = Invoke-ProbeSlice -ShimDirectory $noCargo -Pin $probePin
+    Assert-True ($absentProbe.ExitCode -eq 1 -and $absentProbe.Output.Contains('is not installed')) `
+        'CONTROL: an ABSENT cargo still reaches the refusal and exits 1, naming the install command'
+
+    $failingCargo2 = New-NativeShim -Name 'cargo' -StderrLine 'error: no such subcommand' -Stdout '' -ExitCode 101
+    $failingProbe = Invoke-ProbeSlice -ShimDirectory $failingCargo2 -Pin $probePin
+    Assert-True ($failingProbe.ExitCode -eq 1 -and $failingProbe.Output.Contains('is not installed')) `
+        'CONTROL: a cargo that exits non-zero is still refused -- tolerating stderr is not tolerating failure'
+
+    # THE CELL THAT KILLS AN OVER-PERMISSIVE FIX. Wrapping the call in a Continue window must not
+    # also swallow the PIN comparison: a chatty cargo carrying the WRONG version is still wrong.
+    $wrongCargo = New-NativeShim -Name 'cargo' -StderrLine 'info: syncing channel updates for 1.97.1' -Stdout "cargo-nextest-cargo-nextest 0.9.99`r`n" -ExitCode 0
+    $wrongProbe = Invoke-ProbeSlice -ShimDirectory $wrongCargo -Pin $probePin
+    Assert-True ($wrongProbe.ExitCode -eq 1 -and $wrongProbe.Output.Contains('ci/tool-versions.json pins')) `
+        'CONTROL: a CHATTY cargo with the wrong version is still refused by the pin comparison'
 } catch {
     Write-Host "HARNESS-BROKE: a cell threw: $($_.Exception.GetType().Name): $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" -ForegroundColor Magenta
     Write-Host $_.ScriptStackTrace -ForegroundColor Magenta

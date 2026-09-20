@@ -28,7 +28,7 @@
 # 45 = 45 runtime assertions: 43 direct Assert-True calls plus the one inside the two-item
 # consumer loop, which the naive grep counts once and which fires twice. Assert-Equal is not used here; every case asserts a boolean outcome or
 # a string equality expressed through Assert-True, so the naive grep and the runtime count agree.
-$ExpectedAssertionCount = 63
+$ExpectedAssertionCount = 69
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -526,7 +526,116 @@ try {
     Assert-True (($canaryLine -match '&\s+git') -and ($canaryLine -match '\|\s*(Select-Object|Where-Object)')) `
         'and the pattern recognises the shape it is looking for when one is put in front of it'
 
-    Write-Host "`n-- the pre-taxonomy refusal still stands --"
+    Write-Host "`n-- a git that FAILED is not a git that found nothing --"
+
+# THE OTHER HALF OF A HAZARD THIS BLOCK ALREADY KNEW ABOUT. classify-run.ps1 carries a comment
+# explaining that a redirected native stderr becomes a NativeCommandError which 'Stop' promotes to
+# a terminating error, and it opens an $ErrorActionPreference='Continue' window to survive that.
+# That fixes the TERMINATION half. The STATUS half was left open: none of the three git calls read
+# an exit code, so a git that ran and REFUSED contributed nothing to $touched and read exactly like
+# a git that answered "this range touches no files".
+#
+# WHICH WAY THE MISTAKE FALLS IS THE POINT. The block's own comment says under-matching "certifies
+# a touched file as untouched, and this check exists precisely to stop a failure in a file the diff
+# touches being called unrelated". A failed `git log origin/main..HEAD` does exactly that, and the
+# script then RECORDS `unrelatedTestFileVerifiedAgainstDiff = $true` -- a red attributed away from
+# the author's own diff, in the ledger, with the verification field saying it was checked.
+#
+# THE MISSING REF IS NOT HYPOTHETICAL: ci/gate-runner.ps1 documents and repairs `--single-branch`
+# clones in this same factory, where nothing populates refs/remotes/origin/main.
+function New-GitShim {
+    <#
+      .SYNOPSIS
+        A real `git.cmd` that answers the subcommands this block issues, and fails the one named.
+      .DESCRIPTION
+        A REAL PROCESS on PATH, because the property under test is an EXIT CODE. A PowerShell
+        function named `git` would shadow the call and could not set $LASTEXITCODE at all.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $TopLevel,
+        [AllowEmptyString()] [string] $FailSubcommand = '',
+        [AllowEmptyString()] [string] $LogOutputFile = ''
+    )
+    $dir = Join-Path $sandbox ([Guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($dir) | Out-Null
+    # GOTO LABELS, not `(echo X & exit /b 0)`. cmd.exe echoes everything up to the `&` INCLUDING the
+    # space before it, so the one-line form handed back a top-level path with a trailing space and
+    # `Push-Location` answered "An object at the specified path does not exist" -- a harness failure
+    # wearing the shape of the refusal these cells are trying to observe.
+    $lines = @('@echo off')
+    if ($FailSubcommand) { $lines += "if `"%1`"==`"$FailSubcommand`" goto failsub" }
+    $lines += 'if "%1"=="rev-parse" goto revparse'
+    if ($LogOutputFile) { $lines += 'if "%1"=="log" goto dolog' }
+    $lines += 'exit /b 0'
+    if ($FailSubcommand) {
+        $lines += ':failsub'
+        $lines += 'echo fatal: ambiguous argument 1>&2'
+        $lines += 'exit /b 128'
+    }
+    $lines += ':revparse'
+    $lines += "echo $TopLevel"
+    $lines += 'exit /b 0'
+    if ($LogOutputFile) {
+        $lines += ':dolog'
+        $lines += "type `"$LogOutputFile`""
+        $lines += 'exit /b 0'
+    }
+    [System.IO.File]::WriteAllText((Join-Path $dir 'git.cmd'), (($lines -join "`r`n") + "`r`n"))
+    return $dir
+}
+
+function Invoke-ClassifyUnrelated {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $TestFile,
+        [Parameter(Mandatory)] [string] $ShimDirectory
+    )
+    $savedPath = $env:PATH
+    try {
+        $env:PATH = "$ShimDirectory;$env:SystemRoot\system32"
+        & $classify -Manifest $Path -Class 'real-red' -Because 'unrelated failure' `
+            -UnrelatedTestFile $TestFile -UnrelatedIssue '1' -FailThenPassObserved *> $null
+        return @{ Ok = $true; Error = '' }
+    } catch {
+        return @{ Ok = $false; Error = $_.Exception.Message }
+    } finally {
+        $env:PATH = $savedPath
+    }
+}
+
+$shimTop = $sandbox.Replace('\', '/')
+
+# ARRANGEMENT: with a git that answers and reports NOTHING touched, the claim is accepted. Without
+# this cell the refusals below could be a script that refuses everything.
+$cleanRun = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false }
+$acceptShim = New-GitShim -TopLevel $shimTop
+$accepted = Invoke-ClassifyUnrelated -Path $cleanRun -TestFile 'core/untouched/tests/far_away.rs' -ShimDirectory $acceptShim
+Assert-True $accepted.Ok "ARRANGEMENT: a git that answers, with the file untouched, ACCEPTS the unrelated claim (was: $($accepted.Error))"
+Assert-True ((Read-Manifest -Path $cleanRun).unrelatedTestFileVerifiedAgainstDiff -eq $true) `
+    'and the accepted claim is what records unrelatedTestFileVerifiedAgainstDiff'
+
+# THE TRAP: git RUNS and REFUSES on the commit range.
+$failedRun = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false }
+$failShim = New-GitShim -TopLevel $shimTop -FailSubcommand 'log'
+$refusedRead = Invoke-ClassifyUnrelated -Path $failedRun -TestFile 'core/untouched/tests/far_away.rs' -ShimDirectory $failShim
+Assert-True (-not $refusedRead.Ok) `
+    "a git that EXITED 128 on the commit range refuses the claim instead of certifying it (was: $($refusedRead.Error))"
+Assert-True ($refusedRead.Error -match 'UNREADABLE rather than empty') `
+    'and the refusal says the range was unreadable, not that it was empty'
+Assert-True ((Read-Manifest -Path $failedRun).PSObject.Properties.Name -notcontains 'unrelatedTestFileVerifiedAgainstDiff') `
+    'and NOTHING is recorded -- an unverifiable claim must not leave a verification field behind'
+
+# CONTROL: the ORIGINAL refusal must survive the new one. A git that answers and reports the file
+# IN the range still refuses, with its own message -- the exit-code check must not have replaced it.
+$touchedRun = New-Manifest -Properties @{ runClass = 'UNCLASSIFIED'; status = 'RED'; overallPassed = $false }
+$logFile = Join-Path $sandbox 'log-output.txt'
+[System.IO.File]::WriteAllText($logFile, "core/touched/tests/near.rs`r`n")
+$touchedShim = New-GitShim -TopLevel $shimTop -LogOutputFile $logFile
+$refusedTouch = Invoke-ClassifyUnrelated -Path $touchedRun -TestFile 'core/touched/tests/near.rs' -ShimDirectory $touchedShim
+Assert-True (-not $refusedTouch.Ok -and $refusedTouch.Error -match 'IS touched by this diff') `
+    "CONTROL: a file the range DOES touch is still refused by the original check (was: $($refusedTouch.Error))"
+
+Write-Host "`n-- the pre-taxonomy refusal still stands --"
 
     $ancient = New-Manifest -Properties @{}
     $preTaxonomy = Invoke-Classify -Path $ancient -Class 'real-red' -Because 'no runClass field at all'

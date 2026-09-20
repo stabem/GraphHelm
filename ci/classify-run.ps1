@@ -406,10 +406,36 @@ if ($UnrelatedTestFile -or $UnrelatedIssue -or $FailThenPassObserved) {
     if (-not $repoRoot) { $ErrorActionPreference = $previousPreference; throw "not inside a git repository: cannot verify that $UnrelatedTestFile is outside the diff" }
     Push-Location -LiteralPath $repoRoot
     try {
+        # EACH CALL'S STATUS IS READ, and that is the other half of the hazard the comment above
+        # describes. The 'Continue' window stops a CHATTY git from aborting this block; it does not
+        # make a git that FAILED look like anything other than a git that found nothing. `git log
+        # origin/main..HEAD` exits 128 with empty output wherever refs/remotes/origin/main is
+        # absent -- ci/gate-runner.ps1 documents repairing exactly that for `--single-branch` clones
+        # in this same factory -- and the committed range then contributes nothing to $touched.
+        #
+        # WHICH DIRECTION THAT MISTAKE FALLS IS THE POINT, and the comment below on
+        # OrdinalIgnoreCase already names it: "under-matching certifies a touched file as untouched,
+        # and this check exists precisely to stop a failure in a file the diff touches being called
+        # unrelated". An unread range is under-matching at its widest, and the script would go on to
+        # RECORD `unrelatedTestFileVerifiedAgainstDiff = $true` for a file the branch did modify.
+        #
+        # NO `2>&1` ON THESE, deliberately, for the reason the comment above gives: the redirect is
+        # what turns git's routine stderr into a NativeCommandError. Unredirected, git's stderr goes
+        # to the console and $LASTEXITCODE is the honest answer about whether it succeeded. Read
+        # through Get-Variable because a command that never launched leaves it unassigned.
         $touched = @()
-        $touched += (git diff --name-only)
-        $touched += (git diff --name-only --cached)
-        $touched += (git log --format= --name-only 'origin/main..HEAD')
+        foreach ($probe in @(
+                @{ Label = 'the working tree'; Arguments = @('diff', '--name-only') },
+                @{ Label = 'the index'; Arguments = @('diff', '--name-only', '--cached') },
+                @{ Label = 'the commit range origin/main..HEAD'; Arguments = @('log', '--format=', '--name-only', 'origin/main..HEAD') })) {
+            $probeLines = & git @($probe.Arguments)
+            $probeCode = Get-Variable -Name 'LASTEXITCODE' -ValueOnly -ErrorAction SilentlyContinue
+            if ($probeCode -ne 0) {
+                throw ("cannot verify that $UnrelatedTestFile is unrelated: 'git $($probe.Arguments -join ' ')' " +
+                    "failed (exit $probeCode), so $($probe.Label) is UNREADABLE rather than empty. Refused.")
+            }
+            $touched += $probeLines
+        }
         $needle = $UnrelatedTestFile.Replace('\', '/')
         # ORDINALIGNORECASE HERE FAILS CLOSED, and that is the reason -- not the Windows one. These
         # paths come from `git diff --name-only`, and git's index is case-sensitive: `Foo.rs` and

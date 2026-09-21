@@ -87,6 +87,11 @@ $script:ContractSweepDotSourced = $MyInvocation.InvocationName -eq '.'
 # How many `merge-base` probes this process has made; a suite reads it to prove none happen after a
 # population has been returned.
 $script:AncestryGitCalls = 0
+# How many times the merge-base CONTRACT was read and canonicalised from scratch. One read is a
+# `merge-base` sha, a blob, and every `$ref` under it expanded -- measured at ~10.5 s per touched
+# head on this repository, and the dominant cost of a sweep (14 touched heads, ~147 s of a 197.8 s
+# run). A suite reads this to prove heads that share a fork point pay for it ONCE.
+$script:ForkContractReads = 0
 # TOTAL WORK BUDGET for one schema's canonicalisation. Depth alone does not bound an acyclic schema:
 # six definitions each `allOf` of eight references to the next expand 8^6 times under depth 48
 # (Codex P1 on #1005). Past this many nodes the reading is refused (UNKNOWN), never computed to
@@ -1026,12 +1031,28 @@ function Get-ContractPopulation {
         if ($fork.TimedOut -or $fork.Code -ne 0 -or @($fork.Lines).Count -ne 1) { return $null }
         $forkSha = ([string]$fork.Lines[0]).Trim()
         if ($forkSha -cnotmatch '^[0-9a-f]{40}$') { return $null }
+        # THE MEMO SITS HERE, NOT ABOVE, and both halves of that are load-bearing. The budget guard
+        # at the top still runs on every call, so an exhausted budget refuses whether or not this
+        # fork was seen -- a cache must not buy the sweep time it no longer has. And the
+        # `merge-base` above still runs per candidate, because its sha IS the key.
+        if ($forkContracts.ContainsKey($forkSha)) { return $forkContracts[$forkSha] }
+        $script:ForkContractReads += 1
         $forkText = Read-RefText -Root $Root -Ref $forkSha -Path $SchemaPath -RemainingSeconds { Get-RemainingSeconds -Cap 60 }
         if ($null -eq $forkText -or (Test-BudgetSpent)) { return $null }
         $forkResolver = New-ExternalResolver -Root $Root -SchemaPath $SchemaPath -SourceRef $forkSha -RemainingSeconds { Get-RemainingSeconds -Cap 60 }
-        return Get-DeclaredKinds -SchemaText $forkText -ExternalResolver $forkResolver
+        $forkKinds = Get-DeclaredKinds -SchemaText $forkText -ExternalResolver $forkResolver
+        # SUCCESSES ONLY. A `$null` here is a timeout or an unreadable blob, and the caller turns it
+        # into UNKNOWN, which ends the sweep -- caching it would be caching a failure, and a later
+        # head would inherit a refusal it never earned.
+        if ($null -ne $forkKinds) { $forkContracts[$forkSha] = $forkKinds }
+        return $forkKinds
     }
 
+    # ONE ENTRY PER FORK POINT, for this population read only. The fork contract is a pure
+    # function of the fork sha (the schema path is fixed for the run), so two heads cut from the
+    # same commit have the same answer by construction -- and this repository cuts many: of 14
+    # touched heads measured on it, only 10 fork points were distinct.
+    $forkContracts = @{}
     $declarations = @()
     $touched = @()
     $examined = 0

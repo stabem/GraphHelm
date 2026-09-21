@@ -84,7 +84,7 @@
 #   1  external reference fragments select the referenced schema node
 #   1  common credential query/path names, including percent-encoded forms, are redacted
 #   1  the independent floor observer remains bounded after the Known reading
-$ExpectedAssertionCount = 114
+$ExpectedAssertionCount = 117
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -1233,6 +1233,80 @@ $literalNode = '{"properties":{"$ref":{"type":"string"}},"const":{"$ref":{"type"
 $script:CanonicalNodes=0
 $literalCanonical = ConvertTo-ContractCanonical -Node $literalNode -Definitions $literalNode
 Assert-True ($literalCanonical.Contains('"properties":{"$ref":') -and $literalCanonical.Contains('"const":{"$ref":')) 'reference-shaped map entries and literal values retain their keys'
+
+# THE MERGE-BASE CONTRACT IS READ ONCE PER FORK POINT, NOT ONCE PER HEAD.
+#
+# Reading one is a `merge-base` sha, a blob, and every `$ref` under it expanded. Measured on this
+# repository: ~10.5 s per touched head, 14 touched heads, ~147 s of a 197.8 s sweep -- the dominant
+# cost of the stage, and the sweep runs twice. Branches cut from the same point have the SAME fork
+# contract by construction, so recomputing it per head is pure repetition: of 14 touched heads here,
+# only 10 fork points were distinct.
+#
+# A SLOW SUITE IS NOT RED, which is why this cell exists at all. Nothing else in this file would
+# notice the memo being dropped.
+$memoFixture = Join-Path ([IO.Path]::GetTempPath()) ('ecs-forkmemo-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($memoFixture)
+$memoRepo = Join-Path $memoFixture 'work'
+$memoBare = Join-Path $memoFixture 'remote.git'
+$memoHookDir = Join-Path $memoFixture 'hooks'
+[void][IO.Directory]::CreateDirectory($memoHookDir)
+function Invoke-MemoFixtureGit {
+    param([string[]]$GitArgs)
+    $out = @(& git -c commit.gpgsign=false -c core.hooksPath=$memoHookDir -c user.name=Fixture -c user.email=fixture@example.invalid @GitArgs 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "memo fixture git failed: $($out -join ' ')" }
+}
+try {
+    Invoke-MemoFixtureGit @('init','--bare','-q',$memoBare)
+    Invoke-MemoFixtureGit @('init','-q','-b','main',$memoRepo)
+    [void][IO.Directory]::CreateDirectory((Join-Path $memoRepo 'schemas'))
+    $memoEnvelope = Join-Path $memoRepo 'schemas/event-envelope.schema.json'
+    $memoPayload = Join-Path $memoRepo 'schemas/checked-target.schema.json'
+    [IO.File]::WriteAllText($memoEnvelope, $schemaExternalRef)
+    [IO.File]::WriteAllText($memoPayload, '{"type":"string"}')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'add','.')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'commit','-qm','baseline')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'remote','add','origin',$memoBare)
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'push','-q','origin','main')
+    # THREE heads cut from ONE commit, each touching the contract differently.
+    foreach ($pair in @(@('m-a','{"type":"number"}'), @('m-b','{"type":"boolean"}'), @('m-c','{"type":"integer"}'))) {
+        Invoke-MemoFixtureGit @('-C',$memoRepo,'checkout','-qb',$pair[0],'main')
+        [IO.File]::WriteAllText($memoPayload, $pair[1])
+        Invoke-MemoFixtureGit @('-C',$memoRepo,'commit','-qam',("payload " + $pair[0]))
+        Invoke-MemoFixtureGit @('-C',$memoRepo,'push','-q','origin',$pair[0])
+    }
+    # Move main, then cut a FOURTH head from the new tip: a second, genuinely distinct fork point.
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'checkout','-q','main')
+    [IO.File]::WriteAllText((Join-Path $memoRepo 'unrelated.txt'), 'moves main without touching the contract')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'add','.')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'commit','-qm','advance main')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'push','-q','origin','main')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'checkout','-qb','m-d','main')
+    [IO.File]::WriteAllText($memoPayload, '{"type":"null"}')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'commit','-qam','payload m-d')
+    Invoke-MemoFixtureGit @('-C',$memoRepo,'push','-q','origin','m-d')
+
+    $memoForks = @(@('m-a','m-b','m-c','m-d') | ForEach-Object {
+            (@(& git -C $memoRepo merge-base 'origin/main' $_ 2>$null) | Select-Object -First 1)
+        })
+    Assert-True (@($memoForks | Sort-Object -Unique).Count -eq 2) `
+        "ARRANGEMENT: the four heads share exactly two fork points (found $(@($memoForks | Sort-Object -Unique).Count)), or the count below measures nothing"
+
+    $readsBefore = [int] (Get-Variable -Scope Script -Name ForkContractReads).Value
+    $memoPopulation = Get-ContractPopulation -Root $memoRepo -BudgetSeconds 120
+    $readsAfter = [int] (Get-Variable -Scope Script -Name ForkContractReads).Value
+
+    Assert-True ($memoPopulation.Known -and @($memoPopulation.Touched).Count -eq 4) `
+        "ARRANGEMENT: all four heads are touched and the population is Known (touched=$(@($memoPopulation.Touched).Count), Known=$($memoPopulation.Known)), or the delta below is about heads that never took the expensive path"
+
+    # NOT `-le 4`: an upper bound is satisfied by doing the work four times. The number IS the claim.
+    Assert-True (($readsAfter - $readsBefore) -eq 2) `
+        "the fork contract is read once per FORK POINT: 4 touched heads over 2 fork points cost $($readsAfter - $readsBefore) read(s), expected 2"
+} finally {
+    $resolvedMemo = [IO.Path]::GetFullPath($memoFixture)
+    $memoParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $resolvedMemo.StartsWith($memoParent,[StringComparison]::OrdinalIgnoreCase)) { throw 'unsafe memo fixture cleanup path' }
+    Remove-Item -LiteralPath $resolvedMemo -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {

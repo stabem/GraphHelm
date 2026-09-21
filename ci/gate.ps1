@@ -4370,6 +4370,49 @@ function Publish-RunManifest {
     }
 }
 
+function Get-EventContractSweepRecord {
+    <#
+        #205: what the event-contract sweep could say about this run, as a fact the record carries.
+
+        The sweep runs inside `ci powershell suites` and its population is the REMOTE: a night the
+        network does not answer is a fact about the instrument, not about the tree, so it must not
+        become `status: RED` (a red that fires on an unstable network is the class pressers learn to
+        wave through, and then the real collision hides behind it). The suite prints one marker line
+        into the stage capture -- `[event-contract] MEASURED -- ...` or
+        `[event-contract] NOT MEASURED -- <reason>` -- and this rule turns it into the manifest's
+        `eventContractSweep` so a presser sees it without reading the transcript.
+
+        `absent` is its own state: a run whose capture holds neither marker (an older suite, a
+        stage that never ran) is not a run that measured nothing.
+        Exactly one recognized marker is required. Duplicate markers, even identical ones,
+        make the global capture ambiguous and cannot establish measurement.
+    #>
+    param([AllowNull()] [AllowEmptyCollection()] [string[]] $Lines)
+    $state = 'absent'
+    $reason = ''
+    $markers = 0
+    foreach ($line in @($Lines)) {
+        $text = [string] $line
+        if ($text -cmatch '^\[event-contract\] NOT MEASURED -- (.*)$') {
+            $markers++
+            $state = 'notMeasured'
+            $reason = $Matches[1].Trim()
+        } elseif ($text -cmatch '^\[event-contract\] MEASURED -- ') {
+            $markers++
+            $state = 'measured'
+            $reason = ''
+        }
+    }
+    if ($markers -gt 1) {
+        $state = 'notMeasured'
+        $reason = 'ambiguous sweep capture: multiple recognized markers'
+    }
+    return [ordered]@{
+        state  = $state
+        reason = $reason
+    }
+}
+
 function Get-RunCoverage {
     <#
         What this run actually COVERED, as a fact the record carries rather than an inference a
@@ -4592,6 +4635,9 @@ function Write-RunManifest {
         }
     }
     $coverage = Get-RunCoverage -SkipPostgres ([bool]($script:matrixSkipped -or $script:postgresMatrixUnavailable)) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath))
+    # #205: the sweep's own reading, out of the full stage capture (#751) so the background-joined
+    # suites stage is read like any other.
+    $eventContractSweep = Get-EventContractSweepRecord -Lines $script:allStageLines
 
     $staleArtifacts = @($ArtifactManifest.artifacts | Where-Object { $_.freshBuild -eq $false })
     # #904: THE POPULATION THAT DECIDES, beside the one that used to. `$staleArtifacts` is every
@@ -4744,6 +4790,9 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         # unreadable case this field exists to tell apart from it. `, @(...)` is the standard
         # PowerShell idiom that stops the collapse without nesting a non-empty array inside another.
         requiredFeaturesExcluded = if ($script:requiredFeaturesReportUnreadable) { $null } else { , @($script:requiredFeaturesExcluded) }
+        # #205: `measured` | `notMeasured` (+ reason) | `absent`. A mute remote is written HERE, as a
+        # fact about the instrument, and never into `status`.
+        eventContractSweep = $eventContractSweep
         # A FACT, not an inference: the head moved between the start of the gate and this write.
         # The record names the head the STAGES ran against, and this says the working tree is no
         # longer on it -- which is why the publication below refuses to commit.
@@ -5619,7 +5668,14 @@ try {
     # out of this file by anchor: a changed call shape breaks that suite's FIXTURE rather than its
     # subject, and a harness breaking while wearing an ordinary red is the thing it exists to catch.
     Invoke-Stage 'ci powershell suites' -AlwaysRun {
-        $joined = Complete-BackgroundStage -Started $script:psSuitesStarted
+        # The join emits the child's lines on the success stream and its exit code LAST. The lines
+        # must go on to Invoke-Stage's capture (this stage's outputTail, `$script:allStageLines`,
+        # and so the manifest's `eventContractSweep`); the code is kept. `$joined = ...` swallowed
+        # both into one variable: ten landed manifests carried 0 lines for this stage (#205).
+        $joined = $null
+        Complete-BackgroundStage -Started $script:psSuitesStarted | ForEach-Object {
+            if ($_ -is [int]) { $joined = $_ } else { $_ }
+        }
         if ($null -eq $joined) {
             # The early start failed. Same command, same place, exactly as long as before #956.
             & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')

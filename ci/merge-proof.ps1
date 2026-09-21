@@ -467,6 +467,30 @@ function Test-ManifestVouches {
                 "but the record -- and this tip also touches: " + (($outside | Select-Object -First 5) -join ', '))
         }
     }
+    # #205: THE SWEEP'S READING IS READ HERE, OR IT IS DECORATION. `ci/gate.ps1` writes
+    # `eventContractSweep = { state: measured | notMeasured | absent, reason }` beside `coverage`;
+    # a remote that did not answer is `notMeasured` there and never `status: RED`, because that is a
+    # fact about the instrument and not about the tree. The verdict is where that fact has to bite:
+    # a GREEN whose sweep did not measure is a run that never asked whether the event contract
+    # collides with another open branch, and it does not vouch. Missing evidence is refused in
+    # BLOCKING mode. Only legacy ADVISORY mode retains compatibility with receipts lacking this field.
+    if (Test-NameIsPresent -Object $Manifest -Name 'eventContractSweep') {
+        $sweep = $Manifest.eventContractSweep
+        $state = $null
+        $reason = ''
+        $stateShapeIsScalar = $false
+        if ($null -ne $sweep -and (Test-NameIsPresent -Object $sweep -Name 'state')) {
+            if ($sweep.state -is [string]) { $state = $sweep.state; $stateShapeIsScalar = $true }
+        }
+        if ($null -ne $sweep -and (Test-NameIsPresent -Object $sweep -Name 'reason')) { $reason = [string] $sweep.reason }
+        if (-not $stateShapeIsScalar -or -not (Test-SameText $state 'measured')) {
+            $shown = if (-not $stateShapeIsScalar) { 'not a scalar string' } else { $state }
+            $detail = if ([string]::IsNullOrWhiteSpace($reason)) { '' } else { " ($reason)" }
+            $why += "eventContractSweep is $shown$detail, so the run did not measure whether the event contract collides with another open branch"
+        }
+    } elseif ($blocking) {
+        $why += 'eventContractSweep is absent from a blocking manifest, so this run provides no measured event-contract population'
+    }
     if ($script:landingProofRequired) {
         $why += @(Test-ManifestLandingSnapshot -Manifest $Manifest -ActualPr $script:actualLandingPr -Root $RepositoryRoot -Number $PullRequest)
     }

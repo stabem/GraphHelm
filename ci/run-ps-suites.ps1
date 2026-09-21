@@ -28,6 +28,7 @@ $PinnedSuites = @(
     'frozen-release-guard.tests.ps1',
     'closing-keywords.tests.ps1',
     'crate-input-hash.tests.ps1',
+    'event-contract-sweep.tests.ps1',
     'exit-code-shape.tests.ps1',
     'liveness-rule.tests.ps1',
     'gate-incremental.tests.ps1',
@@ -296,6 +297,43 @@ function Stop-SuiteProcessTree {
     return $true
 }
 
+function Read-SuiteStream {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [int] $TimeoutMilliseconds = 5000
+    )
+
+    # `Process.HasExited` and release of Start-Process's redirected file handles are not one
+    # observable instant on Windows. The full gate measured the gap as a sharing violation while a
+    # focused run missed it. Retry only that IO race and refuse after a bounded admission window;
+    # this deadline does not claim to bound one File.ReadAllText call already in progress.
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([math]::Max(0, $TimeoutMilliseconds))
+    while ($true) {
+        try {
+            return [pscustomobject]@{
+                Succeeded = $true
+                Text = [System.IO.File]::ReadAllText($Path)
+                Reason = $null
+            }
+        } catch [System.IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                return [pscustomobject]@{
+                    Succeeded = $false
+                    Text = $null
+                    Reason = 'redirected stream remained locked after its writer exited'
+                }
+            }
+            Start-Sleep -Milliseconds 25
+        } catch {
+            return [pscustomobject]@{
+                Succeeded = $false
+                Text = $null
+                Reason = 'redirected stream could not be read'
+            }
+        }
+    }
+}
+
 $dispatchOrder = @(
     Get-ChildItem -LiteralPath $SuiteDirectory -Filter '*.tests.ps1' -File -ErrorAction SilentlyContinue |
         Sort-Object -Property Length -Descending |
@@ -369,7 +407,12 @@ try {
         Write-Host "[suite] $name$took" -ForegroundColor Cyan
         foreach ($streamPath in @((Join-Path $scratch "$name.out"), (Join-Path $scratch "$name.err"))) {
             if (Test-Path -LiteralPath $streamPath) {
-                $text = [System.IO.File]::ReadAllText($streamPath)
+                $stream = Read-SuiteStream -Path $streamPath
+                if (-not $stream.Succeeded) {
+                    Write-Host "HARNESS-BROKE: transcript for $name $($stream.Reason)." -ForegroundColor Magenta
+                    exit 2
+                }
+                $text = $stream.Text
                 if (-not [string]::IsNullOrEmpty($text)) { Write-Host $text.TrimEnd() }
             }
         }

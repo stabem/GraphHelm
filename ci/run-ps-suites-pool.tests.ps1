@@ -42,9 +42,11 @@
 #   1  the ledger is set-compared against the discovered set in BOTH directions
 #   1  stderr-only output survives into the replay
 #   1  the replay carries a per-suite wall time
+#   1  a briefly locked transcript is retried and read after its writer releases it
+#   1  a transcript that stays locked fails closed instead of hanging or disappearing
 #   1  an unparseable throttle runs SERIALLY, never wider
 #   1  and says so
-$ExpectedAssertionCount = 21
+$ExpectedAssertionCount = 23
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -289,6 +291,47 @@ try {
         'a suite that writes only to stderr still has that text replayed, so a diagnosis printed on the wrong stream is not lost'
     Assert-True ($stderr.text -match "\[suite\] $([regex]::Escape($noisy)) \([0-9.]+s\)") `
         'and each replayed suite carries its own wall time, so the pool can say which member is its floor without being re-instrumented'
+
+    Write-Host ''
+    Write-Host '-- redirected streams close on their own clock --' -ForegroundColor Cyan
+    $readHelper = Get-Command Read-SuiteStream -ErrorAction SilentlyContinue
+    if ($null -eq $readHelper) {
+        Assert-True $false 'a briefly locked transcript is retried and read after its writer releases it'
+        Assert-True $false 'a transcript that stays locked fails closed instead of hanging or disappearing'
+    } else {
+        $transientPath = Join-Path $fixtureRoot 'transient-stream.txt'
+        $transientReady = Join-Path $fixtureRoot 'transient-stream.ready'
+        [System.IO.File]::WriteAllText($transientPath, 'eventual transcript', $utf8NoBom)
+        $lockerScript = @"
+`$stream = [System.IO.File]::Open('$($transientPath.Replace("'", "''"))', 'Open', 'ReadWrite', 'None')
+[System.IO.File]::WriteAllText('$($transientReady.Replace("'", "''"))', 'ready')
+Start-Sleep -Milliseconds 500
+`$stream.Dispose()
+"@
+        $locker = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $lockerScript
+        $readyDeadline = (Get-Date).AddSeconds(5)
+        while (-not (Test-Path -LiteralPath $transientReady) -and (Get-Date) -lt $readyDeadline) {
+            Start-Sleep -Milliseconds 25
+        }
+        $lockerReady = Test-Path -LiteralPath $transientReady
+        $transient = Read-SuiteStream -Path $transientPath -TimeoutMilliseconds 3000
+        $lockerExited = $locker.WaitForExit(5000)
+        if (-not $lockerExited) { try { $locker.Kill() } catch { } }
+        Assert-True ($lockerReady -and $lockerExited -and $transient.Succeeded -and $transient.Text -eq 'eventual transcript') `
+            'a briefly locked transcript is retried and read after its writer releases it'
+
+        $persistentPath = Join-Path $fixtureRoot 'persistent-stream.txt'
+        [System.IO.File]::WriteAllText($persistentPath, 'must not disappear', $utf8NoBom)
+        $persistentLock = [System.IO.File]::Open($persistentPath, 'Open', 'ReadWrite', 'None')
+        try {
+            $persistent = Read-SuiteStream -Path $persistentPath -TimeoutMilliseconds 150
+        } finally {
+            $persistentLock.Dispose()
+        }
+        Assert-True (-not $persistent.Succeeded -and $persistent.Reason -match 'remained locked') `
+            'a transcript that stays locked fails closed instead of hanging or disappearing'
+    }
 
     Write-Host ''
     Write-Host '-- an unreadable throttle widens to serial, never wider --' -ForegroundColor Cyan

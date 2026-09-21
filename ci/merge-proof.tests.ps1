@@ -11,7 +11,7 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 201
+$ExpectedAssertionCount = 207
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
@@ -689,6 +689,7 @@ function Add-Manifest {
     param(
         [Parameter(Mandatory)] [string] $Repo, [Parameter(Mandatory)] [hashtable] $Body,
         [string] $Name = 'run.json', [switch] $Uncommitted,
+        [switch] $OmitEventContractSweep,
         # The bytes to write, INSTEAD of serializing $Body. An unpaired surrogate does not survive
         # ConvertTo-Json plus a UTF-8 write -- it comes back as nothing at all, so the fixture that
         # was meant to carry one wrote a clean manifest and the cell passed for the wrong reason.
@@ -700,6 +701,13 @@ function Add-Manifest {
     # a fixture without it is not a manifest the gate could have produced. Defaulted here rather than
     # in every cell, and overridable by the cells whose subject IS this field.
     if (-not $Body.ContainsKey('dirtyDiffHash')) { $Body['dirtyDiffHash'] = $null }
+    # A current blocking gate writes the scalar sweep receipt on every manifest. Keep ordinary
+    # blocking fixtures realistic by adding that receipt here; the omission switch below is the
+    # discriminating negative control for merge-proof's fail-closed rule.
+    if (-not $OmitEventContractSweep -and -not $Body.ContainsKey('eventContractSweep') -and
+        ((Get-Content -LiteralPath (Join-Path $Repo 'ci/gate.ps1') -Raw) -match '(?m)^\s*function\s+Get-HeadProvenance\b')) {
+        $Body['eventContractSweep'] = @{ state = 'measured'; reason = '' }
+    }
     $path = Join-Path (Join-Path $Repo '.factory/gate-runs') $Name
     $text = if ($PSBoundParameters.ContainsKey('RawJson')) { $RawJson } else { $Body | ConvertTo-Json -Depth 6 }
     $manifestWriteTimer = [Diagnostics.Stopwatch]::StartNew()
@@ -887,6 +895,59 @@ try {
         -Message 'and the file that spoiled it is named, not merely counted'
     Assert-True -Condition ($r.text -cmatch 'M work\.txt' -or $r.text -cmatch 'A work\.txt') `
         -Message 'with the CHANGE KIND beside it, which is what makes a deletion distinguishable from an addition'
+
+    # ---- #205: the sweep's reading is a fact the verdict READS, or it is decoration.
+    Write-Host ''
+    Write-Host '-- a run whose event-contract sweep could not measure is NOT vouched for --' -ForegroundColor Cyan
+    # `ci/gate.ps1` writes `eventContractSweep = { state, reason }` beside `coverage`; a remote that
+    # did not answer is `notMeasured` there and never `status: RED`. The observer is this script: a
+    # GREEN whose sweep did not measure is a run that never asked whether the contract collides.
+    $repo = New-Repo -Name 'sweep-not-measured' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated
+        eventContractSweep = @{ state = 'notMeasured'; reason = 'git fetch origin did not finish within 20s' } } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $r = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+    Assert-True -Condition ($r.exitCode -eq 2 -and $r.text -cmatch 'NOT') `
+        -Message "a GREEN whose sweep is notMeasured is NOT (exit $($r.exitCode))"
+    Assert-True -Condition ($r.text -cmatch 'notMeasured' -and $r.text -cmatch 'did not finish within 20s') `
+        -Message 'and the reason names the state AND the sweep''s own reason, so the presser knows it was the remote, not the tree'
+    # CONTROL: the same manifest with a measured sweep is the ordinary SATISFIED, so the rule is
+    # about the state and not about the field's presence.
+    $repo = New-Repo -Name 'sweep-measured' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated
+        eventContractSweep = @{ state = 'measured'; reason = '' } } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $r = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+    Assert-True -Condition ($r.exitCode -eq 0) `
+        -Message "CONTROL: a measured sweep leaves the verdict SATISFIED (exit $($r.exitCode))"
+    # A current blocking manifest that omits the mandatory receipt must not pass as if the sweep ran.
+    $repo = New-Repo -Name 'sweep-absent-blocking' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -OmitEventContractSweep -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $r = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+    Assert-True -Condition ($r.exitCode -eq 2 -and $r.text -cmatch 'eventContractSweep is absent') `
+        -Message 'a blocking manifest without the mandatory event-contract receipt is NOT and names the omission'
+    # Compatibility is explicit: a historical non-provenance gate remains ADVISORY mode.
+    $repo = New-Repo -Name 'sweep-absent-legacy'
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -OmitEventContractSweep -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $r = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+    Assert-True -Condition ($r.exitCode -eq 0 -and $r.text -cmatch 'ADVISORY' -and $r.text -cnotmatch 'eventContractSweep is absent') `
+        -Message 'legacy ADVISORY mode still reads older receipts without inventing mandatory sweep evidence'
+    # A singleton JSON array is not a scalar state. Casting it to [string] would turn ["measured"]
+    # into "measured" and let a malformed manifest satisfy the proof.
+    $repo = New-Repo -Name 'sweep-measured-array' -ProvenanceInGate
+    $gated = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Manifest -Repo $repo -Body @{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated
+        eventContractSweep = @{ state = ,@('measured'); reason = '' } } | Out-Null
+    $tip = (& git -C $repo rev-parse HEAD).Trim()
+    $r = Invoke-Proof -Repo $repo -PullRequest 42 -Head $tip
+    Assert-True -Condition ($r.exitCode -ne 0) `
+        -Message 'a singleton array event-contract state does not satisfy merge proof'
 
     # ---- An ancestor is not a parent. This is the cell the is-ancestor sabotage must redden.
     Write-Host ''
@@ -1283,7 +1344,7 @@ try {
         # one the committed store is held to.
         (@{ status = 'RED'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json), $utf8NoBom)
     [System.IO.File]::WriteAllText((Join-Path $ledger "$prefix-2026-09-02T11-00-00.json"),
-        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json), $utf8NoBom)
+        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null; eventContractSweep = @{state='measured';reason=''} } | ConvertTo-Json), $utf8NoBom)
     $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
             -PullRequest 42 -Head $tip -RepositoryRoot $repo -LedgerDirectory $ledger 2>&1 | ForEach-Object { [string]$_ })
     $code = $LASTEXITCODE
@@ -1597,7 +1658,8 @@ try {
     $ledger = Join-Path $fixtureRoot 'witness-good-ledger'
     [System.IO.Directory]::CreateDirectory($ledger) | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $ledger ($gated.Substring(0, 12) + '-2026-09-02T10-00-00.json')),
-        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json), $utf8NoBom)
+        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null
+            eventContractSweep = @{ state = 'measured'; reason = '' } } | ConvertTo-Json), $utf8NoBom)
     $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
             -PullRequest 42 -Head $tip -RepositoryRoot $repo -LedgerDirectory $ledger 2>&1 | ForEach-Object { [string]$_ })
     Assert-True -Condition ((($out -join "`n")) -cnotmatch 'rests on the committed manifest alone') `
@@ -1621,6 +1683,7 @@ try {
         [System.IO.Directory]::CreateDirectory($ledger) | Out-Null
         $body = @{} + $case.body
         $body['headSha'] = $gated
+        $body['eventContractSweep'] = @{ state = 'measured'; reason = '' }
         [System.IO.File]::WriteAllText((Join-Path $ledger ($gated.Substring(0, 12) + '-2026-09-02T10-00-00.json')),
             ($body | ConvertTo-Json), $utf8NoBom)
         $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
@@ -2256,7 +2319,7 @@ try {
     $slotStore = Join-Path $slotRoot 'gate-runs'
     [System.IO.Directory]::CreateDirectory($slotStore) | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $slotStore ($gated.Substring(0, 12) + '-2026-09-06T05-00-00.json')),
-        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null } | ConvertTo-Json),
+        (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = $gated; dirtyDiffHash = $null; eventContractSweep = @{state='measured';reason=''} } | ConvertTo-Json),
         $utf8NoBom)
 
     $previousSlotDir = $env:GRAPHHELM_SLOT_DIR
@@ -2280,7 +2343,7 @@ try {
         # must come back.
         Remove-Item -LiteralPath (Join-Path $slotStore ($gated.Substring(0, 12) + '-2026-09-06T05-00-00.json')) -Force
         [System.IO.File]::WriteAllText((Join-Path $slotStore ('0123456789ab-2026-09-06T05-00-00.json')),
-            (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = ('0' * 40); dirtyDiffHash = $null } | ConvertTo-Json),
+            (@{ status = 'GREEN'; pushed = $true; pullRequest = 42; headSha = ('0' * 40); dirtyDiffHash = $null; eventContractSweep = @{state='measured';reason=''} } | ConvertTo-Json),
             $utf8NoBom)
         $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $subjectPath `
                 -PullRequest 42 -Head $tip -RepositoryRoot $repo 2>&1 | ForEach-Object { [string]$_ })

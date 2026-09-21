@@ -253,9 +253,9 @@ fn userinfo_cannot_be_used_to_disguise_a_remote_host_as_loopback() {
     assert!(
         matches!(
             RouteManifest::from_json(&bracket_bypass.to_string()).unwrap_err(),
-            ManifestError::CleartextRemoteUrl { .. }
+            ManifestError::UserinfoBaseUrl { .. }
         ),
-        "http://[::1]@evil.com must be refused as cleartext-remote, not accepted as loopback"
+        "http://[::1]@evil.com must be refused as userinfo"
     );
 
     let mut localhost_bypass = valid_manifest_json();
@@ -263,21 +263,34 @@ fn userinfo_cannot_be_used_to_disguise_a_remote_host_as_loopback() {
     assert!(
         matches!(
             RouteManifest::from_json(&localhost_bypass.to_string()).unwrap_err(),
-            ManifestError::CleartextRemoteUrl { .. }
+            ManifestError::UserinfoBaseUrl { .. }
         ),
-        "http://localhost:tok@attacker.example must be refused, not accepted as loopback"
+        "http://localhost:tok@attacker.example must be refused as userinfo"
     );
 
-    // Userinfo against a GENUINE loopback host is still fine — nothing in this milestone
-    // forbids basic auth to a local fake.
+    // Userinfo is forbidden even for loopback: the URL may be listed or logged by a caller.
     let mut genuine_loopback = valid_manifest_json();
     genuine_loopback["routes"][0]["baseUrl"] = "http://user:pass@127.0.0.1:9".into();
-    assert!(RouteManifest::from_json(&genuine_loopback.to_string()).is_ok());
+    assert!(matches!(
+        RouteManifest::from_json(&genuine_loopback.to_string()).unwrap_err(),
+        ManifestError::UserinfoBaseUrl { .. }
+    ));
 
-    // https:// is unaffected by any of this — it is accepted regardless of host.
+    // https:// is also forbidden from carrying userinfo.
     let mut https_untouched = valid_manifest_json();
     https_untouched["routes"][0]["baseUrl"] = "https://user:pass@evil.com".into();
-    assert!(RouteManifest::from_json(&https_untouched.to_string()).is_ok());
+    assert!(matches!(
+        RouteManifest::from_json(&https_untouched.to_string()).unwrap_err(),
+        ManifestError::UserinfoBaseUrl { .. }
+    ));
+
+    let mut query_at = valid_manifest_json();
+    query_at["routes"][0]["baseUrl"] = "https://api.example.com?email=a@b".into();
+    assert!(RouteManifest::from_json(&query_at.to_string()).is_ok());
+
+    let mut fragment_at = valid_manifest_json();
+    fragment_at["routes"][0]["baseUrl"] = "https://api.example.com#contact=a@b".into();
+    assert!(RouteManifest::from_json(&fragment_at.to_string()).is_ok());
 }
 
 /// PR review MEDIUM 11: a trailing `/` on `baseUrl` is refused rather than silently normalized

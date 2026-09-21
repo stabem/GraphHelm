@@ -127,6 +127,8 @@ pub enum BrokerError {
     NotFound { id: String },
     /// The credential has been revoked and can no longer be leased.
     Revoked { id: String },
+    /// A rotation attempted to change the provider of an existing reference.
+    ProviderMismatch { id: String },
     /// The requesting route is not in the credential's `usable_by` list.
     NotUsableByRoute { id: String, route_id: String },
     /// Sealing or opening the credential's value failed — including AEAD authentication failure
@@ -151,6 +153,9 @@ impl std::fmt::Display for BrokerError {
                 write!(formatter, "credential '{id}' is not known to the broker")
             }
             Self::Revoked { id } => write!(formatter, "credential '{id}' has been revoked"),
+            Self::ProviderMismatch { id } => {
+                write!(formatter, "credential '{id}' has a different provider")
+            }
             Self::NotUsableByRoute { id, route_id } => write!(
                 formatter,
                 "credential '{id}' is not usable by route '{route_id}'"
@@ -360,6 +365,78 @@ impl CredentialBroker {
         persist(&self.broker_dir, &candidate)?;
         self.entries = candidate;
         Ok(())
+    }
+
+    /// Rotates a credential while preserving every route already authorized for its reference.
+    ///
+    /// Unlike a caller-side `list` followed by [`Self::store`], this reloads the current index
+    /// after acquiring the broker lock. Two HTTP rotations can therefore add different routes
+    /// without one replacing the other's freshly-added scope. Provider changes fail closed based
+    /// on that same fresh entry.
+    pub async fn store_preserving_existing_scope(
+        &mut self,
+        reference: SecretReference,
+        value: SecretBytes,
+    ) -> Result<SecretReference, BrokerError> {
+        validate_reference(&reference)?;
+        let SecretReference {
+            id,
+            provider,
+            mut usable_by,
+        } = reference;
+
+        let input = EvidenceInput::new(
+            id.clone(),
+            MEDIA_TYPE,
+            Sensitivity::Restricted,
+            RETENTION_CLASS,
+            value,
+        )
+        .map_err(BrokerError::Sealed)?;
+        let sealed = self
+            .protector
+            .seal(gateway_scope(), input)
+            .await
+            .map_err(BrokerError::Sealed)?;
+
+        let _lock = acquire_broker_lock(&self.broker_dir)?;
+        let mut candidate = load(&self.broker_dir, self.protector.key_provider()).await?;
+        if let Some(existing) = candidate.get(&id) {
+            if existing.provider != provider {
+                return Err(BrokerError::ProviderMismatch { id });
+            }
+            usable_by.extend(existing.usable_by.iter().cloned());
+            usable_by.sort();
+            usable_by.dedup();
+        }
+        let mac = compute_entry_mac(
+            self.protector.key_provider(),
+            &id,
+            &provider,
+            &usable_by,
+            false,
+            &sealed,
+        )
+        .await?;
+        candidate.insert(
+            id.clone(),
+            Entry {
+                id: id.clone(),
+                provider: provider.clone(),
+                usable_by: usable_by.clone(),
+                revoked: false,
+                sealed,
+                mac_key_id: mac.key_id,
+                mac_tag: mac.tag,
+            },
+        );
+        persist(&self.broker_dir, &candidate)?;
+        self.entries = candidate;
+        Ok(SecretReference {
+            id,
+            provider,
+            usable_by,
+        })
     }
 
     /// Returns the plaintext value for `id`, provided it exists, is not revoked, and `route_id`

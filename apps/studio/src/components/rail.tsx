@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary } from "../runtime/types";
 import { clock, hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
@@ -43,6 +43,7 @@ export function ProjectRail({
   onLoadMore,
   onNewTask,
   onAddProject,
+  onOpenModels,
   projectName,
   onRenameProject,
   removedRuns = [],
@@ -62,6 +63,9 @@ export function ProjectRail({
   onLoadMore: () => void;
   onNewTask: () => void;
   onAddProject: () => void;
+  /** #1171: the models screen. It sits here rather than in a task because it is about the
+   * RUNTIME, not about any one run: the providers it can reach outlive every task on this list. */
+  onOpenModels: () => void;
   projectName?: string;
   onRenameProject?: (name: string) => boolean;
   removedRuns?: string[];
@@ -224,6 +228,11 @@ export function ProjectRail({
           </div>
         )}
       </div>
+
+      <button type="button" className="add-project" onClick={onOpenModels}>
+        <SlidersHorizontal aria-hidden="true" />
+        models
+      </button>
 
       {/* Closing the list rather than heading it: this acts on the LIST, not on any one folder. */}
       <button type="button" className="add-project" onClick={onAddProject}>

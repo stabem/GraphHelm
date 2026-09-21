@@ -204,8 +204,12 @@ export interface ModelRouteSummary {
   transport: string;
   billingMode: string;
   model: string | null;
+  /** Public manifest fields needed to edit a route without replacing hidden configuration. */
+  baseUrl?: string | null;
+  credentialRef?: string | null;
   profiles: string[];
   enabled: boolean;
+  [key: string]: unknown;
 }
 
 /** Sealed evidence, opened. `content` is the plaintext - a model's reply, a tool's output - and

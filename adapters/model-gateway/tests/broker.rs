@@ -11,7 +11,7 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Barrier},
     task::{Context, Poll, Wake, Waker},
     thread,
 };
@@ -563,6 +563,109 @@ fn concurrent_store_and_revoke_from_two_broker_handles_never_resurrects_a_revoca
             assert_eq!(leased.expose(<[u8]>::to_vec), SENTINEL.as_bytes());
         });
     }
+}
+
+#[test]
+fn preserving_scope_serializes_concurrent_rotations_and_checks_fresh_provider() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+
+    block_on(async {
+        let mut broker = create_broker(broker_dir.path(), keyring_dir.path()).await;
+        broker
+            .store(
+                SecretReference {
+                    id: "shared_scope".to_owned(),
+                    provider: "anthropic".to_owned(),
+                    usable_by: vec!["route_a".to_owned()],
+                },
+                sentinel_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let barrier = Arc::new(Barrier::new(2));
+    let broker_dir_b = broker_dir.path().to_path_buf();
+    let keyring_dir_b = keyring_dir.path().to_path_buf();
+    let barrier_b = Arc::clone(&barrier);
+    let rotate_b = thread::spawn(move || {
+        block_on(async {
+            let mut broker = open_broker(&broker_dir_b, &keyring_dir_b).await;
+            barrier_b.wait();
+            broker
+                .store_preserving_existing_scope(
+                    SecretReference {
+                        id: "shared_scope".to_owned(),
+                        provider: "anthropic".to_owned(),
+                        usable_by: vec!["route_b".to_owned()],
+                    },
+                    sentinel_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+    });
+    let broker_dir_c = broker_dir.path().to_path_buf();
+    let keyring_dir_c = keyring_dir.path().to_path_buf();
+    let barrier_c = Arc::clone(&barrier);
+    let rotate_c = thread::spawn(move || {
+        block_on(async {
+            let mut broker = open_broker(&broker_dir_c, &keyring_dir_c).await;
+            barrier_c.wait();
+            broker
+                .store_preserving_existing_scope(
+                    SecretReference {
+                        id: "shared_scope".to_owned(),
+                        provider: "anthropic".to_owned(),
+                        usable_by: vec!["route_c".to_owned()],
+                    },
+                    sentinel_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+    });
+    rotate_b.join().unwrap();
+    rotate_c.join().unwrap();
+
+    block_on(async {
+        let broker = open_broker(broker_dir.path(), keyring_dir.path()).await;
+        assert_eq!(
+            broker.list()[0].usable_by,
+            vec!["route_a", "route_b", "route_c"]
+        );
+    });
+
+    let stale_dir = broker_dir.path().to_path_buf();
+    let stale_keyring = keyring_dir.path().to_path_buf();
+    block_on(async {
+        let mut stale = open_broker(&stale_dir, &stale_keyring).await;
+        let mut fresh = open_broker(&stale_dir, &stale_keyring).await;
+        fresh
+            .store(
+                SecretReference {
+                    id: "shared_scope".to_owned(),
+                    provider: "openai".to_owned(),
+                    usable_by: vec!["route_a".to_owned()],
+                },
+                sentinel_bytes(),
+            )
+            .await
+            .unwrap();
+        let error = stale
+            .store_preserving_existing_scope(
+                SecretReference {
+                    id: "shared_scope".to_owned(),
+                    provider: "anthropic".to_owned(),
+                    usable_by: vec!["route_d".to_owned()],
+                },
+                sentinel_bytes(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BrokerError::ProviderMismatch { .. }));
+    });
 }
 
 /// #1139: a keyring that already holds the key (made by `graphhelm init` for the Runtime's

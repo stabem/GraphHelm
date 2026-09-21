@@ -269,6 +269,9 @@ pub enum ManifestError {
     ///
     /// Carries only the route id, for the same reason as [`Self::CleartextRemoteUrl`].
     TrailingSlashBaseUrl { route_id: String },
+    /// A route's `baseUrl` authority carried userinfo, which could expose credentials through
+    /// listings, logs, or URL clients.
+    UserinfoBaseUrl { route_id: String },
     /// Any other per-route structural rule: route id shape, a `direct_api` route missing
     /// `baseUrl`/`model`/`credentialRef` or carrying `runtime`/`command`, or a `native_runtime`
     /// route missing `runtime`/`command` (or carrying an empty `command.program`) or carrying
@@ -323,6 +326,9 @@ impl std::fmt::Display for ManifestError {
                 f,
                 "route '{route_id}': baseUrl must not end with a trailing '/'"
             ),
+            Self::UserinfoBaseUrl { route_id } => {
+                write!(f, "route '{route_id}': baseUrl must not contain userinfo")
+            }
             Self::StructuralViolation { route_id, rule } => {
                 write!(f, "route '{route_id}': {rule}")
             }
@@ -564,12 +570,30 @@ fn validate_base_url(route_id: &str, base_url: &str) -> Result<(), ManifestError
         });
     }
 
-    if base_url.starts_with("https://") {
+    if let Some(authority_and_path) = base_url.strip_prefix("https://") {
+        if authority_and_path
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .contains('@')
+        {
+            return Err(ManifestError::UserinfoBaseUrl {
+                route_id: route_id.to_owned(),
+            });
+        }
         return Ok(());
     }
 
     if let Some(authority_and_path) = base_url.strip_prefix("http://") {
-        let authority = authority_and_path.split('/').next().unwrap_or_default();
+        let authority = authority_and_path
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default();
+        if authority.contains('@') {
+            return Err(ManifestError::UserinfoBaseUrl {
+                route_id: route_id.to_owned(),
+            });
+        }
         if is_loopback_authority(authority) {
             return Ok(());
         }

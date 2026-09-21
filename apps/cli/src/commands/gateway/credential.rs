@@ -54,7 +54,10 @@ pub(in crate::commands) fn set(
 /// line and is shared: the keyring precondition, the passphrase from the process environment, the
 /// reference's own charset and bound inside `CredentialBroker::store`, and a reply that names the
 /// reference and never the value.
-pub(in crate::commands) fn set_value(
+/// HTTP rotation keeps the broker's existing route scope. The browser only knows the route it is
+/// editing, while a credential reference may intentionally be shared by several routes; replacing
+/// the scope with the browser's one-item list would silently revoke the other routes.
+pub(in crate::commands) fn set_value_preserving_scope(
     broker_dir: &Path,
     keyring_dir: &Path,
     key_id: &str,
@@ -65,7 +68,7 @@ pub(in crate::commands) fn set_value(
 ) -> Outcome {
     finish(
         SET_COMMAND,
-        store(
+        store_preserving_scope(
             broker_dir,
             keyring_dir,
             key_id,
@@ -125,6 +128,52 @@ fn store(
             "id": reference.id,
             "provider": reference.provider,
             "routes": reference.usable_by,
+        }))
+    })
+}
+
+fn store_preserving_scope(
+    broker_dir: &Path,
+    keyring_dir: &Path,
+    key_id: &str,
+    reference: &str,
+    provider: &str,
+    usable_by: Vec<String>,
+    value: SecretBytes,
+) -> Result<serde_json::Value, Failure> {
+    require_keyring_directory(keyring_dir)?;
+    let passphrase = passphrase_from_env()?;
+    let broker_dir = broker_dir.to_path_buf();
+    let keyring_dir = keyring_dir.to_path_buf();
+    let key_id = key_id.to_owned();
+    let reference = reference.to_owned();
+    let provider = provider.to_owned();
+    runtime()?.block_on(async move {
+        let mut broker =
+            CredentialBroker::open_or_create(&broker_dir, &keyring_dir, &key_id, passphrase)
+                .await
+                .map_err(|error| broker_failure(&error))?;
+        let reference_value = SecretReference {
+            id: reference.clone(),
+            provider: provider.clone(),
+            usable_by,
+        };
+        let reference_value = broker
+            .store_preserving_existing_scope(reference_value, value)
+            .await
+            .map_err(|error| match error {
+                graphhelm_model_gateway::broker::BrokerError::ProviderMismatch { .. } => {
+                    credential_error(
+                        "credential provider does not match the existing reference",
+                        "/provider",
+                    )
+                }
+                other => broker_failure(&other),
+            })?;
+        Ok(json!({
+            "id": reference_value.id,
+            "provider": reference_value.provider,
+            "routes": reference_value.usable_by,
         }))
     })
 }

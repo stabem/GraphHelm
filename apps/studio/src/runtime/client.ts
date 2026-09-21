@@ -209,7 +209,7 @@ export interface MutationOptions {
 }
 
 interface RequestOptions {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   path: string;
   body?: unknown;
   headers?: Record<string, string>;
@@ -1261,6 +1261,94 @@ export class RuntimeClient {
       }
       throw error;
     }
+  }
+
+
+  /**
+   * Writes one `direct_api` route into the Runtime's own manifest (`PUT /v1/gateway/routes`).
+   *
+   * THE MANIFEST IS NOT A PARAMETER, and that is the Runtime's rule rather than this client's
+   * restraint: a mutation cannot name the file it writes, because a path in a request would let
+   * any authenticated caller create a manifest anywhere the server process can write. The server
+   * writes the one `serve --manifest` named at startup, or refuses.
+   *
+   * Fields the caller did not set are not sent. The Runtime owns every default - `enabled` when
+   * absent, the `secret_<id>` credential reference, the profile a route advertises - and a client
+   * that filled them in would be a second place they are decided.
+   */
+  async setRoute(draft: {
+    id: string;
+    provider: string;
+    baseUrl: string;
+    model: string;
+    enabled?: boolean;
+    replace?: boolean;
+    credentialRef?: string;
+    profiles?: string[];
+  }): Promise<{ routes: ModelRouteSummary[] }> {
+    const body: Record<string, unknown> = {
+      id: draft.id,
+      provider: draft.provider,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+    };
+    if (typeof draft.enabled === "boolean") body.enabled = draft.enabled;
+    if (typeof draft.replace === "boolean") body.replace = draft.replace;
+    if (typeof draft.credentialRef === "string" && draft.credentialRef !== "") {
+      body.credentialRef = draft.credentialRef;
+    }
+    if (Array.isArray(draft.profiles)) body.profiles = draft.profiles;
+    const reply = await this.#request<{ routes?: ModelRouteSummary[] }>({
+      method: "PUT",
+      path: "/v1/gateway/routes",
+      body,
+    });
+    // A write invalidates the fixture-only shortcut: this Runtime demonstrably has a manifest.
+    this.#fixtureOnly = false;
+    return { routes: reply.routes ?? [] };
+  }
+
+  /**
+   * Stores one route's API key in the Runtime's broker
+   * (`PUT /v1/gateway/credentials/{reference}`).
+   *
+   * THE VALUE GOES IN THE BODY AND NOWHERE ELSE. The Runtime's read audit records request paths
+   * and response bodies and never a request body, so a key in the path or the query would land in
+   * a plaintext file on the operator's machine. Nothing reads a stored value back - there is no
+   * such request - so this method returns only what the Runtime says about the reference.
+   */
+  async setCredential(draft: {
+    reference: string;
+    provider: string;
+    usableBy: string[];
+    value: string;
+  }): Promise<{ id: string; routes: string[] }> {
+    const reference = checkedId(draft.reference, "reference");
+    const reply = await this.#request<{ id?: string; routes?: string[] }>({
+      method: "PUT",
+      path: `/v1/gateway/credentials/${encodeURIComponent(reference)}`,
+      body: {
+        value: draft.value,
+        provider: draft.provider,
+        usableBy: draft.usableBy,
+      },
+    });
+    return { id: reply.id ?? reference, routes: reply.routes ?? [] };
+  }
+
+  /**
+   * Asks the Runtime whether one route's credential leases (`GET /v1/gateway/probe`).
+   *
+   * It places NO model call, so an `available` here says the key works and says nothing about the
+   * provider. Every caller that renders this has to carry that distinction with it.
+   */
+  async probeRoute(routeId: string): Promise<{ health: string }> {
+    const id = checkedId(routeId, "route");
+    const reply = await this.#request<{ health?: string }>({
+      method: "GET",
+      path: `/v1/gateway/probe?route=${encodeURIComponent(id)}`,
+    });
+    return { health: reply.health ?? "unknown" };
   }
 
   /**

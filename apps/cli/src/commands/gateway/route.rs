@@ -54,6 +54,7 @@ pub(in crate::commands) struct RouteWrite {
     pub base_url: String,
     pub model: String,
     pub credential_ref: Option<String>,
+    pub profiles: Option<Vec<String>>,
     pub enabled: bool,
     pub replace: bool,
 }
@@ -161,7 +162,7 @@ fn merged(
         "baseUrl": write.base_url,
         "model": write.model,
         "credentialRef": credential_ref,
-        "profiles": [PROFILE],
+        "profiles": write.profiles.clone().unwrap_or_else(|| vec![PROFILE.to_owned()]),
         "enabled": write.enabled,
     });
     let position = routes
@@ -236,7 +237,12 @@ fn listing(manifest: &RouteManifest) -> Value {
                         Transport::DirectApi => "direct_api",
                         Transport::NativeRuntime => "native_runtime",
                     },
+                    "authentication": route.authentication(),
+                    "billingMode": route.billing_mode(),
+                    "baseUrl": route.base_url(),
+                    "credentialRef": route.credential_ref(),
                     "model": route.model(),
+                    "profiles": route.profiles(),
                     "enabled": route.enabled(),
                 })
             })

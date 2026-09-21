@@ -2578,3 +2578,67 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
  .canvas-lint { top: 132px; }
  .free-canvas-content .sheet { top: 130px; }
 }
+
+/* Settings -> Models (#1171). The cards read like the rest of the page: a panel, a list, and one
+   form at a time. `.model.off` dims a disabled route rather than hiding it, for the same reason
+   the composer shows disabled routes in its picker -- "missing" and "turned off" send an operator
+   to two different places. */
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 13px 0;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.model {
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  padding: 9px 10px;
+}
+
+.model.off { opacity: 0.62; }
+
+.model-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.model-head strong { font-family: var(--mono); font-size: 12px; }
+
+.model-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* The dot IS the sentence: a probe reports one of four things and each one reads differently at a
+   glance, so a colour never carries the meaning alone. */
+.probe {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--faint);
+}
+
+.probe.available { color: var(--live); border-color: var(--live); }
+.probe.refused { color: var(--danger); border-color: var(--danger); }
+.probe.checking { color: var(--text); }
+
+.add-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 13px;
+  align-self: flex-start;
+}

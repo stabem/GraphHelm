@@ -3717,6 +3717,30 @@ pub(super) async fn gateway_route_set(
             );
         }
     };
+    let profiles = match payload.get("profiles") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Array(values)) => {
+            let Some(values) = values
+                .iter()
+                .map(|value| value.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+            else {
+                return bad_request(
+                    GATEWAY_ROUTE_SET_COMMAND,
+                    "\"profiles\" must be an array of strings when it is given",
+                    "/profiles",
+                );
+            };
+            Some(values)
+        }
+        Some(_) => {
+            return bad_request(
+                GATEWAY_ROUTE_SET_COMMAND,
+                "\"profiles\" must be an array of strings when it is given",
+                "/profiles",
+            );
+        }
+    };
     let (Some(enabled), Some(replace)) = (
         optional_flag(&payload, "enabled", true),
         optional_flag(&payload, "replace", false),
@@ -3739,6 +3763,7 @@ pub(super) async fn gateway_route_set(
         base_url: fields[2].clone(),
         model: fields[3].clone(),
         credential_ref,
+        profiles,
         enabled,
         replace,
     };
@@ -3882,7 +3907,7 @@ pub(super) async fn gateway_credential_set(
     let provider = provider.to_owned();
 
     match tokio::task::spawn_blocking(move || {
-        crate::commands::gateway::credential::set_value(
+        crate::commands::gateway::credential::set_value_preserving_scope(
             &broker, &keyring, &key_id, &reference, &provider, routes, value,
         )
     })

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { ProjectRail } from "./rail";
 import type { ExecutionSummary } from "../runtime/types";
@@ -35,6 +36,7 @@ describe("naming rows on the rail", () => {
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
         onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
       />,
     );
     const feature = screen.getByRole("button", { name: /Locate related components and tests/ });
@@ -56,6 +58,7 @@ describe("naming rows on the rail", () => {
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
         onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
         briefings={{
           exec_feature: { objective: "Locate related components and tests", name: "Feature" },
           [generated]: { objective: "Investigate slow login on mobile", name: "New task" },
@@ -100,6 +103,7 @@ describe("a truncated row says its whole name on hover", () => {
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
         onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
       />,
     );
   }
@@ -116,5 +120,32 @@ describe("a truncated row says its whole name on hover", () => {
     railWithCollidingNames();
     const second = screen.getByRole("button", { name: new RegExp(other) });
     expect(within(second).getByText("run-bbbb2222")).toHaveAttribute("title", "run-bbbb2222");
+  });
+
+  // #1171: the models entry point had no cell at all. A review lane proved it by rewiring
+  // `onClick={onOpenModels}` to `onClick={onAddProject}` -- typecheck stayed at 0 and all 465
+  // tests stayed green, because both rail suites only PASSED the new prop and never pressed the
+  // button. A prop a suite tolerates is not a prop a suite constrains.
+  it("opens the models screen from the rail, and not the add-project screen", async () => {
+    const onOpenModels = vi.fn();
+    const onAddProject = vi.fn();
+    render(
+      <ProjectRail
+        projects={[{ name: "store", runs: [row("exec_feature")] }]}
+        selected=""
+        connected
+        hasMore={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onNewTask={vi.fn()}
+        onAddProject={onAddProject}
+        onOpenModels={onOpenModels}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "models" }));
+    expect(onOpenModels).toHaveBeenCalledTimes(1);
+    // The sibling button is the decoy: wiring this one to it is the exact defect the lane staged.
+    expect(onAddProject).not.toHaveBeenCalled();
   });
 });

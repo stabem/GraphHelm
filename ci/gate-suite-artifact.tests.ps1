@@ -11,7 +11,11 @@
 
 $ExpectedAssertionCount = 22
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
+# Two full gates observed the name-only import return while Get-FileHash was still absent in this
+# child, even though the same six-way pool was green in isolation. Load the host's own manifest and
+# force its script exports into this runspace; the no-auto-load assertion below keeps this
+# fail-closed if that explicit import ever stops providing the command.
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
 $script:total = 0
 $script:failures = 0
 

@@ -8716,6 +8716,119 @@ fn a_route_written_over_http_is_the_write_the_cli_would_have_made() {
         http["data"], cli["data"],
         "the listing must be identical on both doors after an HTTP write"
     );
+    let listed = http["data"]["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == "deepseek_official")
+        .unwrap();
+    assert_eq!(listed["baseUrl"], "https://api.deepseek.com");
+    assert_eq!(listed["credentialRef"], "secret_deepseek_official");
+    assert_eq!(
+        listed["profiles"],
+        serde_json::json!(["balanced_reasoning"])
+    );
+    assert!(!http.to_string().contains("sk-SENTINEL"));
+}
+
+#[test]
+fn route_replace_preserves_the_supplied_reference_and_profiles() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let (status, written) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-v4-pro",
+            "credentialRef": "cred_existing",
+            "profiles": ["critical_reasoning"],
+        }),
+    );
+    assert_eq!(status, 200, "{written}");
+    let (status, replaced) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.example/v1",
+            "model": "deepseek-v5",
+            "credentialRef": "cred_existing",
+            "profiles": ["critical_reasoning"],
+            "replace": true,
+        }),
+    );
+    assert_eq!(status, 200, "{replaced}");
+    let route = replaced["data"]["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == "deepseek_official")
+        .unwrap();
+    assert_eq!(route["baseUrl"], "https://api.deepseek.example/v1");
+    assert_eq!(route["credentialRef"], "cred_existing");
+    assert_eq!(route["profiles"], serde_json::json!(["critical_reasoning"]));
+    let manifest: Value = serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();
+    let route = manifest["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == "deepseek_official")
+        .unwrap();
+    assert_eq!(route["credentialRef"], "cred_existing");
+    assert_eq!(route["profiles"], serde_json::json!(["critical_reasoning"]));
+}
+
+#[test]
+fn http_credential_rotation_preserves_shared_route_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, _manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    for id in ["route_a", "route_b"] {
+        let (status, reply) = put_json(
+            &format!("{base}/v1/gateway/routes"),
+            &token,
+            &serde_json::json!({
+                "id": id,
+                "provider": "openai",
+                "baseUrl": "https://api.example.com",
+                "model": "model",
+                "credentialRef": "cred_shared",
+                "replace": true,
+            }),
+        );
+        assert_eq!(status, 200, "{reply}");
+    }
+    let (status, first) = put_json(
+        &format!("{base}/v1/gateway/credentials/cred_shared"),
+        &token,
+        &serde_json::json!({
+            "value": "first-secret",
+            "provider": "openai",
+            "usableBy": ["route_a"],
+        }),
+    );
+    assert_eq!(status, 200, "{first}");
+    let (status, rotated) = put_json(
+        &format!("{base}/v1/gateway/credentials/cred_shared"),
+        &token,
+        &serde_json::json!({
+            "value": "rotated-secret",
+            "provider": "openai",
+            "usableBy": ["route_b"],
+        }),
+    );
+    assert_eq!(status, 200, "{rotated}");
+    assert_eq!(
+        rotated["data"]["routes"],
+        serde_json::json!(["route_a", "route_b"])
+    );
 }
 
 #[test]

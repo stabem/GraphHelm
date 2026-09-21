@@ -66,6 +66,7 @@ import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
+import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
 import { AddProject } from "./components/addproject";
 import { RAIL_MAX, RAIL_MIN, loadRailWidth, saveRailWidth } from "./rail-width";
 import { DRAFT_NODE_ID, draftGraph, newExecutionId } from "./graph/draft";
@@ -264,6 +265,15 @@ export default function App({
   const [addingProject, setAddingProject] = useState(false);
   /** The Runtime's own model list, read once per draft. `null` while it is being read. */
   const [routes, setRoutes] = useState<RouteChoice | null>(null);
+  // #1171: the models screen. `probes` starts empty on purpose - a route nobody has checked is
+  // rendered "not checked", never green, because a dot that started green would be a claim
+  // nobody measured.
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [probes, setProbes] = useState<Record<string, ProbeState>>({});
+  const modelsSaveGeneration = useRef(0);
+  const probeGeneration = useRef(new Map<string, number>());
   const [composeError, setComposeError] = useState("");
   /** The composer's error readable at a call (see `parkedDraft`; `draftRef` for the shape). */
   const composeErrorRef = useRef("");
@@ -672,6 +682,7 @@ export default function App({
     setTopologyError("");
     setComposeError(resumed?.error ?? "");
     setRoutes(null);
+    setProbes({});
     setBoard(emptyBoard());
     setFocus({ kind: "node", id: DRAFT_NODE_ID });
     void (async () => {
@@ -729,6 +740,95 @@ export default function App({
    * text on screen where they can fix and resend it - clearing first would lose what they wrote to
    * a refusal they did not cause.
    */
+  // #1171: the three writes the models screen makes. Each one re-reads the listing afterwards
+  // rather than patching local state from the reply: the manifest is a FILE the Runtime owns and
+  // another operator (or a CLI in another window) can have moved it between two of these calls.
+  const refreshRoutes = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      const listing = await client.listRoutes();
+      if (clientRef.current === client) setRoutes(listing);
+    } catch {
+      // A listing that cannot be re-read leaves the previous one on screen. It is stale, and the
+      // next successful read replaces it; inventing an empty list here would report that the
+      // operator just deleted every provider they have.
+    }
+  }, []);
+
+  const saveModels = useCallback(async (draft: RouteDraft, key: KeyDraft | null): Promise<SaveOutcome> => {
+    const client = clientRef.current;
+    if (!client) return "route_saved_key_failed";
+    const generation = connectionGeneration.current;
+    const saveGeneration = ++modelsSaveGeneration.current;
+    const isCurrentSave = () =>
+      clientRef.current === client &&
+      connectionGeneration.current === generation &&
+      modelsSaveGeneration.current === saveGeneration;
+    probeGeneration.current.set(draft.id, (probeGeneration.current.get(draft.id) ?? 0) + 1);
+    for (const routeId of key?.usableBy ?? []) {
+      probeGeneration.current.set(routeId, (probeGeneration.current.get(routeId) ?? 0) + 1);
+    }
+    setModelsBusy(true);
+    setModelsError("");
+    try {
+      await client.setRoute(draft);
+      // A route may have landed before the connection changed, but a requested key that was not
+      // sent is never a saved operation. Keep the draft retryable and do not let this completion
+      // paint the replacement Runtime's Models panel.
+      if (!isCurrentSave()) return "route_saved_key_failed";
+      if (key !== null) {
+        try {
+          await client.setCredential(key);
+        } catch {
+          if (!isCurrentSave()) return "route_saved_key_failed";
+          await refreshRoutes();
+          if (!isCurrentSave()) return "route_saved_key_failed";
+          setProbes({});
+          setModelsError("The route was saved, but the API key was not stored. Retry to store it.");
+          return "route_saved_key_failed";
+        }
+      }
+      if (!isCurrentSave()) return "route_saved_key_failed";
+      await refreshRoutes();
+      if (!isCurrentSave()) return "route_saved_key_failed";
+      setProbes({});
+      return "saved";
+    } catch (error) {
+      if (isCurrentSave()) {
+        setModelsError(messageOf(error, "The model could not be saved."));
+      }
+      throw error;
+    } finally {
+      if (isCurrentSave()) setModelsBusy(false);
+    }
+  }, [refreshRoutes]);
+
+  const probeRoute = useCallback(async (routeId: string) => {
+    const client = clientRef.current;
+    if (!client) return;
+    const generation = connectionGeneration.current;
+    const requestGeneration = (probeGeneration.current.get(routeId) ?? 0) + 1;
+    probeGeneration.current.set(routeId, requestGeneration);
+    setProbes((current) => ({ ...current, [routeId]: { state: "checking" } }));
+    try {
+      const reply = await client.probeRoute(routeId);
+      if (clientRef.current !== client || connectionGeneration.current !== generation || probeGeneration.current.get(routeId) !== requestGeneration) return;
+      setProbes((current) => ({
+        ...current,
+        [routeId]:
+          reply.health === "available"
+            ? { state: "available" }
+            : { state: "refused", message: reply.health },
+      }));
+    } catch (error) {
+      if (clientRef.current !== client || connectionGeneration.current !== generation || probeGeneration.current.get(routeId) !== requestGeneration) return;
+      setProbes((current) => ({
+        ...current,
+        [routeId]: { state: "refused", message: messageOf(error, "the check could not run") },
+      }));
+    }
+  }, []);
   const sendDraft = useCallback(
     async (objective: string, route: string | null) => {
       const client = clientRef.current;
@@ -943,6 +1043,8 @@ export default function App({
   const openWith = useCallback(
     async (client: RuntimeClient) => {
       clientRef.current = client;
+      setProbes({});
+      probeGeneration.current.clear();
       const page = await client.listExecutions({ limit: LIST_PAGE_SIZE });
       // A disconnect while the opening read was in flight must not re-light the page: this
       // completion belongs to the connection it started, like every other (PR #467 review, P1).
@@ -1134,6 +1236,10 @@ export default function App({
     setDraftObjective("");
     setComposeError("");
     setRoutes(null);
+    setModelsBusy(false);
+    setModelsError("");
+    setProbes({});
+    probeGeneration.current.clear();
     setBusy(false);
     setConnected(false);
     setProject(null);
@@ -1668,11 +1774,22 @@ export default function App({
         stale={stale}
         hasMore={nextCursor !== null}
         busy={busy}
-        onSelect={select}
+        onSelect={(id) => {
+          setModelsOpen(false);
+          select(id);
+        }}
         onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
-        onNewTask={startDraft}
+        onNewTask={() => {
+          setModelsOpen(false);
+          startDraft();
+        }}
+        onOpenModels={() => {
+          if (!closeProjectDocument()) return;
+          setModelsOpen(true);
+        }}
         onAddProject={() => {
           if (!closeProjectDocument()) return;
+          setModelsOpen(false);
           setAddingProject(true);
           setFocus({ kind: "none" });
         }}
@@ -1833,7 +1950,20 @@ export default function App({
           * canvas, and a real screenshot showed it burying node cards, the attention line and the
           * dock. `.split` puts the task's group chat (`.talk`) beside the canvas (`.scene`); only
           * a node's own window layers, and it layers over the canvas it describes. */}
-        {addingProject ? (
+        {modelsOpen ? (
+          <Models
+            choice={routes}
+            busy={modelsBusy}
+            error={modelsError}
+            probes={probes}
+            onApply={saveModels}
+            onProbe={(routeId) => void probeRoute(routeId)}
+            onClose={() => {
+              setModelsOpen(false);
+              setModelsError("");
+            }}
+          />
+        ) : addingProject ? (
           <AddProject onClose={() => setAddingProject(false)} />
         ) : draft !== null ? (
           <div className="split">

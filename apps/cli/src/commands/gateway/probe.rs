@@ -185,6 +185,7 @@ fn probe_direct_api(
             | BrokerError::Storage { .. }
             | BrokerError::Corrupt { .. }
             | BrokerError::KeyProvider(_)
+            | BrokerError::ProviderMismatch { .. }
             | BrokerError::InvalidReference { .. },
         ) => (
             Check {

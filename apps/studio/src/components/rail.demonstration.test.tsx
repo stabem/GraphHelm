@@ -35,6 +35,7 @@ describe("the demonstration mark on the rail", () => {
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
         onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
       />,
     );
     const marks = screen.getAllByText(/demonstration/);

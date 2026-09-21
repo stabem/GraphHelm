@@ -918,3 +918,48 @@ describe("the briefing", () => {
     await expect(other.getBriefing("run-1")).rejects.toBeInstanceOf(RuntimeError);
   });
 });
+
+describe("the gateway writes (#1171)", () => {
+  /** A value distinctive enough that finding it anywhere is unambiguous. */
+  const KEY = "sk-SENTINEL-client-1171-0123456789";
+
+  /**
+   * setCredential documents that the value goes in the BODY and nowhere else, and until now
+   * nothing held it. A review lane proved the gap by appending
+   * ?value=${encodeURIComponent(draft.value)} to the path -- the exact failure the comment
+   * names -- and the whole suite stayed green, typecheck included.
+   *
+   * The URL matters more than it looks: the Runtime read audit records request paths and query
+   * strings and response bodies, and never a request body. A key in the path would land in a
+   * plaintext file on the operator machine.
+   */
+  it("puts the key in the body and never in the url", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      {
+        match: (call) => call.method === "PUT",
+        reply: ok(
+          { id: "secret_deepseek_official", routes: ["deepseek_official"] },
+          "gateway.credential.set",
+        ),
+      },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.setCredential({
+      reference: "secret_deepseek_official",
+      provider: "openai",
+      usableBy: ["deepseek_official"],
+      value: KEY,
+    });
+
+    const put = calls.find((call) => call.method === "PUT");
+    expect(put).toBeDefined();
+    // THE CONTROL, so a sweep that could never match cannot pass this cell: the body DOES carry
+    // the value, and the reference IS in the url.
+    expect(put?.body).toMatchObject({ value: KEY, provider: "openai" });
+    expect(put?.url).toContain("secret_deepseek_official");
+    // The sweep itself, over both spellings a caller could produce.
+    expect(put?.url).not.toContain(KEY);
+    expect(put?.url).not.toContain(encodeURIComponent(KEY));
+    expect(JSON.stringify(put?.headers ?? {})).not.toContain(KEY);
+  });
+});

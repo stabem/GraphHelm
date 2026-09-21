@@ -437,6 +437,7 @@ pub fn run(command: TopLevel) -> Outcome {
                         base_url,
                         model,
                         credential_ref,
+                        profiles: None,
                         // The flag is `--disabled` and the field is `enabled`, so the DEFAULT is
                         // the safe one to type: a route written without saying anything about its
                         // state is on, which is what an operator adding a provider means.

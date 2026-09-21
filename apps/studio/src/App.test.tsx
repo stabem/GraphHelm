@@ -15,7 +15,7 @@ import App from "./App";
 import { saveProjectName, saveRemovedRuns } from "./studio-preferences";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
-import { MAX_NODE_TIMEOUT_SECONDS } from "./runtime/client";
+import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
 import type { MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 
@@ -131,6 +131,9 @@ function stubClient(overrides: Record<string, unknown> = {}) {
     // through `client.startTask` has to exist on the returned type, and one that appears only
     // when overridden does not.
     listRoutes: vi.fn(async () => ({ configured: true, routes: [] })),
+    setRoute: vi.fn(async () => ({ routes: [] })),
+    setCredential: vi.fn(async () => ({ id: "secret_route", routes: [] })),
+    probeRoute: vi.fn(async () => ({ health: "available" })),
     // `null` is what an older Runtime without the briefing route yields: the base stub is
     // the id-only world, and the tests that name a run by its objective override it.
     getBriefing: vi.fn(async () => null),
@@ -1049,6 +1052,8 @@ describe("starting a new task", () => {
         provider: "anthropic",
         transport: "direct_api",
         billingMode: "per_token",
+        baseUrl: "https://api.anthropic.com",
+        credentialRef: "secret_fast_route",
         model: "claude-sonnet-5",
         profiles: ["critical_reasoning"],
         enabled: true,
@@ -1058,6 +1063,8 @@ describe("starting a new task", () => {
         provider: "anthropic",
         transport: "direct_api",
         billingMode: "per_token",
+        baseUrl: "https://api.anthropic.com",
+        credentialRef: "secret_retired_route",
         model: "claude-haiku-4-5",
         profiles: [],
         enabled: false,
@@ -1098,6 +1105,138 @@ describe("starting a new task", () => {
     expect(client.listRoutes).toHaveBeenCalled();
     expect(within(picker).getByRole("option", { name: /claude-sonnet-5/ })).not.toBeDisabled();
     expect(within(picker).getByRole("option", { name: /claude-haiku-4-5/ })).toBeDisabled();
+  });
+
+  it("writes the route before the key and keeps Models busy for both writes", async () => {
+    let releaseRoute!: () => void;
+    let releaseKey!: () => void;
+    const order: string[] = [];
+    const client = withRoutes({
+      setRoute: vi.fn(() => { order.push("route-start"); return new Promise((resolve) => { releaseRoute = () => { order.push("route-done"); resolve({ routes: ROUTES.routes }); }; }); }),
+      setCredential: vi.fn(() => { order.push("key-start"); return new Promise((resolve) => { releaseKey = () => { order.push("key-done"); resolve({ id: "secret_fast_route", routes: ["fast_route"] }); }; }); }),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Edit fast_route/i }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "fresh-key");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(order).toEqual(["route-start"]));
+    expect(screen.getByRole("button", { name: "applying" })).toBeDisabled();
+    releaseRoute();
+    await waitFor(() => expect(order).toEqual(["route-start", "route-done", "key-start"]));
+    expect(screen.getByRole("button", { name: "applying" })).toBeDisabled();
+    releaseKey();
+    await waitFor(() => expect(order).toEqual(["route-start", "route-done", "key-start", "key-done"]));
+  });
+
+  it("does not write a key when the route is refused and keeps the error visible", async () => {
+    const client = withRoutes({
+      setRoute: vi.fn(async () => { throw new RuntimeError("route refused", 400, []); }),
+      setCredential: vi.fn(),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Edit fast_route/i }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "never-send");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("route refused");
+    expect(screen.getByRole("form", { name: "Edit route" })).toBeInTheDocument();
+    expect(client.setCredential).not.toHaveBeenCalled();
+  });
+
+  it("does not call Runtime when adding a model without an API key", async () => {
+    const client = withRoutes({
+      setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
+      setCredential: vi.fn(),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Add model/i }));
+    await userEvent.type(screen.getByLabelText("Route id"), "new_route");
+    await userEvent.type(screen.getByLabelText("Base URL"), "https://api.example.com");
+    await userEvent.type(screen.getByLabelText("Model"), "example-model");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/new model needs an API key/i);
+    expect(client.setRoute).not.toHaveBeenCalled();
+    expect(client.setCredential).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed key draft retryable after the route was saved", async () => {
+    const client = withRoutes({
+      setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
+      setCredential: vi.fn()
+        .mockRejectedValueOnce(new RuntimeError("key refused", 400, []))
+        .mockResolvedValueOnce({ id: "secret_fast_route", routes: ["fast_route"] }),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Edit fast_route/i }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "retry-me");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/route was saved, but the API key was not stored/i);
+    expect(screen.getByLabelText(/API key/i)).toHaveValue("retry-me");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(client.setCredential).toHaveBeenCalledTimes(2));
+    expect(client.setRoute).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not call a key write or paint stale save state after disconnect", async () => {
+    let releaseRoute!: (value: { routes: typeof ROUTES.routes }) => void;
+    const client = withRoutes({
+      setRoute: vi.fn(() => new Promise<{ routes: typeof ROUTES.routes }>((resolve) => { releaseRoute = resolve; })),
+      setCredential: vi.fn(),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Edit fast_route/i }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "must-not-cross-runtime");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(client.setRoute).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+    releaseRoute({ routes: ROUTES.routes });
+    await waitFor(() => expect(client.dispose).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.setCredential).not.toHaveBeenCalled();
+    expect(screen.queryByText(/route was saved, but the API key was not stored/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores an older probe after a newer probe for the same route", async () => {
+    const replies: Array<(value: { health: string }) => void> = [];
+    const client = withRoutes({
+      probeRoute: vi.fn(() => new Promise<{ health: string }>((resolve) => replies.push(resolve))),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    const card = screen.getByText("fast_route").closest("li") as HTMLElement;
+    const check = within(card).getByRole("button", { name: "check" });
+    await userEvent.click(check);
+    await userEvent.click(check);
+    replies[1]({ health: "auth_required" });
+    await waitFor(() => expect(screen.getByRole("status", { name: /auth_required/i })).toBeInTheDocument());
+    replies[0]({ health: "available" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("status", { name: /auth_required/i })).toBeInTheDocument();
+  });
+
+  it("does not let a probe from before a route save restore a stale result", async () => {
+    let finishProbe!: (value: { health: string }) => void;
+    const client = withRoutes({
+      probeRoute: vi.fn(() => new Promise<{ health: string }>((resolve) => { finishProbe = resolve; })),
+      setRoute: vi.fn(async () => ({ routes: ROUTES.routes })),
+    });
+    await open(client);
+    await userEvent.click(screen.getByRole("button", { name: /^models$/i }));
+    const card = screen.getByText("fast_route").closest("li") as HTMLElement;
+    await userEvent.click(within(card).getByRole("button", { name: "check" }));
+    await userEvent.click(screen.getByRole("button", { name: /Edit fast_route/i }));
+    await userEvent.clear(screen.getByLabelText("Model"));
+    await userEvent.type(screen.getByLabelText("Model"), "new-model");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+    finishProbe({ health: "available" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(card).getByRole("status", { name: "probe: not checked" })).toBeInTheDocument();
   });
 
   /** THE WHOLE POINT: the operator's sentence becomes the first node's objective, verbatim, and

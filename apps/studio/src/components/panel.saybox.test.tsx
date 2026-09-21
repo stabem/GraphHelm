@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fastUserEvent } from "../test/user-event";
+// Its own instance: see the helper for why this is not a shared const.
+const userEvent = fastUserEvent();
 
 import { RunPanel, resetPanelCaches } from "./panel";
 import type { ExecutionStatus } from "../runtime/types";

@@ -56,6 +56,30 @@ pub enum TopLevel {
     /// the directory in git, and prints the exact next commands. Idempotent: an existing token or
     /// key is kept, never rotated. Neither secret is ever printed.
     Init(InitArgs),
+    /// Read-only inventory and preview for adopting GraphHelm methodology into supported hosts.
+    Setup(AdoptionSetupArgs),
+    /// Creates a local, verified checkpoint of supported host configuration files.
+    Backup(AdoptionBackupArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AdoptionSetupArgs {
+    #[arg(long)]
+    pub project: PathBuf,
+    #[arg(long)]
+    pub home: PathBuf,
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AdoptionBackupArgs {
+    #[arg(long)]
+    pub project: PathBuf,
+    #[arg(long)]
+    pub home: PathBuf,
+    #[arg(long = "state-root")]
+    pub state_root: PathBuf,
 }
 
 #[derive(Debug, Args)]

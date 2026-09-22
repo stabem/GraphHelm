@@ -1,6 +1,7 @@
 //! Stable GraphHelm wire contracts.
 
 mod actor;
+pub mod adoption;
 // `#[macro_use]` so `wire_vocabulary!` reaches the modules declared after this one. It was
 // module-private while `development` was its only user; `simulation` adopting it for `NodeState`
 // (#408) is what needed the scope. Declaration order is the visibility rule for `macro_rules!`,

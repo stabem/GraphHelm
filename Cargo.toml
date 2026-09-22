@@ -20,6 +20,7 @@ members = [
   "adapters/postgres-event-store",
   "adapters/model-gateway",
   "adapters/tool-host",
+  "adapters/host-adoption",
   "adapters/codebase-memory-mcp",
   "apps/cli",
   "tools/acceptance-map",

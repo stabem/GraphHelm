@@ -50,6 +50,7 @@ pub const GHCLI027_INIT_REFUSED: &str = "GHCLI027_INIT_REFUSED";
 /// read of such an id answered success with every field null and the verdict `can_sleep`: a typo
 /// told the operator the run needed nothing.
 pub const GHCLI028_EXECUTION_NOT_FOUND: &str = "GHCLI028_EXECUTION_NOT_FOUND";
+pub const GHCLI029_ADOPTION_REFUSED: &str = "GHCLI029_ADOPTION_REFUSED";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -87,6 +88,7 @@ pub const ALL: &[&str] = &[
     GHCLI026_ARCHITECT_REFUSED,
     GHCLI027_INIT_REFUSED,
     GHCLI028_EXECUTION_NOT_FOUND,
+    GHCLI029_ADOPTION_REFUSED,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

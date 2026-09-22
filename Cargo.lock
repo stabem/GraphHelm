@@ -914,6 +914,7 @@ dependencies = [
  "graphhelm-gateway",
  "graphhelm-governor",
  "graphhelm-graph",
+ "graphhelm-host-adoption",
  "graphhelm-model-gateway",
  "graphhelm-policy",
  "graphhelm-postgres-event-store",
@@ -1072,6 +1073,23 @@ dependencies = [
  "serde_yaml_ng",
  "sha2 0.11.0",
  "thiserror",
+]
+
+[[package]]
+name = "graphhelm-host-adoption"
+version = "0.1.0"
+dependencies = [
+ "graphhelm-policy",
+ "graphhelm-protocols",
+ "graphhelm-sealed-key-provider",
+ "hex",
+ "libc",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "toml",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

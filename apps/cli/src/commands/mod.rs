@@ -1,3 +1,4 @@
+mod adoption;
 pub(crate) mod architect;
 mod development;
 mod draft;
@@ -475,6 +476,8 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
         TopLevel::Init(args) => init::run(&args),
+        TopLevel::Setup(args) => adoption::run(&args),
+        TopLevel::Backup(args) => adoption::backup(&args),
         TopLevel::Quality(args) => match args.command {
             QualityCommand::Certify {
                 events,

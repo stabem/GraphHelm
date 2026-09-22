@@ -1,5 +1,6 @@
 //! Deterministic policy evaluation.
 
+pub mod adoption;
 mod code_contract;
 mod evaluator;
 

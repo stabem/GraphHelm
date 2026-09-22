@@ -154,6 +154,10 @@ All commands must work on Windows PowerShell. Core crates must also compile and 
 - Add property tests where they materially cover canonicalization, immutability, or replay. Keep generators bounded and deterministic under the committed proptest regression seed.
 - Golden fixtures are allowed only for reviewed canonical JSON, semantic hashes, and ordered event output. A fixture update requires an explicit explanation in the commit/PR.
 - Every public method must have working behavior in the same commit. No `TODO`, `TBD`, `unimplemented!`, empty handler, or ceremonial scaffold is allowed.
+- Before adding or requesting a test, name the observable contract, the plausible defect it would catch, and the gap in existing coverage. Choose the smallest adequate proof and reuse existing coverage when it observes the contract. Do not impose blanket TDD, red-first steps, mutation exercises, or test quotas.
+- Reject unconditional passes, mock self-confirmation, assertions over values created by the test, and checks that merely freeze incidental source spelling or private call order. Preserve tests for real architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility, and platform contracts.
+- Runtime-affecting configuration needs behavioral evidence; parsing or shape validation alone is not proof. Report passed, failed, skipped, and unobserved separately. A skipped or unavailable observer never counts as a pass, and an unobserved promise remains unresolved.
+- This policy is versioned on `main`. Merging it does not update existing branches or installed skill copies; lanes must integrate the `main` change and reload or reinstall their bundled skills before relying on it. Bundled skills remain self-contained and must not depend on repository-external paths.
 
 ## Foundation Graph Kernel constraints
 

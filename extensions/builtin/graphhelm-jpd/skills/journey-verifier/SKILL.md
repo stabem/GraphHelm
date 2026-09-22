@@ -83,6 +83,17 @@ Schema validity proves only the candidate shape. It does not register evaluator 
 receipts, recompute digests, or decide freshness. Without a registered deterministic JPD validator,
 the result remains unresolved and must not be labeled authoritative proof.
 
+## Evidence discipline
+
+Before adding or requesting a test for a journey, name the observable contract, plausible defect,
+and existing coverage gap. Use the smallest adequate journey observer or validator and reuse
+coverage that already observes the contract. A red-first regression or bounded fault exercise is
+conditional evidence, not a quota. Reject unconditional passes, mock self-confirmation, and checks
+that freeze incidental source spelling or private call order. Keep meaningful architecture,
+security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility,
+and platform checks. Runtime configuration needs behavioral evidence. Report passed, failed,
+skipped, and unobserved separately; skipped or unavailable observation remains unresolved.
+
 An existing owner-recorded waiver may authorize continuation, but this skill cannot create or infer
 one. Keep the missing fact unproven, report `accepted_with_waiver` separately from the retry outcome,
 and retain the actor, reason exactly as recorded, acknowledged risks, affected Graph

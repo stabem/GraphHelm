@@ -80,6 +80,18 @@ timestamps, or recompute age and absence-window duration. Those checks require a
 deterministic validator. Until it exists and succeeds, preserve the bundle's `capability_missing`
 authority instead of treating a shaped `matched` candidate as operational proof.
 
+## Evidence discipline
+
+When a journey change needs a test or a requested test, state the observable contract, the
+plausible defect, and the existing coverage gap first. Select the smallest observer or validator
+that can see that contract, and reuse adequate coverage. Do not add a test merely because a file
+changed or a generic TDD rule asks for one. Reject unconditional passes, mock self-confirmation,
+and assertions that only lock incidental source spelling or private call order. Preserve real
+architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency,
+compatibility, and platform checks. Runtime configuration requires behavioral evidence; parsing
+alone is insufficient. Keep passed, failed, skipped, and unobserved distinct; a skipped or missing
+observer never becomes a match.
+
 ## Missing capability
 
 Do not create a fictional browser, provider, accessibility, delivery tool, or evaluator. Return a

@@ -1048,7 +1048,7 @@
           "id": "skill/journey-verifier",
           "kind": "skill",
           "path": "skills/journey-verifier/SKILL.md",
-          "sha256": "sha256:fb5fc535542f12cb97241c1a76e0cada96272510b747cfdb5b3cc1dfb3b8c7fb",
+          "sha256": "sha256:692d0c3be9f9f1ce08ad1ae9606feb602d3c769c3a4c3c8788fd05d8f77ec5f3",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1106,7 +1106,7 @@
           "id": "skill/observation-compiler",
           "kind": "skill",
           "path": "skills/observation-compiler/SKILL.md",
-          "sha256": "sha256:fe2c5d55b5538f6d29e40d65724e61dab9b0fe11586bd284a87880f833ebaa90",
+          "sha256": "sha256:34d15359e024b206f0cd90301f571df65c17d5fd023696856e1bf9d0ead94767",
           "effects": [
             "artifact.local.write",
             "artifact.propose",

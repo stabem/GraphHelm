@@ -56,6 +56,7 @@ libc = "=0.2.189"
 windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
 
 [dev-dependencies]
+toml.workspace = true
 graphhelm-development-benchmark = { path = "../../tools/development-benchmark" }
 tokio = { workspace = true, features = ["net", "rt", "time", "io-util"] }
 hex.workspace = true

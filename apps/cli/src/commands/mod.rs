@@ -478,6 +478,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Init(args) => init::run(&args),
         TopLevel::Setup(args) => adoption::run(&args),
         TopLevel::Backup(args) => adoption::backup(&args),
+        TopLevel::Restore(args) => adoption::restore(&args),
         TopLevel::Quality(args) => match args.command {
             QualityCommand::Certify {
                 events,

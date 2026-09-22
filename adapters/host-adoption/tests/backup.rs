@@ -1,8 +1,17 @@
+fn private_state() -> tempfile::TempDir {
+    let state = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    state
+}
 #[test]
 fn manual_backup_is_verified_without_changing_the_source() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     let path = project.path().join("AGENTS.md");
     let bytes = b"\xef\xbb\xbfKeep this exact file.\r\n";
     std::fs::write(&path, bytes).unwrap();
@@ -17,6 +26,29 @@ fn manual_backup_is_verified_without_changing_the_source() {
 }
 
 #[test]
+fn backup_refuses_when_an_authority_lock_is_held() {
+    use fs2::FileExt;
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = private_state();
+    let lock_path = project.path().join(".graphhelm-adoption.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    let error =
+        graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap_err();
+    assert_eq!(
+        error.reason,
+        graphhelm_protocols::adoption::AdoptionReason::Busy
+    );
+}
+
+#[test]
 fn backup_id_is_never_a_path() {
     assert!(!graphhelm_host_adoption::valid_backup_id("../../.ssh"));
     assert!(!graphhelm_host_adoption::valid_backup_id("C:\\outside"));
@@ -27,7 +59,7 @@ fn backup_id_is_never_a_path() {
 fn corrupt_blob_is_reported_as_backup_corrupt() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"original").unwrap();
     let receipt =
         graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
@@ -50,7 +82,7 @@ fn corrupt_blob_is_reported_as_backup_corrupt() {
 fn a_second_distinct_backup_reuses_the_private_backup_directory() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     let source = project.path().join("AGENTS.md");
     std::fs::write(&source, b"first").unwrap();
     let first = graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
@@ -69,7 +101,7 @@ fn unsupported_manifest_version_is_rejected() {
 
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"original").unwrap();
     let receipt =
         graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
@@ -98,7 +130,7 @@ fn unsupported_manifest_version_is_rejected() {
 fn backup_stops_before_writing_when_total_limit_is_exceeded() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"12345").unwrap();
 
     let error =
@@ -140,7 +172,7 @@ fn backup_refuses_a_symlinked_destination_ancestor() {
     use std::os::unix::fs::symlink;
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     let outside = tempfile::tempdir().unwrap();
     symlink(outside.path(), state.path().join("backups")).unwrap();
     std::fs::write(project.path().join("AGENTS.md"), b"private").unwrap();
@@ -161,7 +193,7 @@ fn backup_refuses_a_broken_source_symlink() {
     use std::os::unix::fs::symlink;
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     symlink(
         project.path().join("missing-target"),
         project.path().join("AGENTS.md"),
@@ -192,7 +224,7 @@ fn replace_with_fifo(path: &std::path::Path) {
 fn verify_rejects_a_manifest_fifo_without_blocking() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"original").unwrap();
     let receipt =
         graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
@@ -211,7 +243,7 @@ fn verify_rejects_a_manifest_fifo_without_blocking() {
 fn verify_rejects_a_blob_fifo_without_blocking() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"original").unwrap();
     let receipt =
         graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
@@ -232,7 +264,7 @@ fn backup_refuses_a_symlink_in_the_source_root_ancestry() {
     let outside = tempfile::tempdir().unwrap();
     let holder = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(outside.path().join("AGENTS.md"), b"outside").unwrap();
     let link = holder.path().join("linked");
     symlink(outside.path(), &link).unwrap();
@@ -251,7 +283,7 @@ fn backup_blobs_and_directories_are_private_before_bytes_are_written() {
     use std::os::unix::fs::PermissionsExt;
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"private").unwrap();
 
     let receipt =
@@ -278,7 +310,7 @@ fn backup_blobs_and_directories_are_private_before_bytes_are_written() {
 fn backup_blob_has_the_repository_owner_only_acl() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let state = private_state();
     std::fs::write(project.path().join("AGENTS.md"), b"private").unwrap();
 
     let receipt =
@@ -287,4 +319,78 @@ fn backup_blob_has_the_repository_owner_only_acl() {
     let blob = std::fs::File::open(state.path().join("backups").join(id).join("blob-0")).unwrap();
 
     graphhelm_sealed_key_provider::verify_owner_only(&blob).unwrap();
+}
+
+#[test]
+fn backup_includes_project_claude_settings_surface() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = private_state();
+    std::fs::create_dir_all(project.path().join(".claude")).unwrap();
+    std::fs::write(
+        project.path().join(".claude/settings.json"),
+        b"{\"project\":true}",
+    )
+    .unwrap();
+
+    let receipt =
+        graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
+    let id = receipt["id"].as_str().unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(state.path().join("backups").join(id).join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(manifest["files"]["project/.claude/settings.json"].is_string());
+    assert_eq!(manifest["surfaceMetadata"].as_object().unwrap().len(), 14);
+    assert_eq!(
+        manifest["surfaceMetadata"]["home/CLAUDE.md"]["state"],
+        "absent"
+    );
+    assert!(
+        manifest["surfaceMetadata"]["project/.claude/settings.json"]["accessDigest"].is_string()
+    );
+}
+
+#[test]
+fn backup_records_discovered_skill_manifest_as_private_evidence() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = private_state();
+    std::fs::create_dir_all(project.path().join(".claude/plugins/demo")).unwrap();
+    std::fs::write(
+        project.path().join(".claude/plugins/demo/plugin.json"),
+        br#"{"name":"demo"}"#,
+    )
+    .unwrap();
+
+    let receipt =
+        graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
+    let id = receipt["id"].as_str().unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(state.path().join("backups").join(id).join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest["files"]["discovered/project/plugin/.claude/plugins/demo/plugin.json"].is_string()
+    );
+    graphhelm_host_adoption::verify_backup(state.path(), id).unwrap();
+}
+
+#[test]
+fn backup_rejects_an_oversized_discovered_skill_manifest() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = private_state();
+    let skill = project.path().join(".claude/skills/demo");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), vec![b'x'; 1024 * 1024 + 1]).unwrap();
+
+    let error =
+        graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap_err();
+
+    assert_eq!(
+        error.reason,
+        graphhelm_protocols::adoption::AdoptionReason::LimitExceeded
+    );
+    assert!(!state.path().join("backups").exists());
 }

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/adoption-receipt.schema.json",
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "const": "p50.dev/adoption/v1"
+    },
+    "kind": {
+      "const": "ApplyReceipt"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "planDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "backupId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state": {
+          "enum": [
+            "installed_unverified",
+            "verified",
+            "restored",
+            "recovery_required"
+          ]
+        }
+      },
+      "required": [
+        "transactionId",
+        "planDigest",
+        "backupId",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "id",
+    "spec"
+  ],
+  "additionalProperties": true,
+  "x-graphhelm-schema-version": "1.0.0"
+}

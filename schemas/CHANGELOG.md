@@ -1,5 +1,35 @@
 # Schema Changelog
 
+## activation-receipt 1.0.0
+
+Adds an offline ActivationReceipt claim bound to the exact transaction, accepted plan digest,
+host/version, configuration/package digests, environment, fresh session, observer identity and
+custody ID, correlated read-only GraphHelm MCP `list` observation, methodology evidence and
+installation/observation/expiry timestamps. The digest covers the canonical document without its
+digest field. Shape validation and a matching digest never authenticate an observer. Production
+has no trusted host observer and remains `installed_unverified` with `observer_missing`.
+Synthetic successful custody exists only in adapter unit tests, with explicit fixture labeling.
+Production journal readers reject persisted verified claims without trusted in-memory custody;
+recomputing a journal checksum never supplies that authority.
+The original frozen 1.0.0 release is unchanged. Current catalog inventory also includes the
+previously added restore-plan contract.
+
+## restore-plan 1.0.0
+
+Adds a digest-only offline restore preview bound to physical project/home/state roots, the verified original or transaction checkpoint, the owning transaction chain, every supported current file digest and access-metadata digest, and owned package activation digests. Exact approval and a fresh equal preview precede any mutation. Unowned later files are explicitly retained; overlapping text or semantic-key changes are conflicts. JSON/TOML restoration merges only changed owned keys; arrays are indivisible without a stable host identity contract. TOML with later comments conservatively conflicts because the current serializer cannot preserve comment placement. Source contents stay in private verified backups and content-addressed payloads.
+
+The unreleased 1.0.0 contract now covers all fourteen supported project and user configuration surfaces, including override instructions, project settings, managed Claude settings, project MCP configuration, and project/user Codex configuration. Discovered skill and plugin manifests are private backup evidence and are never restore destinations.
+
+The unreleased adoption journal optionally records its predecessor and a restore intent with the selected backup and source transaction IDs. Completed package entries bind the exact activation-pointer bytes. Restore uses the existing retained-handle publication guards and resumes an interrupted accepted restoration. A partial restore records `recovery_required`; `restored` is published only after all owned file and activation changes complete. Shared user surfaces carry private durable owner references; a different active project is refused before writes. This revision does not add arbitrary file creation, runtime-secret deletion, execution-data deletion, or guard sweeping. The frozen 1.0.0 release is unchanged.
+
+## adoption-plan 1.0.0, adoption-receipt 1.0.0, adoption-journal 1.0.0
+
+Adds the local, versioned adoption mutation contracts. The plan binds exact approval to bounded operations and explicit scopes. The receipt separates installed file state from verified host activation. The private journal records root identities, relative destinations, before/after digests and access metadata; it never contains source file contents. All three schemas are registered offline. The original 1.0.0 release snapshot remains unchanged, and these additions accumulate in the existing 1.1.0 candidate release.
+
+The unreleased journal contract also records retained publication guards, their source/candidate identities and digests, and `restore_intent`, `detached`, and `restore_detached` phases. Apply and compensation preserve the actual displaced file. Linux uses an atomic exchange; Windows uses two anchored, no-replace renames with a durable journal step between them. Windows readers may briefly observe an absent destination while the host is required to be quiescent. Recovery reconciles a detached file before further mutation and refuses an unrelated file created in that interval. The interval has a fixed number of protocol steps, not a guaranteed wall-clock bound. Initial journals are durable and verified before the active pointer is published; an orphan initial journal can be explicitly recovered without guessing missing intent.
+
+The unreleased journal now optionally records two pinned local Extension activation intents. Each entry carries only its Extension ID, digest, phase, and the identity of an exclusively created private root. A null root represents intent persisted before directory creation; recovery never claims an existing directory from that intent. Activation compensation retires the transaction-owned pointer while retaining package and journal evidence. Package bytes, source configuration, and secrets are not embedded in these entries. Existing journals without package entries retain their meaning.
+
 ## node 1.1.0 - `agents` carries the other workers on one task
 
 A node is the TASK: `required` is `type`, `name`, `objective`, `optionality`. `agent` names the

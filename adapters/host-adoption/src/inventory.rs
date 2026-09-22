@@ -1,27 +1,34 @@
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
 use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason, Coverage};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_DISCOVERY_ENTRIES: usize = 10_000;
+const MAX_DISCOVERY_DEPTH: usize = 16;
+const MAX_DISCOVERY_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct DiscoveryBudget {
+    entries: usize,
+    bytes: u64,
+    exhausted: bool,
+}
 
 pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
     validate_root(project)?;
     validate_root(home)?;
-    let claude = inspect_host(
-        "claude",
-        project,
-        home,
-        &[
-            ".claude/settings.json",
-            ".claude/settings.local.json",
-            ".claude.json",
-            ".mcp.json",
-            "CLAUDE.md",
-        ],
-    )?;
-    let codex = inspect_host("codex", project, home, &[".codex/config.toml", "AGENTS.md"])?;
+    let mut claude = inspect_host("claude", project, home)?;
+    let mut codex = inspect_host("codex", project, home)?;
+    let (claude_entries, claude_complete) = scan_known_roots(project, home, "claude")?;
+    let (codex_entries, codex_complete) = scan_known_roots(project, home, "codex")?;
+    append_scanned(&mut claude, claude_entries, claude_complete);
+    append_scanned(&mut codex, codex_entries, codex_complete);
+    mark_duplicates(&mut claude);
+    mark_duplicates(&mut codex);
     let coverage = [claude["coverage"].as_str(), codex["coverage"].as_str()]
         .iter()
         .map(|value| match *value {
@@ -37,6 +44,7 @@ pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
         "id": "inventory/local",
         "spec": {
             "roots": [{"id": "project", "scope": "project"}, {"id": "home", "scope": "user"}],
+            "rootBindings": crate::root_bindings(project, home)?,
             "hosts": [claude, codex],
             "coverage": if graphhelm_protocols::adoption::coverage_complete(&coverage) { "complete" } else { "incomplete" }
         }
@@ -47,44 +55,473 @@ pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
     Ok(document)
 }
 
-fn inspect_host(
-    host: &str,
+fn mark_duplicates(host: &mut Value) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut duplicate = std::collections::BTreeSet::new();
+    if let Some(items) = host["items"].as_array() {
+        for item in items {
+            if let (Some(kind), Some(name)) = (item["kind"].as_str(), item["name"].as_str()) {
+                let key = format!("{kind}:{name}");
+                if !seen.insert(key.clone()) {
+                    duplicate.insert(key);
+                }
+            }
+        }
+    }
+    if let Some(items) = host["items"].as_array_mut() {
+        for item in items {
+            if let (Some(kind), Some(name)) = (item["kind"].as_str(), item["name"].as_str()) {
+                item["duplicate"] = json!(duplicate.contains(&format!("{kind}:{name}")));
+            }
+        }
+    }
+}
+
+fn append_scanned(host: &mut Value, entries: Vec<Value>, complete: bool) {
+    host["items"]
+        .as_array_mut()
+        .expect("host items")
+        .extend(entries);
+    let host_name = host["host"].clone();
+    let roots = host["coverageDetails"]
+        .as_array_mut()
+        .expect("coverage details");
+    roots.push(json!({
+        "scope": host_name,
+        "state": if complete { "complete" } else { "incomplete" },
+        "reason": if complete { Value::Null } else { json!("linked_or_unreadable_or_bound") }
+    }));
+    if !complete {
+        host["coverage"] = json!("incomplete");
+    }
+}
+
+/// Scan only documented skill/plugin roots. Missing roots are complete (there is
+/// nothing installed); links, unreadable entries and the bound are incomplete.
+fn scan_known_roots(
     project: &Path,
     home: &Path,
-    surfaces: &[&str],
-) -> Result<Value, AdoptionError> {
+    host: &str,
+) -> Result<(Vec<Value>, bool), AdoptionError> {
+    let roots: &[(&str, &str, &str)] = match host {
+        "claude" => &[
+            ("project", ".claude/skills", "skill"),
+            ("project", ".claude/plugins", "plugin"),
+            ("home", ".claude/skills", "skill"),
+            ("home", ".claude/plugins", "plugin"),
+        ],
+        "codex" => &[
+            ("project", ".agents/skills", "skill"),
+            ("home", ".agents/skills", "skill"),
+            ("home", ".codex/skills", "skill"),
+        ],
+        _ => &[],
+    };
+    let mut entries = Vec::new();
+    let mut complete = true;
+    let mut budget = DiscoveryBudget::default();
+    for (scope, relative, kind) in roots {
+        let root = if *scope == "project" { project } else { home };
+        let path = root.join(relative);
+        if !path.exists() {
+            continue;
+        }
+        if scan_tree(&path, root, host, scope, kind, 0, &mut entries, &mut budget).is_err() {
+            complete = false;
+        }
+        if budget.exhausted {
+            complete = false;
+            break;
+        }
+    }
+    Ok((entries, complete))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_tree(
+    path: &Path,
+    root: &Path,
+    host: &str,
+    scope: &str,
+    kind: &str,
+    depth: usize,
+    entries: &mut Vec<Value>,
+    budget: &mut DiscoveryBudget,
+) -> Result<(), ()> {
+    if depth > MAX_DISCOVERY_DEPTH {
+        budget.exhausted = true;
+        return Err(());
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|_| ())?;
+    if meta.file_type().is_symlink() {
+        return Err(());
+    }
+    if meta.is_file() {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        // Filter names before opening files. Arbitrary package contents are never read.
+        if (kind == "skill" && file_name != "SKILL.md")
+            || (kind == "plugin"
+                && !matches!(file_name, "plugin.json" | "manifest.json" | "SKILL.md"))
+        {
+            return Ok(());
+        }
+        let rel = path
+            .strip_prefix(root)
+            .map_err(|_| ())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let bytes = read_candidate(root, &rel).map_err(|_| ())?.ok_or(())?;
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err(());
+        }
+        let unit_name = logical_package_name(kind, path, &bytes, file_name);
+        let stable = format!("{scope}/{kind}/{rel}/{unit_name}");
+        entries.push(json!({
+            "id": stable, "root": scope, "path": rel,
+            "name": unit_name, "host": host, "scope": semantic_scope(scope), "kind": kind, "surfaceKind": kind, "status": "observed",
+            "installed": true, "enabled": Value::Null, "loaded": Value::Null,
+            "digest": format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+            "origin": "local", "protected": false, "duplicate": false, "managed": false
+        }));
+        return Ok(());
+    }
+    for child in std::fs::read_dir(path).map_err(|_| ())? {
+        if budget.entries >= MAX_DISCOVERY_ENTRIES {
+            budget.exhausted = true;
+            return Err(());
+        }
+        budget.entries += 1;
+        let child = child.map_err(|_| ())?;
+        scan_tree(
+            &child.path(),
+            root,
+            host,
+            scope,
+            kind,
+            depth + 1,
+            entries,
+            budget,
+        )?;
+    }
+    Ok(())
+}
+
+fn logical_package_name(kind: &str, path: &Path, bytes: &[u8], file_name: &str) -> String {
+    if kind == "plugin"
+        && let Ok(value) = serde_json::from_slice::<Value>(bytes)
+        && let Some(name) = value.get("name").and_then(Value::as_str)
+        && !name.is_empty()
+        && name.len() <= 256
+        && !name.contains(['/', '\\', ':'])
+    {
+        return name.to_owned();
+    }
+    let package_dir = path.parent().and_then(|parent| {
+        if parent.file_name().and_then(|name| name.to_str()) == Some(".claude-plugin") {
+            parent.parent()
+        } else {
+            Some(parent)
+        }
+    });
+    package_dir
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(file_name)
+        .to_owned()
+}
+
+/// Returns the bounded manifest bytes that inventory observed. These are recovery evidence for
+/// discovered packages; they are deliberately not mutable adoption surfaces.
+pub(crate) fn discovered_manifest_files(
+    project: &crate::storage::Root,
+    home: &crate::storage::Root,
+    byte_limit: u64,
+) -> Result<BTreeMap<String, Vec<u8>>, AdoptionError> {
+    let mut result = BTreeMap::new();
+    let mut budget = DiscoveryBudget::default();
+    let byte_limit = byte_limit.min(MAX_DISCOVERY_BYTES);
+    for host in ["claude", "codex"] {
+        let roots: &[(&str, &str, &str)] = match host {
+            "claude" => &[
+                ("project", ".claude/skills", "skill"),
+                ("project", ".claude/plugins", "plugin"),
+                ("home", ".claude/skills", "skill"),
+                ("home", ".claude/plugins", "plugin"),
+            ],
+            _ => &[
+                ("project", ".agents/skills", "skill"),
+                ("home", ".agents/skills", "skill"),
+                ("home", ".codex/skills", "skill"),
+            ],
+        };
+        for (scope, relative, kind) in roots {
+            let root = if *scope == "project" { project } else { home };
+            let path = root.record.path.join(relative);
+            if !path.exists() {
+                continue;
+            }
+            collect_manifest_files(
+                &path,
+                root,
+                scope,
+                kind,
+                0,
+                byte_limit,
+                &mut budget,
+                &mut result,
+            )?;
+            if budget.exhausted {
+                return Err(AdoptionError {
+                    reason: AdoptionReason::LimitExceeded,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_manifest_files(
+    path: &Path,
+    root: &crate::storage::Root,
+    scope: &str,
+    kind: &str,
+    depth: usize,
+    byte_limit: u64,
+    budget: &mut DiscoveryBudget,
+    result: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), AdoptionError> {
+    if depth > MAX_DISCOVERY_DEPTH {
+        return Err(AdoptionError {
+            reason: AdoptionReason::LimitExceeded,
+        });
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|_| AdoptionError {
+        reason: AdoptionReason::CoverageIncomplete,
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(AdoptionError {
+            reason: AdoptionReason::PathUnsafe,
+        });
+    }
+    if meta.is_file() {
+        let file_name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default();
+        if (kind == "skill" && file_name != "SKILL.md")
+            || (kind == "plugin"
+                && !matches!(file_name, "plugin.json" | "manifest.json" | "SKILL.md"))
+        {
+            return Ok(());
+        }
+        let rel = path
+            .strip_prefix(&root.record.path)
+            .map_err(|_| AdoptionError {
+                reason: AdoptionReason::PathUnsafe,
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = root.source_optional(&rel)?.ok_or(AdoptionError {
+            reason: AdoptionReason::CoverageIncomplete,
+        })?;
+        let remaining = byte_limit.saturating_sub(budget.bytes);
+        let bytes = crate::storage::read_file(&source.file, remaining.min(MAX_FILE_BYTES))?;
+        budget.bytes = budget
+            .bytes
+            .checked_add(bytes.len() as u64)
+            .ok_or(AdoptionError {
+                reason: AdoptionReason::LimitExceeded,
+            })?;
+        if budget.bytes > byte_limit {
+            budget.exhausted = true;
+            return Err(AdoptionError {
+                reason: AdoptionReason::LimitExceeded,
+            });
+        }
+        result.insert(format!("discovered/{scope}/{kind}/{rel}"), bytes);
+        return Ok(());
+    }
+    for child in std::fs::read_dir(path).map_err(|_| AdoptionError {
+        reason: AdoptionReason::CoverageIncomplete,
+    })? {
+        if budget.entries >= MAX_DISCOVERY_ENTRIES {
+            budget.exhausted = true;
+            return Err(AdoptionError {
+                reason: AdoptionReason::LimitExceeded,
+            });
+        }
+        budget.entries += 1;
+        collect_manifest_files(
+            &child
+                .map_err(|_| AdoptionError {
+                    reason: AdoptionReason::CoverageIncomplete,
+                })?
+                .path(),
+            root,
+            scope,
+            kind,
+            depth + 1,
+            byte_limit,
+            budget,
+            result,
+        )?;
+    }
+    Ok(())
+}
+
+fn inspect_host(host: &str, project: &Path, home: &Path) -> Result<Value, AdoptionError> {
     let mut items = Vec::new();
     let mut coverage = "complete";
-    for surface in surfaces {
-        let (root, relative) = candidate(host, project, home, surface);
-        let Some(bytes) = read_candidate(root, relative)? else {
-            continue;
+    let mut coverage_details = vec![
+        json!({"scope":"host-api","state":"incomplete","reason":"host_api_unavailable"}),
+        json!({"scope":"plugin-browser","state":"incomplete","reason":"plugin_browser_unavailable"}),
+    ];
+    for surface in crate::surfaces::for_host(host) {
+        let root = if surface.scope == "project" {
+            project
+        } else {
+            home
+        };
+        let relative = surface.path;
+        let bytes = match read_candidate(root, relative) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                items.push(json!({
+                    "id": surface.id, "root": surface.scope, "path": relative,
+                    "host": host, "scope": semantic_scope(surface.scope), "kind": relative,
+                    "surfaceKind": surface.kind, "status": "absent", "installed": false,
+                    "enabled": Value::Null, "loaded": Value::Null, "digest": Value::Null,
+                    "origin": "local", "protected": surface.kind == "instructions" || surface.kind == "mcp",
+                    "duplicate": false, "managed": surface.kind == "managed_settings"
+                }));
+                continue;
+            }
+            Err(error) => {
+                coverage = "inaccessible";
+                coverage_details.push(json!({
+                    "scope": surface.id, "state": "incomplete", "reason": format!("{:?}", error.reason)
+                }));
+                items.push(json!({
+                    "id": surface.id, "root": surface.scope, "path": relative,
+                    "host": host, "scope": semantic_scope(surface.scope), "kind": relative,
+                    "surfaceKind": surface.kind, "status": "inaccessible", "installed": Value::Null,
+                    "enabled": Value::Null, "loaded": Value::Null, "digest": Value::Null,
+                    "origin": "local", "protected": surface.kind == "instructions" || surface.kind == "mcp",
+                    "duplicate": false, "managed": surface.kind == "managed_settings"
+                }));
+                continue;
+            }
         };
         if bytes.len() as u64 > MAX_FILE_BYTES {
             coverage = "truncated";
-            items.push(json!({"kind": surface, "status": "truncated"}));
+            items.push(json!({
+                "id": surface.id, "root": surface.scope, "path": relative,
+                "host": host, "scope": semantic_scope(surface.scope), "kind": relative,
+                "surfaceKind": surface.kind,
+                "status": "truncated", "installed": true, "enabled": Value::Null,
+                "loaded": Value::Null, "origin": "local", "protected": false,
+                "duplicate": false, "managed": false
+            }));
             continue;
         }
-        let parse_status = parse_status(surface, &bytes);
-        items.push(json!({"kind": surface, "status": parse_status}));
+        let parse_status = parse_status(relative, &bytes);
+        let mut item = json!({
+            "id": surface.id,
+            "root": surface.scope,
+            "path": relative,
+            "host": host,
+            "scope": semantic_scope(surface.scope),
+            "kind": relative,
+            "surfaceKind": surface.kind,
+            "status": parse_status,
+            "installed": true,
+            "enabled": Value::Null,
+            "loaded": Value::Null,
+            "digest": format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
+            "origin": "local",
+            "protected": surface.kind == "instructions" || surface.kind == "mcp" || surface.kind == "managed_settings",
+            "duplicate": false,
+            "managed": surface.kind == "managed_settings"
+        });
+        if serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .is_some_and(|v| v.get("hooks").is_some())
+        {
+            item["hookEffects"] = json!("unknown_not_executed");
+        }
+        items.push(item);
+        append_configured_entries(&mut items, host, surface.scope, relative, &bytes);
     }
-    Ok(json!({"host": host, "coverage": coverage, "items": items}))
+    if coverage == "complete" {
+        coverage = "incomplete";
+    }
+    Ok(
+        json!({"host": host, "coverage": coverage, "coverageDetails": coverage_details, "items": items}),
+    )
 }
 
-fn candidate<'a, 'b>(
+fn append_configured_entries(
+    items: &mut Vec<Value>,
     host: &str,
-    project: &'a Path,
-    home: &'a Path,
-    surface: &'b str,
-) -> (&'a Path, &'b str) {
-    match surface {
-        ".mcp.json" | "CLAUDE.md" | "AGENTS.md" | ".claude/settings.local.json" => {
-            (project, surface)
+    scope: &str,
+    path: &str,
+    bytes: &[u8],
+) {
+    let item_scope = semantic_scope(scope);
+    if path.ends_with(".json") {
+        let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+            return;
+        };
+        if let Some(plugins) = value.get("enabledPlugins").and_then(Value::as_object) {
+            for (name, enabled) in plugins {
+                let enabled = enabled.as_bool().map_or(Value::Null, |value| json!(value));
+                items.push(json!({"id":format!("{scope}/{path}/plugin/{name}"),"name":name,"root":scope,"path":path,"host":host,"scope":item_scope,"kind":"plugin","installed":Value::Null,"enabled":enabled,"loaded":Value::Null,"digest":Value::Null,"origin":"configured","protected":false,"duplicate":false,"managed":false}));
+            }
         }
-        ".claude.json" => (home, surface),
-        _ if host == "claude" || host == "codex" => (home, surface),
-        _ => (home, surface),
+        if let Some(servers) = value.get("mcpServers").and_then(Value::as_object) {
+            for (name, config) in servers {
+                let enabled = config.get("enabled").and_then(Value::as_bool);
+                items.push(json!({"id":format!("{scope}/{path}/mcp/{name}"),"name":name,"root":scope,"path":path,"host":host,"scope":item_scope,"kind":"mcp_server","installed":Value::Null,"enabled":enabled,"loaded":Value::Null,"digest":Value::Null,"origin":"configured","protected":true,"duplicate":false,"managed":false}));
+            }
+        }
+    } else if path.ends_with("config.toml") {
+        let Ok(value) = toml::from_str::<toml::Value>(&String::from_utf8_lossy(bytes)) else {
+            return;
+        };
+        if let Some(config) = value
+            .get("skills")
+            .and_then(|v| v.get("config"))
+            .and_then(toml::Value::as_array)
+        {
+            for entry in config {
+                if let Some(name) = entry.get("path").and_then(toml::Value::as_str) {
+                    let enabled = entry.get("enabled").and_then(toml::Value::as_bool);
+                    let logical = name
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or("configured-skill");
+                    let source_id = hex::encode(Sha256::digest(name.as_bytes()));
+                    items.push(json!({"id":format!("{scope}/{path}/skill/{source_id}"),"name":logical,"root":scope,"path":path,"host":host,"scope":item_scope,"kind":"skill","installed":Value::Null,"enabled":enabled,"loaded":Value::Null,"digest":Value::Null,"origin":"configured","protected":false,"duplicate":false,"managed":false}));
+                }
+            }
+        }
+        if let Some(servers) = value.get("mcp_servers").and_then(toml::Value::as_table) {
+            for (name, config) in servers {
+                let enabled = config.get("enabled").and_then(toml::Value::as_bool);
+                items.push(json!({"id":format!("{scope}/{path}/mcp/{name}"),"name":name,"root":scope,"path":path,"host":host,"scope":item_scope,"kind":"mcp_server","installed":Value::Null,"enabled":enabled,"loaded":Value::Null,"digest":Value::Null,"origin":"configured","protected":true,"duplicate":false,"managed":false}));
+            }
+        }
     }
+}
+
+fn semantic_scope(root: &str) -> &'static str {
+    if root == "project" { "project" } else { "user" }
 }
 
 fn validate_root(root: &Path) -> Result<(), AdoptionError> {

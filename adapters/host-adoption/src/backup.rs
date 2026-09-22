@@ -13,8 +13,10 @@ use sha2::{Digest, Sha256};
 const BACKUPS: &str = "backups";
 /// A checkpoint is local recovery data, never an unbounded archive of a home directory.
 const MAX_BACKUP_BYTES: u64 = 1024 * 1024 * 1024;
-const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
-const MAX_BACKUP_FILES: usize = 8;
+// 10,000 bounded discovery entries can carry long, nested relative names. The manifest contains
+// only those names and fixed-size digests, so 64 MiB safely covers the worst accepted key set.
+const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_BACKUP_FILES: usize = crate::surfaces::ALL.len() + 10_000;
 
 pub fn valid_backup_id(id: &str) -> bool {
     id.len() == 64
@@ -34,23 +36,61 @@ pub fn backup_with_limit(
     state_root: &Path,
     limit_bytes: u64,
 ) -> Result<Value, AdoptionError> {
-    checked_directory(project)?;
-    checked_directory(home)?;
+    let project_root = crate::storage::Root::observe(project)?;
+    let home_root = crate::storage::Root::observe(home)?;
+    let _home_lock = home_root.lock(".graphhelm-adoption.lock")?;
+    let _project_lock = project_root.lock(".graphhelm-adoption.lock")?;
+    project_root.verify()?;
+    home_root.verify()?;
+    backup_with_limit_unlocked(&project_root, &home_root, state_root, limit_bytes)
+}
+
+/// Internal entry point for apply/restore, which already hold both authority locks.
+pub(crate) fn backup_locked(
+    project: &crate::storage::Root,
+    home: &crate::storage::Root,
+    state_root: &Path,
+    limit_bytes: u64,
+) -> Result<Value, AdoptionError> {
+    backup_with_limit_unlocked(project, home, state_root, limit_bytes)
+}
+
+fn backup_with_limit_unlocked(
+    project: &crate::storage::Root,
+    home: &crate::storage::Root,
+    state_root: &Path,
+    limit_bytes: u64,
+) -> Result<Value, AdoptionError> {
+    project.verify()?;
+    home.verify()?;
     let mut files = BTreeMap::new();
+    let mut surface_metadata = BTreeMap::new();
+    let mut surface_identities = BTreeMap::new();
     let mut total = 0_u64;
-    for (name, path) in sources(project, home) {
-        let Some((root, relative)) = source_root_and_relative(project, home, &path) else {
-            continue;
+    for surface in crate::surfaces::ALL {
+        let name = surface.id;
+        let root = if surface.scope == "project" {
+            project
+        } else {
+            home
         };
-        let Some(bytes) =
-            read_bounded_regular(&root, &relative, limit_bytes.saturating_sub(total))?
+        let Some(observed) =
+            observe_surface(root, surface.path, limit_bytes.saturating_sub(total))?
         else {
+            surface_metadata.insert(name, json!({"state":"absent","accessDigest":Value::Null}));
             continue;
         };
+        surface_metadata.insert(
+            name,
+            json!({"state":"present","accessDigest":observed.access_digest}),
+        );
+        surface_identities.insert(name, observed.identity);
         total = total
-            .checked_add(u64::try_from(bytes.len()).map_err(|_| AdoptionError {
-                reason: AdoptionReason::LimitExceeded,
-            })?)
+            .checked_add(
+                u64::try_from(observed.bytes.len()).map_err(|_| AdoptionError {
+                    reason: AdoptionReason::LimitExceeded,
+                })?,
+            )
             .ok_or(AdoptionError {
                 reason: AdoptionReason::LimitExceeded,
             })?;
@@ -59,15 +99,76 @@ pub fn backup_with_limit(
                 reason: AdoptionReason::LimitExceeded,
             });
         }
+        files.insert(name.to_owned(), observed.bytes);
+    }
+    // Discovered package manifests are private recovery evidence. Restore never treats these
+    // dynamic package sources as mutable adoption surfaces.
+    let discovery_limit = limit_bytes.saturating_sub(total);
+    let discovered = crate::inventory::discovered_manifest_files(project, home, discovery_limit)?;
+    let discovered_names = discovered.keys().cloned().collect::<Vec<_>>();
+    for (name, bytes) in discovered {
+        total = total.checked_add(bytes.len() as u64).ok_or(AdoptionError {
+            reason: AdoptionReason::LimitExceeded,
+        })?;
+        if total > limit_bytes {
+            return Err(AdoptionError {
+                reason: AdoptionReason::LimitExceeded,
+            });
+        }
         files.insert(name, bytes);
+    }
+    // Cooperative writers are excluded by the authority locks. A second pass detects source
+    // drift from writers that do not participate in that locking protocol.
+    for surface in crate::surfaces::ALL {
+        let root = if surface.scope == "project" {
+            project
+        } else {
+            home
+        };
+        let current = observe_surface(root, surface.path, MAX_BACKUP_BYTES)?;
+        if current.as_ref().map(|value| &value.bytes) != files.get(surface.id) {
+            return Err(AdoptionError {
+                reason: AdoptionReason::Busy,
+            });
+        }
+        if current.as_ref().map(|value| &value.identity) != surface_identities.get(surface.id) {
+            return Err(AdoptionError {
+                reason: AdoptionReason::Busy,
+            });
+        }
+        let metadata = surface_metadata
+            .get(surface.id)
+            .and_then(Value::as_object)
+            .ok_or(AdoptionError {
+                reason: AdoptionReason::InvalidConfiguration,
+            })?;
+        let current_access = current.as_ref().map(|value| value.access_digest.as_str());
+        if current_access != metadata.get("accessDigest").and_then(Value::as_str) {
+            return Err(AdoptionError {
+                reason: AdoptionReason::Busy,
+            });
+        }
+    }
+    project.verify()?;
+    home.verify()?;
+    let discovered_again =
+        crate::inventory::discovered_manifest_files(project, home, discovery_limit)?;
+    if discovered_again.len() != discovered_names.len()
+        || discovered_names
+            .iter()
+            .any(|name| discovered_again.get(name) != files.get(name))
+    {
+        return Err(AdoptionError {
+            reason: AdoptionReason::Busy,
+        });
     }
     #[cfg(unix)]
     {
-        backup_unix(&files, state_root)
+        backup_unix(&files, &surface_metadata, state_root)
     }
     #[cfg(windows)]
     {
-        backup_windows(&files, state_root)
+        backup_windows(&files, &surface_metadata, state_root)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -88,7 +189,7 @@ pub fn verify_backup(state_root: &Path, id: &str) -> Result<Value, AdoptionError
     {
         let state = unix_open_dir_chain(state_root, false)?;
         unix_check_private_dir(&state)?;
-        let backups = unix_open_child_dir(&state, BACKUPS, true)?;
+        let backups = unix_open_child_dir(&state, BACKUPS, false)?;
         unix_check_private_dir(&backups)?;
         let destination = unix_open_child_dir(&backups, id, false)?;
         unix_check_private_dir(&destination)?;
@@ -116,47 +217,28 @@ pub fn verify_backup(state_root: &Path, id: &str) -> Result<Value, AdoptionError
     }
 }
 
-fn sources(project: &Path, home: &Path) -> [(&'static str, PathBuf); 8] {
-    [
-        ("project/AGENTS.md", project.join("AGENTS.md")),
-        ("project/CLAUDE.md", project.join("CLAUDE.md")),
-        ("project/.mcp.json", project.join(".mcp.json")),
-        (
-            "project/.claude/settings.local.json",
-            project.join(".claude/settings.local.json"),
-        ),
-        (
-            "home/.claude/settings.json",
-            home.join(".claude/settings.json"),
-        ),
-        ("home/.claude.json", home.join(".claude.json")),
-        ("home/.codex/config.toml", home.join(".codex/config.toml")),
-        ("home/AGENTS.md", home.join("AGENTS.md")),
-    ]
-}
-
-fn source_root_and_relative(project: &Path, home: &Path, path: &Path) -> Option<(PathBuf, String)> {
-    let (root, relative) = if path.starts_with(project) {
-        (project, path.strip_prefix(project).ok()?)
-    } else {
-        (home, path.strip_prefix(home).ok()?)
-    };
-    let relative = relative.to_str()?.replace('\\', "/");
-    Some((
-        root.to_path_buf(),
-        relative.trim_start_matches('/').to_owned(),
-    ))
+pub(crate) fn read_supported(
+    root: &crate::storage::Root,
+    relative: &str,
+) -> Result<Option<Vec<u8>>, AdoptionError> {
+    crate::storage::relative_ok(relative)?;
+    root.verify()?;
+    read_bounded_regular(&root.record.path, relative, 1024 * 1024)
 }
 
 #[cfg(unix)]
-fn backup_unix(files: &BTreeMap<&str, Vec<u8>>, state_root: &Path) -> Result<Value, AdoptionError> {
+fn backup_unix(
+    files: &BTreeMap<String, Vec<u8>>,
+    surface_metadata: &BTreeMap<&str, Value>,
+    state_root: &Path,
+) -> Result<Value, AdoptionError> {
     use std::os::fd::AsRawFd;
 
     let state = unix_open_dir_chain(state_root, true)?;
     unix_check_private_dir(&state)?;
     let backups = unix_open_child_dir(&state, BACKUPS, true)?;
     unix_check_private_dir(&backups)?;
-    let manifest = manifest_for(files)?;
+    let manifest = manifest_for(files, surface_metadata)?;
     let id = digest(&manifest);
     if let Some(destination) = unix_open_optional_child_dir(&backups, &id)? {
         return verify_unix_dir(&destination, &id);
@@ -176,7 +258,10 @@ fn backup_unix(files: &BTreeMap<&str, Vec<u8>>, state_root: &Path) -> Result<Val
 }
 
 #[cfg(unix)]
-fn unix_open_dir_chain(path: &Path, create: bool) -> Result<std::fs::File, AdoptionError> {
+pub(super) fn unix_open_dir_chain(
+    path: &Path,
+    create: bool,
+) -> Result<std::fs::File, AdoptionError> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
@@ -272,7 +357,7 @@ fn unix_open_optional_child_dir(
 }
 
 #[cfg(unix)]
-fn unix_open_child_dir(
+pub(super) fn unix_open_child_dir(
     parent: &std::fs::File,
     name: &str,
     create: bool,
@@ -310,7 +395,7 @@ fn unix_open_child_dir(
 }
 
 #[cfg(unix)]
-fn unix_create_child_dir(
+pub(super) fn unix_create_child_dir(
     parent: &std::fs::File,
     name: &str,
 ) -> Result<std::fs::File, AdoptionError> {
@@ -448,6 +533,7 @@ fn verify_unix_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionErro
             reason: AdoptionReason::BackupCorrupt,
         })?;
     validate_manifest_files(files)?;
+    validate_manifest_surface_metadata(value.get("surfaceMetadata"), files)?;
     let mut total = 0_u64;
     for (index, (_, expected)) in files.iter().enumerate() {
         let expected = expected.as_str().ok_or(AdoptionError {
@@ -483,17 +569,22 @@ fn validate_manifest_files(files: &serde_json::Map<String, Value>) -> Result<(),
         });
     }
     for (name, expected) in files {
-        if !matches!(
-            name.as_str(),
-            "project/AGENTS.md"
-                | "project/CLAUDE.md"
-                | "project/.mcp.json"
-                | "project/.claude/settings.local.json"
-                | "home/.claude/settings.json"
-                | "home/.claude.json"
-                | "home/.codex/config.toml"
-                | "home/AGENTS.md"
-        ) || !expected.as_str().is_some_and(valid_backup_id)
+        let parts = name.split('/').collect::<Vec<_>>();
+        let discovered = name.len() <= 4096
+            && !name.contains(['\\', ':', '\0'])
+            && parts.len() >= 5
+            && parts[0] == "discovered"
+            && matches!(parts[1], "project" | "home")
+            && matches!(parts[2], "skill" | "plugin")
+            && !parts
+                .iter()
+                .any(|part| part.is_empty() || matches!(*part, "." | ".."))
+            && matches!(
+                parts.last().copied(),
+                Some("SKILL.md" | "plugin.json" | "manifest.json")
+            );
+        if (crate::surfaces::by_id(name).is_none() && !discovered)
+            || !expected.as_str().is_some_and(valid_backup_id)
         {
             return Err(AdoptionError {
                 reason: AdoptionReason::BackupCorrupt,
@@ -512,8 +603,47 @@ fn validate_manifest_version(value: &Value) -> Result<(), AdoptionError> {
     Ok(())
 }
 
+fn validate_manifest_surface_metadata(
+    value: Option<&Value>,
+    files: &serde_json::Map<String, Value>,
+) -> Result<(), AdoptionError> {
+    let metadata = value.and_then(Value::as_object).ok_or(AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    if metadata.len() != crate::surfaces::ALL.len()
+        || crate::surfaces::ALL
+            .iter()
+            .any(|surface| !metadata.contains_key(surface.id))
+    {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    for (id, entry) in metadata {
+        let object = entry.as_object().ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        let state = object.get("state").and_then(Value::as_str);
+        let access = object.get("accessDigest");
+        let in_files = files.contains_key(id);
+        let valid_state = match state {
+            Some("present") => {
+                in_files && access.and_then(Value::as_str).is_some_and(valid_backup_id)
+            }
+            Some("absent") => !in_files && matches!(access, Some(Value::Null)),
+            _ => false,
+        };
+        if !valid_state {
+            return Err(AdoptionError {
+                reason: AdoptionReason::BackupCorrupt,
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
-fn unix_check_private_dir(path: &std::fs::File) -> Result<(), AdoptionError> {
+pub(super) fn unix_check_private_dir(path: &std::fs::File) -> Result<(), AdoptionError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let metadata = path.metadata().map_err(unavailable)?;
     if metadata.permissions().mode() & 0o077 != 0 || metadata.uid() != unsafe { libc::geteuid() } {
@@ -526,14 +656,15 @@ fn unix_check_private_dir(path: &std::fs::File) -> Result<(), AdoptionError> {
 
 #[cfg(windows)]
 fn backup_windows(
-    files: &BTreeMap<&str, Vec<u8>>,
+    files: &BTreeMap<String, Vec<u8>>,
+    surface_metadata: &BTreeMap<&str, Value>,
     state_root: &Path,
 ) -> Result<Value, AdoptionError> {
     // The caller may place GraphHelm state below a shared application-data root. The retained,
     // owner-only `backups` child is the Windows privacy boundary; every checkpoint stays below it.
     let state = windows_open_directory_chain(state_root, true)?;
     let backups = windows_open_or_create_private_dir(&state, BACKUPS)?;
-    let manifest = manifest_for(files)?;
+    let manifest = manifest_for(files, surface_metadata)?;
     let id = digest(&manifest);
     if let Some(destination) = windows_open_child(&backups, &id, true)? {
         windows_check_private(&destination)?;
@@ -559,7 +690,19 @@ fn backup_windows(
 }
 
 #[cfg(windows)]
-fn windows_open_directory_chain(path: &Path, create: bool) -> Result<std::fs::File, AdoptionError> {
+pub(super) fn windows_open_directory_chain(
+    path: &Path,
+    create: bool,
+) -> Result<std::fs::File, AdoptionError> {
+    windows_open_directory_chain_access(path, create, false)
+}
+
+#[cfg(windows)]
+pub(super) fn windows_open_directory_chain_access(
+    path: &Path,
+    create: bool,
+    mutable: bool,
+) -> Result<std::fs::File, AdoptionError> {
     use std::path::Component;
 
     if !path.is_absolute() {
@@ -588,33 +731,35 @@ fn windows_open_directory_chain(path: &Path, create: bool) -> Result<std::fs::Fi
     let mut current = open_windows_component(&root_path, true)?.ok_or(AdoptionError {
         reason: AdoptionReason::CoverageIncomplete,
     })?;
-    for name in normals {
+    let count = normals.len();
+    for (index, name) in normals.into_iter().enumerate() {
         let name = name.to_str().ok_or(AdoptionError {
             reason: AdoptionReason::PathUnsafe,
         })?;
-        current = match windows_open_child(&current, name, true)? {
-            Some(child) => child,
-            None if create => {
-                let child = windows_create_child(&current, name, true)?;
-                graphhelm_sealed_key_provider::protect_owner_only(&child).map_err(|_| {
-                    AdoptionError {
+        current =
+            match windows_nt_child(&current, name, true, false, mutable && index + 1 == count)? {
+                Some(child) => child,
+                None if create => {
+                    let child = windows_create_child(&current, name, true)?;
+                    graphhelm_sealed_key_provider::protect_owner_only(&child).map_err(|_| {
+                        AdoptionError {
+                            reason: AdoptionReason::CoverageIncomplete,
+                        }
+                    })?;
+                    child
+                }
+                None => {
+                    return Err(AdoptionError {
                         reason: AdoptionReason::CoverageIncomplete,
-                    }
-                })?;
-                child
-            }
-            None => {
-                return Err(AdoptionError {
-                    reason: AdoptionReason::CoverageIncomplete,
-                });
-            }
-        };
+                    });
+                }
+            };
     }
     Ok(current)
 }
 
 #[cfg(windows)]
-fn windows_open_or_create_private_dir(
+pub(super) fn windows_open_or_create_private_dir(
     parent: &std::fs::File,
     name: &str,
 ) -> Result<std::fs::File, AdoptionError> {
@@ -637,14 +782,14 @@ fn windows_open_or_create_private_dir(
 }
 
 #[cfg(windows)]
-fn windows_check_private(file: &std::fs::File) -> Result<(), AdoptionError> {
+pub(super) fn windows_check_private(file: &std::fs::File) -> Result<(), AdoptionError> {
     graphhelm_sealed_key_provider::verify_owner_only(file).map_err(|_| AdoptionError {
         reason: AdoptionReason::PathUnsafe,
     })
 }
 
 #[cfg(windows)]
-fn windows_open_child(
+pub(super) fn windows_open_child(
     parent: &std::fs::File,
     name: &str,
     directory: bool,
@@ -661,7 +806,7 @@ fn windows_open_mutable_directory(
 }
 
 #[cfg(windows)]
-fn windows_create_child(
+pub(super) fn windows_create_child(
     parent: &std::fs::File,
     name: &str,
     directory: bool,
@@ -672,12 +817,34 @@ fn windows_create_child(
 }
 
 #[cfg(windows)]
-fn windows_nt_child(
+pub(super) fn windows_nt_child(
     parent: &std::fs::File,
     name: &str,
     directory: bool,
     create: bool,
     mutable: bool,
+) -> Result<Option<std::fs::File>, AdoptionError> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    windows_nt_child_shared(
+        parent,
+        name,
+        directory,
+        create,
+        mutable,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    )
+}
+
+#[cfg(windows)]
+pub(super) fn windows_nt_child_shared(
+    parent: &std::fs::File,
+    name: &str,
+    directory: bool,
+    create: bool,
+    mutable: bool,
+    share: u32,
 ) -> Result<Option<std::fs::File>, AdoptionError> {
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
@@ -692,8 +859,8 @@ fn windows_nt_child(
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_ATTRIBUTE_NORMAL,
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES,
-        FILE_WRITE_DATA, READ_CONTROL, SYNCHRONIZE, WRITE_DAC,
+        FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, READ_CONTROL, SYNCHRONIZE,
+        WRITE_DAC,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -736,12 +903,13 @@ fn windows_nt_child(
             | READ_CONTROL
             | SYNCHRONIZE
             | if create || mutable {
-                FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | WRITE_DAC | DELETE
+                FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | WRITE_DAC | if create { DELETE } else { 0 }
             } else {
                 0
             }
-    } else if create {
-        FILE_READ_DATA
+    } else if create || mutable {
+        DELETE
+            | FILE_READ_DATA
             | FILE_WRITE_DATA
             | FILE_READ_ATTRIBUTES
             | FILE_WRITE_ATTRIBUTES
@@ -766,7 +934,7 @@ fn windows_nt_child(
             &mut io_status,
             std::ptr::null(),
             FILE_ATTRIBUTE_NORMAL,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            share,
             if create { FILE_CREATE } else { FILE_OPEN },
             options,
             std::ptr::null(),
@@ -907,6 +1075,7 @@ fn verify_windows_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionE
             reason: AdoptionReason::BackupCorrupt,
         })?;
     validate_manifest_files(files)?;
+    validate_manifest_surface_metadata(value.get("surfaceMetadata"), files)?;
     let mut total = 0_u64;
     for (index, (_, expected)) in files.iter().enumerate() {
         let expected = expected.as_str().ok_or(AdoptionError {
@@ -935,28 +1104,71 @@ fn verify_windows_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionE
     )
 }
 
-fn manifest_for(files: &BTreeMap<&str, Vec<u8>>) -> Result<Vec<u8>, AdoptionError> {
+fn manifest_for(
+    files: &BTreeMap<String, Vec<u8>>,
+    surface_metadata: &BTreeMap<&str, Value>,
+) -> Result<Vec<u8>, AdoptionError> {
     let hashes = files
         .iter()
-        .map(|(name, bytes)| (*name, digest(bytes)))
+        .map(|(name, bytes)| (name.clone(), digest(bytes)))
         .collect::<BTreeMap<_, _>>();
-    serde_json::to_vec(&json!({"version":1,"files":hashes})).map_err(|_| AdoptionError {
-        reason: AdoptionReason::InvalidConfiguration,
-    })
+    serde_json::to_vec(&json!({"version":1,"files":hashes,"surfaceMetadata":surface_metadata}))
+        .map_err(|_| AdoptionError {
+            reason: AdoptionReason::InvalidConfiguration,
+        })
 }
 
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn checked_directory(path: &Path) -> Result<(), AdoptionError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(unavailable)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+fn access_digest(file: &std::fs::File) -> Result<String, AdoptionError> {
+    let access = crate::storage::access(file)?;
+    let encoded = serde_json::to_vec(&access).map_err(|_| AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    })?;
+    Ok(digest(&encoded))
+}
+
+struct ObservedSurface {
+    bytes: Vec<u8>,
+    identity: crate::storage::Identity,
+    access_digest: String,
+}
+
+/// Read only below the retained authority root. The caller performs a second full pass before
+/// publication to detect drift from writers outside the cooperative authority locks.
+fn observe_surface(
+    root: &crate::storage::Root,
+    relative: &str,
+    remaining: u64,
+) -> Result<Option<ObservedSurface>, AdoptionError> {
+    crate::storage::relative_ok(relative)?;
+    root.verify()?;
+    let Some(source) = root.source_optional(relative)? else {
+        return Ok(None);
+    };
+    let file = &source.file;
+    let identity = crate::storage::identity(file)?;
+    let stored_access_digest = access_digest(file)?;
+    let bytes = crate::storage::read_file(file, remaining.min(1024 * 1024))?;
+    root.verify()?;
+    let current = root.source_optional(relative)?.ok_or(AdoptionError {
+        reason: AdoptionReason::Busy,
+    })?;
+    if crate::storage::identity(&current.file)? != identity
+        || access_digest(&current.file)? != stored_access_digest
+        || crate::storage::read_file(&current.file, remaining.min(1024 * 1024))? != bytes
+    {
         return Err(AdoptionError {
-            reason: AdoptionReason::PathUnsafe,
+            reason: AdoptionReason::Busy,
         });
     }
-    Ok(())
+    Ok(Some(ObservedSurface {
+        bytes,
+        identity,
+        access_digest: stored_access_digest,
+    }))
 }
 
 fn read_bounded_regular(
@@ -1146,7 +1358,11 @@ fn bounded_read(
 
 #[cfg(unix)]
 fn map_open_error(error: std::io::Error) -> AdoptionError {
-    if matches!(error.raw_os_error(), Some(libc::ELOOP | libc::EMLINK)) {
+    // O_DIRECTORY | O_NOFOLLOW reports ENOTDIR for a symlink on Linux.
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::ELOOP | libc::EMLINK | libc::ENOTDIR)
+    ) {
         AdoptionError {
             reason: AdoptionReason::PathUnsafe,
         }
@@ -1201,4 +1417,82 @@ fn unavailable(_: std::io::Error) -> AdoptionError {
     AdoptionError {
         reason: AdoptionReason::CoverageIncomplete,
     }
+}
+
+/// Reads the selected blob only from the same retained snapshot directory that was verified.
+pub(crate) fn verified_blob(
+    state_root: &Path,
+    id: &str,
+    key: &str,
+) -> Result<Vec<u8>, AdoptionError> {
+    verified_optional_blob(state_root, id, key)?.ok_or(AdoptionError {
+        reason: AdoptionReason::BackupUnverified,
+    })
+}
+
+pub(crate) fn verified_optional_blob(
+    state_root: &Path,
+    id: &str,
+    key: &str,
+) -> Result<Option<Vec<u8>>, AdoptionError> {
+    if !valid_backup_id(id) {
+        return Err(AdoptionError {
+            reason: AdoptionReason::PathUnsafe,
+        });
+    }
+    #[cfg(unix)]
+    let destination = {
+        let state = unix_open_dir_chain(state_root, false)?;
+        unix_check_private_dir(&state)?;
+        let backups = unix_open_child_dir(&state, BACKUPS, false)?;
+        unix_check_private_dir(&backups)?;
+        let destination = unix_open_child_dir(&backups, id, false)?;
+        unix_check_private_dir(&destination)?;
+        verify_unix_dir(&destination, id)?;
+        destination
+    };
+    #[cfg(windows)]
+    let destination = {
+        let state = windows_open_directory_chain(state_root, false)?;
+        let backups = windows_open_child(&state, BACKUPS, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        windows_check_private(&backups)?;
+        let destination = windows_open_child(&backups, id, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        windows_check_private(&destination)?;
+        verify_windows_dir(&destination, id)?;
+        destination
+    };
+    #[cfg(unix)]
+    let manifest = unix_read_at_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?;
+    #[cfg(windows)]
+    let manifest = windows_read_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?;
+    if digest(&manifest) != id {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    let manifest: Value = serde_json::from_slice(&manifest).map_err(|_| AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    let files = manifest["files"].as_object().ok_or(AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    validate_manifest_files(files)?;
+    let Some((index, (_, expected))) = files.iter().enumerate().find(|(_, (name, _))| *name == key)
+    else {
+        return Ok(None);
+    };
+    #[cfg(unix)]
+    let bytes = unix_read_at_limited(&destination, &format!("blob-{index}"), 1024 * 1024)?;
+    #[cfg(windows)]
+    let bytes = windows_read_limited(&destination, &format!("blob-{index}"), 1024 * 1024)?;
+    if expected.as_str() != Some(digest(&bytes).as_str()) {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    Ok(Some(bytes))
 }

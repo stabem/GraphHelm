@@ -60,6 +60,8 @@ pub enum TopLevel {
     Setup(AdoptionSetupArgs),
     /// Creates a local, verified checkpoint of supported host configuration files.
     Backup(AdoptionBackupArgs),
+    /// Preview or apply an exact reviewed, offline configuration restore.
+    Restore(AdoptionRestoreArgs),
 }
 
 #[derive(Debug, Args)]
@@ -68,8 +70,29 @@ pub struct AdoptionSetupArgs {
     pub project: PathBuf,
     #[arg(long)]
     pub home: PathBuf,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["apply", "recover", "verify"])]
     pub dry_run: bool,
+    /// Private recovery storage, outside the project and host roots.
+    #[arg(long = "state-root")]
+    pub state_root: Option<PathBuf>,
+    /// Apply this private, reviewed plan after checking its exact digest.
+    #[arg(long, requires_all = ["accept", "state_root"], conflicts_with_all = ["recover", "verify", "plan"])]
+    pub apply: Option<PathBuf>,
+    /// Preview this exact reviewed plan, or bind it to a verification attempt.
+    #[arg(long, conflicts_with = "recover")]
+    pub plan: Option<PathBuf>,
+    /// Validate an activation receipt against --plan and current installed bytes.
+    /// No trusted host observer is shipped; user-authored JSON remains observer_missing.
+    #[arg(long, requires_all = ["plan", "state_root"], conflicts_with = "recover")]
+    pub verify: Option<PathBuf>,
+    #[arg(long, requires = "apply")]
+    pub accept: Option<String>,
+    /// Explicit local package trees; both must match the reviewed Extension pins.
+    #[arg(long = "package", requires = "apply")]
+    pub packages: Vec<PathBuf>,
+    /// Reconcile an interrupted transaction using its private journal.
+    #[arg(long, requires = "state_root", conflicts_with = "apply")]
+    pub recover: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -80,6 +103,21 @@ pub struct AdoptionBackupArgs {
     pub home: PathBuf,
     #[arg(long = "state-root")]
     pub state_root: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct AdoptionRestoreArgs {
+    #[arg(long = "state-root")]
+    pub state_root: PathBuf,
+    /// Original baseline, or a checkpoint linked to an adoption transaction.
+    #[arg(long, default_value = "original")]
+    pub backup: String,
+    #[arg(long, requires = "accept", conflicts_with = "recover")]
+    pub apply: Option<PathBuf>,
+    #[arg(long, requires = "apply")]
+    pub accept: Option<String>,
+    #[arg(long, conflicts_with = "apply")]
+    pub recover: Option<String>,
 }
 
 #[derive(Debug, Args)]

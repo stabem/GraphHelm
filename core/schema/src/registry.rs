@@ -5,6 +5,12 @@ use graphhelm_protocols::Diagnostic;
 use jsonschema::{Draft, FancyRegex, PatternOptions, Registry, Retrieve, Uri, Validator};
 use std::fmt;
 
+const RESTORE_PLAN_SCHEMA: &str = include_str!("../../../schemas/restore-plan.schema.json");
+const ACTIVATION_RECEIPT_SCHEMA: &str =
+    include_str!("../../../schemas/activation-receipt.schema.json");
+const PLAN_SCHEMA: &str = include_str!("../../../schemas/adoption-plan.schema.json");
+const RECEIPT_SCHEMA: &str = include_str!("../../../schemas/adoption-receipt.schema.json");
+const JOURNAL_SCHEMA: &str = include_str!("../../../schemas/adoption-journal.schema.json");
 const GRAPH_SCHEMA: &str = include_str!("../../../schemas/graph.schema.json");
 const NODE_SCHEMA: &str = include_str!("../../../schemas/node.schema.json");
 const EDGE_SCHEMA: &str = include_str!("../../../schemas/edge.schema.json");
@@ -1160,6 +1166,27 @@ fn embedded_resources() -> BTreeMap<String, serde_json::Value> {
     #[cfg(test)]
     EMBEDDED_COMPILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     BTreeMap::from([
+        (
+            "https://p50.dev/schemas/restore-plan.schema.json".into(),
+            serde_json::from_str(RESTORE_PLAN_SCHEMA).expect("embedded restore schema"),
+        ),
+        (
+            "https://p50.dev/schemas/activation-receipt.schema.json".into(),
+            serde_json::from_str(ACTIVATION_RECEIPT_SCHEMA)
+                .expect("embedded activation receipt schema"),
+        ),
+        (
+            "https://p50.dev/schemas/adoption-plan.schema.json".into(),
+            parse_schema(PLAN_SCHEMA),
+        ),
+        (
+            "https://p50.dev/schemas/adoption-receipt.schema.json".into(),
+            parse_schema(RECEIPT_SCHEMA),
+        ),
+        (
+            "https://p50.dev/schemas/adoption-journal.schema.json".into(),
+            parse_schema(JOURNAL_SCHEMA),
+        ),
         (GRAPH_ID.into(), parse_schema(GRAPH_SCHEMA)),
         (NODE_ID.into(), parse_schema(NODE_SCHEMA)),
         (EDGE_ID.into(), parse_schema(EDGE_SCHEMA)),
@@ -1324,6 +1351,42 @@ fn validation_work_is_bounded(
 
 fn parse_schema(source: &str) -> serde_json::Value {
     serde_json::from_str(source).expect("checked-in JSON schemas must parse")
+}
+
+pub fn validate_adoption_plan(value: &serde_json::Value) -> Vec<Diagnostic> {
+    validate_embedded(
+        "https://p50.dev/schemas/adoption-plan.schema.json",
+        value,
+        "adoption-plan",
+    )
+}
+pub fn validate_activation_receipt(value: &serde_json::Value) -> Vec<Diagnostic> {
+    validate_embedded(
+        "https://p50.dev/schemas/activation-receipt.schema.json",
+        value,
+        "activation-receipt",
+    )
+}
+pub fn validate_adoption_receipt(value: &serde_json::Value) -> Vec<Diagnostic> {
+    validate_embedded(
+        "https://p50.dev/schemas/adoption-receipt.schema.json",
+        value,
+        "adoption-receipt",
+    )
+}
+pub fn validate_adoption_journal(value: &serde_json::Value) -> Vec<Diagnostic> {
+    validate_embedded(
+        "https://p50.dev/schemas/adoption-journal.schema.json",
+        value,
+        "adoption-journal",
+    )
+}
+pub fn validate_restore_plan(value: &serde_json::Value) -> Vec<Diagnostic> {
+    validate_embedded(
+        "https://p50.dev/schemas/restore-plan.schema.json",
+        value,
+        "restore-plan",
+    )
 }
 
 #[cfg(test)]

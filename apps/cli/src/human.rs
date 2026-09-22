@@ -60,8 +60,75 @@ fn renderer_for(command: &str) -> Option<fn(&Value, Palette) -> String> {
         "gateway.setup" => Some(setup),
         "gateway.probe" => Some(probe),
         "init" => Some(init),
+        "setup" | "restore" => Some(adoption),
         _ => None,
     }
+}
+
+fn adoption(data: &Value, palette: Palette) -> String {
+    let mut out = String::new();
+    if let Some(receipt) = data.get("receipt") {
+        let _ = writeln!(
+            out,
+            "State: {}",
+            palette.name(text(&receipt["spec"]["state"]))
+        );
+        if let Some(status) = receipt.pointer("/verification/status") {
+            let _ = writeln!(out, "Observation: {}", text(status));
+        }
+        if let Some(id) = receipt
+            .pointer("/spec/transactionId")
+            .or_else(|| receipt.get("id"))
+        {
+            let _ = writeln!(out, "Receipt: {}", text(id));
+        }
+        if let Some(action) = receipt.pointer("/hostAction/instruction") {
+            let _ = writeln!(out, "{}", text(action));
+        }
+        if let Some(program) = receipt.pointer("/hostAction/program") {
+            // Preserve argument boundaries and escape control characters without constructing
+            // a shell command. These are display values from named envelope fields only.
+            out.push_str("Host launch values (JSON strings; display only):\n");
+            let _ = writeln!(out, "Program: {}", Value::from(text(program)));
+        }
+        if let Some(args) = receipt
+            .pointer("/hostAction/args")
+            .and_then(Value::as_array)
+        {
+            for (index, arg) in args.iter().enumerate() {
+                let _ = writeln!(out, "Argument {}: {}", index + 1, Value::from(text(arg)));
+            }
+        }
+        return out;
+    }
+    let plan = &data["plan"];
+    if let Some(rows) = plan.pointer("/spec/decisions").and_then(Value::as_array) {
+        out.push_str("Decision | Item\n");
+        for row in rows {
+            let item = row.get("item").or_else(|| {
+                row["operationIndex"]
+                    .as_u64()
+                    .and_then(|index| plan["spec"]["operations"].get(index as usize))
+                    .and_then(|operation| operation.get("path"))
+            });
+            let _ = writeln!(
+                out,
+                "{} | {}",
+                text(&row["decision"]),
+                item.map(text).unwrap_or("(not reported)")
+            );
+        }
+    }
+    if let Some(digest) = plan.get("digest") {
+        let _ = writeln!(out, "Plan digest: {}", text(digest));
+    }
+    if let Some(instruction) = data.pointer("/acceptance/instruction") {
+        let _ = writeln!(out, "{}", text(instruction));
+    }
+    if let Some(conflicts) = plan.pointer("/spec/conflicts").and_then(Value::as_array) {
+        let _ = writeln!(out, "Restore conflicts: {}", conflicts.len());
+    }
+    out
 }
 
 /// The human summary for this envelope, or `None` when this command has no renderer.
@@ -296,6 +363,57 @@ mod tests {
             data: Some(data),
             diagnostics: Vec::new(),
         }
+    }
+
+    #[test]
+    fn adoption_table_and_status_read_only_envelope_fields() {
+        let data = json!({"plan":{"digest":"sha256:reviewed","spec":{"decisions":[
+            {"item":"personal preference","decision":"keep"},
+            {"item":"conflicting skill","decision":"disable"},
+            {"item":"factory instruction","decision":"replace"},
+            {"item":"unknown text","decision":"unresolved"}]}},"secret":"SENTINEL"});
+        let rendered = render(&success("setup", data), Palette::plain()).expect("setup renderer");
+        for item in [
+            "keep",
+            "disable",
+            "replace",
+            "unresolved",
+            "sha256:reviewed",
+            "personal preference",
+        ] {
+            assert!(rendered.contains(item), "{rendered}");
+        }
+        assert!(!rendered.contains("SENTINEL"));
+        let receipt = json!({"receipt":{"spec":{"state":"installed_unverified","transactionId":"transaction"},"verification":{"status":"observer_missing"}}});
+        let rendered = render(&success("setup", receipt), Palette::plain()).unwrap();
+        assert!(rendered.contains("installed_unverified"));
+        assert!(rendered.contains("observer_missing"));
+    }
+
+    #[test]
+    fn adoption_host_action_displays_program_and_every_argument_as_json_strings() {
+        let receipt = json!({"receipt":{
+            "spec":{"state":"installed_unverified","transactionId":"transaction"},
+            "hostAction":{
+                "instruction":"Start a fresh Claude Code session with this program and argument list.",
+                "program":"C:\\Program Files\\Claude\\claude.exe",
+                "args":["--plugin-dir","C:\\project with spaces\\plugin one","--plugin-dir","/project/\"plugin two\";$(command)\n\u{001b}[31m"],
+                "secret":"SENTINEL"
+            }
+        }});
+        let rendered = render(&success("setup", receipt), Palette::plain()).unwrap();
+        let expected = concat!(
+            "Host launch values (JSON strings; display only):\n",
+            "Program: \"C:\\\\Program Files\\\\Claude\\\\claude.exe\"\n",
+            "Argument 1: \"--plugin-dir\"\n",
+            "Argument 2: \"C:\\\\project with spaces\\\\plugin one\"\n",
+            "Argument 3: \"--plugin-dir\"\n",
+            "Argument 4: \"/project/\\\"plugin two\\\";$(command)\\n\\u001b[31m\"\n",
+        );
+        assert!(rendered.contains(expected), "{rendered}");
+        assert!(rendered.contains("Start a fresh Claude Code session"));
+        assert!(!rendered.contains("SENTINEL"));
+        assert!(!rendered.contains('\u{001b}'));
     }
 
     #[test]

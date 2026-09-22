@@ -103,6 +103,36 @@
       "documentVersion": "1.0.0",
       "path": "schemas/sensitivity.schema.json",
       "sha256": "sha256:e8a8871b45a15a47c81227551a0904f807b87ea5d7159086c512e9840469ddfd"
+    },
+    "adoption-plan": {
+      "id": "https://p50.dev/schemas/adoption-plan.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/adoption-plan.schema.json",
+      "sha256": "sha256:afdb5bf44896fbec81ceea4deda7232f32a614ad49dc134162087b9e576f19a6"
+    },
+    "adoption-receipt": {
+      "id": "https://p50.dev/schemas/adoption-receipt.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/adoption-receipt.schema.json",
+      "sha256": "sha256:43d0dc5cb74df1eff58d0542cd9df4037454784e24c01e33e97c501ffc570c1c"
+    },
+    "adoption-journal": {
+      "id": "https://p50.dev/schemas/adoption-journal.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/adoption-journal.schema.json",
+      "sha256": "sha256:dfca05c01fb04385894a1836dd345c3eddc8fc5685882a88600a4167d5007545"
+    },
+    "restore-plan": {
+      "id": "https://p50.dev/schemas/restore-plan.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/restore-plan.schema.json",
+      "sha256": "sha256:177dfc168ed3a2bd90621600c13a33702a36a9752be0ed2f1e29a91cd6d14657"
+    },
+    "activation-receipt": {
+      "id": "https://p50.dev/schemas/activation-receipt.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/activation-receipt.schema.json",
+      "sha256": "sha256:cc15ac68882f8344530845421899ab50782742c7f8fe251dfcd7cff896a75faa"
     }
   }
 }

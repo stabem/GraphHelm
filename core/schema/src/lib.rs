@@ -17,3 +17,8 @@ pub use registry::{
     validate_extension_value, validate_graph_value, validate_inline_value, validate_physical_batch,
     validate_waiver,
 };
+
+pub use registry::validate_activation_receipt;
+pub use registry::{validate_adoption_journal, validate_adoption_plan, validate_adoption_receipt};
+
+pub use registry::validate_restore_plan;

@@ -441,7 +441,9 @@ Flow:
 An update resolves a new immutable version, validates its full inventory, compares permissions and
 capabilities with the active version, and requires new approval for any increase. The future loader
 must switch versions atomically, keep the previous good version active when replacement validation
-fails, and reverse registrations when a version unloads. Issue #210 does not implement this loader.
+fails, and reverse registrations when a version unloads. The local Extension host now supports
+validated installation and active-version switching/rollback. That local pointer is not proof of
+host loading or a complete dynamic registration loader; those require their own observed receipts.
 
 ### 12.6 One composition path
 
@@ -450,8 +452,12 @@ repository-plugin or skill-plugin wrapper with its own installation, cache, mani
 rules. Package resolution owns source, immutable version, dependencies, and lock state; the
 Extension manifest owns explicit composition and configuration.
 
-Discovery does not activate a package. Activation remains explicit. Issue #210 delivers validation
-and a data bundle only; it does not claim to install or activate extensions.
+Discovery does not activate a package. Activation remains explicit. Issue #210 delivered validation
+and a data bundle. The current Extension host also supports validated local installation and
+active-version switching; reviewed adoption configuration participates in backup and restore.
+These file-state operations remain `installed_unverified` for actual host behavior. No trusted
+host observer ships yet, and user-authored receipts retain `observer_missing`; see the
+[adoption rehearsal](../acceptance/adoption-rehearsal.md).
 
 A host-specific Skill or MCP file is a thin adapter. It may call only declared public CLI, MCP, or
 HTTP contracts, and deleting it loses convenience only. It cannot import Runtime internals or

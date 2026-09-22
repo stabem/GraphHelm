@@ -20,6 +20,16 @@ without a provider and what changes when you add one.
 that number. `install/install.sh` (the VPS systemd path) binds `127.0.0.1:8080` instead; if you
 follow that path, substitute the port. Nothing GraphHelm serves is ever bound beyond loopback.
 
+**Existing host configuration.** `graphhelm setup --project <project> --home <disposable-profile>`
+previews supported files without changing them. An exact reviewed plan and `--accept` digest are
+required to apply; backup precedes mutation, and `graphhelm restore` previews a reversible return.
+Terminal output renders the same fields that pipes receive as JSON. Installation remains
+`installed_unverified`: no trusted host observer ships yet, and `--verify` cannot turn a
+user-authored ActivationReceipt into proof. Follow the separate
+[disposable adoption rehearsal](../acceptance/adoption-rehearsal.md) for supported scope, exact
+commands, retained recovery guards, and the missing-observer limit. Those rehearsal commands are
+a recipe, not part of the historical executed transcripts cited above.
+
 ## Prerequisites
 
 | | Needed for | Check |

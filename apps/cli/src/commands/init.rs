@@ -151,13 +151,66 @@ fn under_root(name: &str) -> String {
     format!("{RUNTIME_DIRECTORY}/{name}")
 }
 
-fn execute(args: &InitArgs) -> Result<Value, Failure> {
+/// A side-effect-free description of init's writes. Adoption may review this description;
+/// it must never call the legacy writer before its backup/journal boundary.
+pub(super) struct Provisioning {
+    project: PathBuf,
+    root: PathBuf,
+    events: PathBuf,
+    bind: SocketAddr,
+    harnesses: Vec<Harness>,
+}
+
+impl Provisioning {
+    pub(super) fn public_description(&self) -> Value {
+        let mut writes = vec![
+            json!({"path": under_root(EVENTS_DIRECTORY), "operation": "ensure_directory"}),
+            json!({"path": under_root(&format!("{EVENTS_DIRECTORY}/{}", secret_file::token_path(&self.events).file_name().unwrap_or_default().to_string_lossy())), "operation": "ensure_private_token"}),
+            json!({"path": under_root(KEY_FILE), "operation": "ensure_private_sealing_key"}),
+            json!({"path": under_root(KEYRING_DIRECTORY), "operation": "ensure_keyring"}),
+            json!({"path": GITIGNORE_FILE, "operation": "append_ignore_if_git"}),
+        ];
+        for harness in &self.harnesses {
+            writes.push(match harness {
+                Harness::ClaudeCode => json!({"path": CLAUDE_CODE_FILE, "operation": "merge_mcp_registration"}),
+                Harness::Codex => json!({"path": under_root(CODEX_SNIPPET_FILE), "operation": "write_registration_snippet"}),
+            });
+        }
+        json!({"root": RUNTIME_DIRECTORY, "bind": self.bind.to_string(), "writes": writes})
+    }
+}
+
+pub(super) fn describe(args: &InitArgs) -> Result<Provisioning, Failure> {
     let bind = parse_bind(&args.bind)?;
     validate_key_id(&args.key_id)?;
     let project = resolve_project(args.project.as_deref())?;
     let root = project.join(RUNTIME_DIRECTORY);
     refuse_symlink(&root, "/root")?;
     let events = root.join(EVENTS_DIRECTORY);
+    let harnesses = if args.harness.is_empty() {
+        detect_harnesses(&project)
+    } else {
+        let mut chosen = args.harness.clone();
+        chosen.dedup();
+        chosen
+    };
+    Ok(Provisioning {
+        project,
+        root,
+        events,
+        bind,
+        harnesses,
+    })
+}
+
+fn execute(args: &InitArgs) -> Result<Value, Failure> {
+    let Provisioning {
+        project,
+        root,
+        events,
+        bind,
+        harnesses,
+    } = describe(args)?;
     let events_state = ensure_directory(&events, "/events")?;
 
     // THE token: `serve`'s own function, so what `init` mints is what `serve` reads. The value is
@@ -174,13 +227,6 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
     let gitignore_path = project.join(GITIGNORE_FILE);
     let gitignore_state = ensure_gitignore(&project, &gitignore_path)?;
 
-    let harnesses = if args.harness.is_empty() {
-        detect_harnesses(&project)
-    } else {
-        let mut chosen = args.harness.clone();
-        chosen.dedup();
-        chosen
-    };
     let url = format!("http://{bind}");
     let mut registrations = Vec::new();
     for harness in harnesses {

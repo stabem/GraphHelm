@@ -520,15 +520,19 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
     assert_eq!(
         divergent,
         vec![
+            "activation-receipt",
+            "adoption-journal",
+            "adoption-plan",
+            "adoption-receipt",
             "context-provenance",
             "event-envelope",
             "execution-accounting-receipt",
             "graph-signal",
-            "node"
+            "node",
+            "restore-plan"
         ],
-        "the deliberate divergences from 1.0.0 are exactly these five (#1065 added \
-         context-provenance whole, #1054 added agent_presence_declared, #1049 added the \
-         node crew)"
+        "the deliberate divergences from 1.0.0 include the five additive adoption contracts \
+         from #1188, context-provenance, event-envelope, accounting, signals and the node crew"
     );
     for change in &report.changes {
         assert_ne!(
@@ -544,7 +548,8 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
 
     // Positive control: the acceptance above is the subject's, not the instrument's.
     let mut divergent = candidate.clone();
-    let removed = divergent.schemas.keys().next().unwrap().clone();
+    // Remove a schema the frozen baseline actually requires, not an additive candidate schema.
+    let removed = baseline.schemas.keys().next().unwrap().clone();
     divergent.schemas.remove(&removed);
     assert_eq!(
         compare_catalogs(&baseline, &divergent).class,

@@ -48,6 +48,6 @@ pub fn propose(inventory: &Value) -> Result<Value, AdoptionError> {
         "apiVersion": "p50.dev/adoption/v1",
         "kind": "AdoptionPlan",
         "id": "plan/local-preview",
-        "spec": {"decisions": decisions, "applyAllowed": false}
+        "spec": {"decisions": decisions, "applyAllowed": false, "rootBindings": inventory["spec"]["rootBindings"]}
     }))
 }

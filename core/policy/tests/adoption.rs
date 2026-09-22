@@ -1,6 +1,14 @@
 use graphhelm_policy::adoption::{Decision, decision_allowed};
 
 #[test]
+fn successful_file_installation_is_not_verified_adoption() {
+    use graphhelm_policy::adoption::adoption_verified;
+    assert!(!adoption_verified(&[]));
+    assert!(!adoption_verified(&[true, true, false]));
+    assert!(adoption_verified(&[true, true, true]));
+}
+
+#[test]
 fn classifier_cannot_disable_security_even_with_high_confidence() {
     assert!(!decision_allowed(true, Decision::Disable));
     assert!(!decision_allowed(true, Decision::Replace));

@@ -260,12 +260,17 @@ deterministic simulation fixture. Together, `extension validate` and graph
 validate/lint/simulate prove package integrity and Graph DSL/simulation conformance; they do not
 execute the eight skill instruction files or an external observer end to end.
 
-A general installer, remote registry, hot reload, marketplace, browser engine, and every Project
-Skill install, activation, or publication path remain separate milestones. This slice can emit a
+The current Extension host supports validated local package installation and active-version
+switching. The adoption CLI adds reviewed backup/apply/restore for supported local configuration;
+it does not prove that a running host loaded the method. Production observation remains
+`observer_missing` until a trusted host observer exists; see the
+[separate rehearsal](../acceptance/adoption-rehearsal.md). Remote registry, hot reload, marketplace,
+browser observers, and Project Skill publication remain separate obligations. The package can emit a
 task-local Skill Capsule draft and validate the packaged capsule schema and containing extension,
 not the emitted instance. The instance remains advisory until a registered validator returns a
-receipt. This slice also does not add a generic JPD certification gate; the current `quality
-certify` surface remains limited to its registered geometry gate.
+receipt. The current `quality certify` surface includes registered geometry, retry-lineage and
+journey-contract gates; their individual contracts do not establish generic JPD certification or
+real host activation.
 Per-contribution surface declarations are validated but are not yet host-enforced tool subsets: the
 current MCP server exposes its fixed tool table to the session token. Missing runtime capabilities
 are reported, never simulated by the skill text.

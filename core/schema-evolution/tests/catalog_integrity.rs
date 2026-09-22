@@ -162,7 +162,7 @@ fn repository_has_one_safe_initial_release() {
     // change, and `graphhelm schema check --baseline schemas/releases/1.0.0/catalog.json` refuses
     // 1.2.0 with GHC004_SEMVER_MISMATCH -- which is how this was found.
     assert_eq!(catalog.release_version, Version::new(1, 1, 0));
-    assert_eq!(catalog.schemas.len(), 17);
+    assert_eq!(catalog.schemas.len(), CURRENT_SCHEMA_NAMES.len());
     assert!(!root.join("schemas/releases/1.1.0").exists());
     assert!(!root.join("schemas/releases/1.2.0").exists());
     // 59 cases / 61 resources: #1086 added the context-provenance `root` refusal, #1049 the
@@ -184,7 +184,7 @@ fn current_catalog_adds_execution_accounting_without_backfilling_release_1_0_0()
     // 1.1.0: one transition from the frozen baseline, sized by cumulative impact -- see the
     // reasoning at the release_version assertion above.
     assert_eq!(current.release_version, Version::new(1, 1, 0));
-    assert_eq!(current.schemas.len(), 17);
+    assert_eq!(current.schemas.len(), CURRENT_SCHEMA_NAMES.len());
     assert!(current.schemas.contains_key("execution-accounting-receipt"));
     assert_eq!(release.release_version, Version::new(1, 0, 0));
     assert_eq!(release.schemas.len(), 15);
@@ -405,7 +405,11 @@ const RELEASE_1_0_0_SCHEMA_NAMES: [&str; 15] = [
     "sensitivity",
 ];
 
-const CURRENT_SCHEMA_NAMES: [&str; 17] = [
+const CURRENT_SCHEMA_NAMES: [&str; 22] = [
+    "activation-receipt",
+    "adoption-journal",
+    "adoption-plan",
+    "adoption-receipt",
     "agent",
     "artifact-reference",
     "claim",
@@ -422,6 +426,7 @@ const CURRENT_SCHEMA_NAMES: [&str; 17] = [
     "persisted-graph-version",
     "policy-waiver",
     "repository-scope",
+    "restore-plan",
     "sensitivity",
 ];
 
@@ -588,7 +593,7 @@ fn the_release_snapshot_is_frozen_and_divergence_is_version_declared() {
     // 1.1.0, for the reason written at the first release_version assertion in this file.
     assert_eq!(current.catalog.release_version, Version::new(1, 1, 0));
     assert_eq!(release.catalog.release_version, Version::new(1, 0, 0));
-    assert_eq!(current.catalog.schemas.len(), 17);
+    assert_eq!(current.catalog.schemas.len(), CURRENT_SCHEMA_NAMES.len());
     assert_eq!(release.catalog.schemas.len(), 15);
     for (label, resources) in [("current", &current), ("release", &release)] {
         let report = validate_catalog(resources);
@@ -1374,4 +1379,31 @@ fn catalog_rejects_one_schema_above_four_mebibytes_before_digest_work() {
     assert_eq!(report.diagnostics.len(), 1);
     assert_eq!(report.diagnostics[0].code, "GHC001_CATALOG_INVALID");
     assert_eq!(report.diagnostics[0].path, "/schemas/graph/bytes");
+}
+
+#[test]
+fn adoption_contracts_are_catalogued_without_rewriting_the_frozen_release() {
+    let root = repository_root();
+    let catalog: SchemaCatalog =
+        serde_json::from_slice(&fs::read(root.join("schemas/catalog.json")).unwrap()).unwrap();
+    let release: SchemaCatalog = serde_json::from_slice(
+        &fs::read(root.join("schemas/releases/1.0.0/catalog.json")).unwrap(),
+    )
+    .unwrap();
+    for name in [
+        "activation-receipt",
+        "adoption-plan",
+        "adoption-receipt",
+        "adoption-journal",
+        "restore-plan",
+    ] {
+        let entry = catalog
+            .schemas
+            .get(name)
+            .expect("adoption wire contract is catalogued");
+        let schema: Value =
+            serde_json::from_slice(&fs::read(root.join(&entry.path)).unwrap()).unwrap();
+        assert_eq!(entry.sha256, schema_digest(&schema).unwrap());
+        assert!(!release.schemas.contains_key(name));
+    }
 }

@@ -2,6 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Every required observation must be present; an empty evidence set proves nothing.
+#[must_use]
+pub fn adoption_verified(required: &[bool]) -> bool {
+    !required.is_empty() && required.iter().all(|observed| *observed)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {

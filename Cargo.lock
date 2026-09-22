@@ -939,6 +939,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "toml",
  "uuid",
  "windows-sys 0.61.2",
  "zeroize",
@@ -1079,11 +1080,16 @@ dependencies = [
 name = "graphhelm-host-adoption"
 version = "0.1.0"
 dependencies = [
+ "fs2",
+ "graphhelm-extension-host",
+ "graphhelm-graph",
  "graphhelm-policy",
  "graphhelm-protocols",
+ "graphhelm-schema",
  "graphhelm-sealed-key-provider",
  "hex",
  "libc",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",

@@ -91,9 +91,11 @@ param(
     [int] $MaxTipEntries = 5000,
     # How many records this will read from either store. See the note where the default is applied.
     [int] $MaxManifests,
-    # The TOTAL this will read from the store, across every manifest. A seam for the same reason the
-    # others are: the cell that proves the aggregate ceiling refuses cannot write two gigabytes.
-    [long] $MaxStoreBytes = 64MB
+    # The TOTAL this will read from the store, across every manifest. The committed main store was
+    # measured at about 108 MB, so 256 MB leaves practical headroom while keeping a finite,
+    # fail-closed bound. A seam for the same reason the others are: the cell that proves the
+    # aggregate ceiling refuses cannot write two gigabytes.
+    [long] $MaxStoreBytes = 256MB
 )
 
 $ErrorActionPreference = 'Continue'

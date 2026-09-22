@@ -11,7 +11,7 @@
 # Exit codes are the consumer's scheme, agreed with the desk that calls this: 0 SATISFIED,
 # 1 THE TOOL BROKE, 2 NOT, 3 ABSENT. 1 is reserved for a broken tool so a caller treating
 # "non-zero" as "refused" can never refuse a merge because this script failed to run.
-$ExpectedAssertionCount = 207
+$ExpectedAssertionCount = 208
 # 'Continue', not 'Stop': these cells run git and the subject against fixtures that are meant to
 # fail, and under Windows PowerShell 5.1 a native command's redirected stderr becomes a
 # NativeCommandError that 'Stop' promotes to a terminating error.
@@ -1763,6 +1763,9 @@ try {
 
     Write-Host ''
     Write-Host '-- the store has a total ceiling, not only a per-file one --' -ForegroundColor Cyan
+    $subjectText = [System.IO.File]::ReadAllText($subjectPath)
+    Assert-True -Condition ($subjectText -cmatch '\[long\]\s+\$MaxStoreBytes\s*=\s*256MB') `
+        -Message 'the default aggregate store ceiling leaves headroom for the measured 108 MB committed store'
     # Two thousand manifests of just under a megabyte each pass the per-file ceiling one at a time
     # and add up to two gigabytes. The per-file limit reads as a bound and bounds only the worst
     # SINGLE entry -- the same shape as a count ceiling with unbounded files behind it.

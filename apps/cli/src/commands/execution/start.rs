@@ -290,6 +290,7 @@ pub(crate) fn execute_prepared(
     // becomes invisible.
     let mut node_ids = Vec::new();
     let mut node_timeout_seconds = BTreeMap::new();
+    let mut node_customs_budgets = BTreeMap::new();
     for (id, node) in &version.graph().spec.nodes {
         let parsed = OpaqueId::parse(id).map_err(|_| {
             execution_state(
@@ -301,6 +302,18 @@ pub(crate) fn execute_prepared(
         // operator declared nothing, and must never be read as a budget of zero.
         if let Some(seconds) = graphhelm_protocols::declared_timeout_seconds(node) {
             node_timeout_seconds.insert(parsed.clone(), seconds);
+        }
+        // #1184 review: the customs budgets travel WITH the declaration, because nothing on this
+        // path publishes a graph version for `stage_deadline` to read them from. Same rule as the
+        // timeout above — only a node that declared them gets a key.
+        //
+        // AN UNREADABLE BLOCK RECORDS NOTHING, and does not refuse the start. It cannot produce a
+        // wait either: such a graph is refused by the drive's own preflight
+        // (`GHG017_CUSTOMS_DECLARATION_INVALID`) before any node runs, so no node ever parks and
+        // there is no stage for a missing budget to fail to bound. Refusing here instead would
+        // move that refusal to a second place with a different code, and the two could drift.
+        if let Ok(Some(customs)) = node.customs() {
+            node_customs_budgets.insert(parsed.clone(), customs.budgets);
         }
         node_ids.push(parsed);
     }
@@ -319,6 +332,7 @@ pub(crate) fn execute_prepared(
         execution_id: stream_id.clone(),
         node_ids,
         node_timeout_seconds,
+        node_customs_budgets,
         name: declared_text(&graph.metadata.name),
         objective,
         executor,

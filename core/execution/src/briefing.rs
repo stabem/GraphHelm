@@ -672,6 +672,9 @@ mod tests {
             name: Some("Deploy com override manual".to_owned()),
             objective: Some("Produzir build implantável.".to_owned()),
             executor: Some(DeclaredExecutor::Fixture),
+            // These fixtures are about the declared form's OTHER fields; a graph that declares no
+            // customs produces an empty map, which is what keeps each cell asking its own question.
+            node_customs_budgets: std::collections::BTreeMap::new(),
         });
         projection
             .node_states
@@ -1194,6 +1197,9 @@ mod tests {
             name: None,
             objective: None,
             executor: None,
+            // These fixtures are about the declared form's OTHER fields; a graph that declares no
+            // customs produces an empty map, which is what keeps each cell asking its own question.
+            node_customs_budgets: std::collections::BTreeMap::new(),
         });
         let answer = attention(&projection, &AttentionInputs::default());
         let briefing = briefing_view(&projection, &answer, &history);
@@ -1235,6 +1241,9 @@ mod tests {
             name: None,
             objective: None,
             executor: None,
+            // These fixtures are about the declared form's OTHER fields; a graph that declares no
+            // customs produces an empty map, which is what keeps each cell asking its own question.
+            node_customs_budgets: std::collections::BTreeMap::new(),
         });
         let answer = attention(&projection, &AttentionInputs::default());
         let briefing = briefing_view(&projection, &answer, &history);

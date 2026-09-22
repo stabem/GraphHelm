@@ -55,7 +55,12 @@ fn replay_output(events: &Path) -> Vec<u8> {
 
 /// Every event's wire name, in stream order, read from the repository rather than from any
 /// command's summary.
-fn journal_kinds(events: &Path) -> Vec<String> {
+/// Every event in the repository the CLI just wrote, in stream order.
+///
+/// Extracted from `journal_kinds` so the #1184 cells can read PAYLOADS and INSTANTS from the same
+/// reader that already answers "which kinds landed". Two readers over one journal is how the
+/// first divergence becomes invisible.
+fn journal(events: &Path) -> Vec<graphhelm_protocols::EventEnvelope> {
     struct TestClock;
     impl graphhelm_protocols::Clock for TestClock {
         fn now(&self) -> chrono::DateTime<chrono::Utc> {
@@ -80,6 +85,10 @@ fn journal_kinds(events: &Path) -> Vec<String> {
         .read_unique_replay_stream()
         .expect("the arrangement leaves exactly one stream");
     history
+}
+
+fn journal_kinds(events: &Path) -> Vec<String> {
+    journal(events)
         .iter()
         .map(|envelope| envelope.kind.wire_name().to_owned())
         .collect()
@@ -533,5 +542,260 @@ fn replay_of_the_acting_journal_is_byte_identical_and_a_rejected_clearance_repla
     assert_eq!(
         replayed["data"]["nodeStates"]["implementation"],
         "waiting_input"
+    );
+}
+
+/// One event's payload, as JSON, read from the repository the CLI wrote.
+///
+/// The JOURNAL, never a command's own summary: a summary is the claim's author, and these cells
+/// are about what was recorded.
+fn journal_payload(events: &Path, wire_name: &str) -> Value {
+    let history = journal(events);
+    let envelope = history
+        .iter()
+        .find(|envelope| envelope.kind.wire_name() == wire_name)
+        .unwrap_or_else(|| panic!("no {wire_name} in the stream"));
+    serde_json::to_value(&envelope.kind).unwrap()["data"].clone()
+}
+
+/// The instant of the FIRST event of this wire kind whose serialized payload contains `needle`.
+///
+/// Keyed on the payload rather than on a position in the batch, because the batch here is written
+/// by the real command: a cell that counted events would break on any unrelated append.
+fn journal_occurred_at(
+    events: &Path,
+    wire_name: &str,
+    needle: &str,
+) -> chrono::DateTime<chrono::Utc> {
+    let history = journal(events);
+    let envelope = history
+        .iter()
+        .find(|envelope| {
+            envelope.kind.wire_name() == wire_name
+                && serde_json::to_string(&envelope.kind).is_ok_and(|text| text.contains(needle))
+        })
+        .unwrap_or_else(|| panic!("no {wire_name} carrying {needle}"));
+    *envelope.occurred_at.as_datetime()
+}
+
+/// #1184 review BLOCK, the START half: the declaration snapshots each node's customs budgets, so
+/// the wait a real `execution start` opens has a DEADLINE.
+///
+/// The fold cells for this live in `core/events/tests/sweep_verb.rs` and build the declaration
+/// event by hand, which is the right grain for the projection and leaves exactly one thing
+/// unmeasured: whether `start` writes those budgets at all. Removing the snapshot in
+/// `apps/cli/src/commands/execution/start.rs` reddens nothing in that suite -- measured -- so this
+/// cell exists to close that gap, through the real command and the real example graph.
+///
+/// `examples/graphs/customs-acting.yaml` declares `waitWithinSeconds: 86400` on `implementation`,
+/// and this asserts the horizon that number produces rather than merely that a deadline exists.
+/// "Is present" would pass for a horizon at the instant of entry, which is what a budget of zero
+/// produces and what a presence check cannot see.
+#[test]
+fn a_started_execution_records_the_declared_customs_budgets_and_the_wait_gets_a_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, _fixtures) = start_parked(directory.path(), "exec-customs-deadline");
+
+    // THE DECLARATION carries the budgets.
+    let declared = journal_payload(&events, "execution_form_declared");
+    let budgets = &declared["nodeCustomsBudgets"]["implementation"];
+    assert_eq!(
+        budgets["waitWithinSeconds"], 86400,
+        "the graph's own declared wait budget must reach the declaration event: {declared}"
+    );
+    assert_eq!(
+        budgets["clearanceWithinSeconds"], 3600,
+        "and the clearance budget beside it: {declared}"
+    );
+    // `release_notes` declares customs too (with an empty `proofKinds`), so its budgets are
+    // recorded as well. A snapshot that kept only the node that happened to park would be a
+    // narrower rule than the declaration states.
+    assert_eq!(
+        declared["nodeCustomsBudgets"]["release_notes"]["waitWithinSeconds"], 86400,
+        "every node that declared customs is recorded, not only the one that parked: {declared}"
+    );
+
+    // THE WAIT gets the horizon those budgets produce -- the property the review asked for, and
+    // the one the declaration exists to serve. Before this, a wait opened by a real start carried
+    // no deadline at all and no instant could make it overdue.
+    let projection = replay_projection(&events);
+    // `openWaits`, which is the FOLD's own map. `customs.nodes.<id>.openWait` is the STATUS
+    // command's render of the same fact and is asserted separately below: the first read here
+    // took the status path against the replay projection and got `Null` -- an absence at the
+    // wrong path, which reads exactly like a missing deadline.
+    let wait = &projection["openWaits"]["implementation"];
+    let park_at = journal_occurred_at(&events, "node_outcome_recorded", "waiting_input");
+    let expected = graphhelm_protocols::PersistedTimestamp::from_datetime(
+        park_at
+            .checked_add_signed(chrono::Duration::seconds(86400))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        wait["deadline"],
+        serde_json::to_value(&expected).unwrap(),
+        "the park instant plus the declared 86400 seconds, and nothing else: {projection}"
+    );
+
+    // AND IT REACHES THE OPERATOR'''S SURFACE. The fold computing a horizon nobody can read would
+    // satisfy the sweep and tell a person nothing, and `status` is the door the Studio reads.
+    let rendered = status(&events, "exec-customs-deadline");
+    assert_eq!(
+        rendered["customs"]["nodes"]["implementation"]["openWait"]["deadline"],
+        serde_json::to_value(&expected).unwrap(),
+        "the same horizon on the surface an operator actually reads: {rendered}"
+    );
+}
+
+/// #1184 review (pass B): the SYNCHRONOUS driver parks too.
+///
+/// This repository has two dispatch drivers. `core/runtime/src/driver.rs` serves the Public
+/// Runtime API; `apps/cli/src/commands/execution/driver.rs` serves `execution start` on the CLI,
+/// and the park was added to the first and not the second. A customs node started from the CLI
+/// reached `Succeeded` and the execution completed with the declaration inert.
+///
+/// THE FIXTURE HERE SUCCEEDS, and that is the whole point of a second cell. Every other cell in
+/// this file scripts `implementation` to `"unknown"`, which makes the FIXTURE EXECUTOR answer
+/// `NeedsInput` -- so the node parks for a reason that has nothing to do with any customs
+/// declaration, and those cells would stay green with the park deleted from both drivers. With
+/// `"success"` the only thing that can produce a wait is the declaration.
+#[test]
+fn a_successful_customs_node_parks_on_the_synchronous_cli_driver() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = write_json(
+        directory.path(),
+        "fixtures.json",
+        &serde_json::json!({
+            "nodeOutcomes": { "implementation": "success", "release_notes": "success" }
+        }),
+    );
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph().to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec-sync-park",
+        ])
+        .output()
+        .unwrap();
+    let value = json(&output.stdout);
+    assert_eq!(value["ok"], true, "{value}");
+
+    // The node RAN and then parked: the fixture said success, so anything other than
+    // `waiting_input` here means the declaration was ignored on this path.
+    assert_eq!(
+        value["data"]["nodeStates"]["implementation"], "waiting_input",
+        "a node declaring proofKinds must park even when its work succeeded: {value}"
+    );
+
+    // THE EXECUTION IS NOT OVER. Without the park it completes, and a cell that only checked the
+    // node state would still pass on a completed run whose terminal node was quietly skipped.
+    assert_eq!(
+        value["data"]["status"], "running",
+        "the execution must not complete while a node waits: {value}"
+    );
+    assert_eq!(
+        value["data"]["nodeStates"]["release_notes"], "ready",
+        "the downstream node is held behind the parked one: {value}"
+    );
+
+    // THE WAIT IS OPEN AND BOUNDED. `claim` refuses against a node with no open wait, so a park
+    // without one is unanswerable; and the deadline is what makes the sweep able to call it
+    // overdue. `customs-acting.yaml` declares waitWithinSeconds: 86400 on this node.
+    let projection = replay_projection(&events);
+    // `lastOutcome` lives on the REPLAY projection, not on the start render -- the first version
+    // of this cell read it off `value["data"]` and got Null, which is an absence at the wrong
+    // path rather than a missing park. The start render carries node STATES; the journal carries
+    // what produced them.
+    assert_eq!(
+        projection["lastOutcome"]["implementation"], "needs_input",
+        "the recorded outcome is the park, not a success: {projection}"
+    );
+    let wait = &projection["openWaits"]["implementation"];
+    assert!(
+        wait["atSequence"].as_u64().is_some(),
+        "the park must open a wait a claim can answer: {projection}"
+    );
+    let park_at = journal_occurred_at(&events, "node_outcome_recorded", "waiting_input");
+    let expected = graphhelm_protocols::PersistedTimestamp::from_datetime(
+        park_at
+            .checked_add_signed(chrono::Duration::seconds(86400))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        wait["deadline"],
+        serde_json::to_value(&expected).unwrap(),
+        "the park instant plus the declared 86400 seconds: {projection}"
+    );
+
+    // AND IT REACHES THE OPERATOR. A park the surface does not report is a hang with extra steps.
+    let rendered = status(&events, "exec-sync-park");
+    assert_eq!(
+        rendered["attention"], "needs_you",
+        "a parked node is something the owner must answer: {rendered}"
+    );
+    assert!(
+        rendered["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|reason| {
+                reason["kind"] == "waiting_input_node" && reason["node"] == "implementation"
+            })),
+        "the reason must name the node that is waiting: {rendered}"
+    );
+}
+
+/// The CONTROL for the cell above, and it is the one that makes it mean anything. Same driver,
+/// same successful fixture, same command -- only the node's declaration is absent. A park here
+/// would mean the driver parks on something other than the declaration.
+#[test]
+fn a_successful_node_with_no_customs_completes_on_the_synchronous_cli_driver() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = write_json(
+        directory.path(),
+        "fixtures.json",
+        &serde_json::json!({ "nodeOutcomes": { "implementation": "success" } }),
+    );
+    // `software-feature.yaml`'s entrypoint declares no customs block at all.
+    let graph_without_customs = root().join("examples/graphs/provider-less-demo.yaml");
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph_without_customs.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec-sync-nocustoms",
+        ])
+        .output()
+        .unwrap();
+    let value = json(&output.stdout);
+    assert_eq!(value["ok"], true, "{value}");
+    assert_ne!(
+        value["data"]["nodeStates"]["implementation"], "waiting_input",
+        "a node that declared no customs must not park: {value}"
+    );
+    let projection = replay_projection(&events);
+    assert!(
+        projection["openWaits"]["implementation"]["atSequence"]
+            .as_u64()
+            .is_none(),
+        "and it opens no wait: {projection}"
     );
 }

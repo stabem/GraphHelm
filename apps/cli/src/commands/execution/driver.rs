@@ -75,6 +75,18 @@ pub(super) fn drive_to_quiescence(
     let execution_id = OpaqueId::parse(execution_id_ref.as_str())
         .map_err(|_| execution_state("the execution identifier is not wire-safe", "/execution"))?;
 
+    // #1184 review (pass B): REFUSED BEFORE ANY NODE RUNS, and the same condition under the same
+    // code the async driver uses -- both ask `graphhelm_execution::unreadable_customs_nodes`, so
+    // the two drivers cannot come to disagree about which graphs are refusable. By the time the
+    // park decision below runs, the node's work has already happened and a block that cannot be
+    // read has no honest answer left.
+    if let Some(node) = graphhelm_execution::unreadable_customs_nodes(spec).first() {
+        return Err(execution_state(
+            "a node declares a completion.customs block that cannot be read",
+            &format!("/spec/nodes/{node}/completion"),
+        ));
+    }
+
     loop {
         approve_untouched(store, scope, &stream_id, &execution_id, spec, actor)?;
 
@@ -228,6 +240,21 @@ pub(super) fn drive_to_quiescence(
                     "/execution/dispatch",
                 )
             })?;
+            // #1184 review (pass B): THE PARK, on this driver too. It was added to the async
+            // driver alone, so a customs node started through the CLI reached `Succeeded` and the
+            // execution completed with the declaration inert -- on exactly the path an operator
+            // uses by hand. The predicate is the shared one; a change to it moves both drivers.
+            //
+            // ONLY a success is converted, for the reason the async side gives: parking a node
+            // that failed would ask a person to attest to work that did not happen, and would
+            // take the node out of the retry path that owns it.
+            let outcome = if outcome == NodeOutcome::Succeeded
+                && graphhelm_execution::completion_is_gated_in(spec, node)
+            {
+                NodeOutcome::NeedsInput
+            } else {
+                outcome
+            };
             record_outcome(
                 store,
                 scope,

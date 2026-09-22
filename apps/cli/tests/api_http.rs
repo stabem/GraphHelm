@@ -2757,8 +2757,10 @@ fn event_kinds(base: &str, token: &str, execution: &str) -> Vec<String> {
 /// `executor: "fixture"` that only the async arm declares.
 ///
 /// Held start: `execution_started`, `execution_paused`, no `node_` event, and no executor
-/// declared (the async arm would have declared `fixture`). Then `resume` over HTTP drives it: the
-/// stream gains node events for BOTH nodes and ends `completed`.
+/// declared (the async arm would have declared `fixture`). Then `resume` over HTTP drives it:
+/// the stream gains node events, and the drive runs the entrypoint'''s work and parks it at the
+/// customs gate that node declares (#1184). The graph is borrowed for its SHAPE, not for its
+/// customs; what this cell proves is that nothing moved until `resume` moved it.
 #[test]
 fn a_held_start_on_an_async_capable_graph_dispatches_nothing_until_resume_drives_it() {
     let directory = tempfile::tempdir().unwrap();
@@ -2853,20 +2855,39 @@ fn a_held_start_on_an_async_capable_graph_dispatches_nothing_until_resume_drives
         "the resume of a held start must succeed: {resumed}"
     );
     let after: Vec<Value> = all_events(&base, &token, execution);
-    for node in ["implementation", "release_notes"] {
-        assert!(
-            after.iter().any(|event| {
-                event["kind"]["type"]
-                    .as_str()
-                    .is_some_and(|kind| kind.starts_with("node_"))
-                    && event.to_string().contains(&format!("\"{node}\""))
-            }),
-            "resume must drive `{node}`: {resumed}"
-        );
-    }
+    assert!(
+        after.iter().any(|event| {
+            event["kind"]["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("node_"))
+                && event.to_string().contains("\"implementation\"")
+        }),
+        "resume must drive the entrypoint the held start refused to dispatch: {resumed}"
+    );
+    // #1184: this cell borrows the CUSTOMS example for its SHAPE (two agent nodes, every type
+    // Cognitive, so a fixture-only server takes the async-capable path) and its entrypoint
+    // declares `completion.customs.proofKinds: [test_report]`. The drive therefore runs that
+    // node'''s work and then PARKS it for a person: `running` with an open wait, not `completed`.
+    //
+    // This assertion read `completed` until #1184, and that reading was only ever true while a
+    // declared proof kind was inert on the real path — the graph now behaves as its own
+    // declaration says. The SUBJECT of this cell is untouched: a held start dispatches nothing,
+    // and `resume` is what drives it, which the node events above prove.
     assert_eq!(
-        resumed["data"]["status"], "completed",
-        "resume must drive the held execution to completion: {resumed}"
+        resumed["data"]["status"], "running",
+        "the drive reaches the entrypoint'''s customs gate, so the execution is not over: {resumed}"
+    );
+    assert_eq!(
+        resumed["data"]["nodeStates"]["implementation"], "waiting_input",
+        "the node that declared a proof kind parks instead of completing itself: {resumed}"
+    );
+    assert_eq!(
+        resumed["data"]["nodeStates"]["release_notes"], "ready",
+        "the park holds the downstream node back: {resumed}"
+    );
+    assert_eq!(
+        resumed["data"]["attention"], "needs_you",
+        "a parked node is something the owner has to answer: {resumed}"
     );
 }
 

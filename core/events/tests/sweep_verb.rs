@@ -1069,3 +1069,252 @@ fn a_rebuilt_projection_names_the_same_episodes_the_journal_recorded() {
          again by some later sweep) and no more"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// #1184 review BLOCK: a wait created on the ORDINARY START PATH has a deadline.
+//
+// `stage_deadline` read customs only from `current_graph`, which nothing but a sealed
+// `GraphVersionPublished` fills. Every cell above publishes one, so every cell above measured the
+// half of the world that works. The `start` path does not publish: it appends
+// `execution_form_declared`, and a test in the fold asserts that a declaration must NOT fill the
+// sealed graph. So a node parked by a real start carried `deadline: None`, `overdue_at` skipped it
+// forever, and `waitWithinSeconds` -- REQUIRED by its own schema -- bounded nothing.
+//
+// The budgets now travel with the declaration. These two cells are the pair the review asked for:
+// one that the fix turns from red to green, and one that pins which source wins when both exist.
+// ---------------------------------------------------------------------------------------------
+
+/// The wait budget the declaration-path fixture declares, in seconds.
+///
+/// Thirty rather than an hour so the cell can ask on BOTH sides of the horizon within the same
+/// minute, and so the expected instant below is readable as arithmetic a person can check.
+const DECLARED_WAIT_SECONDS: u64 = 30;
+
+/// A parked node on the START path: an execution declared, never published.
+///
+/// The publication is the one event this deliberately omits, and the omission IS the subject. The
+/// `graph_hash` is a literal rather than a version's own, exactly as `execution_projection.rs`
+/// writes it, because there is no version here to take one from -- which is the point.
+fn declared_fixture(
+    budgets: Option<graphhelm_protocols::CustomsBudgets>,
+    publish: bool,
+) -> (tempfile::TempDir, LocalEventRepository, Vec<EventEnvelope>) {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::at(12));
+    let repository =
+        LocalEventRepository::open(directory.path(), clock.clone(), Arc::new(Ids::default()))
+            .unwrap();
+
+    let mut node_customs_budgets = std::collections::BTreeMap::new();
+    if let Some(budgets) = budgets {
+        node_customs_budgets.insert(OpaqueId::parse(NODE).unwrap(), budgets);
+    }
+
+    // Only the precedence cell publishes. When it does, the published node declares an HOUR while
+    // the declaration declares thirty seconds, so the two sources cannot produce the same answer
+    // and whichever one the fold read is legible from the deadline alone.
+    let (version, evidence) = if publish {
+        let (version, evidence) = version_and_evidence(Some(published_customs()));
+        (Some(version), evidence)
+    } else {
+        (None, Vec::new())
+    };
+    let (graph_version, graph_hash) = match &version {
+        Some(version) => (version.number(), version.topology_hash().clone()),
+        None => (
+            FIRST_VERSION,
+            graphhelm_protocols::WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+        ),
+    };
+
+    let mut batch = vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse(EXECUTION).unwrap(),
+                graph_version,
+                graph_hash,
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "form-declared",
+            EventKind::ExecutionFormDeclared(graphhelm_protocols::ExecutionFormDeclared {
+                execution_id: OpaqueId::parse(EXECUTION).unwrap(),
+                node_ids: vec![OpaqueId::parse(NODE).unwrap()],
+                node_timeout_seconds: std::collections::BTreeMap::new(),
+                name: None,
+                objective: None,
+                executor: None,
+                node_customs_budgets,
+            }),
+        ),
+    ];
+    if let Some(version) = version {
+        batch.push(NewEvent::new(
+            OpaqueId::parse("graph-published").unwrap(),
+            version.created_by().clone(),
+            Sensitivity::Internal,
+            EventKind::GraphVersionPublished(Box::new(GraphVersionPublished { version })),
+            evidence
+                .iter()
+                .map(|item| item.reference().clone())
+                .collect(),
+            vec![],
+        ));
+    }
+    batch.extend([
+        outcome_event("dispatch", Outcome::Started, NodeState::Queued),
+        outcome_event("run", Outcome::Started, NodeState::Running),
+        outcome_event("park", Outcome::NeedsInput, NodeState::WaitingInput),
+    ]);
+
+    let request = PreparedAppend::new(
+        scope(),
+        OpaqueId::parse(STREAM).unwrap(),
+        1,
+        batch,
+        evidence,
+        vec![],
+    )
+    .unwrap();
+    let appended = repository.append_atomic(&request).unwrap();
+    // The park is the last event, and every assertion below is about the instant IT carries. A
+    // fixture whose park landed somewhere else would make the expected horizon arithmetic about a
+    // different event, so the instant is checked rather than assumed.
+    assert_eq!(
+        appended.last().unwrap().occurred_at,
+        instant("2026-08-10T12:00:00Z"),
+        "the park must carry the fixture's own instant"
+    );
+    clock.advance_to(15);
+    (directory, repository, appended)
+}
+
+/// The budgets a PUBLISHED node declares in the precedence cell: an hour, so it cannot be confused
+/// with the declaration's thirty seconds.
+fn published_customs() -> PersistedCustoms {
+    PersistedCustoms::new(3600, CLEARANCE_BUDGET_SECONDS, None)
+}
+
+fn declared_budgets(wait: u64) -> graphhelm_protocols::CustomsBudgets {
+    graphhelm_protocols::CustomsBudgets {
+        wait_within_seconds: wait,
+        clearance_within_seconds: CLEARANCE_BUDGET_SECONDS,
+        dlq_within_seconds: None,
+    }
+}
+
+fn projection_of(repository: &LocalEventRepository) -> graphhelm_events::ExecutionProjection {
+    let history = repository.read_replay_stream(&scope(), STREAM).unwrap();
+    graphhelm_events::replay(&scope(), STREAM, &history).unwrap()
+}
+
+/// THE CELL THE REVIEW ASKED FOR. Red before the fix, green after: no published graph, a declared
+/// `waitWithinSeconds` of 30, a park at 12:00:00Z, a deadline at exactly 12:00:30Z, and one
+/// overdue episode at 12:00:31Z.
+#[test]
+fn a_wait_declared_at_start_without_a_published_graph_has_a_deadline_and_can_lapse() {
+    let (_directory, repository, appended) =
+        declared_fixture(Some(declared_budgets(DECLARED_WAIT_SECONDS)), false);
+    let projection = projection_of(&repository);
+
+    assert!(
+        projection.current_graph.is_none(),
+        "ARRANGEMENT: this cell is about the path that publishes NO graph version"
+    );
+    assert_eq!(
+        projection.node_states.get(NODE),
+        Some(&NodeState::WaitingInput),
+        "ARRANGEMENT: the node must actually be parked"
+    );
+
+    let wait = projection
+        .open_waits
+        .get(NODE)
+        .expect("the park opens a wait");
+    assert_eq!(
+        wait.at_sequence,
+        appended.last().unwrap().sequence,
+        "the wait is identified by the parking event's own sequence"
+    );
+    // EXACTLY, not "is some": a deadline at the wrong instant lapses at the wrong time, and
+    // `is_some` would pass for a horizon of zero -- the trap `stage_deadline`'s own doc names.
+    assert_eq!(
+        wait.deadline.as_ref(),
+        Some(&instant("2026-08-10T12:00:30Z")),
+        "12:00:00Z plus the declared 30 seconds, and nothing else"
+    );
+
+    // ONE SECOND BEFORE: not overdue. Without this the cell would pass on a deadline that had
+    // already lapsed at the instant of entry, which is the failure mode a horizon of zero
+    // produces and the one a single late reading cannot distinguish.
+    assert!(
+        graphhelm_events::overdue_at(&projection, &instant("2026-08-10T12:00:29Z")).is_empty(),
+        "the wait must not be overdue before its own horizon"
+    );
+
+    let overdue = graphhelm_events::overdue_at(&projection, &instant("2026-08-10T12:00:31Z"));
+    assert_eq!(overdue.len(), 1, "exactly one episode lapsed: {overdue:?}");
+    assert_eq!(overdue[0].node, NODE);
+    assert_eq!(overdue[0].episode_seq, wait.at_sequence);
+    assert_eq!(overdue[0].deadline, instant("2026-08-10T12:00:30Z"));
+    assert_eq!(overdue[0].claim_seq, None);
+}
+
+/// THE CONTROL for the cell above. Same fixture, same park, same instant -- only the declaration
+/// is absent. Without it, "the declaration produced the deadline" is not established: a fold that
+/// invented a budget from nowhere would satisfy the cell above just as well.
+#[test]
+fn a_start_path_node_that_declared_no_customs_still_has_no_deadline() {
+    let (_directory, repository, _appended) = declared_fixture(None, false);
+    let projection = projection_of(&repository);
+
+    let wait = projection
+        .open_waits
+        .get(NODE)
+        .expect("the park opens a wait either way");
+    assert_eq!(
+        wait.deadline, None,
+        "an undeclared budget stays absent and never becomes a horizon of zero"
+    );
+    assert!(
+        graphhelm_events::overdue_at(&projection, &instant("2027-01-01T00:00:00Z")).is_empty(),
+        "nobody bounded this stage, so no instant makes it overdue"
+    );
+}
+
+/// PRECEDENCE, pinned in the one arrangement where the two sources disagree: a published graph
+/// declaring an hour and a declaration declaring thirty seconds, on the same node, in the same
+/// stream. The published graph is the sealed form and wins; the declaration is what it grew from.
+///
+/// The two budgets differ deliberately, so the deadline alone says which source the fold read. A
+/// cell whose two sources agreed would pass whichever one it consulted.
+#[test]
+fn a_published_graph_decides_the_deadline_even_when_a_declaration_is_also_present() {
+    let (_directory, repository, _appended) =
+        declared_fixture(Some(declared_budgets(DECLARED_WAIT_SECONDS)), true);
+    let projection = projection_of(&repository);
+
+    assert!(
+        projection.current_graph.is_some(),
+        "ARRANGEMENT: this cell needs the published half present"
+    );
+    assert!(
+        projection
+            .declared_form
+            .as_ref()
+            .is_some_and(|form| !form.node_customs_budgets.is_empty()),
+        "ARRANGEMENT: this cell needs the declared half present too"
+    );
+
+    let wait = projection
+        .open_waits
+        .get(NODE)
+        .expect("the park opens a wait");
+    assert_eq!(
+        wait.deadline.as_ref(),
+        Some(&instant("2026-08-10T13:00:00Z")),
+        "the published hour, not the declared thirty seconds"
+    );
+}

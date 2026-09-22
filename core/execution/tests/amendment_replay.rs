@@ -36,6 +36,9 @@ fn projection_with_unbudgeted_node_in_flight() -> graphhelm_events::ExecutionPro
         name: None,
         objective: None,
         executor: None,
+        // These fixtures are about the declared form's OTHER fields; a graph that declares no
+        // customs produces an empty map, which is what keeps each cell asking its own question.
+        node_customs_budgets: std::collections::BTreeMap::new(),
     });
     projection
 }

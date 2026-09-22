@@ -1,5 +1,42 @@
 # Specification Changelog
 
+## A node can wait for a person, #1184 - 2026-09-21
+
+A node that declares `completion.customs.proofKinds` now PARKS when its work succeeds, instead of
+completing itself. The customs pipeline was built from the fold outwards and one link was missing
+at the runtime edge: nothing ever produced the park.
+
+- **Measured before the change.** A node declaring `proofKinds: ["test_report"]` reached
+  `succeeded` and its execution completed with `customs: {"clearances":{},"nodes":{}}`. A control
+  run with `completion.requires` present behaved identically - the declaration was inert on every
+  real path. The only producer of `NodeOutcome::NeedsInput` in the workspace was the FIXTURE
+  executor answering for a node with no fixture; `serve/mod.rs` already said in as many words that
+  the real executor "is deliberately built to never return `NeedsInput`".
+- **The park happens after the work, never instead of it,** and the outcome's sealed material
+  travels with it. Proof kinds are evidence that the work HAPPENED, so a gate that skipped the work
+  would ask for proof of nothing, and a park that dropped the sealables would ask for evidence it
+  had just discarded. Only a SUCCESS is converted: a failure keeps its own outcome and stays in the
+  retry path that owns it.
+- **An empty `proofKinds` list is not a gate.** It is the field's own default, so treating it as one
+  would park every node that declared budgets and nothing else. `examples/graphs/customs-acting.yaml`
+  was authored this way already - `implementation` names a proof kind and `release_notes` names
+  none - and it now behaves as it reads.
+- **Nothing else was needed.** `(Running, NeedsInput) -> WaitingInput`, the open-wait map, the
+  `Parked` scan, `attention`'s `needs_you`, `claim`, and the `CompletionCleared` arm that writes
+  `Succeeded` back were all already built and tested. Because the clearance writes the completion
+  directly, a released node never re-runs its work.
+- **An unreadable `completion.customs` block now refuses the execution before any node effect**
+  (`GHG017_CUSTOMS_DECLARATION_INVALID` at `/spec/nodes/<id>/completion`), the same shape `GHG016`
+  uses. By the time the park decision runs, the node's work has already happened and there is no
+  honest answer left: completing it would spend the declaration silently, parking it would invent a
+  gate nobody declared.
+
+Declared limit, not fixed here: the wait carries NO deadline on the `start` path. `stage_deadline`
+reads customs from `current_graph`, which `start` never fills - it appends `execution_form_declared`
+into `declared_form`, and a declaration is deliberately not a publication. So `waitWithinSeconds`,
+required by its own schema, stays inert and the overdue sweep will not fire on a wait this change
+creates. That is the function's documented "no graph published yet" arm, not a regression.
+
 ## The red banner decides the failed stages, #1149 - 2026-09-18
 
 `graphhelm gate classify-red`'s excerpt took `failedStages` from every `[gate] FAILED: <stage>`

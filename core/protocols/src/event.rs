@@ -3,11 +3,11 @@ use std::{collections::BTreeMap, fmt};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ActorId, ArtifactReference, EventHash, EvidenceId, EvidenceReference, ExecutionMode,
-    FreshnessClass, NodeOutcome, NodeState, OpaqueId, PersistedActor, PersistedActorType,
-    PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp, PolicyWaiver, RawSha256,
-    RepositoryScope, SemanticVersion, Sensitivity, SignalSeverity, SignalSourceKind,
-    SimulationStatus, WireHash,
+    ActorId, ArtifactReference, CustomsBudgets, EventHash, EvidenceId, EvidenceReference,
+    ExecutionMode, FreshnessClass, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    PersistedActorType, PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp,
+    PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity, SignalSeverity,
+    SignalSourceKind, SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -739,6 +739,28 @@ pub struct ExecutionFormDeclared {
     /// or from a gateway. Optional for the same hash-chain reason as the two fields above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<DeclaredExecutor>,
+    /// Each node's declared customs budgets, snapshotted at start (#1184 review BLOCK).
+    ///
+    /// THE DECLARATION CARRIES ITS OWN DEADLINES, and that is the whole reason this field exists
+    /// rather than a read-through to the graph. `stage_deadline` computes a customs horizon from
+    /// `current_graph`, which only a sealed `GraphVersionPublished` fills; the ordinary `start`
+    /// path publishes no graph version, so a node that parked on that path had a wait with NO
+    /// deadline — `waitWithinSeconds`, required by its own schema, produced nothing and the sweep
+    /// could never call the wait overdue. Populating `current_graph` from a declaration was the
+    /// other way to close it and was rejected: a declaration is not a publication, and the fold
+    /// has a cell that says so.
+    ///
+    /// AN ENTRY EXISTS ONLY FOR A NODE THAT DECLARED CUSTOMS, exactly as `node_timeout_seconds`
+    /// above holds only nodes that declared a deadline. An absent key means the operator declared
+    /// nothing and must never be read as budgets of zero — the trap `stage_deadline`'s own doc
+    /// names, where a horizon at the instant of entry makes every stage instantly overdue.
+    ///
+    /// Optional and `skip_serializing_if`, for the hash-chain reason the three fields above give:
+    /// a history written before this field existed must re-serialize to the same bytes. An old
+    /// history decodes with an empty map, which reads as "nobody bounded these stages" — the same
+    /// answer it gave before, and the honest one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_customs_budgets: BTreeMap<OpaqueId, CustomsBudgets>,
 }
 
 /// The upper bound, in characters, on [`ExecutionFormDeclared::name`] and

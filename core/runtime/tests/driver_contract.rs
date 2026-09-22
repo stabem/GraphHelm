@@ -3020,3 +3020,430 @@ fn the_context_ledger_records_only_nodes_that_were_dispatched() {
     );
     assert_eq!(ledger["ran"].sources, ["src/tree.rs"]);
 }
+
+// ---------------------------------------------------------------------------------------------
+// #1184: a node can wait for a person.
+//
+// The customs pipeline was built from the fold outwards -- the park transition
+// (`(Running, NeedsInput) -> WaitingInput`), the open-wait map, the `needs_you` attention
+// reason, `claim`, and the `CompletionCleared` arm that writes `Succeeded` back. The one thing
+// missing was the PARK: the real executor is deliberately built never to return `NeedsInput`
+// (`serve/mod.rs` says so verbatim), so on every real drive a node that declared `proofKinds`
+// went straight to `succeeded` and its declaration was inert. These cells pin the link.
+// ---------------------------------------------------------------------------------------------
+
+fn agent_graph_node_with_customs(objective: &str, customs: serde_json::Value) -> GraphNode {
+    let mut node = agent_graph_node(objective);
+    node.properties.insert(
+        "completion".to_owned(),
+        serde_json::json!({ "customs": customs }),
+    );
+    node
+}
+
+fn declared_customs(proof_kinds: serde_json::Value) -> serde_json::Value {
+    let mut customs = serde_json::json!({
+        "budgets": { "waitWithinSeconds": 3600, "clearanceWithinSeconds": 3600 }
+    });
+    if let Some(kinds) = proof_kinds.as_array() {
+        customs["proofKinds"] = serde_json::Value::Array(kinds.clone());
+    }
+    customs
+}
+
+/// Drives one spec to quiescence with a model that always answers the same way, and hands back
+/// the projection plus the model's call count.
+fn drive_customs_spec(
+    directory: &std::path::Path,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    model_result: Result<ModelReply, GatewayError>,
+) -> (graphhelm_events::ExecutionProjection, usize) {
+    let model = Arc::new(FakeModelPort {
+        result: model_result,
+        calls: AtomicUsize::new(0),
+    });
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+    let calls = model.calls.load(Ordering::SeqCst);
+    (projection, calls)
+}
+
+/// THE CELL. Subject and control in ONE drive, so the difference between them cannot be
+/// explained by the store, the executor, the clock or the pass: two nodes, same shape, same
+/// reply, and the only thing that differs is whether the node's own declaration names a proof
+/// kind. `gated` parks; `plain` completes.
+#[test]
+fn a_node_that_declares_proof_kinds_parks_instead_of_completing_itself() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            (
+                "gated",
+                agent_graph_node_with_customs(
+                    "search",
+                    declared_customs(serde_json::json!(["test_report"])),
+                ),
+            ),
+            ("plain", agent_graph_node("search")),
+        ],
+        vec![],
+        2,
+    );
+    let (projection, calls) =
+        drive_customs_spec(directory.path(), execution_id, spec, Ok(reply("done")));
+
+    // The park happens AFTER the work, never instead of it: proof kinds are evidence that the
+    // work HAPPENED, so a gate that skipped the work would be asking for proof of nothing.
+    assert_eq!(calls, 2, "both nodes ran their work");
+    assert_eq!(
+        projection.node_states.get("gated"),
+        Some(&NodeState::WaitingInput),
+        "a declared proof kind parks the node instead of completing it"
+    );
+    assert_eq!(
+        projection.node_states.get("plain"),
+        Some(&NodeState::Succeeded),
+        "the control node in the SAME drive completes as before"
+    );
+    // The wait is open and the timeline says so -- the two structures `claim` reads. Without
+    // both, a claim against this park is refused as `unknown_wait` and the whole pipeline is
+    // unreachable, so asserting only the node state would pass on a park nobody can answer.
+    assert!(
+        projection.open_waits.contains_key("gated"),
+        "the park must open a wait a claim can answer"
+    );
+    assert!(
+        projection.customs_scans.get("gated").is_some_and(|scans| {
+            scans
+                .iter()
+                .any(|scan| scan.stage == graphhelm_events::CustomsStage::Parked)
+        }),
+        "the park must appear on the node's customs timeline"
+    );
+    assert!(
+        !projection.open_waits.contains_key("plain"),
+        "the control node opens no wait"
+    );
+}
+
+/// The attention surface is the whole point: a park nobody can SEE is a hang. This is the
+/// reading the Studio badge renders.
+#[test]
+fn a_parked_node_reports_needs_you() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![(
+            "gated",
+            agent_graph_node_with_customs(
+                "search",
+                declared_customs(serde_json::json!(["test_report"])),
+            ),
+        )],
+        vec![],
+        1,
+    );
+    let (projection, _) =
+        drive_customs_spec(directory.path(), execution_id, spec, Ok(reply("done")));
+    let attention = graphhelm_execution::attention(
+        &projection,
+        &graphhelm_execution::AttentionInputs::default(),
+    );
+    assert!(
+        attention.reasons().iter().any(|reason| matches!(
+            reason,
+            graphhelm_execution::AttentionReason::WaitingInputNode { node } if node == "gated"
+        )),
+        "the parked node must be named as the thing waiting on a person: {attention:?}"
+    );
+}
+
+/// An empty `proofKinds` is the field's own DEFAULT, so treating it as a gate would park every
+/// node that declared budgets and nothing else -- a requirement its author never wrote.
+#[test]
+fn a_customs_block_naming_no_proof_kind_declares_no_gate() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            (
+                "absent",
+                agent_graph_node_with_customs("search", declared_customs(serde_json::json!(null))),
+            ),
+            (
+                "empty",
+                agent_graph_node_with_customs("search", declared_customs(serde_json::json!([]))),
+            ),
+        ],
+        vec![],
+        2,
+    );
+    let (projection, _) =
+        drive_customs_spec(directory.path(), execution_id, spec, Ok(reply("done")));
+    assert_eq!(
+        projection.node_states.get("absent"),
+        Some(&NodeState::Succeeded),
+        "a customs block with no proofKinds field is not a gate"
+    );
+    assert_eq!(
+        projection.node_states.get("empty"),
+        Some(&NodeState::Succeeded),
+        "an explicitly empty proofKinds list is not a gate"
+    );
+}
+
+/// Only a SUCCESS is converted. Parking a node that failed would ask a person to attest to work
+/// that did not happen, and would take the node out of the retry path that owns it.
+#[test]
+fn a_node_that_failed_keeps_its_own_outcome_however_it_declared_customs() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![(
+            "gated",
+            agent_graph_node_with_customs(
+                "search",
+                declared_customs(serde_json::json!(["test_report"])),
+            ),
+        )],
+        vec![],
+        1,
+    );
+    let (projection, calls) = drive_customs_spec(
+        directory.path(),
+        execution_id,
+        spec,
+        Err(GatewayError::ProviderUnavailable),
+    );
+    assert!(calls >= 1, "the node was dispatched");
+    assert_ne!(
+        projection.node_states.get("gated"),
+        Some(&NodeState::WaitingInput),
+        "a failure must not be laundered into a wait for a person"
+    );
+    assert!(
+        !projection.open_waits.contains_key("gated"),
+        "a failed node opens no wait"
+    );
+}
+
+/// The park carries the work's own record through UNCHANGED. The sealed reply is the material a
+/// claimant cites as the proof this park waits for; a park that discarded it would be asking for
+/// evidence it had just thrown away.
+#[test]
+fn a_parked_node_keeps_the_evidence_its_work_produced() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![(
+            "gated",
+            agent_graph_node_with_customs(
+                "search",
+                declared_customs(serde_json::json!(["test_report"])),
+            ),
+        )],
+        vec![],
+        1,
+    );
+    let (_projection, _) = drive_customs_spec(
+        directory.path(),
+        execution_id,
+        spec,
+        Ok(reply("the answer")),
+    );
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let history = repository
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    let parked = history
+        .iter()
+        .find(|event| match &event.kind {
+            EventKind::NodeOutcomeRecorded(recorded) => recorded.outcome == NodeOutcome::NeedsInput,
+            _ => false,
+        })
+        .expect("the park is journaled as a node outcome");
+    assert!(
+        !parked.evidence_refs.is_empty(),
+        "the sealed work travels with the park, not only with a completion"
+    );
+}
+
+/// A `completion.customs` block that does not deserialize refuses the EXECUTION, before any node
+/// effect -- the same shape `GHG016` uses, for the same reason: by the time the park decision
+/// runs the node's work has already happened, and there is no honest answer left.
+#[test]
+fn an_unreadable_customs_declaration_refuses_the_execution_before_any_node_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            (
+                "typo",
+                // `waitWithin` is not `waitWithinSeconds`, and `deny_unknown_fields` plus a
+                // missing required field makes this unreadable rather than partly readable.
+                agent_graph_node_with_customs(
+                    "search",
+                    serde_json::json!({
+                        "proofKinds": ["test_report"],
+                        "budgets": { "waitWithin": 3600, "clearanceWithinSeconds": 3600 }
+                    }),
+                ),
+            ),
+            (
+                "fine",
+                agent_graph_node_with_customs(
+                    "search",
+                    declared_customs(serde_json::json!(["test_report"])),
+                ),
+            ),
+            ("plain", agent_graph_node("search")),
+        ],
+        vec![],
+        2,
+    );
+    let (projection, calls) =
+        drive_customs_spec(directory.path(), execution_id, spec, Ok(reply("unused")));
+
+    assert_eq!(calls, 0, "no model may run");
+    assert!(
+        projection.node_states.is_empty(),
+        "preflight refusal must precede even Draft -> Ready approval"
+    );
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Failed)
+    );
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let history = repository
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    let diagnostics = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::GraphValidationFailed(failed) => Some(&failed.diagnostics),
+            _ => None,
+        })
+        .expect("stable refusal diagnostics are journaled");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.path().as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            "GHG017_CUSTOMS_DECLARATION_INVALID",
+            "/spec/nodes/typo/completion"
+        )],
+        "only the unreadable declaration is named; a valid one and an absent one are not"
+    );
+}
+
+/// THE OWNER'S FLOW, end to end: the node parks, a person claims it with the proof its own
+/// declaration asked for, a clearance lands, and the node completes WITHOUT re-running its work.
+/// That last part is why this does not go through `(WaitingInput, Started)`: re-dispatching the
+/// node would buy the same answer a second time.
+#[test]
+fn a_cleared_claim_completes_a_parked_node_without_running_its_work_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let node = agent_graph_node_with_customs(
+        "search",
+        declared_customs(serde_json::json!(["test_report"])),
+    );
+    let spec = spec_with(vec![("gated", node)], vec![], 1);
+    let (projection, calls) = drive_customs_spec(
+        directory.path(),
+        execution_id.clone(),
+        spec.clone(),
+        Ok(reply("done")),
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(
+        projection.node_states.get("gated"),
+        Some(&NodeState::WaitingInput)
+    );
+
+    let repository = opener(directory.path().to_path_buf())().unwrap();
+    let evidence = vec![graphhelm_protocols::ClaimEvidence {
+        kind: "test_report".to_owned(),
+        content_hash: WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+        size: 12,
+    }];
+    let required = vec!["test_report".to_owned()];
+    let (claimed, _) = graphhelm_events::claim(
+        &repository,
+        &driver_scope(),
+        DRIVER_STREAM,
+        &driver_actor(),
+        &OpaqueId::parse("claim-key").unwrap(),
+        graphhelm_events::ClaimRequest {
+            node: "gated",
+            completes_wait_seq: None,
+            evidence: evidence.clone(),
+            attestation: graphhelm_protocols::ClaimAttestation {
+                asserter: OpaqueId::parse("owner").unwrap(),
+                mode: graphhelm_protocols::ClaimAttestationMode::OperatorAttested,
+            },
+            required_proof_kinds: &required,
+        },
+    )
+    .unwrap();
+    let graphhelm_events::ClaimOutcome::Claimed { claim_seq, .. } = claimed else {
+        panic!("the claim must be accepted: {claimed:?}");
+    };
+
+    let (cleared, _) = graphhelm_events::clear(
+        &repository,
+        &driver_scope(),
+        DRIVER_STREAM,
+        &driver_actor(),
+        &OpaqueId::parse("clear-key").unwrap(),
+        claim_seq,
+        &graphhelm_events::claim_evidence_digest(&evidence),
+    )
+    .unwrap();
+    assert!(
+        matches!(cleared, graphhelm_events::ClearanceOutcome::Cleared),
+        "a machine replay against the claim's own digest clears: {cleared:?}"
+    );
+
+    // The SECOND drive: the node is already `Succeeded` by the clearance's own fold arm, so
+    // nothing re-dispatches it. A model call here would mean the work was bought twice.
+    let (after, calls_after) =
+        drive_customs_spec(directory.path(), execution_id, spec, Ok(reply("done")));
+    assert_eq!(
+        after.node_states.get("gated"),
+        Some(&NodeState::Succeeded),
+        "a cleared claim completes the node"
+    );
+    assert_eq!(calls_after, 0, "the node's work is never run a second time");
+    assert!(
+        !after.open_waits.contains_key("gated"),
+        "the wait is closed once cleared"
+    );
+}

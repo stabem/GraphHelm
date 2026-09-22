@@ -1001,6 +1001,9 @@ fn the_wedge_reads_the_declared_form_and_prefers_the_sealed_one() {
         name: None,
         objective: None,
         executor: None,
+        // These fixtures are about the declared form's OTHER fields; a graph that declares no
+        // customs produces an empty map, which is what keeps each cell asking its own question.
+        node_customs_budgets: std::collections::BTreeMap::new(),
     });
     let seen = graphhelm_execution::attention(&projection, &AttentionInputs::default());
     assert!(
@@ -1251,6 +1254,9 @@ fn a_requeued_node_whose_calm_was_bought_is_still_named() {
         name: None,
         objective: None,
         executor: None,
+        // These fixtures are about the declared form's OTHER fields; a graph that declares no
+        // customs produces an empty map, which is what keeps each cell asking its own question.
+        node_customs_budgets: std::collections::BTreeMap::new(),
     });
     projection.apply_amendment(graphhelm_protocols::ExecutionFormAmended {
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
@@ -1319,6 +1325,9 @@ fn a_default_feed_claims_no_budget_where_the_graph_declares_one() {
         name: None,
         objective: None,
         executor: None,
+        // These fixtures are about the declared form's OTHER fields; a graph that declares no
+        // customs produces an empty map, which is what keeps each cell asking its own question.
+        node_customs_budgets: std::collections::BTreeMap::new(),
     });
 
     // CONTROL: the budget really is declared. Without this the two verdicts below could differ

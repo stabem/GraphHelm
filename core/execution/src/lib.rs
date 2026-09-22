@@ -26,7 +26,10 @@ pub use bounds::{
 pub use briefing::{
     AnswerRemedy, Briefing, Decision, DecisionKind, NextStep, WorkItem, briefing_view,
 };
-pub use customs::{CustomsView, NodeCustomsView, OpenClaimView, customs_view};
+pub use customs::{
+    CUSTOMS_DECLARATION_INVALID_CODE, CustomsView, NodeCustomsView, OpenClaimView,
+    completion_is_gated, completion_is_gated_in, customs_view, unreadable_customs_nodes,
+};
 pub use dispatch::{DispatchError, dispatch_plan, parallel_limit};
 pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use progress::{Progress, classify_progress};

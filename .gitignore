@@ -6,3 +6,10 @@ __pycache__/
 .worktrees/
 target/
 *.jsonl
+# The local Runtime state directory a developer or a session creates in the repository root:
+# the serve token, the sealed broker credential store, the keyring and the live event stores.
+# It was NOT ignored, and a single "git add -A" in a session worktree staged
+# .graphhelm/broker/credentials.json, .graphhelm/serve.key and both event-store tokens.
+# Caught before any push (#1184), which is luck rather than a safeguard: untracked is not a
+# guard, an ignore rule is.
+/.graphhelm/

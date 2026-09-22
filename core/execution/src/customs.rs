@@ -126,6 +126,76 @@ pub fn customs_view(projection: &ExecutionProjection) -> CustomsView {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// #1184 review (pass B): ONE customs completion policy, because this repository has TWO dispatch
+// drivers and they had already drifted.
+//
+// `core/runtime/src/driver.rs::drive_to_quiescence_async` serves the Public Runtime API; the
+// synchronous `apps/cli/src/commands/execution/driver.rs::drive_to_quiescence` serves
+// `execution start` on the CLI. The park was added to the first and not the second, so a customs
+// node started from the CLI reached `Succeeded` and completed without ever opening a wait -- the
+// declaration inert on exactly the path an operator uses by hand.
+//
+// The predicate and the refusal vocabulary live HERE, in the crate both drivers already depend on,
+// so a future change to either cannot move one without the other. The DIAGNOSTIC each driver
+// raises stays with that driver, because the error types differ; what must not differ is the
+// answer to "does this node gate its own completion" and the code that names an unreadable block.
+// ---------------------------------------------------------------------------------------------
+
+/// The refusal code for a `completion.customs` block that does not deserialize.
+///
+/// Shared rather than repeated: two drivers refusing the same condition under two codes is a
+/// distinction with no meaning that an operator would have to learn.
+pub const CUSTOMS_DECLARATION_INVALID_CODE: &str = "GHG017_CUSTOMS_DECLARATION_INVALID";
+
+/// Whether this node's own declaration says its completion must clear customs.
+///
+/// A node that names proof kinds does not get to declare itself done. Its work runs, its evidence
+/// is sealed, and then it PARKS (`NodeOutcome::NeedsInput` -> `NodeState::WaitingInput`) until a
+/// claim presenting that proof is cleared -- at which point the fold's `CompletionCleared` arm
+/// writes `Succeeded` directly, so the work never re-runs.
+///
+/// An EMPTY `proofKinds` list is not a gate. The field's own serde default is an empty vector, so
+/// treating empty as "park" would gate every node that declared budgets and nothing else, on a
+/// requirement its author never wrote down.
+///
+/// A malformed block answers TRUE -- fail-closed. Both drivers refuse such a graph before any node
+/// runs (see [`unreadable_customs_nodes`]), so this arm is unreachable on either dispatch path
+/// today; it is written this way so that a future caller which skips the preflight fails into a
+/// node that waits for a person rather than one that quietly certifies itself.
+#[must_use]
+pub fn completion_is_gated(node: &graphhelm_protocols::GraphNode) -> bool {
+    match node.customs() {
+        Ok(Some(customs)) => !customs.proof_kinds.is_empty(),
+        Ok(None) => false,
+        Err(_) => true,
+    }
+}
+
+/// The same question against a spec and a node id, for a driver that holds the graph rather than
+/// the node. An id the spec does not carry is NOT gated: there is no declaration to read, and
+/// inventing a gate for an absent node would refuse work nobody described.
+#[must_use]
+pub fn completion_is_gated_in(spec: &graphhelm_protocols::GraphSpec, node: &str) -> bool {
+    spec.nodes.get(node).is_some_and(completion_is_gated)
+}
+
+/// Every node whose `completion.customs` block is present and does not deserialize, in spec order.
+///
+/// REFUSED BEFORE THE EXECUTION STARTS, which is why this returns the names rather than a verdict:
+/// each driver owns its own diagnostic type and path grammar, and only the CODE and the CONDITION
+/// are shared. By the time a park decision runs the node's work has already happened, so a block
+/// that cannot be read there has no honest answer left -- completing the node would spend the
+/// declaration silently, parking it would invent a gate nobody could have declared.
+#[must_use]
+pub fn unreadable_customs_nodes(spec: &graphhelm_protocols::GraphSpec) -> Vec<String> {
+    spec.nodes
+        .iter()
+        .filter(|(_, node)| node.customs().is_err())
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

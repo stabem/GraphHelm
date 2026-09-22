@@ -1258,16 +1258,34 @@ fn stage_deadline(
     node: &str,
     entered_at: &PersistedTimestamp,
     budget: impl FnOnce(&graphhelm_protocols::PersistedCustoms) -> u64,
+    declared: impl FnOnce(&graphhelm_protocols::CustomsBudgets) -> u64,
 ) -> Option<PersistedTimestamp> {
     let node_id = graphhelm_protocols::OpaqueId::parse(node).ok()?;
-    let customs = projection
-        .current_graph
-        .as_ref()?
-        .topology()
-        .nodes()
-        .get(&node_id)?
-        .customs()?;
-    let seconds = i64::try_from(budget(&customs)).ok()?;
+    let seconds = match projection.current_graph.as_ref() {
+        // THE PUBLISHED GRAPH IS THE ANSWER WHENEVER THERE IS ONE, and a published node with no
+        // customs answers NOTHING rather than falling through to the declaration. The two sources
+        // describe different moments: a publication supersedes the declaration it grew from, so a
+        // node whose sealed form dropped its customs has had them dropped, and reading the older
+        // declaration would resurrect a bound the publication removed. One source per projection
+        // state, chosen by which state it is in — never a search across both for whichever
+        // answers.
+        Some(graph) => {
+            let customs = graph.topology().nodes().get(&node_id)?.customs()?;
+            budget(&customs)
+        }
+        // #1184 review: the ordinary `start` path publishes no graph version, so before this arm
+        // every customs stage on that path had NO deadline at all and the sweep could never call
+        // one overdue. The declaration carries the budgets the operator wrote; an absent entry is
+        // still "nobody bounded this stage", which is the one reading that must survive.
+        None => declared(
+            projection
+                .declared_form
+                .as_ref()?
+                .node_customs_budgets
+                .get(&node_id)?,
+        ),
+    };
+    let seconds = i64::try_from(seconds).ok()?;
     let horizon = entered_at
         .as_datetime()
         .checked_add_signed(chrono::Duration::seconds(seconds))?;
@@ -1508,9 +1526,13 @@ fn apply_projection_event(
                 // Computed BEFORE the insert, and not only to satisfy the borrow checker: the
                 // deadline belongs to the moment the stage was ENTERED, which is this event, and
                 // reading the spec first keeps that plain.
-                let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
-                    customs.wait_within_seconds()
-                });
+                let deadline = stage_deadline(
+                    projection,
+                    &node,
+                    &event.occurred_at,
+                    graphhelm_protocols::PersistedCustoms::wait_within_seconds,
+                    |budgets| budgets.wait_within_seconds,
+                );
                 projection.open_waits.insert(
                     node.clone(),
                     OpenWait {
@@ -1556,9 +1578,13 @@ fn apply_projection_event(
                 // than continuing the wait's clock. Two stages, two budgets, one rule: the
                 // deadline is always the entering event's instant plus the budget for the stage
                 // being entered.
-                let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
-                    customs.clearance_within_seconds()
-                });
+                let deadline = stage_deadline(
+                    projection,
+                    &node,
+                    &event.occurred_at,
+                    graphhelm_protocols::PersistedCustoms::clearance_within_seconds,
+                    |budgets| budgets.clearance_within_seconds,
+                );
                 projection.open_claims.insert(
                     event.sequence,
                     OpenClaim {
@@ -2128,9 +2154,13 @@ fn apply_projection_event(
             // The alternative grain — one exception per NODE, ever — would tell an operator about
             // the first failure and stay silent about every one after it. A node that was rescued
             // and then left to rot a second time has failed twice.
-            let deadline = stage_deadline(projection, &node, &event.occurred_at, |customs| {
-                customs.clearance_within_seconds()
-            });
+            let deadline = stage_deadline(
+                projection,
+                &node,
+                &event.occurred_at,
+                graphhelm_protocols::PersistedCustoms::clearance_within_seconds,
+                |budgets| budgets.clearance_within_seconds,
+            );
             let mut rebased = false;
             for claim in projection.open_claims.values_mut() {
                 if claim.node == node {
@@ -3103,6 +3133,10 @@ mod tests {
                     name: None,
                     objective: None,
                     executor: None,
+                    // This fixture is about the DECLARED FORM's shape, not about customs: an
+                    // empty map is what a graph declaring no customs produces, and it keeps this
+                    // cell asking the question it was written to ask.
+                    node_customs_budgets: std::collections::BTreeMap::new(),
                 }),
                 vec![],
                 vec![],

@@ -774,6 +774,9 @@ mod tests {
                 name: None,
                 objective: None,
                 executor,
+                // These fixtures are about the declared form's OTHER fields; a graph that declares no
+                // customs produces an empty map, which is what keeps each cell asking its own question.
+                node_customs_budgets: std::collections::BTreeMap::new(),
             });
             projection
         }

@@ -384,6 +384,11 @@ const RETRY_CAUSE_CONFLICT_CODE: &str = "GHG015_RETRY_CAUSE_CONFLICT";
 const RETRY_POLICY_TYPED_CODE: &str = "GHS003_TYPED";
 /// #1065: a declared `context.budgetBytes` that is not an integer in `1..=MAX_BUDGET_BYTES`.
 const CONTEXT_BUDGET_INVALID_CODE: &str = "GHG016_CONTEXT_BUDGET_INVALID";
+/// #1184 review (pass B): the code and the condition are SHARED with the synchronous CLI driver
+/// (`graphhelm_execution::CUSTOMS_DECLARATION_INVALID_CODE`), because this repository has two
+/// dispatch drivers and the park was added to one of them. Re-exported under the local name so
+/// the two call sites below read unchanged.
+use graphhelm_execution::CUSTOMS_DECLARATION_INVALID_CODE;
 
 /// Record ADR-030's invalid-policy refusal and terminal execution settlement in one batch.
 /// No node lifecycle event may precede this pair: contradictory policy is rejected before work.
@@ -750,6 +755,36 @@ fn context_budget_diagnostics(
     Ok(diagnostics)
 }
 
+/// #1184: every `completion.customs` block in the graph must be readable.
+///
+/// The CONDITION and the CODE come from `graphhelm_execution` so the synchronous CLI driver
+/// refuses exactly the same graphs under exactly the same name; only the diagnostic's own type
+/// and path grammar are this driver's.
+///
+/// UNCONDITIONAL, unlike `context_budget_diagnostics` above, and the asymmetry is deliberate.
+/// That one is gated on `ports_present` because the field it validates is read only by the
+/// context compile, so refusing a graph on a drive that never reads it would break a graph that
+/// had not changed. Customs has no such consumer condition: EVERY drive of every node reaches
+/// the park decision, so a block that cannot be read is load-bearing on every path.
+fn customs_declaration_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for node_id in graphhelm_execution::unreadable_customs_nodes(spec) {
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        // `/spec/nodes/<id>/completion`: one segment deep, the same node-field pointer grammar
+        // the two preflights above use, pointing at the block that carries the typo.
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/completion"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            CUSTOMS_DECLARATION_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
+    }
+    Ok(diagnostics)
+}
+
 fn preflight_retry_causes(value: Option<&serde_json::Value>) -> (BTreeSet<&str>, bool) {
     let Some(value) = value else {
         return (BTreeSet::new(), false);
@@ -856,6 +891,7 @@ pub async fn drive_to_quiescence_async(
     // silently skipped while the execution stays `running`.
     let mut preflight_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
     preflight_diagnostics.extend(context_budget_diagnostics(&spec, context.is_some())?);
+    preflight_diagnostics.extend(customs_declaration_diagnostics(&spec)?);
     if !preflight_diagnostics.is_empty() {
         let projection = reread_async(&store_open, &scope, &stream).await?;
         let already_terminal = matches!(
@@ -1152,6 +1188,30 @@ pub async fn drive_to_quiescence_async(
                     in_flight_nodes.remove(&node);
                     match outcome {
                         Some(work) => {
+                            // #1184: THE PARK. A node whose declaration names proof kinds does
+                            // not complete on its own say-so — the outcome becomes `NeedsInput`,
+                            // which `apply_transition` turns into `WaitingInput`, which
+                            // `attention` reports as `needs_you`. Everything else on the outcome
+                            // is carried through UNCHANGED, and that is not incidental: the
+                            // sealables and the token summary are the record of work that really
+                            // happened, and they are the material a claimant cites as the proof
+                            // this park is waiting for. Dropping them here would make the gate
+                            // ask for evidence it had just discarded.
+                            //
+                            // ONLY a success is converted. A failure, a retryable failure or an
+                            // interruption must keep its own outcome: parking a node that failed
+                            // would ask a person to attest to work that did not happen, and
+                            // would take the node out of the retry path that owns it.
+                            let work = if work.outcome == NodeOutcome::Succeeded
+                                && graphhelm_execution::completion_is_gated_in(&spec, &node)
+                            {
+                                WorkOutcome {
+                                    outcome: NodeOutcome::NeedsInput,
+                                    ..work
+                                }
+                            } else {
+                                work
+                            };
                             write_outcome(
                                 &store_open, &sealer, &ids, &scope, &stream,
                                 &execution_id, &actor, node, work,

@@ -2642,3 +2642,64 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   margin: 10px 13px;
   align-self: flex-start;
 }
+
+/* Answering a parked node (#1186). It sits inside the node panel, above the thread, because the
+   thing a person came to this window to do when a node is waiting is answer it -- not read back
+   what it already said. The block is bordered rather than plain so it reads as an action area
+   and not as one more fact about the node. */
+.answer {
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  margin: 10px 13px 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.answer h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.answer-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.answer-add label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.answer-bundle {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.answer-bundle li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.answer-bundle strong { font-family: var(--mono); font-size: 12px; }
+
+/* The digest is shown in the mono face at a size a person can actually compare against their own
+   `sha256sum` output. Shrinking it to a decoration would leave a value nobody can check. */
+.answer-bundle code {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.8;
+}

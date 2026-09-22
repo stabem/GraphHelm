@@ -1,5 +1,40 @@
 # Specification Changelog
 
+## Answering a node that waits for you, #1186 - 2026-09-21
+
+The Studio could say a node needed a person and gave them nowhere to say so. The panel turned an
+`attentionReasons` entry of kind `waiting_input_node` into the debt "your answer", and the only way
+to pay it was to leave the Studio for a terminal.
+
+- **Measured.** `runtime/client.ts` had no `claim` and no `clear` method, and no component
+  referenced either verb. Both routes have existed on the server since M11; what was missing was
+  the door.
+- **Two steps, claim then clear,** because that separation is the customs design: a claim is
+  quarantined testimony that releases nothing, and only a clearance releases it. One button would
+  make a rejected countersignature look like a failure of the click.
+- **The artefact never leaves the browser.** A claim presents `{kind, contentHash, size}` — a
+  digest and a size — so the file is hashed where it already is and only its fingerprint travels.
+  A cell asserts that neither the file's name nor its bytes appear in what is sent.
+- **The verdict is read from the journal, not from the HTTP result.** Both verbs answer 200 when
+  they refuse: a refused claim is a `completion_refused` event, and a rejected clearance is an
+  entry in `customs.clearances`. `MutationEvidence.result` says "succeeded" for both, so a surface
+  reading it would tell a person their claim went through when the journal says otherwise.
+  `runtime/customs.ts` holds those readers, and an unrecognised shape answers `unknown` rather than
+  either verdict.
+- **`MUTATION_DECISION_KIND` holds a LIST per action.** `claim` appends `completion_claimed` OR
+  `completion_refused`; one name per action made every refused claim read as "no attributable
+  event", which is the reading reserved for a mutation that never landed.
+- **The wait sequence is sent, always.** Omitting it asks the Runtime to answer whichever wait is
+  open now, which is the stale rendezvous the field exists to prevent. A status that carries no
+  sequence renders no controls instead of guessing.
+- **Refusals print in the Runtime's own vocabulary,** and a code this build has not caught up with
+  prints as itself rather than as a generic error.
+
+Declared limit: the screen cannot say WHAT proof the node asked for. The topology route publishes
+endpoint identities only, and the status payload carries the open wait but not the node's
+declaration, so nothing the Studio reads names a node's `proofKinds`. The person names the kind,
+and a bundle that does not satisfy the declaration is refused by the Runtime with
+`evidence_budget_unmet`.
 ## A node can wait for a person, #1184 - 2026-09-21
 
 A node that declares `completion.customs.proofKinds` now PARKS when its work succeeds, instead of

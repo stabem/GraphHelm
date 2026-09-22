@@ -170,7 +170,17 @@ export interface RecordedActor {
 /** What a write tool returns: enough to decide whether the journey actually happened, without
  * the caller having to re-read anything. */
 export interface MutationEvidence {
-  action: "start" | "pause" | "approve" | "resume" | "signal" | "cancel" | "sweep" | "amendBudget";
+  action:
+    | "start"
+    | "pause"
+    | "approve"
+    | "resume"
+    | "signal"
+    | "cancel"
+    | "sweep"
+    | "amendBudget"
+    | "claim"
+    | "clear";
   executionId: string;
   node: string | null;
   /** The actor as RECORDED (or, on a refusal, as sent): the wire's whole vocabulary, because the
@@ -247,4 +257,31 @@ export interface Briefing {
   nextStep: { kind: string; [key: string]: unknown };
   asOfSequence: number;
   [key: string]: unknown;
+}
+
+/**
+ * One artefact a completion claim presents, as the Runtime's own parser accepts it.
+ *
+ * A DIGEST AND A SIZE, never the artefact. "Proof" here means the material that shows the work
+ * happened — a test report, a diff, a log — and nothing in this shape is signature-verified. The
+ * artefact stays wherever it is; what travels is a fingerprint of it, which is why a browser can
+ * produce one without uploading anything.
+ */
+export interface ClaimEvidence {
+  /** The proof KIND this item answers, matched by name against the node's declared `proofKinds`.
+   * Fewer kinds than declared is refused (`evidence_budget_unmet`); extra kinds are accepted and
+   * recorded as unverified, never counted as stronger proof. */
+  kind: string;
+  /** `sha256:<64 lowercase hex>`. */
+  contentHash: string;
+  size: number;
+}
+
+/** The wait a parked node is holding open, as the status payload renders it under
+ * `customs.nodes.<id>.openWait`. `atSequence` is the ENVELOPE SEQUENCE of the event that parked
+ * the node, and it is the wait's identity: a node re-parks, so a name identifies the node but
+ * never the wait. */
+export interface OpenWait {
+  atSequence: number;
+  deadline?: string | null;
 }

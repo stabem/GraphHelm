@@ -35,12 +35,15 @@ import {
 import { devSession, newestPresenceByActor, type AgentPresence, type DevSession } from "./runtime/session";
 import type {
   Briefing,
+  ClaimEvidence,
   EventPage,
   EvidenceContent,
   ExecutionStatus,
   ExecutionSummary,
   MutationEvidence,
 } from "./runtime/types";
+import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
+import type { AnswerOutcome } from "./components/answer";
 import {
   registerStudioTools,
   type ModelContextLike,
@@ -1039,6 +1042,71 @@ export default function App({
     },
     onActivity: (next: ToolActivity) => setActivity(next),
   };
+
+  /**
+   * Answering a parked node (#1186): claim, then clear, then re-read.
+   *
+   * TWO WRITES, AND THE SECOND ONE CAN FAIL AFTER THE FIRST LANDED. A claim is spent whether or
+   * not its clearance arrives — the wait it answered is no longer open to a second claim — so a
+   * clear that throws must NOT surface as "nothing happened". It returns `unknown` carrying the
+   * claim's sequence, and the form tells the person to re-open the node rather than retry into a
+   * `duplicate_completion` refusal.
+   *
+   * THE VERDICTS COME FROM THE JOURNAL, never from the HTTP result: both verbs answer 200 when
+   * they refuse, because a refusal is a recorded decision in this design rather than a transport
+   * error. `claimVerdict` and `clearVerdict` are where that rule lives.
+   */
+  const answerNode = useCallback(
+    async (node: string, waitSeq: number, evidence: ClaimEvidence[]): Promise<AnswerOutcome> => {
+      const client = clientRef.current;
+      const execution = selectedRef.current;
+      const file = graphFile.trim();
+      // BOUND AT THE PRESS, not armed earlier: `graphFile` is a dependency, so the callback the
+      // button holds is rebuilt whenever the box changes and a press always carries what the box
+      // says now. That is the opposite arrangement from `verifyPath`, which must NOT read the
+      // live box — its read is armed long before it fires, and a half-typed path drawing edges
+      // was the defect there. Here the person presses after typing, and the path they can see is
+      // the path that travels.
+      // Thrown, not returned: nothing was sent, and every returned outcome describes something
+      // that was. The form reports it as a Runtime it could not reach, which is what it is.
+      if (!client || execution === "" || file === "") {
+        throw new Error("no runtime, no run, or no graph file");
+      }
+      const claimed = await client.claimNode(execution, { file, node, waitSeq, evidence });
+      const verdict = claimVerdict(claimed);
+      if (verdict.outcome === "refused") {
+        void loadExecution(execution);
+        return { step: "claim-refused", reasonCode: verdict.reasonCode };
+      }
+      if (verdict.outcome === "unknown") {
+        void loadExecution(execution);
+        return { step: "unknown", claimSeq: null };
+      }
+      let cleared: MutationEvidence;
+      try {
+        cleared = await client.clearClaim(execution, {
+          file,
+          claimSeq: verdict.claimSeq,
+          evidence,
+          node,
+        });
+      } catch {
+        void loadExecution(execution);
+        return { step: "unknown", claimSeq: verdict.claimSeq };
+      }
+      const clearance = clearVerdict(cleared, verdict.claimSeq);
+      // The re-read happens on EVERY path, including the refusals: the journal moved in all of
+      // them, and a board still showing the state from before the claim would be a stale screen
+      // asserting a world that no longer exists.
+      void loadExecution(execution);
+      if (clearance.outcome === "cleared") return { step: "claimed-and-cleared" };
+      if (clearance.outcome === "refused") {
+        return { step: "clearance-refused", reasonCode: clearance.reasonCode };
+      }
+      return { step: "unknown", claimSeq: verdict.claimSeq };
+    },
+    [graphFile, loadExecution],
+  );
 
   const openWith = useCallback(
     async (client: RuntimeClient) => {
@@ -2496,6 +2564,49 @@ export default function App({
                   executionId={selected === "" ? undefined : selected}
                   openEvidence={openEvidence}
                   onOpenDocument={openProjectDocument}
+                  answer={
+                    // WITHHELD WHEN IT CANNOT WORK, rather than rendered and then failing: a
+                    // claim must carry the graph (the Runtime reads the node's declared proof
+                    // kinds from it), so with no path in the box there is nothing to offer. The
+                    // panel renders nothing here and says nothing about whether the node waits.
+                    graphFile.trim() === "" || selected === ""
+                      ? undefined
+                      : {
+                          waitSeq: openWaitSequence(status, node.id),
+                          onAnswer: (evidence) => {
+                            const waitSeq = openWaitSequence(status, node.id);
+                            // CORRECTED (#1187 review, lane B). This read was described as
+                            // making the press "carry the wait that is open NOW, not the one that
+                            // was open when the panel rendered". It cannot: it reads the same
+                            // `status` from the same render closure as the `waitSeq` prop above,
+                            // so the two are the same value by construction and neither is
+                            // fresher than the render. A ref would not help either — React state
+                            // cannot change without a re-render, and a re-render rebuilds this
+                            // closure.
+                            //
+                            // WHAT IT ACTUALLY BUYS is that the sequence travelling to the
+                            // Runtime is computed at this call site rather than threaded from
+                            // elsewhere, so a future caller cannot pass a number from a different
+                            // source without editing this line.
+                            //
+                            // WHERE A SUPERSEDED RENDEZVOUS IS ACTUALLY CAUGHT is the fold, not
+                            // this screen: a claim naming a wait that is no longer open is
+                            // refused as `stale_rendezvous`, and the node stays parked. The
+                            // guarantee is the Runtime's; this line never had it.
+                            if (waitSeq === null) {
+                              return Promise.reject(new Error("no open wait"));
+                            }
+                            return answerNode(node.id, waitSeq, evidence);
+                          },
+                          hash: async (file: File) => ({
+                            contentHash: await digestOf(
+                              await file.arrayBuffer(),
+                              globalThis.crypto.subtle,
+                            ),
+                            size: file.size,
+                          }),
+                        }
+                  }
                 />
               )}
               </aside>

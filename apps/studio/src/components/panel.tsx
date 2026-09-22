@@ -21,7 +21,8 @@ import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
-import type { EvidenceContent, ExecutionStatus, RuntimeEvent } from "../runtime/types";
+import { AnswerNode, type AnswerOutcome } from "./answer";
+import type { ClaimEvidence, EvidenceContent, ExecutionStatus, RuntimeEvent } from "../runtime/types";
 import { moodOf, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
@@ -1047,6 +1048,7 @@ export function NodePanel({
   executionId,
   openEvidence,
   onOpenDocument,
+  answer,
 }: {
   node: GraphNode;
   events: RuntimeEvent[];
@@ -1054,6 +1056,15 @@ export function NodePanel({
   executionId?: string;
   openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
   onOpenDocument?: (document: DocumentReference) => void;
+  /** How this panel answers a node that is waiting for a person (#1186). Optional, and its
+   * absence is not a claim that the node is not waiting: a panel opened without a connected
+   * Runtime, or without the graph file the claim has to carry, has no honest way to answer and
+   * renders nothing rather than a button that cannot work. */
+  answer?: {
+    waitSeq: number | null;
+    onAnswer: (evidence: ClaimEvidence[]) => Promise<AnswerOutcome>;
+    hash: (file: File) => Promise<{ contentHash: string; size: number }>;
+  };
 }) {
   const mood = moodOf(node.state);
   const attempts = node.history.filter((entry) => entry.outcome === "started").length;
@@ -1090,6 +1101,18 @@ export function NodePanel({
           <strong>{clock(node.lastEventAt)}</strong>
         </div>
       </div>
+
+      {/* THE STATE DECIDES, not the presence of the prop: a node that is not parked must not be
+        * offered an answer, because a claim against it is refused (`not_waiting`) and the button
+        * would exist only to produce that refusal. */}
+      {node.state === "waiting_input" && answer !== undefined && (
+        <AnswerNode
+          node={node.id}
+          waitSeq={answer.waitSeq}
+          onAnswer={answer.onAnswer}
+          hash={answer.hash}
+        />
+      )}
 
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}
       {(!deliveryView || historyEvents.length > 0) && <Thread events={historyEvents} executionId={executionId} openEvidence={openEvidence} />}

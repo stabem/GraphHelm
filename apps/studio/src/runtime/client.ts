@@ -19,6 +19,7 @@ import envelopeSchema from "../../../../schemas/event-envelope.schema.json";
 import type {
   Actor,
   Briefing,
+  ClaimEvidence,
   Diagnostic,
   Envelope,
   EventPage,
@@ -62,6 +63,11 @@ export const MAX_MESSAGE_LENGTH = 4000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
+/** The bound `resume` has always applied to a graph path, now named so three verbs share it. */
+const MAX_GRAPH_PATH_LENGTH = 512;
+/** A claim presents a handful of artefacts, not a corpus. The Runtime bounds the bundle FILE at
+ * 1 MiB; this is the same intent one layer up, where the items are still items. */
+const MAX_EVIDENCE_ITEMS = 32;
 /** The Runtime's refusal for a well-formed id that names no execution (#1083 F1). */
 const EXECUTION_NOT_FOUND = "GHCLI028_EXECUTION_NOT_FOUND";
 
@@ -136,17 +142,31 @@ const MUTATION_KEY_SUFFIX: Record<MutationEvidence["action"], string> = {
   cancel: "cancelled",
   sweep: "sweep-performed",
   amendBudget: "outcome",
+  claim: "claim",
+  clear: "clear",
 };
 
-const MUTATION_DECISION_KIND: Record<MutationEvidence["action"], string> = {
-  start: "execution_started",
-  pause: "execution_paused",
-  approve: "node_outcome_recorded",
-  resume: "execution_resumed",
-  signal: "signal_recorded",
-  cancel: "execution_completed",
-  sweep: "sweep_performed",
-  amendBudget: "execution_form_amended",
+/**
+ * The kind (or kinds) the Runtime appends for each verb, as the attribution scan looks for.
+ *
+ * A LIST, NOT A NAME, because two verbs decide in the journal rather than in the status code.
+ * `claim` appends `completion_claimed` OR `completion_refused` — the route says so in as many
+ * words, and a refused claim is a 200 whose decision is the event. A map holding one name per
+ * action would make every refused claim read as "no attributable event", which is the reading
+ * reserved for a mutation that never landed: the caller would be told nothing happened while
+ * the journal holds the refusal that did.
+ */
+const MUTATION_DECISION_KIND: Record<MutationEvidence["action"], readonly string[]> = {
+  start: ["execution_started"],
+  pause: ["execution_paused"],
+  approve: ["node_outcome_recorded"],
+  resume: ["execution_resumed"],
+  signal: ["signal_recorded"],
+  cancel: ["execution_completed"],
+  sweep: ["sweep_performed"],
+  amendBudget: ["execution_form_amended"],
+  claim: ["completion_claimed", "completion_refused"],
+  clear: ["completion_cleared"],
 };
 
 function isAttributableDecision(
@@ -158,7 +178,7 @@ function isAttributableDecision(
 ): boolean {
   if (
     event.idempotencyKey?.startsWith(keyPrefix) !== true ||
-    event.kind !== MUTATION_DECISION_KIND[action] ||
+    !MUTATION_DECISION_KIND[action].includes(event.kind) ||
     event.actorId !== actor.id ||
     event.actorType !== actor.type
   ) {
@@ -258,6 +278,67 @@ function checkedId(value: unknown, field: string): string {
     throw new RuntimeError(`${field} must be a non-empty identifier of at most ${MAX_ID_LENGTH} characters.`, 0, []);
   }
   return value;
+}
+
+/** The bound `resume` already applies to a graph path, named once so the customs verbs cannot
+ * drift from it. A path on the RUNTIME's filesystem: relayed verbatim, never opened here. */
+function checkedGraphPath(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_GRAPH_PATH_LENGTH) {
+    throw new RuntimeError(
+      `file must be a non-empty path of at most ${MAX_GRAPH_PATH_LENGTH} characters.`,
+      0,
+      [],
+    );
+  }
+  return value;
+}
+
+/** A journal sequence, which is a non-negative INTEGER.
+ *
+ * Zero is legal and is not an absence: an empty stream answers `headSequence: 0`, and the same
+ * reasoning that made `If-Match: 0` load-bearing applies to any sequence this client sends. A
+ * guard written as `!value` would drop it. */
+function checkedSequence(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new RuntimeError(`${field} must be a non-negative integer.`, 0, []);
+  }
+  return value;
+}
+
+/**
+ * The evidence bundle, checked to the shape the Runtime's own parser accepts
+ * (`{kind, contentHash, size}`), before it costs a request.
+ *
+ * NOT A CREDENTIAL AND NOT A FILE. Every item is a DIGEST of an artefact plus its size; the
+ * artefact itself never leaves the caller. That is the whole reason this surface can hash in the
+ * browser and send the result: what travels is a fingerprint of a test report, not the report.
+ */
+function checkedEvidence(value: unknown): ClaimEvidence[] {
+  if (!Array.isArray(value) || value.length > MAX_EVIDENCE_ITEMS) {
+    throw new RuntimeError(`evidence must be an array of at most ${MAX_EVIDENCE_ITEMS} items.`, 0, []);
+  }
+  return value.map((item, index) => {
+    const entry = item as Partial<ClaimEvidence> | null;
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      typeof entry.kind !== "string" ||
+      entry.kind.length === 0 ||
+      entry.kind.length > MAX_ID_LENGTH ||
+      typeof entry.contentHash !== "string" ||
+      !/^sha256:[0-9a-f]{64}$/.test(entry.contentHash) ||
+      typeof entry.size !== "number" ||
+      !Number.isSafeInteger(entry.size) ||
+      entry.size < 0
+    ) {
+      throw new RuntimeError(
+        `evidence[${index}] must be {kind, contentHash: "sha256:<64 hex>", size}.`,
+        0,
+        [],
+      );
+    }
+    return { kind: entry.kind, contentHash: entry.contentHash, size: entry.size };
+  });
 }
 
 function normaliseEvent(raw: Record<string, unknown>): RuntimeEvent {
@@ -1166,6 +1247,75 @@ export class RuntimeClient {
     );
   }
 
+  /**
+   * `POST /v1/executions/{id}/claim` — testimony that a parked node's external work is done.
+   *
+   * THE GRAPH TRAVELS WITH THE REQUEST, exactly as `resume` does and for the same reason: the
+   * node's declared `proofKinds` are read from it by the Runtime, never supplied by this caller.
+   * `file` is a path on the RUNTIME's filesystem, bounded and relayed verbatim, never read here.
+   *
+   * `waitSeq` NAMES THE RENDEZVOUS and is not an optimisation. The fold refuses a claim that
+   * names a superseded wait (`stale_rendezvous`) instead of silently answering whichever wait is
+   * open now; omitting it asks the Runtime to pick, which is precisely the ambiguity the field
+   * exists to remove. A caller with a status in hand always has the sequence.
+   *
+   * A REFUSAL IS A 200. The verb journals `completion_refused` with a registry code, so the
+   * mutation succeeds while the claim does not: read the verdict with `claimVerdict`, never from
+   * `result`.
+   */
+  async claimNode(
+    executionId: string,
+    request: { file: string; node: string; waitSeq?: number; evidence?: ClaimEvidence[] },
+    options: MutationOptions = {},
+  ): Promise<MutationEvidence> {
+    const nodeId = checkedId(request.node, "node");
+    const body: Record<string, unknown> = { file: checkedGraphPath(request.file), node: nodeId };
+    if (request.waitSeq !== undefined) {
+      body.waitSeq = checkedSequence(request.waitSeq, "waitSeq");
+    }
+    if (request.evidence !== undefined) {
+      body.evidence = checkedEvidence(request.evidence);
+    }
+    return this.#verifiedMutation(
+      "claim",
+      executionId,
+      `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/claim`,
+      body,
+      nodeId,
+      options,
+    );
+  }
+
+  /**
+   * `POST /v1/executions/{id}/clear` — countersign an open claim by machine replay.
+   *
+   * The EVIDENCE is sent, not a hash: the Runtime re-derives the digest and compares it against
+   * what the claim journaled, so a bundle that does not match the testimony is refused
+   * (`hash_mismatch`) rather than accepted. Sending a hash this caller computed would move that
+   * comparison to the side that wants it to pass.
+   *
+   * `node` is carried for ATTRIBUTION only — the request is keyed by `claimSeq`, which is what
+   * identifies the claim being countersigned.
+   */
+  async clearClaim(
+    executionId: string,
+    request: { file: string; claimSeq: number; evidence: ClaimEvidence[]; node?: string },
+    options: MutationOptions = {},
+  ): Promise<MutationEvidence> {
+    const body: Record<string, unknown> = {
+      file: checkedGraphPath(request.file),
+      claimSeq: checkedSequence(request.claimSeq, "claimSeq"),
+      evidence: checkedEvidence(request.evidence),
+    };
+    return this.#verifiedMutation(
+      "clear",
+      executionId,
+      `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/clear`,
+      body,
+      request.node === undefined ? null : checkedId(request.node, "node"),
+      options,
+    );
+  }
   /** `POST /v1/executions/{id}/approve` - readies a blocked or ghost node. */
   async approve(executionId: string, node: string, options: MutationOptions = {}): Promise<MutationEvidence> {
     const nodeId = checkedId(node, "node");

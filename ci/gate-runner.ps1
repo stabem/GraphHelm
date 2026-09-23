@@ -103,6 +103,23 @@ param(
     # THE WAY BACK, so a caller wanting the old behaviour does not have to know which path the
     # default above would have chosen.
     [switch] $SharedCargoHome,
+    # #902: KEEP A WARM TARGET ACROSS RUNS OF ONE PULL REQUEST. OFF BY DEFAULT, and the default is a
+    # measurement, not a preference. Across the 49 receipts of 2026-09-22/23, runner targets kept by
+    # `Test-TargetShouldBeKept` (#1053) - state `complete` - proved 0 artefacts in 10 of 10 re-runs and
+    # built in a median of ~2141 s (1354-14289); fresh targets built in a median of ~381 s (297-1134).
+    # A controlled pair: two FULL gates started at 04:57Z on the same disk, 2734 s on a kept target
+    # and 321 s on a fresh one. The ledger itself works (same-head re-runs proved 211-218 artefacts in
+    # 53-256 s); the runner's re-runs follow a head move, usually a merge of main, which moves core
+    # crates, so every dependent's crateInputHash changes and nothing proves - and rebuilding inside
+    # a large stale target on this disk costs several times a cold build. The switch keeps #1053's
+    # path for a caller that has measured a case where it pays.
+    [switch] $KeepWarmTargets,
+    # #902: HOW OFTEN A RUNNING GATE'S PULL REQUEST IS RE-READ. A gate for a head the branch no longer
+    # names produces a receipt nobody can use; measured 2026-09-23, one slot spent ~45 min on #1214's
+    # dead head. Every this-many seconds the runner asks the server again and cancels the run when the
+    # head moved or the pull request closed. An unresolvable answer never cancels (see
+    # Get-EntryStaleReason). 0 disables the check.
+    [int] $HeadCheckSeconds = 120,
     [string] $StateDirectory,
     [switch] $Once,
     [int] $MaxIterations = 0,
@@ -806,7 +823,9 @@ function Test-PullRequestHasLiveWorker {
 function Remove-PublishedRunnerTarget {
     param(
         [Parameter(Mandatory)] [string] $TargetRoot,
-        [Parameter(Mandatory)] [string] $PullRequest
+        [Parameter(Mandatory)] [string] $PullRequest,
+        # #902: the keep policy applies only when the runner was told to keep warm targets.
+        [switch] $KeepWarm
     )
     # The PR number was validated before this function is called. Construct the only target this
     # runner owns from that number; never accept a path from the queue or from a remote response.
@@ -824,7 +843,7 @@ function Remove-PublishedRunnerTarget {
     # every successful run ends in this branch. Keeping unconditionally would bring back the litter
     # the owner's standing order is about: a target for a pull request that never re-runs is never
     # visited by the run-start eviction, so it is evicted here instead.
-    if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
+    if ($KeepWarm -and (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot)) {
         Write-Note "published receipt for #$PullRequest; keeping the runner target $target -- its last build finished and vouched and $TargetRoot is above its floor (#1053)"
         return
     }
@@ -1190,6 +1209,35 @@ function Test-TargetShouldBeKept {
     $free = Get-TargetRootFreeGB -Path $TargetRoot
     if ($null -eq $free) { return $false }
     return ($free -ge (Get-TargetRootFloorGB -Path $TargetRoot))
+}
+
+function Get-EntryStaleReason {
+    <#
+    .SYNOPSIS
+        Why a RUNNING entry no longer deserves its slot, or $null when it still does.
+    .DESCRIPTION
+        Asked while the gate runs, with the same resolver that admitted the entry, so the two
+        answers cannot disagree about what "the head" means. Three answers cancel: the pull request
+        is MERGED or CLOSED, or its head is not the one being gated. EVERY OTHER ANSWER KEEPS THE
+        RUN, including "the server could not be asked": a gate killed on a network blip loses
+        forty minutes of good work, and a gate left running on a head that moved loses at most the
+        same forty minutes - so the unknown case falls on the side that can only waste, never
+        destroy.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $PullRequest,
+        [Parameter(Mandatory)] [string] $Head,
+        [scriptblock] $Invoker
+    )
+    $resolved = Resolve-PullRequestBranch -PullRequest $PullRequest -Invoker $Invoker
+    if (-not $resolved) { return $null }
+    if ($resolved.State -eq 'MERGED' -or $resolved.State -eq 'CLOSED') {
+        return "pull request is $($resolved.State)"
+    }
+    if ($resolved.Head -and $resolved.Head -ne $Head) {
+        return "head moved to $($resolved.Head.Substring(0, [Math]::Min(8, $resolved.Head.Length)))"
+    }
+    return $null
 }
 
 function Invoke-OneEntry {
@@ -1632,8 +1680,14 @@ function Invoke-OneEntry {
     # must leave the previous target intact for retry and diagnosis; deleting it before this point
     # turns a network/provenance refusal into needless cold work.
     if (Test-Path -LiteralPath $target) {
-        if (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot) {
+        if ($KeepWarmTargets -and (Test-TargetShouldBeKept -TargetDir $target -TargetRoot $TargetRoot)) {
             Write-Note "entry $($Candidate.File.Name): keeping $target -- its last build finished and vouched, so the gate proves each binary on content (#1053, #904)"
+        } elseif (-not $KeepWarmTargets) {
+            Write-Note "entry $($Candidate.File.Name): removing the previous run's target $target -- warm runner targets proved 0 artefacts in 10 of 10 re-runs and built ~5x slower than fresh ones (#902; -KeepWarmTargets restores #1053's keep)"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Note "entry $($Candidate.File.Name): WARNING $target could not be fully removed; this run may redden on the canary staleness cell (#943)"
+            }
         } elseif (Test-TargetBuildFinished -TargetDir $target) {
             $freeNote = Get-TargetRootFreeGB -Path $TargetRoot
             $freeText = if ($null -eq $freeNote) { 'unknown' } else { "$freeNote GB" }
@@ -1716,8 +1770,29 @@ function Invoke-OneEntry {
     # flat between stages -- 45 s measured, with one descendant and no compiler.
     $lastSize = -1
     $flatSince = Get-Date
+    $headCheckedAt = Get-Date
     while (-not (Test-Path -LiteralPath $rcFile)) {
         Start-Sleep -Seconds $PollSeconds
+        # #902: A RUN FOR A HEAD THE BRANCH NO LONGER NAMES IS CANCELLED, NOT FINISHED. The receipt
+        # it would publish certifies a commit nobody can merge, and the slot it holds is the scarcest
+        # thing on the machine. Checked on a clock, not every poll, so the server is asked a few
+        # times an hour; an unresolvable answer keeps the run (Get-EntryStaleReason).
+        if ($HeadCheckSeconds -gt 0 -and ((Get-Date) - $headCheckedAt).TotalSeconds -ge $HeadCheckSeconds) {
+            $headCheckedAt = Get-Date
+            $staleReason = Get-EntryStaleReason -PullRequest "$pr" -Head $head
+            if ($staleReason) {
+                Write-Note "pr $pr cancelled while building: $staleReason; stopping the gate process tree $($proc.Id)"
+                # The whole tree: the gate's cargo, rustc, nextest and PostgreSQL children would
+                # otherwise keep the disk busy for the next entry. The slot lock the gate held is
+                # left for the gate's own dead-holder reclaim (#902), which the next run performs.
+                $null = & taskkill.exe /PID $proc.Id /T /F 2>&1
+                try { $null = $proc.WaitForExit(30000) } catch { }
+                Set-EntryStatus -EntryPath $entryPath -State "cancelled: $staleReason (log=$logFile)"
+                Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+                return 'cancelled'
+            }
+        }
         $size = if (Test-Path -LiteralPath $logFile) { (Get-Item -LiteralPath $logFile).Length } else { 0 }
         if ($size -ne $lastSize) {
             $lastSize = $size
@@ -1787,7 +1862,7 @@ function Invoke-OneEntry {
             Set-EntryStatus -EntryPath $entryPath -State ("waiting: pushed receipt is not merge-reachable: {0}" -f $postPublicationEligibility.Reason)
             return 'stalled'
         }
-        Remove-PublishedRunnerTarget -TargetRoot $TargetRoot -PullRequest "$pr"
+        Remove-PublishedRunnerTarget -TargetRoot $TargetRoot -PullRequest "$pr" -KeepWarm:$KeepWarmTargets
     }
 
     # #988: WHICH CACHE PRODUCED THIS. The gate manifest records cargoTargetDir and not the home,

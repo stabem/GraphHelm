@@ -129,7 +129,8 @@
 #   1  it never reaches the gate, observed by the gate's own marker
 #   1  its entry is closed with a status naming docs-only
 #   1  CONTROL: the same branch with a code change instead does reach the gate
-$ExpectedAssertionCount = 209
+#   -- #902, cold runner targets and head-cancel (+14, landed with #1219; see the #902 cells below)
+$ExpectedAssertionCount = 223
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -616,7 +617,7 @@ exit /b %ERRORLEVEL%
     # A cell whose message survives the change it was written to detect is a cell asserting the
     # defect; the claim is now the CONDITION, and the delete's continued existence is its sibling.
     Assert-True -Condition ($beforeLaunch -match 'Test-TargetBuildFinished -TargetDir \$target') `
-        -Message 'the removal is GUARDED by Test-TargetBuildFinished, so a target whose last build finished and vouched survives into the next run of the same pull request (#1053)'
+        -Message 'the removal is GUARDED by Test-TargetBuildFinished, so under -KeepWarmTargets a target whose last build finished and vouched survives into the next run of the same pull request (#1053; off by default since #902)'
 
     Assert-True -Condition ($beforeLaunch -match 'Remove-Item[^\r\n]*\$target') `
         -Message 'and the removal itself is still there, so every other state -- unfinished, unvouched, unreadable, unknown -- is still deleted (#943)'
@@ -1364,9 +1365,18 @@ exit /b %ERRORLEVEL%
     # run-START eviction and would still pass.
     [System.IO.File]::WriteAllText($publishMarker, '{"state":"complete","processId":4242,"head":"abc"}')
     $script:fakeFreeGB = 500.0
-    Remove-PublishedRunnerTarget -TargetRoot $publishRoot -PullRequest '4242'
+    Remove-PublishedRunnerTarget -TargetRoot $publishRoot -PullRequest '4242' -KeepWarm
     Assert-True -Condition (Test-Path -LiteralPath $publishTarget) `
-        -Message '#1085 + #1053: a published receipt does NOT delete a target whose last build finished and vouched on a root above its floor, so warm reuse survives the cleanup'
+        -Message '#1085 + #1053: under -KeepWarm a published receipt does NOT delete a target whose last build finished and vouched on a root above its floor'
+
+    # #902: THE SAME TARGET, WITHOUT THE SWITCH, IS REMOVED. Warm runner targets proved 0 artefacts
+    # in 10 of 10 re-runs and built ~5x slower than fresh ones (receipts of 2026-09-22/23), so the
+    # runner's default is to keep nothing. The marker still says `complete`; only the switch differs.
+    Remove-PublishedRunnerTarget -TargetRoot $publishRoot -PullRequest '4242'
+    Assert-True -Condition (-not (Test-Path -LiteralPath $publishTarget)) `
+        -Message '#902: without -KeepWarm the SAME vouched, affordable target IS removed after its receipt - the default keeps nothing'
+    $null = New-Item -ItemType Directory -Path $publishTarget -Force
+    [System.IO.File]::WriteAllText((Join-Path $publishTarget 'libthing.rlib'), 'not empty')
 
     # AND THE LITTER STILL GOES. The owner''s standing order is about targets that outlive their
     # run; one whose build never vouched is exactly that, and the run-start eviction will never
@@ -1375,6 +1385,45 @@ exit /b %ERRORLEVEL%
     Remove-PublishedRunnerTarget -TargetRoot $publishRoot -PullRequest '4242'
     Assert-True -Condition (-not (Test-Path -LiteralPath $publishTarget)) `
         -Message '#1085 + #1053: the SAME target with only the state word changed IS removed after the receipt, so the keep is the marker''s doing and the litter rule still bites'
+
+
+    # ---------------------------------------------------------------------------------------------
+    # #902: A RUNNING GATE WHOSE PULL REQUEST MOVED IS CANCELLED, and the runner keeps no warm target
+    # by default. The unit cells drive the real Get-EntryStaleReason through the resolver's own
+    # -Invoker seam; the text cells pin WHERE the check and the kill live; the end-to-end cell in the
+    # fixture section below drives a whole runner against a gate that would otherwise sleep.
+    $staleMatch = [regex]::Match($runnerText, '(?ms)^function Get-EntryStaleReason \{.*?^\}')
+    $resolveMatch = [regex]::Match($runnerText, '(?ms)^function Resolve-PullRequestBranch \{.*?^\}')
+    Assert-True -Condition ($staleMatch.Success -and $resolveMatch.Success) `
+        -Message 'ARRANGEMENT: Get-EntryStaleReason and Resolve-PullRequestBranch are locatable, so the cells below drive the real ones'
+    if ($staleMatch.Success -and $resolveMatch.Success) {
+        . ([scriptblock]::Create($resolveMatch.Value))
+        . ([scriptblock]::Create($staleMatch.Value))
+        $liveHead = 'c' * 40
+        $answer = { param($head, $prState) { param($file, $arguments) [pscustomobject]@{ Code = 0; Output = @("{`"headRefName`":`"b`",`"headRefOid`":`"$head`",`"state`":`"$prState`",`"baseRefName`":`"main`",`"baseRefOid`":`"$('e' * 40)`"}") } }.GetNewClosure() }
+        $same = Get-EntryStaleReason -PullRequest '7' -Head $liveHead -Invoker (& $answer $liveHead 'OPEN')
+        Assert-True -Condition ($null -eq $same) -Message "#902: an OPEN pull request still at the gated head keeps its run (got '$same')"
+        $moved = Get-EntryStaleReason -PullRequest '7' -Head $liveHead -Invoker (& $answer ('b' * 40) 'OPEN')
+        Assert-True -Condition ("$moved" -eq 'head moved to bbbbbbbb') -Message "#902: a head that moved on the server cancels, and the reason names the new head (got '$moved')"
+        $merged = Get-EntryStaleReason -PullRequest '7' -Head $liveHead -Invoker (& $answer $liveHead 'MERGED')
+        Assert-True -Condition ("$merged" -eq 'pull request is MERGED') -Message "#902: a pull request that merged while its gate ran cancels even at the same head (got '$merged')"
+        $blip = Get-EntryStaleReason -PullRequest '7' -Head $liveHead -Invoker { param($file, $arguments) [pscustomobject]@{ Code = 1; Output = @('error connecting to api.github.com') } }
+        Assert-True -Condition ($null -eq $blip) -Message "#902: a server that cannot be asked NEVER cancels - a blip must not kill forty minutes of good work (got '$blip')"
+    } else {
+        foreach ($i in 1..4) { Assert-True -Condition $false -Message '#902: Get-EntryStaleReason cell skipped because the function is missing' }
+    }
+
+    Assert-True -Condition ($runnerText -match '\[switch\] \$KeepWarmTargets' -and $runnerText -match '\[int\] \$HeadCheckSeconds = 120') `
+        -Message '#902: the runner declares -KeepWarmTargets (a switch, so OFF unless passed) and -HeadCheckSeconds with a 120 s default'
+    $evictAt = $runnerText.IndexOf('if ($KeepWarmTargets -and (Test-TargetShouldBeKept -TargetDir $target', [System.StringComparison]::Ordinal)
+    $evictRegion = if ($evictAt -ge 0) { $runnerText.Substring($evictAt, [Math]::Min(1200, $runnerText.Length - $evictAt)) } else { '' }
+    Assert-True -Condition ($evictRegion -match '(?s)^if \(\$KeepWarmTargets -and \(Test-TargetShouldBeKept -TargetDir \$target -TargetRoot \$TargetRoot\)\) \{.*?\} elseif \(-not \$KeepWarmTargets\) \{[^}]*?Remove-Item -LiteralPath \$target -Recurse -Force') `
+        -Message '#902: at run start the keep is reachable only under -KeepWarmTargets, and the very next branch removes the target when the switch is off'
+    $loopAt = $runnerText.IndexOf('while (-not (Test-Path -LiteralPath $rcFile)) {', [System.StringComparison]::Ordinal)
+    $loopEnd = if ($loopAt -ge 0) { $runnerText.IndexOf("`n    }", $loopAt) } else { -1 }
+    $loopText = if ($loopAt -ge 0 -and $loopEnd -gt $loopAt) { $runnerText.Substring($loopAt, $loopEnd - $loopAt) } else { '' }
+    Assert-True -Condition ($loopText -match 'Get-EntryStaleReason -PullRequest "\$pr" -Head \$head' -and $loopText -match 'taskkill\.exe /PID \$proc\.Id /T /F' -and $loopText -match "return 'cancelled'") `
+        -Message '#902: the head re-check, the process-TREE kill and the cancelled return all live INSIDE the wait loop, so a moved head stops a running gate rather than being noticed after it'
 
 
     # ---------------------------------------------------------------------------------------------
@@ -1725,6 +1774,8 @@ owhere head=$serverHead | STATUS: gate run",
 param([string] $LandingSnapshotPath)
 New-Item -ItemType Directory -Path $env:CARGO_TARGET_DIR -Force | Out-Null
 if ($env:RUNNER_TEST_STATE_MARKER) { Set-Content -LiteralPath $env:RUNNER_TEST_STATE_MARKER -Value 'gate reached' -Encoding ASCII }
+if ($env:RUNNER_TEST_PID_MARKER) { Set-Content -LiteralPath $env:RUNNER_TEST_PID_MARKER -Value $PID -Encoding ASCII }
+if ($env:RUNNER_TEST_MODE -eq 'sleep') { Start-Sleep -Seconds 90; exit 0 }
 $cargoHomeSeen = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { '<unset>' }
 if ($env:RUNNER_TEST_CARGO_HOME_MARKER) { Set-Content -LiteralPath $env:RUNNER_TEST_CARGO_HOME_MARKER -Value $cargoHomeSeen -Encoding ASCII }
 if ($env:RUNNER_TEST_MODE -eq 'noop') { exit 0 }
@@ -2171,6 +2222,62 @@ exit /b 0
     Assert-True -Condition ($throwTranscript -match 'gate child threw: fixture gate failed before its final statement') `
         -Message "the throwing child exception is appended to its runner log (path='$throwLogPath')"
     Assert-True -Condition (Test-Path -LiteralPath (Join-Path $targetRoot 'pr933')) -Message 'a throwing gate child retains the target backstop'
+
+    # ---------------------------------------------------------------------------------------------
+    # #902, DRIVEN END TO END: a gate that would sleep 90 s, a head that moves on the server while it
+    # runs, and a runner that must stop it. The fake `gh` reads the live head from a FILE, so the
+    # test can move it mid-run; the fixture gate writes its own pid, so the kill is observed on the
+    # process itself rather than on the runner's word.
+    $cancelClone = Join-Path $fixture 'runner-clone-cancel'
+    $cancelBenchRoot = Join-Path $fixture 'benches-cancel'
+    $null = & git clone -q --origin origin $origin $cancelClone 2>$null
+    New-Item -ItemType Directory -Path $cancelBenchRoot -Force | Out-Null
+    Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
+    $cancelHead = (& git -C $cancelClone ls-remote origin "refs/heads/$serverBranch" | ForEach-Object { ([string]$_ -split "`t")[0] }).Trim()
+    $headFile = Join-Path $fixture 'live-head.txt'
+    Set-Content -LiteralPath $headFile -Value $cancelHead -NoNewline -Encoding ASCII
+    $cancelShim = "@echo off`r`nif `"%~1`"==`"api`" (`r`n  echo 0`r`n  exit /b 0`r`n)`r`nset /p LIVEHEAD=<`"$headFile`"`r`n" +
+        "echo {`"headRefName`":`"$serverBranch`",`"headRefOid`":`"%LIVEHEAD%`",`"state`":`"OPEN`",`"baseRefName`":`"main`",`"baseRefOid`":`"$fixtureHead`"}`r`nexit /b 0`r`n"
+    Set-Content -LiteralPath $shimPath -Value $cancelShim -Encoding ASCII
+    $cancelEntry = [ordered]@{ pr = 934; head = $cancelHead; lane = 'TESTS'; timestamp = (Get-Date).ToUniversalTime().ToString('o') }
+    $cancelPath = Join-Path $queue "934-$($cancelHead.Substring(0, 8))-cancel.json"
+    Set-Content -LiteralPath $cancelPath -Value (ConvertTo-Json $cancelEntry) -Encoding UTF8
+    $pidMarker = Join-Path $fixture 'gate-pid.txt'
+    Remove-Item -LiteralPath $pidMarker -Force -ErrorAction SilentlyContinue
+    $env:RUNNER_TEST_MODE = 'sleep'
+    $env:RUNNER_TEST_PID_MARKER = $pidMarker
+    $cancelRunner = $null
+    try {
+        $cancelRunner = Start-Process powershell -PassThru -WindowStyle Hidden -WorkingDirectory $cancelClone -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner,
+            '-Slot', 'HDD', '-SlotRoot', $slotRoot, '-Once', '-QueueDirectory', $queue, '-StateDirectory', $state,
+            '-BenchRoot', $cancelBenchRoot, '-TargetRoot', $targetRoot, '-PollSeconds', '1', '-HeadCheckSeconds', '2')
+        $deadline = (Get-Date).AddSeconds(90)
+        while (-not (Test-Path -LiteralPath $pidMarker) -and (Get-Date) -lt $deadline -and -not $cancelRunner.HasExited) { Start-Sleep -Milliseconds 500 }
+    } finally {
+        Remove-Item Env:RUNNER_TEST_MODE -ErrorAction SilentlyContinue
+        Remove-Item Env:RUNNER_TEST_PID_MARKER -ErrorAction SilentlyContinue
+    }
+    $gatePid = if (Test-Path -LiteralPath $pidMarker) { [int](Get-Content -LiteralPath $pidMarker -Raw).Trim() } else { 0 }
+    Assert-True -Condition ($gatePid -gt 0) `
+        -Message "CONTROL (#902): the sleeping fixture gate was reached and wrote its pid (runner exited early: $([bool]($cancelRunner -and $cancelRunner.HasExited)))"
+    $movedAt = Get-Date
+    Set-Content -LiteralPath $headFile -Value ('b' * 40) -NoNewline -Encoding ASCII
+    $exited = $false
+    if ($cancelRunner) { $exited = $cancelRunner.WaitForExit(60000) }
+    $cancelSeconds = [Math]::Round(((Get-Date) - $movedAt).TotalSeconds, 1)
+    if ($cancelRunner -and -not $cancelRunner.HasExited) { $null = & taskkill.exe /PID $cancelRunner.Id /T /F 2>&1 }
+    $cancelStatusPath = [System.IO.Path]::ChangeExtension($cancelPath, '.status')
+    $cancelStatus = if (Test-Path -LiteralPath $cancelStatusPath) { (Get-Content -LiteralPath $cancelStatusPath -Raw).Trim() } else { '<no status file>' }
+    Assert-True -Condition ($cancelStatus.Contains(' cancelled: head moved to bbbbbbbb ')) `
+        -Message "#902: a head that moves while its gate runs ends the run as cancelled, naming the new head (status: '$cancelStatus')"
+    Assert-True -Condition ($exited -and $cancelSeconds -lt 45) `
+        -Message "#902: the runner stops within the check interval, not after the gate's 90 s (runner exited: $exited, $cancelSeconds s after the head moved)"
+    $gateAlive = ($gatePid -gt 0) -and [bool](Get-Process -Id $gatePid -ErrorAction SilentlyContinue)
+    Assert-True -Condition ($gatePid -gt 0 -and -not $gateAlive) `
+        -Message "#902: the gate process itself is gone, not merely abandoned (pid $gatePid alive: $gateAlive)"
+    Assert-True -Condition (-not (Test-Path -LiteralPath $cancelPath)) `
+        -Message '#902: the cancelled entry leaves the queue, so the runner does not rebuild a head nobody names'
 
     # ---------------------------------------------------------------------------------------------
     # THE REFUSAL, DRIVEN. The bench now starts from origin/<branch>; if that ref is not at the

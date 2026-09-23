@@ -1522,6 +1522,41 @@ function Invoke-OneEntry {
     # That is the same direction `Read-ScopeSelection` already takes for a selection it cannot
     # read, and it is the only safe direction: a scoped run that narrowed on a bad derivation
     # would run fewer stages and report the same green.
+    # #901, owner order 2026-09-23: A CHANGE THAT IS ONLY MARKDOWN NO CODE READS IS NOT BUILT.
+    # `.factory/MERGE-CHECKLIST.md`'s docs-only exception already lets such a pull request merge
+    # without a receipt; before this block the runner spent a full gate on it anyway (#1214: about
+    # seventeen minutes of the slot for four Markdown files). `ci/docs-only.ps1` takes the same
+    # decision from the diff, with a positive control on its own grep, and the runner acts ONLY on
+    # its exit 0. Every other answer -- 1 not docs-only, 2 undecided, a crash, no merge base --
+    # falls through to the build below, so a failure here costs time and never a gate.
+    #
+    # THE DECISION IS THE RUNNER'S OWN COPY, NEVER THE PULL REQUEST'S (review of #1216 by lane
+    # 5bdc38). Read from the bench, a pull request could ship a `ci/docs-only.ps1` that exits 0 and
+    # skip its own gate, and the only defence left was a presser remembering to re-run main's copy.
+    # The bench supplies DATA -- its diff and its tree -- and the script that judges it comes from the
+    # runner's checkout, the way merge-proof runs from origin/main's. A runner whose checkout predates
+    # the script has no copy, and falls through to the build: the fail-safe direction again.
+    $docsVerdictFile = Join-Path $StateDirectory ("$pr-$runId.docs-only.json")
+    $docsOnlyScript = Join-Path $PSScriptRoot 'docs-only.ps1'
+    try {
+        $docsBase = Invoke-External 'git' @('-C', $bench, 'merge-base', 'origin/main', $resolvedPr.Head)
+        if ((Test-Path -LiteralPath $docsOnlyScript -PathType Leaf) -and $docsBase.Code -eq 0 -and $docsBase.Output.Count -gt 0) {
+            $docsVerdict = Invoke-External 'powershell' @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-File', $docsOnlyScript,
+                '-MergeBase', ([string]$docsBase.Output[0]).Trim(),
+                '-Head', $resolvedPr.Head, '-RepoRoot', $bench)
+            if ($docsVerdict.Code -eq 0 -and $docsVerdict.Output.Count -gt 0) {
+                [System.IO.File]::WriteAllText($docsVerdictFile, (($docsVerdict.Output | ForEach-Object { [string]$_ }) -join "`n"))
+                Write-Note "entry $($Candidate.File.Name): docs-only, not built (#901) -> $docsVerdictFile"
+                Set-EntryStatus -EntryPath $entryPath -State "skipped: docs-only, no code reads the changed Markdown; not built (#901) verdict=$docsVerdictFile"
+                Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+                return 'dropped'
+            }
+            Write-Note "entry $($Candidate.File.Name): docs-only decision exited $($docsVerdict.Code); building"
+        }
+    } catch {
+        Write-Note "entry $($Candidate.File.Name): docs-only decision failed ($($_.Exception.Message)); building"
+    }
     $scopeArgument = ''
     $scopeFile = Join-Path $StateDirectory ("$pr-$runId.scope.json")
     try {

@@ -28,6 +28,7 @@ $PinnedSuites = @(
     'frozen-release-guard.tests.ps1',
     'closing-keywords.tests.ps1',
     'crate-input-hash.tests.ps1',
+    'docs-only.tests.ps1',
     'event-contract-sweep.tests.ps1',
     'exit-code-shape.tests.ps1',
     'liveness-rule.tests.ps1',

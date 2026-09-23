@@ -168,6 +168,16 @@ author flattened them into one rule twice, and lane C and Codex measured them ap
    the manifest it names and confirm the stage list is green. Exit 3 (ABSENT) means nobody
    ran the gate on this head — a gate run owed, not a merge; exit 2 (NOT) means a run exists and does
    not vouch — that is a finding. The two are different answers (#811 introduced the distinction). (Found by A's review
+   **The docs-only exception has an instrument (#901, 2026-09-23):** `ci/docs-only.ps1 -MergeBase
+   <base> -Head <head>` takes the decision below from the diff, with the grep and its positive control
+   in one command, and prints the verdict as JSON; exit 0 is docs-only, 1 is not, 2 is undecided. The
+   queued runner calls it before building and closes a docs-only entry as `skipped: docs-only` with
+   the verdict file named, so such a PR arrives with no receipt by design. The presser re-runs the
+   script **from `origin/main`'s copy** (the same fresh worktree the merge-proof recipe uses), with
+   `-RepoRoot` on the candidate and `-Head` the pressed head, and pastes its output into the merge
+   comment in place of a hand-written grep. Main's copy, not the branch's: a pull request that edits
+   `ci/docs-only.ps1` could otherwise supply the predicate that judges it (#733's lesson). It counts a MENTION as a read, which is wider than the rule below: any Markdown
+   a non-Markdown file names (`README.md`, `AGENTS.md`, `.factory/*.md`) still takes a full gate.
    **The docs-only exception, written (D, #865; re-worded X, #957):** a PR whose file list is entirely
    Markdown that NO CODE reads may record `merge-proof` ABSENT as a NAMED exception — the merge comment
    cites the file list, the empty `git grep -n <basename> origin/main -- ':!docs' ':!*.md'` (the whole

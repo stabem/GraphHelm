@@ -125,7 +125,11 @@
 #   1  -CargoHome with -SharedCargoHome refuses instead of picking a winner
 #   1  and the refusal names both the conflict and the path it was handed
 #   1  CONTROL: the refused run created no home, so it stopped at launch
-$ExpectedAssertionCount = 205
+#   -- #901, a Markdown-only change no code reads is not built (+3 over 205):
+#   1  it never reaches the gate, observed by the gate's own marker
+#   1  its entry is closed with a status naming docs-only
+#   1  CONTROL: the same branch with a code change instead does reach the gate
+$ExpectedAssertionCount = 209
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -1870,6 +1874,83 @@ exit 0
         -Message 'a successful receipt push removes only this PR target after publication'
     Assert-True -Condition (Test-Path -LiteralPath $unrelatedTarget) `
         -Message 'successful publication does not remove an unrelated target directory'
+
+    # #901: A MARKDOWN-ONLY CHANGE NO CODE READS IS NOT BUILT, AND A CODE CHANGE STILL IS. Driven
+    # through the real runner, on an origin of its own so the branch and main this suite shares stay
+    # as the cases below expect them. The fixture gate writes `gate reached` into the marker when it
+    # runs, so the marker's absence is the observation that the build was skipped -- not the status
+    # text, which the runner writes about itself.
+    $docsOrigin = Join-Path $fixture 'docs-only-origin.git'
+    $docsAuthor = Join-Path $fixture 'docs-only-author'
+    $docsBranch = 'issue-901-docs-only'
+    $null = & git clone -q --bare $origin $docsOrigin 2>$null
+    $null = & git clone -q $docsOrigin $docsAuthor 2>$null
+    $null = & git -C $docsAuthor config user.email 'docs-only@test'
+    $null = & git -C $docsAuthor config user.name 'docs-only test'
+    $null = & git -C $docsAuthor checkout -q -B main $fixtureHead 2>$null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs-only.ps1') -Destination (Join-Path $docsAuthor 'ci/docs-only.ps1')
+    $null = & git -C $docsAuthor add -A 2>$null
+    $null = & git -C $docsAuthor commit -q -m 'fixture: the docs-only decision' 2>$null
+    $docsBase = (& git -C $docsAuthor rev-parse HEAD).Trim()
+    $null = & git -C $docsAuthor push -q -f origin 'HEAD:refs/heads/main' 2>$null
+    $docsOutcomes = @{}
+    foreach ($case in @(
+            @{ Name = 'docs'; Pr = 941; File = 'docs/note.md'; Text = 'a note nobody reads by name' },
+            @{ Name = 'code'; Pr = 942; File = 'src/lib.rs'; Text = 'pub fn changed() {}' },
+            # THE LIAR (review of #1216, lane 5bdc38): a code change that also ships a decision script
+            # answering "docs-only" to everything. The runner must judge with ITS copy and build.
+            @{ Name = 'liar'; Pr = 943; File = 'src/lib.rs'; Text = 'pub fn liar() {}'; Liar = $true })) {
+        $null = & git -C $docsAuthor checkout -q -B $docsBranch $docsBase 2>$null
+        if ($case.ContainsKey('Liar')) {
+            Set-Content -LiteralPath (Join-Path $docsAuthor 'ci/docs-only.ps1') -Value 'Write-Output ''{"docsOnly":true}''; exit 0' -Encoding ASCII
+        }
+        $casePath = Join-Path $docsAuthor $case.File
+        New-Item -ItemType Directory -Path (Split-Path $casePath -Parent) -Force | Out-Null
+        Set-Content -LiteralPath $casePath -Value $case.Text -Encoding ASCII
+        $null = & git -C $docsAuthor add -A 2>$null
+        $null = & git -C $docsAuthor commit -q -m "fixture: a $($case.Name) change" 2>$null
+        $caseHead = (& git -C $docsAuthor rev-parse HEAD).Trim()
+        $null = & git -C $docsAuthor push -q -f origin "HEAD:refs/heads/$docsBranch" 2>$null
+        $caseShim = $strictShim.Replace($serverBranch, $docsBranch).Replace($serverHead, $caseHead).Replace(
+            '}', ",`"state`":`"OPEN`",`"baseRefName`":`"main`",`"baseRefOid`":`"$docsBase`"}")
+        Set-Content -LiteralPath $shimPath -Value $caseShim -Encoding ASCII
+        $caseClone = Join-Path $fixture "runner-clone-docs-$($case.Name)"
+        $caseBenchRoot = Join-Path $fixture "benches-docs-$($case.Name)"
+        $null = & git clone -q --origin origin $docsOrigin $caseClone 2>$null
+        New-Item -ItemType Directory -Path $caseBenchRoot -Force | Out-Null
+        Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
+        $caseEntry = [ordered]@{ pr = $case.Pr; head = $caseHead; lane = 'TESTS'; timestamp = (Get-Date).ToUniversalTime().ToString('o') }
+        $caseEntryPath = Join-Path $queue "$($case.Pr)-$($caseHead.Substring(0, 8)).json"
+        Set-Content -LiteralPath $caseEntryPath -Value (ConvertTo-Json $caseEntry) -Encoding UTF8
+        $caseMarker = Join-Path $fixture "docs-only-$($case.Name).marker"
+        $env:RUNNER_TEST_STATE_MARKER = $caseMarker
+        $env:RUNNER_TEST_MODE = 'noop'
+        Push-Location $caseClone
+        try {
+            $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+                -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+                -BenchRoot $caseBenchRoot -TargetRoot $targetRoot -PollSeconds 1 2>&1
+        } finally {
+            Pop-Location
+            Remove-Item Env:RUNNER_TEST_STATE_MARKER -ErrorAction SilentlyContinue
+            Remove-Item Env:RUNNER_TEST_MODE -ErrorAction SilentlyContinue
+        }
+        $caseStatusPath = [System.IO.Path]::ChangeExtension($caseEntryPath, '.status')
+        $docsOutcomes[$case.Name] = [pscustomobject]@{
+            Status  = if (Test-Path -LiteralPath $caseStatusPath) { (Get-Content -LiteralPath $caseStatusPath -Raw).Trim() } else { '<no status file>' }
+            Reached = Test-Path -LiteralPath $caseMarker
+            Queued  = Test-Path -LiteralPath $caseEntryPath
+        }
+    }
+    Set-Content -LiteralPath $shimPath -Value $strictShim -Encoding ASCII
+    Assert-True -Condition (-not $docsOutcomes['docs'].Reached) `
+        -Message "#901: a Markdown-only change no code reads never reaches the gate (status: '$($docsOutcomes['docs'].Status)')"
+    Assert-True -Condition ($docsOutcomes['docs'].Status -match '^\S+ skipped: docs-only' -and -not $docsOutcomes['docs'].Queued) `
+        -Message "#901: and its entry is closed with a status that says why (status: '$($docsOutcomes['docs'].Status)')"
+    Assert-True -Condition ($docsOutcomes['code'].Reached) `
+        -Message "#901: CONTROL: the same branch with a code change instead DOES reach the gate (status: '$($docsOutcomes['code'].Status)')"
+    Assert-True -Condition ($docsOutcomes['liar'].Reached) `
+        -Message "#901: a pull request that ships its own always-yes ci/docs-only.ps1 is STILL built -- the runner judges with its own copy (status: '$($docsOutcomes['liar'].Status)')"
 
     # Change the live PR shape only after the gate stub begins. The runner must re-read the server
     # before publication and retain every local retry artefact when branch/base identity changed.

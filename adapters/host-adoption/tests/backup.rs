@@ -341,11 +341,12 @@ fn backup_includes_project_claude_settings_surface() {
     )
     .unwrap();
     assert!(manifest["files"]["project/.claude/settings.json"].is_string());
-    assert_eq!(manifest["surfaceMetadata"].as_object().unwrap().len(), 14);
+    assert_eq!(manifest["surfaceMetadata"].as_object().unwrap().len(), 16);
     assert_eq!(
-        manifest["surfaceMetadata"]["home/CLAUDE.md"]["state"],
+        manifest["surfaceMetadata"]["home/.claude/CLAUDE.md"]["state"],
         "absent"
     );
+    assert!(manifest["surfaceMetadata"].get("home/CLAUDE.md").is_none());
     assert!(
         manifest["surfaceMetadata"]["project/.claude/settings.json"]["accessDigest"].is_string()
     );
@@ -393,4 +394,60 @@ fn backup_rejects_an_oversized_discovered_skill_manifest() {
         graphhelm_protocols::adoption::AdoptionReason::LimitExceeded
     );
     assert!(!state.path().join("backups").exists());
+}
+
+fn link_directory(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // A junction needs no privilege, unlike a directory symlink; it is what this machine
+        // keeps under ~/.claude/skills.
+        use std::os::windows::process::CommandExt;
+        // cmd.exe does not parse arguments the way std quotes them; hand it the raw line.
+        let status = std::process::Command::new("cmd")
+            .raw_arg(format!(
+                "/C mklink /J \"{}\" \"{}\"",
+                link.display(),
+                target.display()
+            ))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
+}
+
+#[test]
+fn backup_skips_a_linked_skill_entry_and_snapshots_its_siblings() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let state = private_state();
+    let skills = home.path().join(".claude/skills");
+    for name in ["aaa-real", "zzz-real"] {
+        std::fs::create_dir_all(skills.join(name)).unwrap();
+        std::fs::write(skills.join(name).join("SKILL.md"), name).unwrap();
+    }
+    std::fs::create_dir_all(outside.path().join("linked")).unwrap();
+    std::fs::write(outside.path().join("linked/SKILL.md"), b"linked").unwrap();
+    link_directory(&outside.path().join("linked"), &skills.join("mmm-link"));
+
+    let receipt =
+        graphhelm_host_adoption::backup(project.path(), home.path(), state.path()).unwrap();
+    let id = receipt["id"].as_str().unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(state.path().join("backups").join(id).join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let files = manifest["files"].as_object().unwrap();
+
+    assert!(files.contains_key("discovered/home/skill/.claude/skills/aaa-real/SKILL.md"));
+    assert!(files.contains_key("discovered/home/skill/.claude/skills/zzz-real/SKILL.md"));
+    assert!(
+        !files.keys().any(|key| key.contains("mmm-link")),
+        "a linked entry is never read through: {:?}",
+        files.keys().collect::<Vec<_>>()
+    );
+    graphhelm_host_adoption::verify_backup(state.path(), id).unwrap();
 }

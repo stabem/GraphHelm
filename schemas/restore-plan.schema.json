@@ -126,8 +126,8 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 14,
-          "maxItems": 14
+          "minItems": 1,
+          "maxItems": 64
         },
         "effects": {
           "type": "array",
@@ -185,8 +185,8 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 14,
-          "maxItems": 14
+          "minItems": 1,
+          "maxItems": 64
         },
         "packages": {
           "type": "array",

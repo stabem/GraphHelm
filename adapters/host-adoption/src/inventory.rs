@@ -16,6 +16,146 @@ struct DiscoveryBudget {
     entries: usize,
     bytes: u64,
     exhausted: bool,
+    /// A link was met and recorded as an item; the link itself was never followed.
+    linked: bool,
+    /// An entry could not be read and was recorded as an item instead of losing its siblings.
+    unreadable: bool,
+}
+
+impl DiscoveryBudget {
+    fn complete(&self) -> bool {
+        !self.exhausted && !self.linked && !self.unreadable
+    }
+
+    fn reason(&self) -> Value {
+        if self.complete() {
+            return Value::Null;
+        }
+        let mut reasons = Vec::new();
+        if self.linked {
+            reasons.push("linked");
+        }
+        if self.unreadable {
+            reasons.push("unreadable");
+        }
+        if self.exhausted {
+            reasons.push("bound");
+        }
+        json!(reasons.join("_or_"))
+    }
+}
+
+/// Documented discovery roots per host. The Claude plugin cache under `~/.claude/plugins` is
+/// deliberately not a root: the installed set is the `installed_plugins.json` record read by
+/// [`installed_plugin_records`], and walking the cache reports every vendored `SKILL.md` of every
+/// cached version as a plugin (measured 2026-09-22: 1205 items, 998 duplicates, on one machine).
+fn discovery_roots(host: &str) -> &'static [(&'static str, &'static str, &'static str)] {
+    match host {
+        "claude" => &[
+            ("project", ".claude/skills", "skill"),
+            ("project", ".claude/plugins", "plugin"),
+            ("home", ".claude/skills", "skill"),
+            ("project", ".claude/rules", "rule"),
+            ("home", ".claude/rules", "rule"),
+            ("project", ".claude/agents", "agent"),
+            ("home", ".claude/agents", "agent"),
+            ("project", ".claude/commands", "command"),
+            ("home", ".claude/commands", "command"),
+        ],
+        "codex" => &[
+            ("project", ".agents/skills", "skill"),
+            ("home", ".agents/skills", "skill"),
+            ("home", ".codex/skills", "skill"),
+        ],
+        _ => &[],
+    }
+}
+
+/// Only the named manifest file of each kind is ever opened; arbitrary package contents are not.
+fn wanted_file(kind: &str, file_name: &str) -> bool {
+    match kind {
+        "skill" => file_name == "SKILL.md",
+        "plugin" => matches!(file_name, "plugin.json" | "manifest.json" | "SKILL.md"),
+        "rule" | "agent" | "command" => file_name.ends_with(".md"),
+        _ => false,
+    }
+}
+
+/// The documented plugin record. Each entry is installed by definition; enablement still comes
+/// from the `enabledPlugins` settings keys, which are inventoried separately.
+const INSTALLED_PLUGINS_RECORD: &str = ".claude/plugins/installed_plugins.json";
+/// A plugin name is `name@marketplace`. A longer one is not a name this host writes, and each
+/// emitted install copies the name twice, so an unbounded one multiplies the record's size.
+const MAX_PLUGIN_NAME_BYTES: usize = 512;
+
+fn installed_plugin_records(home: &Path, host: &str) -> (Vec<Value>, Option<Value>) {
+    let bytes = match read_candidate(home, INSTALLED_PLUGINS_RECORD) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return (Vec::new(), None),
+        Err(error) => {
+            return (
+                Vec::new(),
+                Some(
+                    json!({"scope":"plugin-record","state":"incomplete","reason":format!("{:?}", error.reason)}),
+                ),
+            );
+        }
+    };
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return (
+            Vec::new(),
+            Some(json!({"scope":"plugin-record","state":"incomplete","reason":"truncated"})),
+        );
+    }
+    let Some(plugins) = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|value| value.get("plugins").cloned())
+        .and_then(|value| value.as_object().cloned())
+    else {
+        return (
+            Vec::new(),
+            Some(json!({"scope":"plugin-record","state":"incomplete","reason":"invalid"})),
+        );
+    };
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+    let mut entries = Vec::new();
+    // ONE BUDGET ACROSS EVERY EMITTED INSTALL, not across names (review of #1210 by [757c],
+    // confirmed by [3f90d6] and [b9deb2]): a record under 1 MiB with one name and a large
+    // `installs` array expanded into that many items, each copying the name, so the memory grew
+    // with installs x name length. Hitting either bound records the gap instead of truncating in
+    // silence.
+    let mut truncated = false;
+    'records: for (name, installs) in &plugins {
+        if name.len() > MAX_PLUGIN_NAME_BYTES {
+            truncated = true;
+            continue;
+        }
+        let installs: Vec<&Value> = match installs.as_array() {
+            Some(array) => array.iter().collect(),
+            None => vec![installs],
+        };
+        for install in installs {
+            if entries.len() >= MAX_DISCOVERY_ENTRIES {
+                truncated = true;
+                break 'records;
+            }
+            let scope = install.get("scope").and_then(Value::as_str);
+            let version = install.get("version").and_then(Value::as_str);
+            entries.push(json!({
+                "id": format!("home/{INSTALLED_PLUGINS_RECORD}/plugin/{name}"),
+                "name": name, "root": "home", "path": INSTALLED_PLUGINS_RECORD,
+                "host": host, "scope": scope.map_or(json!("user"), |scope| json!(scope)),
+                "kind": "plugin", "surfaceKind": "plugin", "status": "recorded",
+                "installed": true, "enabled": Value::Null, "loaded": Value::Null,
+                "version": version.map_or(Value::Null, |version| json!(version)),
+                "digest": digest,
+                "origin": "installed", "protected": false, "duplicate": false, "managed": false
+            }));
+        }
+    }
+    let gap = truncated
+        .then(|| json!({"scope":"plugin-record","state":"incomplete","reason":"truncated"}));
+    (entries, gap)
 }
 
 pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
@@ -23,10 +163,22 @@ pub fn inventory(project: &Path, home: &Path) -> Result<Value, AdoptionError> {
     validate_root(home)?;
     let mut claude = inspect_host("claude", project, home)?;
     let mut codex = inspect_host("codex", project, home)?;
-    let (claude_entries, claude_complete) = scan_known_roots(project, home, "claude")?;
-    let (codex_entries, codex_complete) = scan_known_roots(project, home, "codex")?;
-    append_scanned(&mut claude, claude_entries, claude_complete);
-    append_scanned(&mut codex, codex_entries, codex_complete);
+    let (claude_entries, claude_reason) = scan_known_roots(project, home, "claude")?;
+    let (codex_entries, codex_reason) = scan_known_roots(project, home, "codex")?;
+    append_scanned(&mut claude, claude_entries, claude_reason);
+    append_scanned(&mut codex, codex_entries, codex_reason);
+    let (plugin_records, plugin_gap) = installed_plugin_records(home, "claude");
+    claude["items"]
+        .as_array_mut()
+        .expect("host items")
+        .extend(plugin_records);
+    if let Some(gap) = plugin_gap {
+        claude["coverage"] = json!("incomplete");
+        claude["coverageDetails"]
+            .as_array_mut()
+            .expect("coverage details")
+            .push(gap);
+    }
     mark_duplicates(&mut claude);
     mark_duplicates(&mut codex);
     let coverage = [claude["coverage"].as_str(), codex["coverage"].as_str()]
@@ -77,64 +229,72 @@ fn mark_duplicates(host: &mut Value) {
     }
 }
 
-fn append_scanned(host: &mut Value, entries: Vec<Value>, complete: bool) {
+fn append_scanned(host: &mut Value, entries: Vec<Value>, reason: Value) {
     host["items"]
         .as_array_mut()
         .expect("host items")
         .extend(entries);
     let host_name = host["host"].clone();
+    let complete = reason.is_null();
     let roots = host["coverageDetails"]
         .as_array_mut()
         .expect("coverage details");
     roots.push(json!({
         "scope": host_name,
         "state": if complete { "complete" } else { "incomplete" },
-        "reason": if complete { Value::Null } else { json!("linked_or_unreadable_or_bound") }
+        "reason": reason
     }));
     if !complete {
         host["coverage"] = json!("incomplete");
     }
 }
 
-/// Scan only documented skill/plugin roots. Missing roots are complete (there is
-/// nothing installed); links, unreadable entries and the bound are incomplete.
+/// Scan only documented discovery roots. Missing roots are complete (there is nothing
+/// installed). A link or an unreadable entry is recorded as an item of its own and the scan
+/// goes on with the siblings; only the entry and depth bounds stop it. Returns the entries and
+/// the coverage reason (`Null` when complete).
 fn scan_known_roots(
     project: &Path,
     home: &Path,
     host: &str,
-) -> Result<(Vec<Value>, bool), AdoptionError> {
-    let roots: &[(&str, &str, &str)] = match host {
-        "claude" => &[
-            ("project", ".claude/skills", "skill"),
-            ("project", ".claude/plugins", "plugin"),
-            ("home", ".claude/skills", "skill"),
-            ("home", ".claude/plugins", "plugin"),
-        ],
-        "codex" => &[
-            ("project", ".agents/skills", "skill"),
-            ("home", ".agents/skills", "skill"),
-            ("home", ".codex/skills", "skill"),
-        ],
-        _ => &[],
-    };
+) -> Result<(Vec<Value>, Value), AdoptionError> {
     let mut entries = Vec::new();
-    let mut complete = true;
     let mut budget = DiscoveryBudget::default();
-    for (scope, relative, kind) in roots {
+    for (scope, relative, kind) in discovery_roots(host) {
         let root = if *scope == "project" { project } else { home };
         let path = root.join(relative);
-        if !path.exists() {
+        if std::fs::symlink_metadata(&path).is_err() {
             continue;
         }
-        if scan_tree(&path, root, host, scope, kind, 0, &mut entries, &mut budget).is_err() {
-            complete = false;
-        }
+        let _ = scan_tree(&path, root, host, scope, kind, 0, &mut entries, &mut budget);
         if budget.exhausted {
-            complete = false;
             break;
         }
     }
-    Ok((entries, complete))
+    Ok((entries, budget.reason()))
+}
+
+fn scanned_item(
+    root: &Path,
+    path: &Path,
+    host: &str,
+    scope: &str,
+    kind: &str,
+    status: &str,
+) -> Option<Value> {
+    let rel = path
+        .strip_prefix(root)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let file_name = path.file_name().and_then(|name| name.to_str())?;
+    Some(json!({
+        "id": format!("{scope}/{kind}/{rel}/{file_name}"), "root": scope, "path": rel,
+        "name": file_name, "host": host, "scope": semantic_scope(scope), "kind": kind,
+        "surfaceKind": kind, "status": status, "installed": Value::Null, "enabled": Value::Null,
+        "loaded": Value::Null, "digest": Value::Null, "origin": "local",
+        "protected": kind == "rule", "duplicate": false, "managed": false
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,9 +312,19 @@ fn scan_tree(
         budget.exhausted = true;
         return Err(());
     }
-    let meta = std::fs::symlink_metadata(path).map_err(|_| ())?;
-    if meta.file_type().is_symlink() {
-        return Err(());
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        budget.unreadable = true;
+        entries.extend(scanned_item(root, path, host, scope, kind, "inaccessible"));
+        return Ok(());
+    };
+    // A symlink or a Windows junction is a fact about the host (this machine keeps 24 of them
+    // under ~/.claude/skills, into ~/.agents/skills). It is recorded and never followed; the
+    // siblings after it are still scanned. Aborting here used to hide every later entry and
+    // made backup refuse the whole snapshot (measured 2026-09-22).
+    if meta.file_type().is_symlink() || is_reparse_point(&meta) {
+        budget.linked = true;
+        entries.extend(scanned_item(root, path, host, scope, kind, "linked"));
+        return Ok(());
     }
     if meta.is_file() {
         let file_name = path
@@ -162,10 +332,7 @@ fn scan_tree(
             .and_then(|name| name.to_str())
             .unwrap_or_default();
         // Filter names before opening files. Arbitrary package contents are never read.
-        if (kind == "skill" && file_name != "SKILL.md")
-            || (kind == "plugin"
-                && !matches!(file_name, "plugin.json" | "manifest.json" | "SKILL.md"))
-        {
+        if !wanted_file(kind, file_name) {
             return Ok(());
         }
         let rel = path
@@ -173,10 +340,19 @@ fn scan_tree(
             .map_err(|_| ())?
             .to_string_lossy()
             .replace('\\', "/");
-        let bytes = read_candidate(root, &rel).map_err(|_| ())?.ok_or(())?;
-        if bytes.len() as u64 > MAX_FILE_BYTES {
-            return Err(());
-        }
+        let bytes = match read_candidate(root, &rel) {
+            Ok(Some(bytes)) if bytes.len() as u64 <= MAX_FILE_BYTES => bytes,
+            Ok(Some(_)) => {
+                budget.unreadable = true;
+                entries.extend(scanned_item(root, path, host, scope, kind, "truncated"));
+                return Ok(());
+            }
+            Ok(None) | Err(_) => {
+                budget.unreadable = true;
+                entries.extend(scanned_item(root, path, host, scope, kind, "inaccessible"));
+                return Ok(());
+            }
+        };
         let unit_name = logical_package_name(kind, path, &bytes, file_name);
         let stable = format!("{scope}/{kind}/{rel}/{unit_name}");
         entries.push(json!({
@@ -184,17 +360,25 @@ fn scan_tree(
             "name": unit_name, "host": host, "scope": semantic_scope(scope), "kind": kind, "surfaceKind": kind, "status": "observed",
             "installed": true, "enabled": Value::Null, "loaded": Value::Null,
             "digest": format!("sha256:{}", hex::encode(Sha256::digest(&bytes))),
-            "origin": "local", "protected": false, "duplicate": false, "managed": false
+            "origin": "local", "protected": kind == "rule", "duplicate": false, "managed": false
         }));
         return Ok(());
     }
-    for child in std::fs::read_dir(path).map_err(|_| ())? {
+    let Ok(children) = std::fs::read_dir(path) else {
+        budget.unreadable = true;
+        entries.extend(scanned_item(root, path, host, scope, kind, "inaccessible"));
+        return Ok(());
+    };
+    for child in children {
         if budget.entries >= MAX_DISCOVERY_ENTRIES {
             budget.exhausted = true;
             return Err(());
         }
         budget.entries += 1;
-        let child = child.map_err(|_| ())?;
+        let Ok(child) = child else {
+            budget.unreadable = true;
+            continue;
+        };
         scan_tree(
             &child.path(),
             root,
@@ -209,7 +393,28 @@ fn scan_tree(
     Ok(())
 }
 
+#[cfg(windows)]
+fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
+    false
+}
+
 fn logical_package_name(kind: &str, path: &Path, bytes: &[u8], file_name: &str) -> String {
+    // A rule, agent or command is one Markdown file; Claude Code names it by its stem
+    // (`deploy.md` is `/deploy`). A skill or plugin is a directory named by its parent.
+    if matches!(kind, "rule" | "agent" | "command") {
+        return file_name
+            .strip_suffix(".md")
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or(file_name)
+            .to_owned();
+    }
     if kind == "plugin"
         && let Ok(value) = serde_json::from_slice::<Value>(bytes)
         && let Some(name) = value.get("name").and_then(Value::as_str)
@@ -245,23 +450,15 @@ pub(crate) fn discovered_manifest_files(
     let mut budget = DiscoveryBudget::default();
     let byte_limit = byte_limit.min(MAX_DISCOVERY_BYTES);
     for host in ["claude", "codex"] {
-        let roots: &[(&str, &str, &str)] = match host {
-            "claude" => &[
-                ("project", ".claude/skills", "skill"),
-                ("project", ".claude/plugins", "plugin"),
-                ("home", ".claude/skills", "skill"),
-                ("home", ".claude/plugins", "plugin"),
-            ],
-            _ => &[
-                ("project", ".agents/skills", "skill"),
-                ("home", ".agents/skills", "skill"),
-                ("home", ".codex/skills", "skill"),
-            ],
-        };
-        for (scope, relative, kind) in roots {
+        // Backup evidence is the package manifests only; rules, agents and commands are
+        // instruction files, not packages, and the manifest validator names the package files.
+        for (scope, relative, kind) in discovery_roots(host)
+            .iter()
+            .filter(|(_, _, kind)| matches!(*kind, "skill" | "plugin"))
+        {
             let root = if *scope == "project" { project } else { home };
             let path = root.record.path.join(relative);
-            if !path.exists() {
+            if std::fs::symlink_metadata(&path).is_err() {
                 continue;
             }
             collect_manifest_files(
@@ -303,20 +500,17 @@ fn collect_manifest_files(
     let meta = std::fs::symlink_metadata(path).map_err(|_| AdoptionError {
         reason: AdoptionReason::CoverageIncomplete,
     })?;
-    if meta.file_type().is_symlink() {
-        return Err(AdoptionError {
-            reason: AdoptionReason::PathUnsafe,
-        });
+    // A linked entry is not followed and not snapshotted: its bytes belong to another root.
+    // The inventory records it as `linked`; the backup must still cover the siblings.
+    if meta.file_type().is_symlink() || is_reparse_point(&meta) {
+        return Ok(());
     }
     if meta.is_file() {
         let file_name = path
             .file_name()
             .and_then(|v| v.to_str())
             .unwrap_or_default();
-        if (kind == "skill" && file_name != "SKILL.md")
-            || (kind == "plugin"
-                && !matches!(file_name, "plugin.json" | "manifest.json" | "SKILL.md"))
-        {
+        if !wanted_file(kind, file_name) {
             return Ok(());
         }
         let rel = path
@@ -457,12 +651,68 @@ fn inspect_host(host: &str, project: &Path, home: &Path) -> Result<Value, Adopti
         items.push(item);
         append_configured_entries(&mut items, host, surface.scope, relative, &bytes);
     }
+    if host == "claude" {
+        let (managed_item, managed_detail) = managed_policy_observation(host);
+        items.push(managed_item);
+        coverage_details.push(managed_detail);
+    }
     if coverage == "complete" {
         coverage = "incomplete";
     }
     Ok(
         json!({"host": host, "coverage": coverage, "coverageDetails": coverage_details, "items": items}),
     )
+}
+
+/// The platform directory Claude Code reads managed policy from
+/// (code.claude.com/docs/en/managed-settings, checked 2026-09-22). It lies outside both roots,
+/// so it is observed read-only and is never a backup, apply or restore surface. The registry and
+/// MDM channels the same page documents are not read; the coverage detail says so.
+fn managed_policy_directory() -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::path::PathBuf::from(
+            std::env::var_os("ProgramFiles").unwrap_or_else(|| "C:\\Program Files".into()),
+        )
+        .join("ClaudeCode")
+    } else if cfg!(target_os = "macos") {
+        std::path::PathBuf::from("/Library/Application Support/ClaudeCode")
+    } else {
+        std::path::PathBuf::from("/etc/claude-code")
+    }
+}
+
+fn managed_policy_observation(host: &str) -> (Value, Value) {
+    const FILE: &str = "managed-settings.json";
+    let directory = managed_policy_directory();
+    let location = format!("{}/{FILE}", directory.display()).replace('\\', "/");
+    let mut item = json!({
+        "id": "managed/managed-settings.json", "root": "managed", "path": location,
+        "host": host, "scope": "managed", "kind": FILE, "surfaceKind": "managed_settings",
+        "status": "absent", "installed": false, "enabled": Value::Null, "loaded": Value::Null,
+        "digest": Value::Null, "origin": "platform", "protected": true, "duplicate": false,
+        "managed": true
+    });
+    let detail = json!({"scope":"managed-policy","state":"incomplete","reason":"registry_mdm_and_managed_settings_d_not_inspected"});
+    if std::fs::symlink_metadata(&directory).is_err() {
+        return (item, detail);
+    }
+    match read_candidate(&directory, FILE) {
+        Ok(None) => {}
+        Ok(Some(bytes)) if bytes.len() as u64 > MAX_FILE_BYTES => {
+            item["status"] = json!("truncated");
+            item["installed"] = json!(true);
+        }
+        Ok(Some(bytes)) => {
+            item["status"] = json!(parse_status(FILE, &bytes));
+            item["installed"] = json!(true);
+            item["digest"] = json!(format!("sha256:{}", hex::encode(Sha256::digest(&bytes))));
+        }
+        Err(_) => {
+            item["status"] = json!("inaccessible");
+            item["installed"] = Value::Null;
+        }
+    }
+    (item, detail)
 }
 
 fn append_configured_entries(

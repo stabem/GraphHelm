@@ -9,7 +9,11 @@ pub(crate) struct Surface {
     pub kind: &'static str,
 }
 
-pub(crate) const ALL: [Surface; 14] = [
+/// Claude Code reads project instructions from `CLAUDE.md` or `.claude/CLAUDE.md`, a
+/// git-ignored `CLAUDE.local.md` beside them, and user instructions from `~/.claude/CLAUDE.md`
+/// (code.claude.com/docs/en/memory, checked 2026-09-22). `~/CLAUDE.md` is not a documented
+/// location and is not a surface.
+pub(crate) const ALL: [Surface; 16] = [
     Surface {
         id: "project/AGENTS.md",
         scope: "project",
@@ -21,6 +25,20 @@ pub(crate) const ALL: [Surface; 14] = [
         id: "project/CLAUDE.md",
         scope: "project",
         path: "CLAUDE.md",
+        host: "claude",
+        kind: "instructions",
+    },
+    Surface {
+        id: "project/.claude/CLAUDE.md",
+        scope: "project",
+        path: ".claude/CLAUDE.md",
+        host: "claude",
+        kind: "instructions",
+    },
+    Surface {
+        id: "project/CLAUDE.local.md",
+        scope: "project",
+        path: "CLAUDE.local.md",
         host: "claude",
         kind: "instructions",
     },
@@ -95,9 +113,9 @@ pub(crate) const ALL: [Surface; 14] = [
         kind: "instructions",
     },
     Surface {
-        id: "home/CLAUDE.md",
+        id: "home/.claude/CLAUDE.md",
         scope: "home",
-        path: "CLAUDE.md",
+        path: ".claude/CLAUDE.md",
         host: "claude",
         kind: "instructions",
     },

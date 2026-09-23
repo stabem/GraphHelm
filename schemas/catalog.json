@@ -126,7 +126,7 @@
       "id": "https://p50.dev/schemas/restore-plan.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/restore-plan.schema.json",
-      "sha256": "sha256:7dc771b31ae7fb6f8edb681b21010764ad621ddd1fb34b61497fb46cc44a703a"
+      "sha256": "sha256:6d5c0821e57fdf4e905ff6301f3dd1f555464c578cddd1b7e9aabbd03f475de1"
     },
     "activation-receipt": {
       "id": "https://p50.dev/schemas/activation-receipt.schema.json",

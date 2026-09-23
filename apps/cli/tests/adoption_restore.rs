@@ -36,7 +36,9 @@ fn cli_previews_then_restores_only_the_exact_accepted_offline_plan() {
         .unwrap();
     assert!(
         preview.status.success(),
-        "{}",
+        "stdout: {}
+stderr: {}",
+        String::from_utf8_lossy(&preview.stdout),
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(std::fs::read_dir(s.path()).unwrap().count(), before);
@@ -100,7 +102,9 @@ fn cli_restores_a_direct_manual_checkpoint_without_an_adoption_journal() {
         .unwrap();
     assert!(
         backup.status.success(),
-        "{}",
+        "stdout: {}
+stderr: {}",
+        String::from_utf8_lossy(&backup.stdout),
         String::from_utf8_lossy(&backup.stderr)
     );
     let backup: Value = serde_json::from_slice(&backup.stdout).unwrap();
@@ -116,7 +120,9 @@ fn cli_restores_a_direct_manual_checkpoint_without_an_adoption_journal() {
         .unwrap();
     assert!(
         preview.status.success(),
-        "{}",
+        "stdout: {}
+stderr: {}",
+        String::from_utf8_lossy(&preview.stdout),
         String::from_utf8_lossy(&preview.stderr)
     );
     let preview: Value = serde_json::from_slice(&preview.stdout).unwrap();
@@ -144,7 +150,9 @@ fn cli_restores_a_direct_manual_checkpoint_without_an_adoption_journal() {
         .unwrap();
     assert!(
         applied.status.success(),
-        "{}",
+        "stdout: {}
+stderr: {}",
+        String::from_utf8_lossy(&applied.stdout),
         String::from_utf8_lossy(&applied.stderr)
     );
     let applied: Value = serde_json::from_slice(&applied.stdout).unwrap();

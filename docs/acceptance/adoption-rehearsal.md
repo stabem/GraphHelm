@@ -38,13 +38,31 @@ graphhelm setup --project $project --home $profile --plan $plan
 graphhelm setup --project $project --home $profile --state-root $state --apply $plan --accept 'sha256:<exact-reviewed-digest>'
 ```
 
-The discovery preview is conservative: unknown text is `unresolved`, and fixed-file inventory is
-not exhaustive skill-tree discovery or proof of effective managed policy. Resolve the supported
-operations in a private AdoptionPlan, with explicit user scope for user configuration. Review the
-actual keep/disable/replace/unresolved decisions, protected rules, exact operation bytes, package
-pins and digest. `--plan` previews an already reviewed plan; it does not invent approval or convert
-an unresolved discovery report into an executable plan. Acceptance is the single explicit
-`--accept` digest; pipes never confirm automatically. The CLI repeats all mutation checks.
+The discovery preview is conservative: every instruction file that exists is `unresolved`, every
+other existing item (skills, plugins, MCP servers, settings, agents, commands) is `keep`, and an
+absent surface gets no decision. Fixed-file inventory is not proof of effective managed policy: the
+platform managed-settings file is observed, the registry and MDM channels are not. A link inside a
+discovery root is recorded as `linked` and never followed. Turn the preview into the applyable plan
+with owner decisions, one per unresolved item, and write it to a private file:
+
+```powershell
+graphhelm setup --project $project --home $profile --resolve 'project/AGENTS.md=replace:D:/_agent-scratch/graphhelm/adoption-rehearsal/AGENTS.reviewed.md' --out $plan
+```
+
+`--resolve <item>=keep` answers an item without an operation; `--resolve <item>=replace:<file>`
+uses the file's bytes as the reviewed replacement and is accepted only for the surfaces `apply`
+can write today (`project/AGENTS.md`, `project/CLAUDE.md`, `home/AGENTS.md`). Any unresolved item
+left unanswered refuses the whole plan. A plan with only `keep` answers is refused too: the plan
+schema requires an operation, so a keep-everything or packages-only adoption cannot be expressed
+yet (#1208 F6). The envelope on stdout redacts the after-bytes; the private file at `--out` holds
+them, owner-only. Review the actual decisions, exact operation bytes, package pins and digest in
+that file. `--plan` previews an already reviewed plan; it does not invent approval. Acceptance is
+the single explicit `--accept` digest; pipes never confirm automatically. The CLI repeats all
+mutation checks.
+
+Do not capture the JSON with PowerShell 5.1's `>`: `Out-File` writes UTF-16, and the file is not
+what `--plan` or a JSON reader expects. Use `--out` for the plan, and `| Set-Content -Encoding utf8`
+(or `--json | Out-File -Encoding utf8`) when you keep an envelope.
 
 Check the verified backup and durable journal before treating file installation as complete.
 Repeat the identical accepted apply and confirm the original backup ID is unchanged. Record

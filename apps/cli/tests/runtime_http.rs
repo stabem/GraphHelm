@@ -163,8 +163,30 @@ fn post_request(
     parse_response(&String::from_utf8_lossy(&raw))
 }
 
+/// How long a POST may take to answer. `start` in autopilot mode runs the whole graph inside the
+/// request (program nodes, the tests runner, sealed events), so its answer time is the machine's
+/// speed, not a property of the runtime. At 15 s this failed in about half of the gate runs on
+/// 2026-09-23 (os error 10060, WSAETIMEDOUT) while passing alone, which made it a load meter rather
+/// than a test. A hang still fails, one bound later.
+const POST_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
 fn post_json(url: &str, token: &str, extra_headers: &[(&str, &str)], body: &Value) -> (u16, Value) {
-    let response = post_request(url, token, extra_headers, body, Duration::from_secs(15))
+    post_json_within(url, token, extra_headers, body, POST_READ_TIMEOUT)
+}
+
+/// A POST whose answer time IS the property under test. An immediate pause must answer without
+/// waiting out the in-flight node (which, against `hang_forever_server`, never ends), so it keeps
+/// the short bound the 120 s default would otherwise have widened (review of #1211 by [5bdc38]).
+const PAUSE_ANSWER_BOUND: Duration = Duration::from_secs(15);
+
+fn post_json_within(
+    url: &str,
+    token: &str,
+    extra_headers: &[(&str, &str)],
+    body: &Value,
+    read_timeout: Duration,
+) -> (u16, Value) {
+    let response = post_request(url, token, extra_headers, body, read_timeout)
         .unwrap_or_else(|error| panic!("request to {url} failed: {error}"));
     (response.status, json_body(&response))
 }
@@ -646,7 +668,7 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
 
     // Immediate pause: interrupts the in-flight node.
     let pause_url = format!("{base}/v1/executions/{execution}/pause");
-    let (pause_status, pause_reply) = post_json(
+    let (pause_status, pause_reply) = post_json_within(
         &pause_url,
         &token,
         &[
@@ -655,6 +677,7 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
             ("X-GraphHelm-Actor-Type", "owner"),
         ],
         &serde_json::json!({ "mode": "immediate" }),
+        PAUSE_ANSWER_BOUND,
     );
     assert_eq!(pause_status, 200, "{pause_reply}");
     assert_eq!(pause_reply["data"]["status"], "paused", "{pause_reply}");

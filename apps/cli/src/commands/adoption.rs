@@ -33,32 +33,115 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             });
         }
     };
-    match graphhelm_host_adoption::inventory(&args.project, &args.home) {
-        Ok(inventory) => match graphhelm_host_adoption::propose(&inventory) {
-            Ok(plan) => Outcome::success(
-                COMMAND,
+    let result = (|| {
+        use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+        let inventory = graphhelm_host_adoption::inventory(&args.project, &args.home)?;
+        if args.resolve.is_empty() {
+            let plan = graphhelm_host_adoption::propose(&inventory)?;
+            if let Some(out) = &args.out {
+                graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
+            }
+            return Ok(
                 serde_json::json!({"inventory": inventory, "plan": plan, "provisioning": provisioning}),
-            ),
-            Err(error) => Outcome::domain(
-                COMMAND,
-                vec![Diagnostic::error(
-                    REFUSED,
-                    error.to_string(),
-                    error.reason.pointer(),
-                    SOURCE,
-                )],
-            ),
-        },
-        Err(error) => Outcome::domain(
-            COMMAND,
-            vec![Diagnostic::error(
-                REFUSED,
-                error.to_string(),
-                error.reason.pointer(),
-                SOURCE,
-            )],
-        ),
+            );
+        }
+        // A resolved plan carries the reviewed after-bytes. They go to the private file only;
+        // without --out there is nowhere safe to put them, so the run is refused before it reads
+        // any replacement file.
+        let out = args.out.as_deref().ok_or(AdoptionError {
+            reason: AdoptionReason::InvalidConfiguration,
+        })?;
+        let resolutions = args
+            .resolve
+            .iter()
+            .map(|text| parse_resolution(text))
+            .collect::<Result<Vec<_>, _>>()?;
+        let plan = graphhelm_host_adoption::resolve(&inventory, &resolutions)?;
+        graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
+        let digest = plan["digest"].clone();
+        Ok(serde_json::json!({
+            "inventory": inventory,
+            "plan": graphhelm_host_adoption::redact(plan),
+            "provisioning": provisioning,
+            "acceptance": {
+                "mode": "explicit_digest",
+                "digest": digest,
+                "instruction": "The private plan file is written. Review it, then use --apply with that file, --state-root, and --accept with this exact digest. A pipe never confirms automatically.",
+            }
+        }))
+    })();
+    match result {
+        Ok(data) => Outcome::success(COMMAND, data),
+        Err(error) => refused(error),
     }
+}
+
+fn pretty(
+    plan: &serde_json::Value,
+) -> Result<Vec<u8>, graphhelm_protocols::adoption::AdoptionError> {
+    let mut bytes = serde_json::to_vec_pretty(plan).map_err(|_| {
+        graphhelm_protocols::adoption::AdoptionError {
+            reason: graphhelm_protocols::adoption::AdoptionReason::LimitExceeded,
+        }
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+/// `<item>=keep` or `<item>=replace:<file>`. The file is read with the same bound as a plan.
+fn parse_resolution(
+    text: &str,
+) -> Result<graphhelm_host_adoption::Resolution, graphhelm_protocols::adoption::AdoptionError> {
+    use graphhelm_policy::adoption::Decision;
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    let invalid = || AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    };
+    let (item, decision) = text.split_once('=').ok_or_else(invalid)?;
+    if item.is_empty() || item.len() > 4096 {
+        return Err(invalid());
+    }
+    if decision == "keep" {
+        return Ok(graphhelm_host_adoption::Resolution {
+            item: item.to_owned(),
+            decision: Decision::Keep,
+            after: None,
+        });
+    }
+    let file = decision.strip_prefix("replace:").ok_or_else(invalid)?;
+    if file.is_empty() {
+        return Err(invalid());
+    }
+    Ok(graphhelm_host_adoption::Resolution {
+        item: item.to_owned(),
+        decision: Decision::Replace,
+        after: Some(read_bytes(std::path::Path::new(file))?),
+    })
+}
+
+fn read_bytes(
+    path: &std::path::Path,
+) -> Result<Vec<u8>, graphhelm_protocols::adoption::AdoptionError> {
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    use std::io::Read;
+    const MAX: u64 = 4 * 1024 * 1024;
+    let invalid = || AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    };
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| invalid())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX {
+        return Err(invalid());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| invalid())?
+        .take(MAX + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    if bytes.len() as u64 > MAX {
+        return Err(invalid());
+    }
+    Ok(bytes)
 }
 
 fn read_document(

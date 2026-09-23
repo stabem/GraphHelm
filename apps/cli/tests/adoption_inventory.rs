@@ -344,6 +344,45 @@ fn preview_bounds_the_plugin_record_and_records_the_cut() {
     );
 }
 
+/// Review of #1210 by [5bdc38] (LOW): the cell above cannot pin the name cap, because keys sort
+/// and the entry budget fires before the long name is ever read. This one has no budget pressure:
+/// only the 512-byte cap can keep the long name out, and the cut must still be recorded.
+#[test]
+fn preview_refuses_an_over_long_plugin_name_and_records_the_cut() {
+    let project = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let plugins = home.path().join(".claude/plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    let long_name = "a".repeat(600);
+    let record = format!(
+        r#"{{"version":2,"plugins":{{"{long_name}@m":[{{"scope":"user"}}],"ok@market":[{{"scope":"user"}}]}}}}"#
+    );
+    std::fs::write(plugins.join("installed_plugins.json"), record).unwrap();
+
+    let value = setup(project.path(), home.path());
+    let names = claude_items(&value)
+        .into_iter()
+        .filter(|item| item["kind"] == "plugin")
+        .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec!["ok@market".to_owned()],
+        "only the valid name is emitted"
+    );
+    let host = claude_host(&value);
+    assert!(
+        host["coverageDetails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|detail| detail["scope"] == "plugin-record" && detail["reason"] == "truncated"),
+        "the cut is recorded: {}",
+        host["coverageDetails"]
+    );
+}
+
 #[test]
 fn preview_inventories_user_instructions_rules_agents_and_commands() {
     let project = tempfile::tempdir().unwrap();

@@ -72,6 +72,15 @@ pub struct AdoptionSetupArgs {
     pub home: PathBuf,
     #[arg(long, conflicts_with_all = ["apply", "recover", "verify"])]
     pub dry_run: bool,
+    /// Owner decision for one unresolved item: `<item>=keep` or `<item>=replace:<file>` whose
+    /// bytes are the reviewed replacement. Repeatable. With any `--resolve`, `--out` is required
+    /// because the resulting plan carries bytes that never go to stdout.
+    #[arg(long = "resolve", conflicts_with_all = ["apply", "recover", "verify", "plan"])]
+    pub resolve: Vec<String>,
+    /// Write the plan (preview, or the applyable plan built from `--resolve`) to this private,
+    /// owner-only file. Its exact digest is what `--accept` takes.
+    #[arg(long, conflicts_with_all = ["apply", "recover", "verify", "plan"])]
+    pub out: Option<PathBuf>,
     /// Private recovery storage, outside the project and host roots.
     #[arg(long = "state-root")]
     pub state_root: Option<PathBuf>,

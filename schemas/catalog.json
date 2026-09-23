@@ -108,7 +108,7 @@
       "id": "https://p50.dev/schemas/adoption-plan.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/adoption-plan.schema.json",
-      "sha256": "sha256:afdb5bf44896fbec81ceea4deda7232f32a614ad49dc134162087b9e576f19a6"
+      "sha256": "sha256:865b7cc39fbb82f3e6215a057bfc066b7b0d4b2ddcb6b240414cd1d0827219fa"
     },
     "adoption-receipt": {
       "id": "https://p50.dev/schemas/adoption-receipt.schema.json",

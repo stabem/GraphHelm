@@ -115,7 +115,17 @@
 #   1  a DETACHED canary-dirty bench carrying a commit no remote has is RETAINED
 #   1  a DETACHED bench whose reachability question cannot be answered is RETAINED (fails SAFE)
 #   1  and the BRANCH arm fails safe too: no origin/<branch> RETAINS, it does not read as zero
-$ExpectedAssertionCount = 197
+#   -- #988, the per-slot cargo home is observed rather than read off the source (+5 over 197):
+#   1  the gate CHILD runs with the per-slot CARGO_HOME, reported by the child itself
+#   1  the runner CREATES that home instead of naming a path cargo would find missing
+#   1  the durable status names the cache that produced the run
+#   1  CONTROL: -SharedCargoHome hands the child a DIFFERENT home, so the cells above can fail
+#   1  CONTROL: and the status says `cargoHome=shared`, so `off` is reported and not merely absent
+#   -- #988 follow-up, the contradictory flag pair (+3 over 202):
+#   1  -CargoHome with -SharedCargoHome refuses instead of picking a winner
+#   1  and the refusal names both the conflict and the path it was handed
+#   1  CONTROL: the refused run created no home, so it stopped at launch
+$ExpectedAssertionCount = 205
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -313,6 +323,23 @@ try {
     }
     $entryPath = Join-Path $queue "932-$($entryHead.Substring(0, 8)).json"
     Set-Content -LiteralPath $entryPath -Value (ConvertTo-Json $entry) -Encoding UTF8
+
+    # #988: THE CONTRADICTORY PAIR REFUSES, AND IT REFUSES BEFORE IT DOES ANYTHING. -CargoHome names a
+    # home and -SharedCargoHome asks for the machine-wide one; neither reading of the pair is more
+    # likely, so picking a winner silently would leave an operator who named a path reading
+    # `cargoHome=shared` as a broken feature rather than as their own mistake. The entry queued above
+    # is still here, so this also shows the refusal happens at launch and not after work starts.
+    $bothLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+        -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
+        -CargoHome (Join-Path $slotRoot 'explicit-home') -SharedCargoHome 2>&1
+    $bothCode = $LASTEXITCODE
+    $bothText = ($bothLog | Out-String)
+    Assert-True -Condition ($bothCode -ne 0) `
+        -Message "#988: -CargoHome together with -SharedCargoHome refuses rather than guessing (exit $bothCode)"
+    Assert-True -Condition ($bothText -match 'opposite things' -and $bothText -match 'explicit-home') `
+        -Message "#988: and the refusal names BOTH the flag conflict and the path it was given, so the operator does not have to guess which argument it disliked (said: '$(($bothText -split "`r?`n" | Where-Object { $_ -match '\S' } | Select-Object -First 1))')"
+    Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $slotRoot 'explicit-home'))) `
+        -Message '#988: CONTROL: the refused run created no cargo home, so it stopped before Invoke-OneEntry rather than after'
 
     $log = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
         -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state 2>&1
@@ -1694,6 +1721,8 @@ owhere head=$serverHead | STATUS: gate run",
 param([string] $LandingSnapshotPath)
 New-Item -ItemType Directory -Path $env:CARGO_TARGET_DIR -Force | Out-Null
 if ($env:RUNNER_TEST_STATE_MARKER) { Set-Content -LiteralPath $env:RUNNER_TEST_STATE_MARKER -Value 'gate reached' -Encoding ASCII }
+$cargoHomeSeen = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { '<unset>' }
+if ($env:RUNNER_TEST_CARGO_HOME_MARKER) { Set-Content -LiteralPath $env:RUNNER_TEST_CARGO_HOME_MARKER -Value $cargoHomeSeen -Encoding ASCII }
 if ($env:RUNNER_TEST_MODE -eq 'noop') { exit 0 }
 if ($env:RUNNER_TEST_MODE -eq 'crash') { exit 9 }
 if ($env:RUNNER_TEST_MODE -eq 'throw') { throw 'fixture gate failed before its final statement' }
@@ -1780,6 +1809,12 @@ exit 0
     $unrelatedTarget = Join-Path $targetRoot 'pr-unrelated'
     New-Item -ItemType Directory -Path $unrelatedTarget -Force | Out-Null
 
+    # #988: WHAT THE GATE CHILD ACTUALLY RECEIVED. The runner composes a CARGO_HOME assignment
+    # into the child's command line, so the only honest observer is the child itself -- reading
+    # the runner's source, or the parent's own environment, would pass on a runner that builds
+    # the string and never splices it, which is exactly the defect this guards.
+    $cargoHomeMarker = Join-Path $fixture 'cargo-home-seen.txt'
+    $env:RUNNER_TEST_CARGO_HOME_MARKER = $cargoHomeMarker
     Push-Location $clone
     try {
         $trackingLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
@@ -1787,6 +1822,7 @@ exit 0
             -BenchRoot $benchRoot -TargetRoot $targetRoot -PollSeconds 1 2>&1
     } finally {
         Pop-Location
+        Remove-Item Env:RUNNER_TEST_CARGO_HOME_MARKER -ErrorAction SilentlyContinue
     }
     $trackingText = ($trackingLog | Out-String)
     $bench = Join-Path $benchRoot 'pr933'
@@ -1794,8 +1830,25 @@ exit 0
     $trackingStatus = if (Test-Path -LiteralPath $trackingStatusPath) { (Get-Content -LiteralPath $trackingStatusPath -Raw).Trim() } else { '<no status file>' }
     Assert-True -Condition ($trackingText -match "building on $([regex]::Escape($serverBranch))") `
         -Message "the bench was prepared and the run reached the build step (status: '$trackingStatus'; runner said: '$(($trackingText -split "`r?`n" | Where-Object { $_ -match '\S' } | Select-Object -Last 3) -join ' // ')')"
-    Assert-True -Condition ($trackingStatus -match 'finished rc=0 childExit=0 pushed=True') `
-        -Message "the successful gate records wrapper rc=0 and childExit=0 (status: '$trackingStatus')"
+    # THE CONTRACT IS THE FIELDS, NOT THEIR ADJACENCY. This cell pinned
+    # `finished rc=0 childExit=0 pushed=True` as ONE contiguous string, so it also silently
+    # forbade any new field between them -- measured when #988's `cargoHome=` first went in
+    # beside `childExit=` and turned this cell red while every value in the status was right.
+    # Nothing parses this line positionally (`ci/gate-queue.ps1:210` prints it verbatim), so the
+    # order was never the contract. Asserting each field keeps everything this cell was for and
+    # stops it failing for a reason it does not name.
+    Assert-True -Condition ($trackingStatus -match '\bfinished rc=0\b' -and $trackingStatus -match '\bchildExit=0\b' -and $trackingStatus -match '\bpushed=True\b') `
+        -Message "the successful gate records wrapper rc=0, childExit=0 and pushed=True (status: '$trackingStatus')"
+    # #988, THE BEHAVIOURAL HALF. `-SlotRoot` is set here, so the runner's per-slot default
+    # resolves under the fixture rather than the machine's real `D:\cargo-homes\hdd`.
+    $expectedCargoHome = Join-Path $slotRoot 'cargo-home'
+    $cargoHomeSeenByGate = if (Test-Path -LiteralPath $cargoHomeMarker) { (Get-Content -LiteralPath $cargoHomeMarker -Raw).Trim() } else { '<no marker written>' }
+    Assert-True -Condition ($cargoHomeSeenByGate -eq $expectedCargoHome) `
+        -Message "#988: the gate child runs with the per-slot CARGO_HOME (expected '$expectedCargoHome', the child saw '$cargoHomeSeenByGate')"
+    Assert-True -Condition (Test-Path -LiteralPath $expectedCargoHome) `
+        -Message "#988: the runner creates that home rather than pointing cargo at a path that does not exist ('$expectedCargoHome')"
+    Assert-True -Condition ($trackingStatus -match ('cargoHome=' + [regex]::Escape($expectedCargoHome))) `
+        -Message "#988: the durable status names the cache that produced the run, so a receipt's provenance outlives the runner's notes (status: '$trackingStatus')"
     $benchHead = if (Test-Path -LiteralPath $bench) { (& git -C $bench rev-parse HEAD 2>$null) } else { '' }
     $publishedHead = (& git -C $clone ls-remote origin "refs/heads/$serverBranch" | ForEach-Object { ([string]$_ -split "`t")[0] }).Trim()
     Assert-True -Condition ("$benchHead".Trim() -eq $publishedHead) `
@@ -1962,18 +2015,32 @@ exit /b 0
     Get-ChildItem -LiteralPath $queue -File | Remove-Item -Force -ErrorAction SilentlyContinue
     $noOpPath = Join-Path $queue "933-$($publishedHead.Substring(0, 8))-noop.json"
     Set-Content -LiteralPath $noOpPath -Value (ConvertTo-Json $failedEntry) -Encoding UTF8
+    # #988, THE CONTROL, riding a run this suite already pays for. Without it the cell above
+    # cannot fail for the right reason: a runner that exported CARGO_HOME unconditionally, or a
+    # machine whose ambient CARGO_HOME happened to match, would satisfy it. `-SharedCargoHome`
+    # must produce a DIFFERENT observation from the same fixture and the same marker mechanism.
+    $sharedCargoHomeMarker = Join-Path $fixture 'cargo-home-seen-shared.txt'
+    $env:RUNNER_TEST_CARGO_HOME_MARKER = $sharedCargoHomeMarker
     $env:RUNNER_TEST_MODE = 'noop'
     try {
         Push-Location $noOpClone
         try {
             $noOpLog = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
                 -Slot HDD -SlotRoot $slotRoot -Once -QueueDirectory $queue -StateDirectory $state `
-                -BenchRoot $noOpBenchRoot -TargetRoot $targetRoot -PollSeconds 1 2>&1
+                -BenchRoot $noOpBenchRoot -TargetRoot $targetRoot -PollSeconds 1 -SharedCargoHome 2>&1
         } finally { Pop-Location }
-    } finally { Remove-Item Env:RUNNER_TEST_MODE -ErrorAction SilentlyContinue }
+    } finally {
+        Remove-Item Env:RUNNER_TEST_MODE -ErrorAction SilentlyContinue
+        Remove-Item Env:RUNNER_TEST_CARGO_HOME_MARKER -ErrorAction SilentlyContinue
+    }
     $noOpStatus = if (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($noOpPath, '.status'))) { Get-Content -LiteralPath ([System.IO.Path]::ChangeExtension($noOpPath, '.status')) -Raw } else { '' }
     Assert-True -Condition ($noOpStatus -match 'pushed=False') -Message 'a no-op gate cannot report a published receipt'
     Assert-True -Condition (Test-Path -LiteralPath (Join-Path $targetRoot 'pr933')) -Message 'a no-op gate retains the target backstop'
+    $sharedCargoHomeSeen = if (Test-Path -LiteralPath $sharedCargoHomeMarker) { (Get-Content -LiteralPath $sharedCargoHomeMarker -Raw).Trim() } else { '<no marker written>' }
+    Assert-True -Condition ($sharedCargoHomeSeen -ne (Join-Path $slotRoot 'cargo-home')) `
+        -Message "CONTROL for #988: -SharedCargoHome does NOT hand the child the per-slot home, so the cell above can fail (child saw '$sharedCargoHomeSeen')"
+    Assert-True -Condition ($noOpStatus -match 'cargoHome=shared') `
+        -Message "CONTROL for #988: and the status says so, so an operator can see the per-slot home did not take effect (status: '$($noOpStatus.Trim())')"
 
     $crashClone = Join-Path $fixture 'runner-clone-crash'
     $crashBenchRoot = Join-Path $fixture 'benches-crash'

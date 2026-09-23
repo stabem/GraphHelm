@@ -63,6 +63,46 @@ param(
     [string] $QueueDirectory,
     [string] $BenchRoot,
     [string] $TargetRoot,
+    # PER-SLOT CARGO HOME (#988). One CARGO_HOME shared by every slot is ONE `.package-cache` lock
+    # and one registry directory that every concurrent gate writes through, whatever their
+    # CARGO_TARGET_DIR is -- so the per-PR target directories already in place do not remove this
+    # contention, they only move it. #988 measured 39.3 minutes of ONE run in which no stage ran
+    # at all, three `Blocking waiting for file lock on package cache` lines in the log, and the
+    # lost overlap then tripped ci/gate.ps1's #956 honesty guard into a RED with an EMPTY
+    # failing-stage list. ci/merge-proof.ps1 refuses such a manifest at `:369`, so the cost is not
+    # slow runs, it is runs nobody can press on.
+    #
+    # THE DEFAULT IS PER SLOT, NOT OPT-IN. A knob every caller has to remember is a feature that
+    # is off in production; `-SharedCargoHome` is the way back to the machine-wide home.
+    #
+    # THEY GO ON `D:` BECAUSE IT IS THE ONLY DISK ABOVE ITS OWN FLOOR WITH ROOM FOR TWO HOMES --
+    # not because it has the most free space, which was the first version of this comment and is
+    # the wrong axis. Enumerated against `Get-TargetRootFloorGB` and AGENTS.md rather than eyeballed:
+    #
+    #   C:  101.1 GB free, floor 100  ->  1.1 GB headroom: fits ONE home, not two, and a home grows
+    #   D:  432.7 GB free, floor  30  ->  402.7 GB headroom: the only one that holds both
+    #   E:   29.9 GB free, floor  30  ->  BELOW ITS FLOOR already, with nothing on it
+    #   F:   73.5 GB free, floor  30  ->  forbidden outright: AGENTS.md says "Never F:", the repo disk
+    #
+    # THE HONEST COST OF THAT, STATED RATHER THAN HIDDEN: `D:` is a surveillance-class platter and
+    # #1053 item 3 moved gate TARGETS off it for a measured reason (median 1866 s there against
+    # 1427 s on `E:`, over 370 records). Putting the cargo homes there is compliant and not ideal.
+    # `registry/src` is ~30k small files, which is the shape a saturated platter handles worst, so
+    # the moment `E:` is back above its floor these belong there instead -- one line, this branch.
+    #
+    # A NEW HOME IS COLD, and that is the cost #988 names: the first run per slot re-fetches the
+    # registry (the machine-wide home measures 0.94 GB). It is deliberately NOT seeded by copying
+    # -- a half-copied registry is a worse failure than one slow first build.
+    #
+    # MEASURED LIMIT, AND IT IS NOT IN THIS FILE. A cargo SUBCOMMAND installed by `cargo install`
+    # lives in the OLD home's `bin`, and a cold home has none. `cargo nextest --version` under an
+    # empty CARGO_HOME still answered `0.9.145` here -- but because `C:\Users\gabri\.cargo\bin` is on
+    # PATH, not because the home carried it. On a machine where that directory is not on PATH the
+    # gate's nextest stages would fail under a cold per-slot home.
+    [string] $CargoHome,
+    # THE WAY BACK, so a caller wanting the old behaviour does not have to know which path the
+    # default above would have chosen.
+    [switch] $SharedCargoHome,
     [string] $StateDirectory,
     [switch] $Once,
     [int] $MaxIterations = 0,
@@ -99,6 +139,31 @@ if (-not $BenchRoot) { $BenchRoot = if ($Slot -eq 'SSD') { 'D:\runner-ssd' } els
 # directories against a rule saying at most two. An enforced floor on one gate target is a stricter
 # regime than an unenforced rule on seventeen lane targets.
 if (-not $TargetRoot) { $TargetRoot = if ($Slot -eq 'SSD') { 'E:\runner-targets\ssd' } else { 'C:\runner-targets\hdd' } }
+# #988, resolved here and beside $TargetRoot because it is the same KIND of decision: a per-slot
+# path this runner owns. The directory is NOT created here -- Write-Note does not exist yet at
+# this point in the file, and a creation that cannot announce its own failure is the shape this
+# change exists to end. Invoke-OneEntry creates it, once, and says so.
+# BOTH AT ONCE IS A CONTRADICTION, NOT A PRECEDENCE QUESTION. The first version of this let
+# -SharedCargoHome win silently, which buys the worst outcome available: the operator named a home,
+# did not get it, and reads `cargoHome=shared` as the feature being broken rather than as their own
+# mistake. There is no reading of the pair that is more likely than the other, so guessing one is
+# strictly worse than refusing. It fails HERE, at launch, because a runner loop that starts and
+# then quietly ignores an argument is the shape this whole change exists to end.
+if ($SharedCargoHome -and $CargoHome) {
+    throw "-CargoHome '$CargoHome' and -SharedCargoHome were both given and they ask for opposite things. Pass one: -CargoHome <path> for that home, -SharedCargoHome for the machine-wide one, or neither for this slot's default."
+}
+if ($SharedCargoHome) { $CargoHome = '' }
+elseif (-not $CargoHome) {
+    # A RUNNER TOLD WHERE ITS SLOT LIVES KEEPS ITS CACHE THERE. `-SlotRoot` is already this file's
+    # test seam (`:117`: "exists so a TEST can point this at a throwaway directory"), and without
+    # this branch every existing runner regression would silently create and populate the REAL
+    # `D:\cargo-homes\hdd` -- a suite reaching outside its own temporary root.
+    $CargoHome = if ($SlotRoot) { Join-Path $SlotRoot 'cargo-home' }
+                 elseif ($Slot -eq 'SSD') { 'D:\cargo-homes\ssd' }
+                 else { 'D:\cargo-homes\hdd' }
+}
+$script:CargoHomeChecked = $false
+$script:CargoHomeUsable = $false
 
 # THE RUNNER DOES NOT CLAIM FOR A BUILD. It sets the per-spindle slot paths and lets `ci/gate.ps1`
 # claim through its own `Enter-GateSlot` (`:1953`). The startup terminal reaper briefly uses this
@@ -1556,8 +1621,43 @@ function Invoke-OneEntry {
     # no way to tell a wrapper failure from a still-running child. Keep the wrapper verdict
     # explicit, append the exception to the same bounded transcript, and write the rc in `finally`
     # so every child outcome has a durable answer.
+    # #988: SET IT IN THE CHILD, not merely in this process. Inheritance would carry it too, but
+    # then the home a run used is invisible in the log and a future reader cannot tell which
+    # cache produced a result -- the same reason CARGO_TARGET_DIR is written here, not exported.
+    #
+    # AND WE CREATE THE DIRECTORY EVEN THOUGH CARGO WOULD. Measured: `CARGO_HOME` pointed at a
+    # path that does not exist, `cargo fetch` -> rc=0 and cargo creates the home itself, with
+    # `.package-cache`, `.global-cache` and `registry` in it. So this block is not required for
+    # the feature to work. It earns its place twice over anyway: it ANNOUNCES the one-off cold
+    # fetch at the moment it is incurred rather than leaving a reader to wonder why the first
+    # run on a slot was slow, and it detects an unusable path BEFORE the gate starts -- turning
+    # what would otherwise be a failed gate into a slower run on the machine-wide home.
+    $cargoHomeAssignment = ''
+    if ($CargoHome) {
+        if (-not $script:CargoHomeChecked) {
+            $script:CargoHomeChecked = $true
+            try {
+                if (-not (Test-Path -LiteralPath $CargoHome)) {
+                    New-Item -ItemType Directory -Path $CargoHome -Force -ErrorAction Stop | Out-Null
+                    Write-Note "created the per-slot cargo home $CargoHome; its first run pays one cold registry fetch (#988)"
+                }
+                $script:CargoHomeUsable = $true
+            } catch {
+                # ANNOUNCED. A silent fall back to the machine-wide home is indistinguishable
+                # from the feature working, and an unannounced fallback turns a gap into drift:
+                # every later run would contend on the shared lock while the log said nothing.
+                Write-Note "WARNING could not create the per-slot cargo home $CargoHome ($($_.Exception.Message)); running with the machine-wide home instead"
+                $script:CargoHomeUsable = $false
+            }
+        }
+        if ($script:CargoHomeUsable) {
+            $cargoHomeAssignment = "`$env:CARGO_HOME='$CargoHome'; "
+            Write-Note "entry $($Candidate.File.Name): CARGO_HOME -> $CargoHome"
+        }
+    }
     $inner = "Set-Location '$bench'; " +
         "`$env:CARGO_TARGET_DIR='$target'; " +
+        $cargoHomeAssignment +
         "`$env:GRAPHHELM_SLOT_LOCK_PATH='$slotLock'; " +
         "`$wrapperRc = 99; " +
         "try { & ./ci/gate.ps1$scopeArgument$snapshotArgument *> '$logFile'; " +
@@ -1655,8 +1755,12 @@ function Invoke-OneEntry {
         Remove-PublishedRunnerTarget -TargetRoot $TargetRoot -PullRequest "$pr"
     }
 
-    Set-EntryStatus -EntryPath $entryPath -State ("finished rc=$rc childExit=$childExitText pushed=$pushed log=$logFile")
-    Write-Note "pr $pr finished rc=$rc childExit=$childExitText pushed=$pushed"
+    # #988: WHICH CACHE PRODUCED THIS. The gate manifest records cargoTargetDir and not the home,
+    # so without this field the only trace of the cache a run used dies with the runner's notes
+    # -- and `cargoHome=shared` is how an operator sees the per-slot home did NOT take effect.
+    $homeUsed = if ($cargoHomeAssignment) { $CargoHome } else { 'shared' }
+    Set-EntryStatus -EntryPath $entryPath -State ("finished rc=$rc childExit=$childExitText pushed=$pushed cargoHome=$homeUsed log=$logFile")
+    Write-Note "pr $pr finished rc=$rc childExit=$childExitText pushed=$pushed cargoHome=$homeUsed"
     Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
     return 'built'
 }

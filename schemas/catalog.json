@@ -120,13 +120,13 @@
       "id": "https://p50.dev/schemas/adoption-journal.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/adoption-journal.schema.json",
-      "sha256": "sha256:dfca05c01fb04385894a1836dd345c3eddc8fc5685882a88600a4167d5007545"
+      "sha256": "sha256:18409311f6a8df1be4886eb242ae594cfc7cca52ebbbc02912b1430dc1360115"
     },
     "restore-plan": {
       "id": "https://p50.dev/schemas/restore-plan.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/restore-plan.schema.json",
-      "sha256": "sha256:177dfc168ed3a2bd90621600c13a33702a36a9752be0ed2f1e29a91cd6d14657"
+      "sha256": "sha256:7dc771b31ae7fb6f8edb681b21010764ad621ddd1fb34b61497fb46cc44a703a"
     },
     "activation-receipt": {
       "id": "https://p50.dev/schemas/activation-receipt.schema.json",

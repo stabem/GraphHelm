@@ -82,6 +82,7 @@ pub(crate) struct Prepared {
     directory: File,
     candidate: Option<File>,
     access: Access,
+    current_access: Access,
     pub record: GuardRecord,
 }
 
@@ -90,10 +91,11 @@ impl Source {
         self,
         expected: &str,
         bytes: &[u8],
+        current_metadata: &Access,
         metadata: &Access,
         restoring: bool,
     ) -> Result<Prepared, AdoptionError> {
-        self.check_current(expected, metadata)?;
+        self.check_current(expected, current_metadata)?;
         let name = format!(".graphhelm-adoption-{}", uuid::Uuid::new_v4());
         #[cfg(unix)]
         let directory = backup::unix_create_child_dir(&self.parent, &name)?;
@@ -131,6 +133,7 @@ impl Source {
             directory,
             candidate: Some(candidate),
             access: metadata.clone(),
+            current_access: current_metadata.clone(),
             record,
         })
     }
@@ -158,7 +161,7 @@ impl Prepared {
         #[cfg(windows)]
         let (_pins, _source_guard, _directory_guard) = self.windows_guards()?;
         self.source
-            .check_current(&self.record.expected_digest, &self.access)?;
+            .check_current(&self.record.expected_digest, &self.current_access)?;
         let candidate_file = self.candidate.take().ok_or_else(failed)?;
         if identity(&candidate_file)? != self.record.candidate_identity
             || crate::apply::digest(&read_file(&candidate_file, 1024 * 1024)?)
@@ -207,7 +210,7 @@ impl Prepared {
         if identity(&displaced)? != self.record.source_identity
             || crate::apply::digest(&read_file(&displaced, 1024 * 1024)?)
                 != self.record.expected_digest
-            || access(&displaced)? != self.access
+            || access(&displaced)? != self.current_access
         {
             return Err(failed());
         }
@@ -301,7 +304,13 @@ fn displaced(directory: &File) -> Result<Option<File>, AdoptionError> {
     }
 }
 impl GuardRecord {
-    pub fn verify(&self, root: &Root, path: &str, metadata: &Access) -> Result<(), AdoptionError> {
+    pub fn verify(
+        &self,
+        root: &Root,
+        path: &str,
+        source_metadata: &Access,
+        candidate_metadata: &Access,
+    ) -> Result<(), AdoptionError> {
         name_ok(&self.directory)?;
         let source = root.source(path)?;
         let directory = private_guard(&source.parent, &self.directory)?;
@@ -312,6 +321,7 @@ impl GuardRecord {
             if identity(&candidate)? != self.candidate_identity
                 || crate::apply::digest(&read_file(&candidate, 1024 * 1024)?)
                     != self.replacement_digest
+                || access(&candidate)? != *candidate_metadata
             {
                 return Err(failed());
             }
@@ -321,6 +331,7 @@ impl GuardRecord {
         #[cfg(target_os = "linux")]
         if found == self.candidate_identity {
             if crate::apply::digest(&read_file(&displaced, 1024 * 1024)?) != self.replacement_digest
+                || access(&displaced)? != *candidate_metadata
             {
                 return Err(failed());
             }
@@ -328,7 +339,7 @@ impl GuardRecord {
         }
         if found != self.source_identity
             || crate::apply::digest(&read_file(&displaced, 1024 * 1024)?) != self.expected_digest
-            || access(&displaced)? != *metadata
+            || access(&displaced)? != *source_metadata
         {
             return Err(failed());
         }
@@ -376,7 +387,7 @@ impl GuardRecord {
         &self,
         root: &Root,
         path: &str,
-        metadata: &Access,
+        source_metadata: &Access,
     ) -> Result<(), AdoptionError> {
         #[cfg(windows)]
         {
@@ -397,7 +408,7 @@ impl GuardRecord {
             .ok_or_else(failed)?;
             if identity(&guard)? != self.source_identity
                 || crate::apply::digest(&read_file(&guard, 1024 * 1024)?) != self.expected_digest
-                || access(&guard)? != *metadata
+                || access(&guard)? != *source_metadata
             {
                 return Err(failed());
             }
@@ -406,7 +417,7 @@ impl GuardRecord {
             guard.sync_all().map_err(|_| failed())?;
         }
         #[cfg(not(windows))]
-        let _ = (root, path, metadata);
+        let _ = (root, path, source_metadata);
         Ok(())
     }
 }

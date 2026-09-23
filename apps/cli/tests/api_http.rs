@@ -12,6 +12,21 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[cfg(windows)]
+use std::os::windows::io::{AsHandle, AsRawHandle};
+
+#[cfg(windows)]
+const WAIT_OBJECT_0: u32 = 0;
+#[cfg(windows)]
+const WAIT_TIMEOUT: u32 = 258;
+#[cfg(windows)]
+unsafe extern "system" {
+    fn TerminateProcess(process: *mut std::ffi::c_void, exit_code: u32) -> i32;
+    fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+}
+
+type SpawnObserver = Box<dyn FnOnce(&Child)>;
+
 mod support;
 use support::{RawResponse, parse_response, split_url};
 
@@ -221,7 +236,16 @@ fn serve_with_env(
     extra: &[&str],
     envs: &[(&str, &str)],
 ) -> (ServerGuard, String, String) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    serve_with_env_observed(events, extra, envs, None::<SpawnObserver>)
+}
+
+fn serve_with_env_observed(
+    events: &Path,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+    on_spawn: Option<SpawnObserver>,
+) -> (ServerGuard, String, String) {
+    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
             "serve",
             "--events",
@@ -236,25 +260,45 @@ fn serve_with_env(
         .spawn()
         .unwrap();
 
+    // Establish the guard before any fallible startup parsing, pipe setup, or health check. A
+    // panic after spawn therefore owns a kill-and-wait path during unwinding.
+    let stdout_lines = Arc::new(Mutex::new(Vec::new()));
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = ServerGuard {
+        child,
+        stdout_lines: Arc::clone(&stdout_lines),
+        stderr_lines: Arc::clone(&stderr_lines),
+        stdout_thread: None,
+        stderr_thread: None,
+    };
+    if let Some(on_spawn) = on_spawn {
+        on_spawn(&guard.child);
+    }
     // No race with the startup read below is possible BY OWNERSHIP, not by timing luck:
-    // `.take()` moves each pipe's `ChildStdout`/`ChildStderr` handle out of `child` and into
+    // `.take()` moves each pipe's `ChildStdout`/`ChildStderr` handle out of `guard.child` and into
     // `drain_lines`'s closure, which is the ONLY code in this file that ever holds either raw
     // pipe. Every other reader of a line, including the startup-envelope wait immediately below,
     // goes through `stdout_lines`/`stderr_lines` — the shared, lock-guarded buffer those threads
-    // write into — never through `child.stdout`/`child.stderr` directly again. A second reader of
-    // the raw pipe cannot be written after this point: a repeated `child.stdout.take()` anywhere
+    // write into — never through `guard.child.stdout`/`guard.child.stderr` directly again. A second reader of
+    // the raw pipe cannot be written after this point: a repeated `guard.child.stdout.take()` anywhere
     // else in this file would just observe `None`, because the `Option` was already emptied here.
-    let stdout_lines = Arc::new(Mutex::new(Vec::new()));
-    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
-    let stdout_thread = drain_lines(child.stdout.take().unwrap(), Arc::clone(&stdout_lines));
-    let stderr_thread = drain_lines(child.stderr.take().unwrap(), Arc::clone(&stderr_lines));
+    let stdout_thread = drain_lines(
+        guard.child.stdout.take().unwrap(),
+        Arc::clone(&stdout_lines),
+    );
+    guard.stdout_thread = Some(stdout_thread);
+    let stderr_thread = drain_lines(
+        guard.child.stderr.take().unwrap(),
+        Arc::clone(&stderr_lines),
+    );
+    guard.stderr_thread = Some(stderr_thread);
 
     // The process exited (or never started) before printing anything on stdout. A clap usage
     // error (e.g. an unrecognized subcommand) goes to stderr instead, so surface both streams
     // rather than leaving a bare "assertion failed" — this is the shape the plan's Step 2 RED
     // observation comes back through. Also refuses to hang forever if the process neither prints
     // nor exits (the synchronous `read_line` this replaces had no such bound). Polls the SAME
-    // buffer the drain thread writes into, per the ownership argument above — not `child.stdout`.
+    // buffer the drain thread writes into, per the ownership argument above — not `guard.child.stdout`.
     //
     // 30s, deliberately generous (L's #141 review, finding 2): this file is the instrument the
     // storm test's own attribution depends on, and server startup opens the store under a
@@ -268,15 +312,15 @@ fn serve_with_env(
         if let Some(line) = stdout_lines.lock().unwrap().first().cloned() {
             break line;
         }
-        if let Ok(Some(status)) = child.try_wait() {
+        if let Ok(Some(status)) = guard.child.try_wait() {
             let stderr_text = stderr_lines.lock().unwrap().join("\n");
             panic!(
                 "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
             );
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = guard.child.kill();
+            let _ = guard.child.wait();
             let stderr_text = stderr_lines.lock().unwrap().join("\n");
             panic!(
                 "`graphhelm serve` printed nothing on stdout within 30s and never exited; stderr:\n{stderr_text}"
@@ -303,17 +347,7 @@ fn serve_with_env(
     let base = format!("http://{address}");
     wait_for_health(&base);
 
-    (
-        ServerGuard {
-            child,
-            stdout_lines,
-            stderr_lines,
-            stdout_thread: Some(stdout_thread),
-            stderr_thread: Some(stderr_thread),
-        },
-        base,
-        token,
-    )
+    (guard, base, token)
 }
 
 /// #140's own regression guard, not just its evidence. L's #141 review, finding 1: a scratch
@@ -361,6 +395,55 @@ fn budget_leaves_room_for_the_retry_loop_to_actually_loop() {
     assert!(
         passes >= 3,
         "the outer loop gets only {passes} passes; that is a deadline pair, not a retry loop"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn server_guard_owns_child_before_startup_health_checks() {
+    let temp = tempfile::tempdir().unwrap();
+    let events = temp.path().join("events.jsonl");
+    let retained = Arc::new(Mutex::new(None));
+    let observed_before = Arc::new(Mutex::new(None));
+    let callback_retained = Arc::clone(&retained);
+    let callback_observed = Arc::clone(&observed_before);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = serve_with_env_observed(
+            &events,
+            &[],
+            &[],
+            Some(Box::new(move |child| {
+                let handle = child.as_handle().try_clone_to_owned().unwrap();
+                let wait = unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) };
+                *callback_observed.lock().unwrap() = Some(wait);
+                *callback_retained.lock().unwrap() = Some(handle);
+                panic!("deliberate startup failure after child ownership");
+            })),
+        );
+    }));
+    assert!(result.is_err(), "the startup failure control must panic");
+    let observed_before = observed_before.lock().unwrap().take().unwrap();
+    let handle = retained.lock().unwrap().take().unwrap();
+    let observed_after = unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) };
+    if observed_after != WAIT_OBJECT_0 {
+        assert_ne!(
+            unsafe { TerminateProcess(handle.as_raw_handle(), 1) },
+            0,
+            "the retained child handle must support cleanup after an observer failure"
+        );
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle(), 5_000) },
+            WAIT_OBJECT_0,
+            "the retained child must be reaped before reporting the observer failure"
+        );
+    }
+    assert_eq!(
+        observed_before, WAIT_TIMEOUT,
+        "the child must still be live before the forced panic"
+    );
+    assert_eq!(
+        observed_after, WAIT_OBJECT_0,
+        "the guard must reap the child during unwind"
     );
 }
 

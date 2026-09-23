@@ -18,6 +18,22 @@ const MAX_BACKUP_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_BACKUP_FILES: usize = crate::surfaces::ALL.len() + 10_000;
 
+#[cfg(all(test, windows))]
+fn observe_nt_child_failure(status: i32, directory: bool, create: bool, mutable: bool, share: u32) {
+    eprintln!(
+        "GH_ADOPTION_NT_CHILD_FAILURE source=windows_nt_child_shared status=0x{:08x} directory={directory} create={create} mutable={mutable} share=0x{share:08x}",
+        status as u32
+    );
+}
+
+#[cfg(all(test, windows))]
+fn observe_nt_publish_failure(status: i32) {
+    eprintln!(
+        "GH_ADOPTION_NT_PUBLISH_FAILURE source=windows_publish_directory status=0x{:08x}",
+        status as u32
+    );
+}
+
 pub fn valid_backup_id(id: &str) -> bool {
     id.len() == 64
         && id
@@ -82,7 +98,7 @@ fn backup_with_limit_unlocked(
         };
         surface_metadata.insert(
             name,
-            json!({"state":"present","accessDigest":observed.access_digest}),
+            json!({"state":"present","accessDigest":observed.access_digest,"access":observed.access}),
         );
         surface_identities.insert(name, observed.identity);
         total = total
@@ -162,13 +178,19 @@ fn backup_with_limit_unlocked(
             reason: AdoptionReason::Busy,
         });
     }
+    let state = crate::storage::Root::open(state_root, true)?;
+    // A manual checkpoint may be the first adoption operation. Keep the private journal
+    // directory available so its read-only restore planner can distinguish an empty history from
+    // a malformed journal without creating state during planning.
+    state.private_child("journals")?;
+    let provenance = provenance_for(project, home, &state)?;
     #[cfg(unix)]
     {
-        backup_unix(&files, &surface_metadata, state_root)
+        backup_unix(&files, &surface_metadata, &provenance, state_root)
     }
     #[cfg(windows)]
     {
-        backup_windows(&files, &surface_metadata, state_root)
+        backup_windows(&files, &surface_metadata, &provenance, state_root)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -230,6 +252,7 @@ pub(crate) fn read_supported(
 fn backup_unix(
     files: &BTreeMap<String, Vec<u8>>,
     surface_metadata: &BTreeMap<&str, Value>,
+    provenance: &Value,
     state_root: &Path,
 ) -> Result<Value, AdoptionError> {
     use std::os::fd::AsRawFd;
@@ -238,7 +261,7 @@ fn backup_unix(
     unix_check_private_dir(&state)?;
     let backups = unix_open_child_dir(&state, BACKUPS, true)?;
     unix_check_private_dir(&backups)?;
-    let manifest = manifest_for(files, surface_metadata)?;
+    let manifest = manifest_for(files, surface_metadata, provenance)?;
     let id = digest(&manifest);
     if let Some(destination) = unix_open_optional_child_dir(&backups, &id)? {
         return verify_unix_dir(&destination, &id);
@@ -253,7 +276,7 @@ fn backup_unix(
     unix_rename_child(&backups, &pending_name, &id)?;
     unix_sync_fd(backups.as_raw_fd())?;
     Ok(
-        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"fileCount":files.len()}}),
+        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"restoreEligibility":"bound","fileCount":files.len()}}),
     )
 }
 
@@ -533,7 +556,14 @@ fn verify_unix_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionErro
             reason: AdoptionReason::BackupCorrupt,
         })?;
     validate_manifest_files(files)?;
-    validate_manifest_surface_metadata(value.get("surfaceMetadata"), files)?;
+    validate_manifest_surface_metadata(
+        value.get("surfaceMetadata"),
+        files,
+        value.get("provenance").is_some(),
+    )?;
+    if let Some(provenance) = value.get("provenance") {
+        validate_provenance(provenance)?;
+    }
     let mut total = 0_u64;
     for (index, (_, expected)) in files.iter().enumerate() {
         let expected = expected.as_str().ok_or(AdoptionError {
@@ -558,7 +588,7 @@ fn verify_unix_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionErro
         }
     }
     Ok(
-        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"fileCount":files.len()}}),
+        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"restoreEligibility":if value.get("provenance").is_some() {"bound"} else {"integrity_only"},"fileCount":files.len()}}),
     )
 }
 
@@ -603,9 +633,49 @@ fn validate_manifest_version(value: &Value) -> Result<(), AdoptionError> {
     Ok(())
 }
 
+fn validate_provenance(value: &Value) -> Result<(), AdoptionError> {
+    let object = value.as_object().ok_or(AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    if object.get("kind").and_then(Value::as_str) != Some("manual") {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    for name in ["project", "home", "state"] {
+        let record: crate::storage::RootRecord =
+            serde_json::from_value(object.get(name).cloned().ok_or(AdoptionError {
+                reason: AdoptionReason::BackupCorrupt,
+            })?)
+            .map_err(|_| AdoptionError {
+                reason: AdoptionReason::BackupCorrupt,
+            })?;
+        let value = serde_json::to_value(&record).map_err(|_| AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        let digest = crate::apply::digest(
+            &graphhelm_graph::canonical_content_bytes(&value).map_err(|_| AdoptionError {
+                reason: AdoptionReason::BackupCorrupt,
+            })?,
+        );
+        let recorded = object
+            .get("bindings")
+            .and_then(Value::as_object)
+            .and_then(|bindings| bindings.get(name))
+            .and_then(Value::as_str);
+        if recorded != Some(digest.as_str()) {
+            return Err(AdoptionError {
+                reason: AdoptionReason::BackupCorrupt,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_manifest_surface_metadata(
     value: Option<&Value>,
     files: &serde_json::Map<String, Value>,
+    bound: bool,
 ) -> Result<(), AdoptionError> {
     let metadata = value.and_then(Value::as_object).ok_or(AdoptionError {
         reason: AdoptionReason::BackupCorrupt,
@@ -625,10 +695,23 @@ fn validate_manifest_surface_metadata(
         })?;
         let state = object.get("state").and_then(Value::as_str);
         let access = object.get("accessDigest");
+        let access_pair_valid = !bound
+            || access
+                .and_then(Value::as_str)
+                .zip(object.get("access"))
+                .is_some_and(|(expected, value)| {
+                    serde_json::from_value::<crate::storage::Access>(value.clone())
+                        .ok()
+                        .and_then(|access| access_digest_value(&access).ok())
+                        .is_some_and(|actual| actual == expected)
+                });
         let in_files = files.contains_key(id);
         let valid_state = match state {
             Some("present") => {
-                in_files && access.and_then(Value::as_str).is_some_and(valid_backup_id)
+                in_files
+                    && access.and_then(Value::as_str).is_some_and(valid_backup_id)
+                    && access_pair_valid
+                    && (object.get("access").is_some() || !bound)
             }
             Some("absent") => !in_files && matches!(access, Some(Value::Null)),
             _ => false,
@@ -640,6 +723,102 @@ fn validate_manifest_surface_metadata(
         }
     }
     Ok(())
+}
+
+/// Returns authenticated private checkpoint metadata. `None` is a legacy, integrity-only backup.
+pub(crate) fn checkpoint_provenance(
+    state_root: &Path,
+    id: &str,
+) -> Result<Option<Value>, AdoptionError> {
+    verify_backup(state_root, id)?;
+    #[cfg(unix)]
+    let manifest = {
+        let state = unix_open_dir_chain(state_root, false)?;
+        unix_check_private_dir(&state)?;
+        let backups = unix_open_child_dir(&state, BACKUPS, false)?;
+        unix_check_private_dir(&backups)?;
+        let destination = unix_open_child_dir(&backups, id, false)?;
+        unix_check_private_dir(&destination)?;
+        unix_read_at_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?
+    };
+    #[cfg(windows)]
+    let manifest = {
+        let state = windows_open_directory_chain(state_root, false)?;
+        let backups = windows_open_child(&state, BACKUPS, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        let destination = windows_open_child(&backups, id, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        windows_read_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?
+    };
+    let value: Value = serde_json::from_slice(&manifest).map_err(|_| AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    if digest(&manifest) != id {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    Ok(value.get("provenance").cloned())
+}
+
+pub(crate) fn verified_surface_access(
+    state_root: &Path,
+    id: &str,
+    key: &str,
+) -> Result<Option<crate::storage::Access>, AdoptionError> {
+    let Some(provenance) = checkpoint_provenance(state_root, id)? else {
+        return Ok(None);
+    };
+    let _ = provenance;
+    #[cfg(unix)]
+    let manifest = {
+        let state = unix_open_dir_chain(state_root, false)?;
+        let backups = unix_open_child_dir(&state, BACKUPS, false)?;
+        let destination = unix_open_child_dir(&backups, id, false)?;
+        unix_read_at_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?
+    };
+    #[cfg(windows)]
+    let manifest = {
+        let state = windows_open_directory_chain(state_root, false)?;
+        let backups = windows_open_child(&state, BACKUPS, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        let destination = windows_open_child(&backups, id, true)?.ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+        windows_read_limited(&destination, "manifest.json", MAX_MANIFEST_BYTES)?
+    };
+    let value: Value = serde_json::from_slice(&manifest).map_err(|_| AdoptionError {
+        reason: AdoptionReason::BackupCorrupt,
+    })?;
+    if digest(&manifest) != id {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        });
+    }
+    let files = value
+        .get("files")
+        .and_then(Value::as_object)
+        .ok_or(AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })?;
+    validate_manifest_surface_metadata(value.get("surfaceMetadata"), files, true)?;
+    let Some(access) = value["surfaceMetadata"][key]["access"]
+        .clone()
+        .as_object()
+        .map(|_| value["surfaceMetadata"][key]["access"].clone())
+    else {
+        return Err(AdoptionError {
+            reason: AdoptionReason::BackupUnverified,
+        });
+    };
+    serde_json::from_value(access)
+        .map(Some)
+        .map_err(|_| AdoptionError {
+            reason: AdoptionReason::BackupCorrupt,
+        })
 }
 
 #[cfg(unix)]
@@ -658,13 +837,14 @@ pub(super) fn unix_check_private_dir(path: &std::fs::File) -> Result<(), Adoptio
 fn backup_windows(
     files: &BTreeMap<String, Vec<u8>>,
     surface_metadata: &BTreeMap<&str, Value>,
+    provenance: &Value,
     state_root: &Path,
 ) -> Result<Value, AdoptionError> {
     // The caller may place GraphHelm state below a shared application-data root. The retained,
     // owner-only `backups` child is the Windows privacy boundary; every checkpoint stays below it.
     let state = windows_open_directory_chain(state_root, true)?;
     let backups = windows_open_or_create_private_dir(&state, BACKUPS)?;
-    let manifest = manifest_for(files, surface_metadata)?;
+    let manifest = manifest_for(files, surface_metadata, provenance)?;
     let id = digest(&manifest);
     if let Some(destination) = windows_open_child(&backups, &id, true)? {
         windows_check_private(&destination)?;
@@ -685,7 +865,7 @@ fn backup_windows(
     pending.sync_all().map_err(unavailable)?;
     backups.sync_all().map_err(unavailable)?;
     Ok(
-        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"fileCount":files.len()}}),
+        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"restoreEligibility":"bound","fileCount":files.len()}}),
     )
 }
 
@@ -950,6 +1130,8 @@ pub(super) fn windows_nt_child_shared(
         {
             return Ok(None);
         }
+        #[cfg(test)]
+        observe_nt_child_failure(status, directory, create, mutable, share);
         return Err(AdoptionError {
             reason: AdoptionReason::CoverageIncomplete,
         });
@@ -1023,6 +1205,8 @@ fn windows_publish_directory(
         )
     };
     if status < 0 {
+        #[cfg(test)]
+        observe_nt_publish_failure(status);
         Err(AdoptionError {
             reason: AdoptionReason::CoverageIncomplete,
         })
@@ -1075,7 +1259,14 @@ fn verify_windows_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionE
             reason: AdoptionReason::BackupCorrupt,
         })?;
     validate_manifest_files(files)?;
-    validate_manifest_surface_metadata(value.get("surfaceMetadata"), files)?;
+    validate_manifest_surface_metadata(
+        value.get("surfaceMetadata"),
+        files,
+        value.get("provenance").is_some(),
+    )?;
+    if let Some(provenance) = value.get("provenance") {
+        validate_provenance(provenance)?;
+    }
     let mut total = 0_u64;
     for (index, (_, expected)) in files.iter().enumerate() {
         let expected = expected.as_str().ok_or(AdoptionError {
@@ -1100,30 +1291,54 @@ fn verify_windows_dir(root: &std::fs::File, id: &str) -> Result<Value, AdoptionE
         }
     }
     Ok(
-        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"fileCount":files.len()}}),
+        json!({"apiVersion":"p50.dev/adoption/v1","kind":"BackupReceipt","id":id,"spec":{"verified":true,"restoreEligibility":if value.get("provenance").is_some() {"bound"} else {"integrity_only"},"fileCount":files.len()}}),
     )
 }
 
 fn manifest_for(
     files: &BTreeMap<String, Vec<u8>>,
     surface_metadata: &BTreeMap<&str, Value>,
+    provenance: &Value,
 ) -> Result<Vec<u8>, AdoptionError> {
     let hashes = files
         .iter()
         .map(|(name, bytes)| (name.clone(), digest(bytes)))
         .collect::<BTreeMap<_, _>>();
-    serde_json::to_vec(&json!({"version":1,"files":hashes,"surfaceMetadata":surface_metadata}))
+    serde_json::to_vec(&json!({"version":1,"files":hashes,"surfaceMetadata":surface_metadata,"provenance":provenance}))
         .map_err(|_| AdoptionError {
             reason: AdoptionReason::InvalidConfiguration,
         })
+}
+
+fn provenance_for(
+    project: &crate::storage::Root,
+    home: &crate::storage::Root,
+    state: &crate::storage::Root,
+) -> Result<Value, AdoptionError> {
+    let binding = |record: &crate::storage::RootRecord| {
+        let value = serde_json::to_value(record).map_err(|_| AdoptionError {
+            reason: AdoptionReason::InvalidConfiguration,
+        })?;
+        let bytes =
+            graphhelm_graph::canonical_content_bytes(&value).map_err(|_| AdoptionError {
+                reason: AdoptionReason::InvalidConfiguration,
+            })?;
+        Ok::<String, AdoptionError>(crate::apply::digest(&bytes))
+    };
+    Ok(json!({
+        "kind":"manual",
+        "project": serde_json::to_value(&project.record).map_err(|_| AdoptionError { reason: AdoptionReason::InvalidConfiguration })?,
+        "home": serde_json::to_value(&home.record).map_err(|_| AdoptionError { reason: AdoptionReason::InvalidConfiguration })?,
+        "state": serde_json::to_value(&state.record).map_err(|_| AdoptionError { reason: AdoptionReason::InvalidConfiguration })?,
+        "bindings": {"project":binding(&project.record)?,"home":binding(&home.record)?,"state":binding(&state.record)?}
+    }))
 }
 
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn access_digest(file: &std::fs::File) -> Result<String, AdoptionError> {
-    let access = crate::storage::access(file)?;
+fn access_digest_value(access: &crate::storage::Access) -> Result<String, AdoptionError> {
     let encoded = serde_json::to_vec(&access).map_err(|_| AdoptionError {
         reason: AdoptionReason::InvalidConfiguration,
     })?;
@@ -1134,6 +1349,7 @@ struct ObservedSurface {
     bytes: Vec<u8>,
     identity: crate::storage::Identity,
     access_digest: String,
+    access: crate::storage::Access,
 }
 
 /// Read only below the retained authority root. The caller performs a second full pass before
@@ -1150,14 +1366,16 @@ fn observe_surface(
     };
     let file = &source.file;
     let identity = crate::storage::identity(file)?;
-    let stored_access_digest = access_digest(file)?;
+    let access = crate::storage::access(file)?;
+    let stored_access_digest = access_digest_value(&access)?;
     let bytes = crate::storage::read_file(file, remaining.min(1024 * 1024))?;
     root.verify()?;
     let current = root.source_optional(relative)?.ok_or(AdoptionError {
         reason: AdoptionReason::Busy,
     })?;
+    let current_access = crate::storage::access(&current.file)?;
     if crate::storage::identity(&current.file)? != identity
-        || access_digest(&current.file)? != stored_access_digest
+        || access_digest_value(&current_access)? != stored_access_digest
         || crate::storage::read_file(&current.file, remaining.min(1024 * 1024))? != bytes
     {
         return Err(AdoptionError {
@@ -1168,6 +1386,7 @@ fn observe_surface(
         bytes,
         identity,
         access_digest: stored_access_digest,
+        access,
     }))
 }
 

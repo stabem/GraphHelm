@@ -71,6 +71,15 @@ Use a user-owned state root outside the project by default: `%LOCALAPPDATA%/Grap
 
 A setup baseline is immutable and separate from later manual checkpoints. `restore --original` selects the first baseline for the adoption, not the newest checkpoint. Setup upgrades cannot replace this baseline. Restore supports a missing/corrupt backup refusal and never fabricates recovery. No automatic retention deletion in this slice; expose size and location to the owner.
 
+Manual checkpoints are private, hash-bound recovery data with explicit project, home, and state-root
+provenance. Integrity verification is separate from restore eligibility: an old unlinked snapshot
+may verify as bytes but cannot authorize restore, while an old snapshot explicitly linked by an
+adoption journal remains eligible. A selected manual checkpoint previews explicit replacements for
+present supported files and preserves absent files; it does not claim ownership-aware rollback of
+adoption packages or shared user state. The preview binds current bytes and access metadata, and
+edits after preview refuse as stale. Restore uses the same durable journal and recovery path as
+adoption rollback, with no Runtime, model, provider, or network dependency.
+
 ### 4.4 Consistency and recovery
 
 A multi-file/multi-host migration is a journaled operation, not a single atomic filesystem transaction. Each file publication is atomic where the platform supports it. Persist original snapshots and an operation journal before writes; sync and verify each transition. Recheck original file identity and content immediately before replacement. Require affected host sessions to be closed or otherwise prove a supported reload boundary; do not kill a user's sessions.

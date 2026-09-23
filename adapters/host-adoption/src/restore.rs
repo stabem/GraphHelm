@@ -31,6 +31,15 @@ fn value_digest(value: &Value) -> Result<String, AdoptionError> {
             .map_err(|_| error(AdoptionReason::LimitExceeded))?,
     ))
 }
+fn journal_binding(store: &journal::Store) -> Result<String, AdoptionError> {
+    let active = store.active()?.map(|record| {
+        Ok(json!({
+            "transactionId": record.transaction_id,
+            "recordDigest": value_digest(&serde_json::to_value(record).map_err(|_| storage::failed())?)?
+        }))
+    }).transpose()?;
+    value_digest(&json!({"active": active}))
+}
 fn seal(mut value: Value) -> Result<Value, AdoptionError> {
     value
         .as_object_mut()
@@ -40,6 +49,12 @@ fn seal(mut value: Value) -> Result<Value, AdoptionError> {
     Ok(value)
 }
 fn chain(store: &journal::Store) -> Result<Vec<journal::Journal>, AdoptionError> {
+    chain_with_empty(store, false)
+}
+fn chain_with_empty(
+    store: &journal::Store,
+    allow_empty: bool,
+) -> Result<Vec<journal::Journal>, AdoptionError> {
     let mut next = store.active()?;
     let mut result = Vec::new();
     let mut seen = BTreeSet::new();
@@ -73,19 +88,64 @@ fn chain(store: &journal::Store) -> Result<Vec<journal::Journal>, AdoptionError>
         }
         result.push(record);
     }
-    if result.is_empty() {
+    if result.is_empty() && !allow_empty {
         return Err(storage::failed());
     }
     Ok(result)
 }
 
+fn sources_for_checkpoint(store: &journal::Store) -> Result<Vec<journal::Journal>, AdoptionError> {
+    chain_with_empty(store, true)
+}
+
 /// Reads only: no locks, new snapshots, provider, host process, or Runtime calls.
 pub fn plan_restore(state_root: &Path, backup_id: &str) -> Result<Value, AdoptionError> {
     let store = journal::Store::reader(Root::observe(state_root)?)?;
+    if backup_id != "original" {
+        let linked = match store.active()? {
+            Some(_) => Some(sources_for_checkpoint(&store)?),
+            None => None,
+        };
+        if !linked
+            .as_ref()
+            .is_some_and(|records| records.iter().any(|record| record.backup_id == backup_id))
+        {
+            let Some(provenance) =
+                backup::checkpoint_provenance(&store.root.record.path, backup_id)?
+            else {
+                return Err(error(AdoptionReason::BackupUnverified));
+            };
+            let project = manual_root(&provenance, "project", &store)?;
+            let home = manual_root(&provenance, "home", &store)?;
+            let _state = manual_root(&provenance, "state", &store)?;
+            let sources = linked.unwrap_or_else(Vec::new);
+            return Ok(prepare(&store, &project, &home, backup_id, sources, true)?.value);
+        }
+    }
     let sources = chain(&store)?;
     let project = Root::reopen(&sources[0].project)?;
     let home = Root::reopen(&sources[0].home)?;
-    Ok(prepare(&store, &project, &home, backup_id, sources)?.value)
+    Ok(prepare(&store, &project, &home, backup_id, sources, false)?.value)
+}
+
+fn manual_root(
+    provenance: &Value,
+    name: &str,
+    store: &journal::Store,
+) -> Result<Root, AdoptionError> {
+    let record: crate::storage::RootRecord =
+        serde_json::from_value(provenance.get(name).cloned().ok_or_else(storage::failed)?)
+            .map_err(|_| error(AdoptionReason::BackupCorrupt))?;
+    let root = Root::reopen(&record)?;
+    let binding =
+        value_digest(&serde_json::to_value(&root.record).map_err(|_| storage::failed())?)?;
+    if provenance["bindings"][name] != binding {
+        return Err(error(AdoptionReason::BackupCorrupt));
+    }
+    if name == "state" && root.record != store.root.record {
+        return Err(error(AdoptionReason::PlanStale));
+    }
+    Ok(root)
 }
 fn prepare(
     store: &journal::Store,
@@ -93,25 +153,30 @@ fn prepare(
     home: &Root,
     selection: &str,
     mut sources: Vec<journal::Journal>,
+    manual: bool,
 ) -> Result<PreparedPlan, AdoptionError> {
-    let original: Value = serde_json::from_slice(
-        &storage::read_child(&store.root.file, "original.json", 64 * 1024)?
-            .ok_or_else(storage::failed)?,
-    )
-    .map_err(|_| storage::failed())?;
-    if original["project"]
-        != serde_json::to_value(&project.record).map_err(|_| storage::failed())?
-        || original["home"] != serde_json::to_value(&home.record).map_err(|_| storage::failed())?
-    {
-        return Err(storage::failed());
-    }
     let backup_id = if selection == "original" {
-        original["backupId"].as_str().ok_or_else(storage::failed)?
+        let original: Value = serde_json::from_slice(
+            &storage::read_child(&store.root.file, "original.json", 64 * 1024)?
+                .ok_or_else(storage::failed)?,
+        )
+        .map_err(|_| storage::failed())?;
+        if original["project"]
+            != serde_json::to_value(&project.record).map_err(|_| storage::failed())?
+            || original["home"]
+                != serde_json::to_value(&home.record).map_err(|_| storage::failed())?
+        {
+            return Err(storage::failed());
+        }
+        original["backupId"]
+            .as_str()
+            .ok_or_else(storage::failed)?
+            .to_owned()
     } else {
-        selection
+        selection.to_owned()
     };
-    backup::verify_backup(&store.root.record.path, backup_id)?;
-    if selection != "original" {
+    backup::verify_backup(&store.root.record.path, &backup_id)?;
+    if selection != "original" && !manual {
         let end = sources
             .iter()
             .position(|r| r.backup_id == backup_id)
@@ -141,9 +206,41 @@ fn prepare(
         current.push(json!({"root":scope,"path":path,"digest":current_digest,"accessDigest":access.as_ref().map(|a| serde_json::to_value(a).map_err(|_| storage::failed()).and_then(|v| value_digest(&v))).transpose()?}));
         let base = backup::verified_optional_blob(
             &store.root.record.path,
-            backup_id,
+            &backup_id,
             &format!("{scope}/{path}"),
         )?;
+        if manual {
+            let Some(target) = base.clone() else {
+                effects.push(json!({"root":scope,"path":path,"action":"retain_unowned","beforeDigest":current_digest,"afterDigest":current_digest}));
+                continue;
+            };
+            let target_access = backup::verified_surface_access(
+                &store.root.record.path,
+                &backup_id,
+                &format!("{scope}/{path}"),
+            )?
+            .ok_or_else(|| error(AdoptionReason::BackupUnverified))?;
+            let after = apply::digest(&target);
+            let unchanged = current_digest.as_deref() == Some(&after)
+                && access.as_ref() == Some(&target_access);
+            effects.push(json!({"root":scope,"path":path,"action":if unchanged {"unchanged"} else {"restore"},"beforeDigest":current_digest,"afterDigest":after}));
+            if unchanged {
+                continue;
+            }
+            entries.push(journal::Entry {
+                operation_index: entries.len(),
+                root: scope.into(),
+                path: path.into(),
+                before_digest: current_digest.ok_or_else(storage::failed)?,
+                after_digest: after,
+                access: target_access,
+                before_access: Some(access.ok_or_else(storage::failed)?),
+                phase: Phase::Planned,
+                guards: Vec::new(),
+            });
+            targets.push(target);
+            continue;
+        }
         let owned = sources
             .iter()
             .flat_map(|source| {
@@ -204,6 +301,7 @@ fn prepare(
                     before_digest: current_digest.ok_or_else(storage::failed)?,
                     after_digest: after,
                     access: installed.access.clone(),
+                    before_access: None,
                     phase: Phase::Planned,
                     guards: Vec::new(),
                 });
@@ -213,7 +311,7 @@ fn prepare(
     }
     let source_bindings = sources.iter().map(|r| Ok(json!({"transactionId":r.transaction_id,"digest":value_digest(&serde_json::to_value(r).map_err(|_| storage::failed())?)?}))).collect::<Result<Vec<_>, AdoptionError>>()?;
     let mut packages = Vec::new();
-    for record in &sources {
+    for record in sources.iter().filter(|_| !manual) {
         let valid = crate::hosts::verify_installed(store, record).is_ok();
         for package in &record.packages {
             let root = Root::reopen(package.root.as_ref().ok_or_else(storage::failed)?)?;
@@ -225,8 +323,12 @@ fn prepare(
             }
         }
     }
+    let mut spec = json!({"selection":if selection == "original" {"original"} else {"checkpoint"},"manual":manual,"backupId":backup_id,"rootBindings":crate::root_bindings(&project.record.path,&home.record.path)?,"stateBinding":value_digest(&serde_json::to_value(&store.root.record).map_err(|_| storage::failed())?)?,"sources":source_bindings,"current":current,"effects":effects,"packages":packages,"conflicts":conflicts});
+    if manual {
+        spec["journalBinding"] = json!(journal_binding(store)?);
+    }
     let value = seal(
-        json!({"apiVersion":"p50.dev/adoption/v1","kind":"RestorePlan","id":"restore","spec":{"selection":if selection == "original" {"original"} else {"checkpoint"},"backupId":backup_id,"rootBindings":crate::root_bindings(&project.record.path,&home.record.path)?,"stateBinding":value_digest(&serde_json::to_value(&store.root.record).map_err(|_| storage::failed())?)?,"sources":source_bindings,"current":current,"effects":effects,"packages":packages,"conflicts":conflicts}}),
+        json!({"apiVersion":"p50.dev/adoption/v1","kind":"RestorePlan","id":"restore","spec":spec}),
     )?;
     Ok(PreparedPlan {
         value,
@@ -364,13 +466,48 @@ fn apply_engine(
     }
     let transaction_id = apply::digest(accepted_digest.as_bytes());
     let initial = journal::Store::reader(Root::observe(state_root)?)?;
-    let source_id = plan["spec"]["sources"][0]["transactionId"]
-        .as_str()
-        .ok_or_else(storage::failed)?;
-    let first = initial.read(source_id)?.ok_or_else(storage::failed)?;
-    let project = Root::reopen(&first.project)?;
-    let home = Root::reopen(&first.home)?;
+    let manual = plan["spec"]["manual"] == true
+        && backup::checkpoint_provenance(
+            &initial.root.record.path,
+            plan["spec"]["backupId"]
+                .as_str()
+                .ok_or_else(storage::failed)?,
+        )?
+        .is_some();
+    let (project, home) = if manual {
+        let provenance = backup::checkpoint_provenance(
+            &initial.root.record.path,
+            plan["spec"]["backupId"]
+                .as_str()
+                .ok_or_else(storage::failed)?,
+        )?
+        .ok_or_else(|| error(AdoptionReason::BackupUnverified))?;
+        (
+            manual_root(&provenance, "project", &initial)?,
+            manual_root(&provenance, "home", &initial)?,
+        )
+    } else {
+        let source_id = plan["spec"]["sources"][0]["transactionId"]
+            .as_str()
+            .ok_or_else(storage::failed)?;
+        let first = initial.read(source_id)?.ok_or_else(storage::failed)?;
+        (Root::reopen(&first.project)?, Root::reopen(&first.home)?)
+    };
+    if manual {
+        let _state = manual_root(
+            &backup::checkpoint_provenance(
+                &initial.root.record.path,
+                plan["spec"]["backupId"]
+                    .as_str()
+                    .ok_or_else(storage::failed)?,
+            )?
+            .ok_or_else(|| error(AdoptionReason::BackupUnverified))?,
+            "state",
+            &initial,
+        )?;
+    }
     drop(initial);
+    let state_path = std::path::absolute(state_root).map_err(|_| storage::unsafe_path())?;
     let _user = home.lock(".graphhelm-adoption.lock")?;
     let _project = project.lock(".graphhelm-adoption.lock")?;
     let store = journal::Store::open(Root::open(state_root, false)?)?;
@@ -380,6 +517,25 @@ fn apply_engine(
         }
         return resume(&store, &project, &home, &mut prior, hook);
     }
+    if manual {
+        let expected_binding = journal_binding(&store)?;
+        if plan["spec"]["journalBinding"].as_str() != Some(expected_binding.as_str()) {
+            return Err(error(AdoptionReason::PlanStale));
+        }
+        let keys = plan["spec"]["effects"]
+            .as_array()
+            .ok_or_else(storage::failed)?
+            .iter()
+            .filter(|effect| effect["root"] == "home" && effect["action"] == "restore")
+            .map(|effect| {
+                effect["path"]
+                    .as_str()
+                    .map(|path| format!("file/{path}"))
+                    .ok_or_else(storage::failed)
+            })
+            .collect::<Result<Vec<_>, AdoptionError>>()?;
+        let _claims = crate::ownership::check(&home, &project, &state_path, &keys)?;
+    }
     store.ensure_idle(&transaction_id)?;
     let selection = if plan["spec"]["selection"] == "original" {
         "original"
@@ -388,7 +544,12 @@ fn apply_engine(
             .as_str()
             .ok_or_else(storage::failed)?
     };
-    let prepared = prepare(&store, &project, &home, selection, chain(&store)?)?;
+    let sources = if manual {
+        sources_for_checkpoint(&store)?
+    } else {
+        chain(&store)?
+    };
+    let prepared = prepare(&store, &project, &home, selection, sources, manual)?;
     if prepared.value != *plan {
         return Err(error(AdoptionReason::PlanStale));
     }
@@ -435,11 +596,15 @@ fn apply_engine(
                 .as_str()
                 .ok_or_else(storage::failed)?
                 .into(),
-            sources: prepared
-                .sources
-                .iter()
-                .map(|r| r.transaction_id.clone())
-                .collect(),
+            sources: if manual {
+                Vec::new()
+            } else {
+                prepared
+                    .sources
+                    .iter()
+                    .map(|r| r.transaction_id.clone())
+                    .collect()
+            },
         }),
     };
     sync(&store, &mut record, hook)?;
@@ -507,6 +672,18 @@ fn resume_inner(
     let restore = record.restore.clone().ok_or_else(storage::failed)?;
     backup::verify_backup(&store.root.record.path, &restore.selected_backup)?;
     backup::verify_backup(&store.root.record.path, &record.backup_id)?;
+    if restore.sources.is_empty()
+        && backup::checkpoint_provenance(&store.root.record.path, &restore.selected_backup)?
+            .is_some()
+    {
+        let keys = record
+            .entries
+            .iter()
+            .filter(|entry| entry.root == "home")
+            .map(|entry| format!("file/{}", entry.path))
+            .collect::<Vec<_>>();
+        let _claims = crate::ownership::check(home, project, &store.root.record.path, &keys)?;
+    }
     for id in &restore.sources {
         crate::hosts::preflight_compensation(store, &store.read(id)?.ok_or_else(storage::failed)?)?;
     }
@@ -518,15 +695,28 @@ fn resume_inner(
             home
         };
         if let Some(guard) = entry.guards.last() {
-            guard.reconcile(root, &entry.path, &entry.access)?;
+            guard.reconcile(
+                root,
+                &entry.path,
+                entry.before_access.as_ref().unwrap_or(&entry.access),
+            )?;
         }
         for guard in &entry.guards {
-            guard.verify(root, &entry.path, &entry.access)?;
+            guard.verify(
+                root,
+                &entry.path,
+                entry.before_access.as_ref().unwrap_or(&entry.access),
+                &entry.access,
+            )?;
         }
         let source = root.source(&entry.path)?;
         let current = apply::digest(&source.read()?);
+        let current_access = storage::access(&source.file)?;
+        let before_access = entry.before_access.as_ref().unwrap_or(&entry.access);
+        let at_before = current == entry.before_digest && current_access == *before_access;
+        let at_after = current == entry.after_digest && current_access == entry.access;
         if ![&entry.before_digest, &entry.after_digest].contains(&&current)
-            || storage::access(&source.file)? != entry.access
+            || (!at_before && !at_after)
         {
             return Err(storage::failed());
         }
@@ -540,13 +730,16 @@ fn resume_inner(
             home
         };
         let source = root.source(&entry.path)?;
-        if apply::digest(&source.read()?) != entry.after_digest {
+        if apply::digest(&source.read()?) != entry.after_digest
+            || storage::access(&source.file)? != entry.access
+        {
             if entry.guards.len() >= 16 {
                 return Err(storage::failed());
             }
             let prepared = source.prepare(
                 &entry.before_digest,
                 &store.payload(&entry.after_digest)?,
+                entry.before_access.as_ref().unwrap_or(&entry.access),
                 &entry.access,
                 true,
             )?;

@@ -236,10 +236,12 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
     };
     let (mut out_done, mut err_done) = (false, false);
     let mut status = None;
+    let mut cleanup_confirmed = false;
     loop {
         if Instant::now() >= terminate_at && !reply.timed_out {
             reply.timed_out = true;
-            tree.terminate();
+            tree.terminate_until(deadline)?;
+            cleanup_confirmed = true;
         }
         if Instant::now() >= deadline {
             break;
@@ -260,9 +262,15 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
             Duration::from_millis(2).min(deadline.saturating_duration_since(Instant::now())),
         );
     }
+    if !cleanup_confirmed {
+        // A normal parent exit does not prove that a descendant has exited. The job is still
+        // terminated and drained before a successful reply is allowed to escape.
+        tree.terminate_until(deadline)?;
+    }
     reply.success = !reply.timed_out && status.is_some_and(|s| s.success());
-    // Dropping the pipes cannot block on a descendant holding a write handle. Dropping the tree
-    // terminates remaining descendants even after an apparently successful parent exited.
+    // Dropping the pipes cannot block on a descendant holding a write handle. The retained handles
+    // for the pre-kill member snapshot were observed exited above; Drop remains the containment
+    // backstop for the documented snapshot-to-kill observation window.
     drop(tree);
     Ok(reply)
 }
@@ -358,16 +366,123 @@ impl ProcessTree {
             Ok(tree)
         }
     }
-    fn terminate(&self) {
-        unsafe {
-            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+    fn terminate_until(&self, deadline: Instant) -> Result<(), AdoptionError> {
+        use std::os::windows::io::RawHandle;
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList,
+            QueryInformationJobObject, TerminateJobObject,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+
+        const MEMBER_CAP: usize = 1024;
+        const WAIT_OBJECT_0: u32 = 0;
+        let header = std::mem::size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+        let bytes = header + std::mem::size_of::<usize>() * MEMBER_CAP;
+        let query_members = || -> Result<Vec<u32>, AdoptionError> {
+            // The storage is usize-aligned because the job structure contains a pointer-sized
+            // flexible-array member. Do not cast an unaligned Vec<u8> allocation to this type.
+            let words = bytes.div_ceil(std::mem::size_of::<usize>());
+            let mut storage = vec![0usize; words];
+            let buffer = storage.as_mut_ptr().cast::<u8>();
+            let mut returned = 0u32;
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicProcessIdList,
+                    buffer.cast(),
+                    u32::try_from(bytes).unwrap_or(u32::MAX),
+                    &mut returned,
+                )
+            };
+            if queried == 0 {
+                return Err(cleanup_unconfirmed());
+            }
+            let list = unsafe { &*buffer.cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+            let assigned = list.NumberOfAssignedProcesses as usize;
+            let listed = list.NumberOfProcessIdsInList as usize;
+            if assigned > MEMBER_CAP || listed > MEMBER_CAP || listed != assigned {
+                return Err(cleanup_unconfirmed());
+            }
+            let process_ids = unsafe {
+                buffer
+                    .add(std::mem::offset_of!(
+                        JOBOBJECT_BASIC_PROCESS_ID_LIST,
+                        ProcessIdList
+                    ))
+                    .cast::<usize>()
+            };
+            let mut pids = Vec::with_capacity(listed);
+            for index in 0..listed {
+                let pid = unsafe { *process_ids.add(index) };
+                let Ok(pid) = u32::try_from(pid) else {
+                    return Err(cleanup_unconfirmed());
+                };
+                pids.push(pid);
+            }
+            Ok(pids)
+        };
+
+        // Repeat the bounded snapshot, terminate, handle-drain, and post-termination membership
+        // query. The post-query catches members that joined during the first snapshot-to-kill
+        // window; only an observed empty job membership permits success.
+        let mut pids = query_members()?;
+        loop {
+            if pids.is_empty() {
+                return Ok(());
+            }
+            let mut handles: Vec<RawHandle> = Vec::with_capacity(pids.len());
+            for pid in pids {
+                let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+                if handle.is_null() {
+                    for handle in handles {
+                        unsafe { CloseHandle(handle) };
+                    }
+                    return Err(cleanup_unconfirmed());
+                }
+                handles.push(handle);
+            }
+            if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+                for handle in handles {
+                    unsafe { CloseHandle(handle) };
+                }
+                return Err(cleanup_unconfirmed());
+            }
+            let mut complete = true;
+            for handle in handles {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let millis = remaining.as_millis().min(u32::MAX as u128) as u32;
+                let wait = unsafe { WaitForSingleObject(handle, millis) };
+                unsafe { CloseHandle(handle) };
+                if wait != WAIT_OBJECT_0 {
+                    complete = false;
+                }
+            }
+            if !complete {
+                return Err(cleanup_unconfirmed());
+            }
+            pids = query_members()?;
+            if !pids.is_empty() && Instant::now() >= deadline {
+                return Err(cleanup_unconfirmed());
+            }
         }
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_unconfirmed() -> AdoptionError {
+    AdoptionError {
+        reason: AdoptionReason::HostCleanupUnconfirmed,
     }
 }
 #[cfg(windows)]
 impl Drop for ProcessTree {
     fn drop(&mut self) {
-        self.terminate();
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
         #[cfg(windows)]
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0);

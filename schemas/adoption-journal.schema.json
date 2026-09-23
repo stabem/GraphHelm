@@ -141,7 +141,7 @@
         },
         "entries": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 256,
           "items": {
             "type": "object",
@@ -171,6 +171,9 @@
                 "pattern": "^[0-9a-f]{64}$"
               },
               "access": {
+                "type": "object"
+              },
+              "beforeAccess": {
                 "type": "object"
               },
               "phase": {
@@ -356,7 +359,7 @@
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
               },
-              "minItems": 1,
+              "minItems": 0,
               "maxItems": 256
             }
           },

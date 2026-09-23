@@ -203,12 +203,22 @@ fn timeout_cannot_leave_a_session_escaping_descendant_running() {
     );
     match run_host(&operation) {
         Err(error) => {
-            assert_eq!(
-                error.reason.pointer(),
-                "/adoption/host_containment_unavailable"
-            );
-            assert!(!spawn_marker.exists(), "refused host was started");
-            assert!(!pid_file.exists(), "refused host created a descendant");
+            #[cfg(windows)]
+            {
+                panic!(
+                    "Windows containment must return a reply after proving cleanup: {}",
+                    error.reason.pointer()
+                );
+            }
+            #[cfg(not(windows))]
+            {
+                assert_eq!(
+                    error.reason.pointer(),
+                    "/adoption/host_containment_unavailable"
+                );
+                assert!(!spawn_marker.exists(), "refused host was started");
+                assert!(!pid_file.exists(), "refused host created a descendant");
+            }
         }
         Ok(reply) => {
             assert!(reply.timed_out);

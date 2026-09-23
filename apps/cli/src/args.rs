@@ -109,7 +109,7 @@ pub struct AdoptionBackupArgs {
 pub struct AdoptionRestoreArgs {
     #[arg(long = "state-root")]
     pub state_root: PathBuf,
-    /// Original baseline, or a checkpoint linked to an adoption transaction.
+    /// Original baseline, a verified manual checkpoint, or a checkpoint linked to an adoption transaction.
     #[arg(long, default_value = "original")]
     pub backup: String,
     #[arg(long, requires = "accept", conflicts_with = "recover")]

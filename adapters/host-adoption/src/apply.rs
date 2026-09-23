@@ -169,6 +169,7 @@ fn apply_engine(
             before_digest: operation.before.clone(),
             after_digest: operation.after_digest.clone(),
             access: storage::access(&source.file)?,
+            before_access: None,
             phase: Phase::Planned,
             guards: Vec::new(),
         });
@@ -238,6 +239,7 @@ fn apply_engine(
             let prepared = source.prepare(
                 &operation.before,
                 &operation.after,
+                &record.entries[index].access,
                 &record.entries[index].access,
                 false,
             )?;
@@ -364,10 +366,19 @@ fn compensate(
             home
         };
         if let Some(guard) = entry.guards.last() {
-            guard.reconcile(root, &entry.path, &entry.access)?;
+            guard.reconcile(
+                root,
+                &entry.path,
+                entry.before_access.as_ref().unwrap_or(&entry.access),
+            )?;
         }
         for guard in &entry.guards {
-            guard.verify(root, &entry.path, &entry.access)?;
+            guard.verify(
+                root,
+                &entry.path,
+                entry.before_access.as_ref().unwrap_or(&entry.access),
+                &entry.access,
+            )?;
         }
         let source = root.source(&entry.path)?;
         let current = digest(&source.read()?);
@@ -410,8 +421,13 @@ fn compensate(
             if entry.guards.len() >= 16 {
                 return Err(storage::failed());
             }
-            let prepared =
-                source.prepare(&entry.after_digest, &originals[index], &entry.access, true)?;
+            let prepared = source.prepare(
+                &entry.after_digest,
+                &originals[index],
+                &entry.access,
+                &entry.access,
+                true,
+            )?;
             record.entries[index].guards.push(prepared.record.clone());
             record.entries[index].phase = Phase::RestoreIntent;
             sync(store, record, hook)?;

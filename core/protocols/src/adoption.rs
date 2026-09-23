@@ -55,6 +55,7 @@ pub enum AdoptionReason {
     HostUnsupported,
     HostPolicyRequired,
     HostContainmentUnavailable,
+    HostCleanupUnconfirmed,
 }
 
 impl AdoptionReason {
@@ -77,6 +78,7 @@ impl AdoptionReason {
             Self::HostUnsupported => "/adoption/host_unsupported",
             Self::HostPolicyRequired => "/adoption/host_action_required",
             Self::HostContainmentUnavailable => "/adoption/host_containment_unavailable",
+            Self::HostCleanupUnconfirmed => "/adoption/host_cleanup_unconfirmed",
         }
     }
 }
@@ -107,6 +109,7 @@ impl fmt::Display for AdoptionError {
             AdoptionReason::HostUnsupported => "the detected host does not provide a supported reversible plugin interface",
             AdoptionReason::HostPolicyRequired => "In a fresh Claude Code session, open /status and inspect all managed setting sources. Load the reviewed graphhelm-jpd and graphhelm-development-contracts package directories with --plugin-dir, then rescan. Automatic plugin disabling requires complete effective-policy observation; no host files were changed.",
             AdoptionReason::HostContainmentUnavailable => "This platform has no supported process-containment backend for host execution. No host process was started and no host configuration files were changed. Automatic host operations require enforced descendant containment.",
+            AdoptionReason::HostCleanupUnconfirmed => "The host process was started, but bounded cleanup could not be confirmed before the operation deadline. Host results are discarded and no successful host reply is returned.",
         })
     }
 }

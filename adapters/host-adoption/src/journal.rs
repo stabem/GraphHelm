@@ -25,6 +25,8 @@ pub(crate) struct Entry {
     pub before_digest: String,
     pub after_digest: String,
     pub access: Access,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_access: Option<Access>,
     pub phase: Phase,
     #[serde(default)]
     pub guards: Vec<storage::GuardRecord>,
@@ -176,7 +178,7 @@ impl Store {
         if value.version != 1
             || value.sequence == 0
             || value.transaction_id != id
-            || value.entries.is_empty()
+            || (value.entries.is_empty() && value.restore.is_none())
             || value.entries.len() > 256
             || value.transaction_id != crate::apply::digest(value.plan_digest.as_bytes())
             || !crate::backup::valid_backup_id(&value.backup_id)

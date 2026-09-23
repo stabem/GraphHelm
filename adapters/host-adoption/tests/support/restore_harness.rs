@@ -252,3 +252,81 @@ fn partial_restore_returns_recovery_receipt_and_preserves_interfering_writer() {
         "recovery_required"
     );
 }
+
+#[test]
+fn manual_restore_interruption_recovers_with_empty_source_chain() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    let state = temp.path().join("state");
+    for root in [&project, &home, &state] {
+        std::fs::create_dir(root).unwrap();
+    }
+    std::fs::write(project.join("AGENTS.md"), b"checkpoint\n").unwrap();
+    let checkpoint = crate::backup(&project, &home, &state).unwrap();
+    std::fs::write(project.join("AGENTS.md"), b"later\n").unwrap();
+    let plan = plan_restore(&state, checkpoint["id"].as_str().unwrap()).unwrap();
+    let receipt = apply_engine(
+        &state,
+        &plan,
+        plan["digest"].as_str().unwrap(),
+        &mut |boundary| {
+            if boundary == Boundary::BeforePublish {
+                return Err(graphhelm_protocols::adoption::AdoptionError {
+                    reason: graphhelm_protocols::adoption::AdoptionReason::Busy,
+                });
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(receipt["spec"]["state"], "recovery_required");
+    let recovered = apply_restore(&state, &plan, plan["digest"].as_str().unwrap()).unwrap();
+    assert_eq!(recovered["spec"]["state"], "restored");
+    assert_eq!(
+        std::fs::read(project.join("AGENTS.md")).unwrap(),
+        b"checkpoint\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn manual_restore_recovery_accepts_published_metadata_only_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let home = temp.path().join("home");
+    let state = temp.path().join("state");
+    for root in [&project, &home, &state] {
+        std::fs::create_dir(root).unwrap();
+    }
+    let path = project.join("AGENTS.md");
+    std::fs::write(&path, b"checkpoint\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let checkpoint = crate::backup(&project, &home, &state).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let plan = plan_restore(&state, checkpoint["id"].as_str().unwrap()).unwrap();
+    let receipt = apply_engine(
+        &state,
+        &plan,
+        plan["digest"].as_str().unwrap(),
+        &mut |boundary| {
+            if boundary == Boundary::AfterCompensationCapture {
+                return Err(graphhelm_protocols::adoption::AdoptionError {
+                    reason: graphhelm_protocols::adoption::AdoptionReason::Busy,
+                });
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(receipt["spec"]["state"], "recovery_required");
+    let recovered = apply_restore(&state, &plan, plan["digest"].as_str().unwrap()).unwrap();
+    assert_eq!(recovered["spec"]["state"], "restored");
+    assert_eq!(std::fs::read(&path).unwrap(), b"checkpoint\n");
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}

@@ -30,13 +30,21 @@ struct ToolSpec {
 const TOOLS: [ToolSpec; 31] = [
     ToolSpec {
         name: "start",
-        description: "Start an execution (POST /v1/executions/{executionId}/start): load the \
-                      graph file, optionally a fixtures file, in the given mode. Mode governs \
-                      graph-mutation autonomy only (autopilot accepts proposals automatically, \
-                      supervised holds a proposal queued until the owner approves it, manual \
-                      rejects every proposal outright with nothing queued) - it does NOT hold \
-                      dispatch, a ready node runs the same way in every mode; use \"pause\" to \
-                      hold dispatch.",
+        description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
+                      call: {executionId: <an id YOU choose, new on this store>, mode: \
+                      \"supervised\", file: <graph path on the RUNTIME's host, e.g. \
+                      examples/graphs/software-feature.yaml>} - or \"graph\" (an inline graph \
+                      object) instead of \"file\"; one of the two is required. Pass held: true \
+                      to start WITHOUT driving: the Runtime otherwise drives the graph to \
+                      quiescence before it answers, which with a model-backed executor can \
+                      outlast this client's 30 s timeout - the start then DID happen, and a \
+                      retry is refused as \"already started\"; read \"status\" instead of \
+                      retrying. Optionally a fixtures file. Mode governs graph-mutation \
+                      autonomy only (autopilot accepts proposals automatically, supervised \
+                      holds a proposal queued until the owner approves it, manual rejects every \
+                      proposal outright with nothing queued) - it does NOT hold dispatch, a \
+                      ready node runs the same way in every mode; use \"pause\" to hold \
+                      dispatch.",
         schema: start_schema,
     },
     ToolSpec {
@@ -396,6 +404,13 @@ fn start_schema() -> serde_json::Value {
             "fixtures": {"type": "string"},
             "mode": {"type": "string", "enum": ["autopilot", "supervised", "manual"]},
             "route": {"type": "string"},
+            "held": {
+                "type": "boolean",
+                "description": "true starts the execution without driving it (the HTTP \
+                                spelling of `execution start --held`, #90): the call returns \
+                                as soon as the start is recorded, so it cannot outlast the \
+                                client timeout. Omitted or false drives to quiescence first.",
+            },
         }),
         &["executionId", "mode"],
     )
@@ -925,6 +940,250 @@ fn require<'a>(
     })
 }
 
+/// The codes the Runtime answers with when the BODY had the wrong shape - the refusals a
+/// minimal example can cure. Any other `ok:false` (state, authority, unreadable evidence by a real
+/// id) is left as the envelope alone: an example would be noise beside a diagnostic about state.
+const SHAPE_REFUSAL_CODES: [&str; 2] = [
+    crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+    crate::error_codes::GHCLI003_SIGNAL_INVALID,
+];
+
+/// The smallest call this server accepts for `name`, derived from the tool's OWN schema: every
+/// `required` property, a placeholder each, and - for the few whose required list is not the
+/// whole story (`start` needs `file` or `graph`; a signal is a whole envelope) - the extra shape.
+///
+/// Derived, not hand-written, because a hand-written table of 31 examples is a second copy of the
+/// schemas that drifts the day a field is added (the same reason `MCP_TOOL_NAMES` lives in one
+/// place). Placeholders are angle-bracketed so nothing here can be mistaken for a value that
+/// exists; NO caller argument is ever echoed back, so no secret can travel in a refusal.
+///
+/// Measured before this existed (token-bench, task 1044, GraphHelm arm): 7 of 11 tool calls in
+/// one session were refused for shape - `start` x2, `evidence` x2, `signal` x2, `probe` - each
+/// answered with one missing field name, and the session guessed the next shape wrong again.
+pub(crate) fn minimal_example(name: &str) -> serde_json::Value {
+    let Some(tool) = TOOLS.iter().find(|tool| tool.name == name) else {
+        return serde_json::Value::Null;
+    };
+    let schema = (tool.schema)();
+    let mut example = example_from_schema(name, &schema);
+    // `file` or `graph` is required by the Runtime, not by the schema (see `start_schema`).
+    if name == "start" {
+        example.insert(
+            "file".to_owned(),
+            serde_json::json!(
+                "<graph path on the Runtime's host, e.g. examples/graphs/software-feature.yaml>"
+            ),
+        );
+    }
+    serde_json::Value::Object(example)
+}
+
+/// Every `required` property of an object schema, a placeholder each - and a nested object schema
+/// (one carrying its own `properties`/`required`, as `document` does in `document_read`) yields
+/// the nested example rather than `{}`. Review of #1199 measured the difference: `"document": {}`
+/// was PRESENT, so a presence-only guard was green, and it told the caller nothing - the caller
+/// copied it and was refused again, the loop this surface exists to end.
+fn example_from_schema(
+    tool: &str,
+    schema: &serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut example = serde_json::Map::new();
+    let Some(required) = schema.get("required").and_then(serde_json::Value::as_array) else {
+        return example;
+    };
+    for field in required.iter().filter_map(serde_json::Value::as_str) {
+        let property = schema
+            .get("properties")
+            .and_then(|properties| properties.get(field));
+        let declared = property
+            .and_then(|property| property.get("type"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("string");
+        // An object property derives from its own schema whenever that schema names properties,
+        // required or not; `required` alone was the gate before, which left an object WITHOUT a
+        // required list falling through to the `{}` placeholder this surface exists to abolish.
+        let nested = property
+            .filter(|property| declared == "object" && property.get("properties").is_some());
+        let value = match nested {
+            Some(inner) => serde_json::Value::Object(example_from_schema(tool, inner)),
+            None => placeholder(tool, field, declared),
+        };
+        example.insert(field.to_owned(), value);
+    }
+    example
+}
+
+/// A placeholder for one required field: a real example for the fields whose shape the schema
+/// does not spell out (a signal envelope, a mode's enum, a route id), a typed marker otherwise.
+fn placeholder(tool: &str, field: &str, declared: &str) -> serde_json::Value {
+    match (tool, field) {
+        (_, "executionId") => {
+            serde_json::json!("<an execution id: new for start, existing otherwise>")
+        }
+        (_, "mode") => serde_json::json!("supervised"),
+        (_, "evidenceId") => serde_json::json!("<an evidenceRefs id from an events row>"),
+        (_, "route") => serde_json::json!("<a route id from `routes`, e.g. judge>"),
+        (_, "node") => serde_json::json!("<a nodeId from the execution's form>"),
+        // Every field `schemas/graph-signal.schema.json` requires - the cell
+        // `the_signal_example_carries_every_field_the_signal_schema_requires` reads that file, so
+        // a required field added to the schema reddens this example instead of the next session.
+        // The first version of this example lacked `evidence` and `emittedAt`: measured, a session
+        // copied it and was refused twice more (token-bench 1044, v5).
+        ("signal", "signal") => serde_json::json!({
+            "id": "<a new signal id you choose>",
+            "source": {"type": "node", "id": "<a nodeId>"},
+            "type": "finding.root_cause",
+            "severity": "high",
+            "description": "<what was found, in one paragraph>",
+            "evidence": ["<one observation per entry: a command and what it printed>"],
+            "emittedAt": "<RFC 3339 instant, e.g. 2026-09-22T16:45:00Z>"
+        }),
+        _ => match declared {
+            "integer" => serde_json::json!(1),
+            "number" => serde_json::json!(1.0),
+            "boolean" => serde_json::json!(true),
+            // Never `{}`: an empty object is PRESENT, so a presence check passes, and it tells the
+            // caller nothing (measured on document_read, review of #1199). An object schema that
+            // names no properties cannot be derived; say that instead of shipping a blank. Not
+            // `unreachable!()` - this runs inside a refusal path, which must not panic.
+            "object" => serde_json::json!({
+                "<not derivable>": format!("the schema for {field:?} names no properties; read the tool's schema")
+            }),
+            "array" => serde_json::json!([]),
+            _ => serde_json::json!(format!("<{field}>")),
+        },
+    }
+}
+
+/// A refusal carries its reason AND the smallest valid call. The reason keeps its code
+/// (`INVALID_PARAMS` for an argument the client refused; the Runtime's own `GHCLI…` diagnostics
+/// verbatim in the envelope, which is never edited) - the example rides beside it, never
+/// instead of it.
+fn with_example(name: &str, outcome: HandlerOutcome) -> HandlerOutcome {
+    let example = minimal_example(name);
+    match outcome {
+        HandlerOutcome::Error { code, message } if code == INVALID_PARAMS => {
+            HandlerOutcome::Error {
+                code,
+                message: format!("{message}; minimal valid call for {name:?}: {example}"),
+            }
+        }
+        HandlerOutcome::Result(mut result) => {
+            let shape_refusal = result
+                .get("isError")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+                && result
+                    .get("content")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|content| content.first())
+                    .and_then(|first| first.get("text"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| SHAPE_REFUSAL_CODES.iter().any(|code| text.contains(code)));
+            if let Some(content) = shape_refusal
+                .then(|| result.get_mut("content"))
+                .flatten()
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                content.push(serde_json::json!({
+                    "type": "text",
+                    "text": format!("minimal valid call for {name:?}: {example}"),
+                }));
+            }
+            HandlerOutcome::Result(result)
+        }
+        other => other,
+    }
+}
+
+/// What a timed-out `start` reports once the client has looked: the status envelope when the
+/// Runtime holds the execution (the start happened; not an error, the caller must NOT retry it),
+/// and the transport error with the next step when it does not.
+pub(crate) fn start_after_timeout(
+    transport: &str,
+    observed: Option<(u16, serde_json::Value)>,
+) -> HandlerOutcome {
+    match observed {
+        Some((_, envelope)) if envelope.get("ok") == Some(&serde_json::Value::Bool(true)) => {
+            HandlerOutcome::Result(serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "the start reached the Runtime and is driving; this client timed out waiting \
+                         for the drive ({transport}). Do NOT call start again for this executionId \
+                         - it would be refused as already started. Current status: {envelope}"
+                    ),
+                }],
+                "isError": false,
+            }))
+        }
+        // Reachable, and the RUNTIME ITSELF says it holds no execution under that id: a status
+        // reply the server answered (2xx/404 class) whose diagnostics carry the execution-state
+        // code. Only then is "not recorded; retry" a fact the input carries. This is the arm
+        // review found had no cell: without the `ok:true` guard above it fell into the success
+        // text and told the caller not to retry a start that never happened.
+        Some((status, envelope)) if runtime_denies_execution(status, &envelope) => {
+            HandlerOutcome::Result(serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "the start request timed out ({transport}) and the Runtime does NOT report a \
+                         running execution for this executionId - the start was not recorded; retry \
+                         it, or start with \"held\": true. Status reply: {envelope}"
+                    ),
+                }],
+                "isError": true,
+            }))
+        }
+        // Reachable, but the reply says nothing about the execution: a 401 on a rotated token, a
+        // 500, a 429, an envelope without the execution-state code. Review of bde1867c measured
+        // the hazard of treating this as the arm above: the start HAD landed and was driving, the
+        // GET failed for its own reason, the tool said "retry", and the agent drove it twice - the
+        // outcome the observer exists to prevent, reached through the other door. So: hedge, and
+        // send the caller to `status` rather than to either action.
+        Some((status, envelope)) => HandlerOutcome::Result(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "the start request timed out ({transport}) and the follow-up status read did \
+                     not answer whether the start was recorded (HTTP {status}). Do not assume \
+                     either way: read \"status\" for this executionId until it answers, and only \
+                     then retry or continue. Reply: {envelope}"
+                ),
+            }],
+            "isError": true,
+        })),
+        None => HandlerOutcome::Result(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "the API is unreachable: {transport} - the start was NOT observed on the Runtime \
+                     either; retry, or start with \"held\": true so the call returns before driving"
+                ),
+            }],
+            "isError": true,
+        })),
+    }
+}
+
+/// The one reply that licenses the categorical "not recorded": the Runtime answered the status
+/// read itself (a 2xx or 404-class reply, not a proxy's 401/5xx) AND named the execution state
+/// in its diagnostics. Anything else is the transport or the server talking about something other
+/// than this execution, and gets the hedged text.
+fn runtime_denies_execution(status: u16, envelope: &serde_json::Value) -> bool {
+    let answered = (200..300).contains(&status) || status == 404;
+    let denies = envelope
+        .get("diagnostics")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|diagnostics| {
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.get("code").and_then(serde_json::Value::as_str)
+                    == Some(crate::error_codes::GHCLI005_EXECUTION_STATE)
+            })
+        });
+    answered && denies
+}
+
 /// One tool call: the secret guard first, then exactly one API request; the tool result is
 /// the API envelope verbatim as text content, `isError` mirroring the envelope's `ok`.
 pub(crate) fn call(
@@ -954,7 +1213,7 @@ pub(crate) fn call(
     // folding a blocking local wait into the arm that builds HTTP calls is how a surface
     // grows a second meaning for the same shape.
     if name == "wake_wait" {
-        return wake_wait_tool(api, nonce, arguments);
+        return with_example(name, wake_wait_tool(api, nonce, arguments));
     }
 
     let key = derive_key(nonce, rpc_id);
@@ -1054,35 +1313,49 @@ pub(crate) fn call(
             };
             api.request("GET", &path, None, None, None)
         }),
-        "start" => require(arguments, "executionId").map(|id| {
-            let mut body = serde_json::json!({
-                "mode": str_arg(arguments, "mode").unwrap_or_default(),
-            });
-            // `file` IS COPIED ONLY WHEN GIVEN. It used to be built with `unwrap_or_default()`,
-            // which put `"file": ""` in the body whenever the argument was absent. That was
-            // invisible while the schema made `file` required, and becomes a lie the moment it is
-            // optional: an empty string is a PRESENT file, so the server would refuse it as an
-            // unreadable path instead of reading the `graph` the caller actually sent.
-            if let Some(file) = str_arg(arguments, "file") {
-                body["file"] = serde_json::json!(file);
-            }
-            if let Some(graph) = object_arg(arguments, "graph") {
-                body["graph"] = graph.clone();
-            }
-            if let Some(fixtures) = str_arg(arguments, "fixtures") {
-                body["fixtures"] = serde_json::json!(fixtures);
-            }
-            if let Some(route) = str_arg(arguments, "route") {
-                body["route"] = serde_json::json!(route);
-            }
-            api.request(
-                "POST",
-                &url::segment_path(&["v1", "executions", id, "start"]),
-                Some(&body),
-                Some(&key),
-                if_match,
-            )
-        }),
+        "start" => require(arguments, "executionId")
+            .map_err(|_| HandlerOutcome::Error {
+                code: INVALID_PARAMS,
+                // The bare "requires executionId" cost a bench session three calls before its
+                // first accepted start (token-bench, task 1044): the contract is named whole.
+                message: "start requires a string \"executionId\" (an id you choose), a \
+                          \"mode\", and one of \"file\" (a graph path on the Runtime's host) \
+                          or \"graph\" (an inline graph object); pass \"held\": true to \
+                          start without driving"
+                    .to_owned(),
+            })
+            .map(|id| {
+                let mut body = serde_json::json!({
+                    "mode": str_arg(arguments, "mode").unwrap_or_default(),
+                });
+                if let Some(held) = arguments.get("held").and_then(serde_json::Value::as_bool) {
+                    body["held"] = serde_json::json!(held);
+                }
+                // `file` IS COPIED ONLY WHEN GIVEN. It used to be built with `unwrap_or_default()`,
+                // which put `"file": ""` in the body whenever the argument was absent. That was
+                // invisible while the schema made `file` required, and becomes a lie the moment it is
+                // optional: an empty string is a PRESENT file, so the server would refuse it as an
+                // unreadable path instead of reading the `graph` the caller actually sent.
+                if let Some(file) = str_arg(arguments, "file") {
+                    body["file"] = serde_json::json!(file);
+                }
+                if let Some(graph) = object_arg(arguments, "graph") {
+                    body["graph"] = graph.clone();
+                }
+                if let Some(fixtures) = str_arg(arguments, "fixtures") {
+                    body["fixtures"] = serde_json::json!(fixtures);
+                }
+                if let Some(route) = str_arg(arguments, "route") {
+                    body["route"] = serde_json::json!(route);
+                }
+                api.request(
+                    "POST",
+                    &url::segment_path(&["v1", "executions", id, "start"]),
+                    Some(&body),
+                    Some(&key),
+                    if_match,
+                )
+            }),
         "signal" => require(arguments, "executionId").map(|id| {
             let mut body = serde_json::json!({
                 "signal": arguments.get("signal").cloned().unwrap_or(serde_json::Value::Null),
@@ -1449,23 +1722,373 @@ pub(crate) fn call(
     };
 
     let response = match outcome {
-        Err(refusal) => return refusal,
+        Err(refusal) => return with_example(name, refusal),
         Ok(response) => response,
     };
-    match response {
-        Ok((_status, envelope)) => {
-            let is_error = envelope.get("ok") != Some(&serde_json::Value::Bool(true));
-            HandlerOutcome::Result(serde_json::json!({
-                "content": [{"type": "text", "text": envelope.to_string()}],
-                "isError": is_error,
-            }))
+    with_example(
+        name,
+        match response {
+            Ok((_status, envelope)) => {
+                let is_error = envelope.get("ok") != Some(&serde_json::Value::Bool(true));
+                HandlerOutcome::Result(serde_json::json!({
+                    "content": [{"type": "text", "text": envelope.to_string()}],
+                    "isError": is_error,
+                }))
+            }
+            // No HTTP response at all (server down, timeout): a tool-level error result, not a
+            // protocol error — the chat can see and retry. The transport's Display never carries
+            // a header value, so relaying it is redaction-safe.
+            Err(transport) => {
+                // A start drives before it answers, so a timeout here does not mean the start was
+                // lost: it usually means it happened. The same rule #1202 states for a process tree
+                // - a timeout returns an OBSERVED state, never a guess - applied to the one tool
+                // whose request outlives the client's patience: observe once, bounded to a single
+                // GET, and report what the Runtime holds. (Measured: token-bench task 1044, four
+                // calls for one start before this existed.)
+                if let Some(id) = (name == "start")
+                    .then(|| str_arg(arguments, "executionId"))
+                    .flatten()
+                {
+                    let observed = api.request(
+                        "GET",
+                        &url::segment_path(&["v1", "executions", id]),
+                        None,
+                        None,
+                        None,
+                    );
+                    return start_after_timeout(&transport.to_string(), observed.ok());
+                }
+                HandlerOutcome::Result(serde_json::json!({
+                    "content": [{"type": "text", "text": format!("the API is unreachable: {transport}")}],
+                    "isError": true,
+                }))
+            }
+        },
+    )
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+    use zeroize::Zeroizing;
+
+    /// Does a reply tell the caller not to retry the start? Case-folded, over every phrasing the
+    /// arms use, so a rewording of the success arm cannot slip past it the way a byte-match on
+    /// one sentence would.
+    fn advises_against_retry(text: &str) -> bool {
+        let folded = text.to_ascii_lowercase();
+        [
+            "not call start again",
+            "do not retry",
+            "don't retry",
+            "not retry",
+            "do not start again",
+        ]
+        .iter()
+        .any(|phrase| folded.contains(phrase))
+    }
+
+    /// Every tool's minimal example carries every field its own schema requires - the invariant
+    /// that makes the example worth sending. A tool added without a placeholder for a new
+    /// required field still passes (the typed marker covers it); a tool whose example LOST a
+    /// required field does not.
+    #[test]
+    fn every_tools_minimal_example_satisfies_its_own_required_list() {
+        for tool in TOOLS.iter() {
+            let schema = (tool.schema)();
+            let example = minimal_example(tool.name);
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            for field in required.iter().filter_map(serde_json::Value::as_str) {
+                assert!(
+                    example.get(field).is_some(),
+                    "tool {:?}: example {example} lacks required field {field:?}",
+                    tool.name
+                );
+            }
         }
-        // No HTTP response at all (server down, timeout): a tool-level error result, not a
-        // protocol error — the chat can see and retry. The transport's Display never carries
-        // a header value, so relaying it is redaction-safe.
-        Err(transport) => HandlerOutcome::Result(serde_json::json!({
-            "content": [{"type": "text", "text": format!("the API is unreachable: {transport}")}],
-            "isError": true,
-        })),
+        assert!(
+            minimal_example("start")["file"].is_string(),
+            "start's example names a graph file"
+        );
+        assert!(minimal_example("no-such-tool").is_null());
+    }
+
+    /// The signal example is checked against the SCHEMA FILE, not against a list typed here: the
+    /// example's first version was missing two required fields and nothing in this module could
+    /// know it.
+    #[test]
+    fn the_signal_example_carries_every_field_the_signal_schema_requires() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../schemas/graph-signal.schema.json"
+        ))
+        .expect("the signal schema parses");
+        let example = minimal_example("signal");
+        let signal = &example["signal"];
+        for field in schema["required"]
+            .as_array()
+            .expect("required")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+        {
+            assert!(
+                signal.get(field).is_some(),
+                "signal example lacks required {field:?}: {signal}"
+            );
+        }
+        let source_required = schema["properties"]["source"]["required"]
+            .as_array()
+            .expect("source.required");
+        for field in source_required.iter().filter_map(serde_json::Value::as_str) {
+            assert!(
+                signal["source"].get(field).is_some(),
+                "signal.source lacks {field:?}"
+            );
+        }
+        let severities = schema["properties"]["severity"]["enum"]
+            .as_array()
+            .expect("severity enum");
+        assert!(
+            severities.contains(&signal["severity"]),
+            "severity is one of the schema's values"
+        );
+    }
+
+    /// Presence is not usability: every placeholder must carry the TYPE its schema declares, and a
+    /// nested object schema must yield the nested example. Review of #1199 replaced the generic
+    /// placeholder with `{}` and the presence-only guard stayed green; this cell reddens on that
+    /// sabotage, and on `"document": {}`.
+    #[test]
+    fn every_placeholder_has_the_declared_type_and_nested_objects_are_derived() {
+        fn check(tool: &str, schema: &serde_json::Value, example: &serde_json::Value) {
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            for field in required.iter().filter_map(serde_json::Value::as_str) {
+                let property = &schema["properties"][field];
+                let declared = property["type"].as_str().unwrap_or("string");
+                let value = &example[field];
+                let matches = match declared {
+                    "string" => value.is_string(),
+                    "integer" | "number" => value.is_number(),
+                    "boolean" => value.is_boolean(),
+                    "array" => value.is_array(),
+                    "object" => value.is_object(),
+                    other => {
+                        panic!("tool {tool:?} field {field:?}: unknown declared type {other:?}")
+                    }
+                };
+                assert!(
+                    matches,
+                    "tool {tool:?} field {field:?}: declared {declared:?}, example carries {value}"
+                );
+                if declared == "object" {
+                    assert!(
+                        !value.as_object().unwrap().is_empty(),
+                        "tool {tool:?} field {field:?}: a declared object must never derive to {{}}"
+                    );
+                    if property.get("properties").is_some() {
+                        assert!(
+                            value.get("<not derivable>").is_none(),
+                            "tool {tool:?} field {field:?}: a schema with properties derives them"
+                        );
+                        check(tool, property, value);
+                    }
+                }
+            }
+        }
+        for tool in TOOLS.iter() {
+            let schema = (tool.schema)();
+            let example = minimal_example(tool.name);
+            check(tool.name, &schema, &example);
+        }
+        let document = &minimal_example("document_read")["document"];
+        assert!(
+            document["evidenceId"].is_string() && document["index"].is_number(),
+            "document is {{evidenceId, index}}: {document}"
+        );
+    }
+
+    /// `wake_wait` returns from `call()` before the request table; its refusal must still carry the
+    /// example. The refusal fires before any request is built, so a client pointed at a closed port
+    /// exercises the real wiring with no network.
+    #[test]
+    fn wake_waits_refusal_goes_through_the_example_wrapper() {
+        let api = ApiClient::new(
+            "http://127.0.0.1:1".to_owned(),
+            Zeroizing::new("tok".to_owned()),
+            "a".into(),
+            "agent".into(),
+            None,
+            None,
+            "0123456789abcdef".to_owned(),
+        );
+        match call(
+            &api,
+            "0123456789abcdef",
+            &serde_json::json!(1),
+            "wake_wait",
+            &serde_json::json!({}),
+        ) {
+            HandlerOutcome::Error { code, message } => {
+                assert_eq!(code, INVALID_PARAMS);
+                assert!(
+                    message.starts_with("wake_wait needs executionId"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("minimal valid call for \"wake_wait\""),
+                    "{message}"
+                );
+                assert!(message.contains("\"executionId\""), "{message}");
+            }
+            HandlerOutcome::Result(value) => panic!("a refusal stays a refusal: {value}"),
+        }
+    }
+
+    /// The refusal keeps its code and its reason; the example is appended, never substituted.
+    #[test]
+    fn a_missing_argument_refusal_keeps_its_code_and_gains_the_example() {
+        let refused = with_example(
+            "evidence",
+            HandlerOutcome::Error {
+                code: INVALID_PARAMS,
+                message: "the tool requires a string \"evidenceId\" argument".to_owned(),
+            },
+        );
+        match refused {
+            HandlerOutcome::Error { code, message } => {
+                assert_eq!(code, INVALID_PARAMS);
+                assert!(message.starts_with("the tool requires a string \"evidenceId\" argument"));
+                assert!(message.contains("minimal valid call for \"evidence\""));
+                assert!(message.contains("\"evidenceId\""));
+            }
+            HandlerOutcome::Result(_) => panic!("a refusal stays a refusal"),
+        }
+    }
+
+    /// A Runtime shape refusal keeps its envelope byte-for-byte as the first block and gains a
+    /// second block; a state refusal (a real diagnostic about the execution) gains nothing.
+    #[test]
+    fn a_shape_refusal_from_the_runtime_gains_a_second_block_and_a_state_refusal_does_not() {
+        let envelope = serde_json::json!({"command":"execution.signal","data":null,"diagnostics":[{"code":crate::error_codes::GHCLI003_SIGNAL_INVALID,"message":"the signal envelope failed schema validation","path":"/signal","severity":"error","source":"execution-cli"}],"ok":false});
+        let result = serde_json::json!({"content": [{"type": "text", "text": envelope.to_string()}], "isError": true});
+        match with_example("signal", HandlerOutcome::Result(result)) {
+            HandlerOutcome::Result(value) => {
+                let content = value["content"].as_array().expect("content");
+                assert_eq!(content.len(), 2);
+                assert_eq!(
+                    content[0]["text"].as_str(),
+                    Some(envelope.to_string().as_str()),
+                    "the envelope is untouched"
+                );
+                assert!(
+                    content[1]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("finding.root_cause")
+                );
+                assert_eq!(
+                    value["isError"],
+                    serde_json::Value::Bool(true),
+                    "still an error"
+                );
+            }
+            HandlerOutcome::Error { .. } => panic!("a result stays a result"),
+        }
+        let state = serde_json::json!({"command":"execution.start","data":null,"diagnostics":[{"code":crate::error_codes::GHCLI005_EXECUTION_STATE,"message":"an execution has already started on this stream","path":"/execution","severity":"error","source":"execution-cli"}],"ok":false});
+        let result = serde_json::json!({"content": [{"type": "text", "text": state.to_string()}], "isError": true});
+        match with_example("start", HandlerOutcome::Result(result)) {
+            HandlerOutcome::Result(value) => assert_eq!(
+                value["content"].as_array().unwrap().len(),
+                1,
+                "no example beside a state diagnostic"
+            ),
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+    }
+
+    /// The bounded observer after a start timeout: an execution the Runtime holds is reported as
+    /// started (not an error, with the warning not to retry); an absent one keeps the transport
+    /// error and names the two ways out.
+    #[test]
+    fn a_timed_out_start_reports_the_observed_state_not_a_guess() {
+        let held = serde_json::json!({"command":"execution.status","data":{"executionId":"exec-1","status":"running"},"diagnostics":[],"ok":true});
+        match start_after_timeout("request timed out", Some((200, held))) {
+            HandlerOutcome::Result(value) => {
+                assert_eq!(value["isError"], serde_json::Value::Bool(false));
+                let text = value["content"][0]["text"].as_str().unwrap();
+                assert!(text.contains("Do NOT call start again"));
+                assert!(text.contains("\"status\":\"running\""));
+            }
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+        match start_after_timeout("request timed out", None) {
+            HandlerOutcome::Result(value) => {
+                assert_eq!(value["isError"], serde_json::Value::Bool(true));
+                let text = value["content"][0]["text"].as_str().unwrap();
+                assert!(text.contains("request timed out") && text.contains("\"held\": true"));
+            }
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+        // The third input - reachable, but the Runtime does not hold the execution. Without the
+        // `ok:true` guard this read as success with "do not retry"; the cell that was missing.
+        let refused = serde_json::json!({"command":"execution.status","data":null,"diagnostics":[{"code":crate::error_codes::GHCLI005_EXECUTION_STATE,"message":"no execution on this stream","path":"/execution","severity":"error","source":"execution-cli"}],"ok":false});
+        match start_after_timeout("request timed out", Some((200, refused))) {
+            HandlerOutcome::Result(value) => {
+                assert_eq!(
+                    value["isError"],
+                    serde_json::Value::Bool(true),
+                    "not a success"
+                );
+                let text = value["content"][0]["text"].as_str().unwrap();
+                // A narrow guard on the ERROR arm's own text, which `isError` cannot see: an error
+                // reply must never advise against retrying. Semantic (case-folded, any phrasing
+                // the arms use), not a byte-match on the sibling arm's sentence.
+                assert!(
+                    !advises_against_retry(text),
+                    "an error reply must not advise against retrying: {text}"
+                );
+                assert!(
+                    text.contains("was not recorded")
+                        && text.contains("no execution on this stream"),
+                    "{text}"
+                );
+            }
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+        // The fourth input, the one review of bde1867c found the arm above was wrong about: the
+        // GET failed for a reason that says nothing about the execution (a 401 on a rotated
+        // token). The start may well have landed. Neither "retry" nor "do not retry" may be said.
+        let unrelated = serde_json::json!({"error": "unauthorized"});
+        match start_after_timeout("request timed out", Some((401, unrelated))) {
+            HandlerOutcome::Result(value) => {
+                let text = value["content"][0]["text"].as_str().unwrap();
+                assert!(
+                    !text.contains("was not recorded"),
+                    "no categorical denial on a 401: {text}"
+                );
+                assert!(
+                    !advises_against_retry(text),
+                    "no do-not-retry on a 401: {text}"
+                );
+                assert!(
+                    text.contains("HTTP 401") && text.contains("Do not assume either way"),
+                    "{text}"
+                );
+                assert_eq!(value["isError"], serde_json::Value::Bool(true));
+            }
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+        // And an ok:false envelope the Runtime answered (200) WITHOUT the execution-state code is
+        // not a denial either: the categorical arm needs the code, not the colour.
+        let other = serde_json::json!({"command":"execution.status","data":null,"diagnostics":[{"code":crate::error_codes::GHCLI001_ARGUMENT_INVALID,"message":"bad id","path":"/executionId","severity":"error","source":"execution-cli"}],"ok":false});
+        match start_after_timeout("request timed out", Some((200, other))) {
+            HandlerOutcome::Result(value) => {
+                let text = value["content"][0]["text"].as_str().unwrap();
+                assert!(
+                    !text.contains("was not recorded") && text.contains("Do not assume either way"),
+                    "{text}"
+                );
+            }
+            HandlerOutcome::Error { .. } => panic!(),
+        }
     }
 }

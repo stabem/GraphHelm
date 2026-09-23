@@ -75,7 +75,8 @@ $PinnedSuites = @(
     'slot-lock.tests.ps1',
     'studio-stage.tests.ps1',
     'target-inventory.tests.ps1',
-    'test-count.tests.ps1'
+    'test-count.tests.ps1',
+    'delivery-time.tests.ps1'
 )
 
 $discovered = @(

@@ -144,6 +144,17 @@ All commands must work on Windows PowerShell. Core crates must also compile and 
 
 ## Journey-Proven Development
 
+### Task workflow routing
+
+Use the smallest workflow that can prove the requested change: direct for a small reversible
+change with a known observer and no persistence, permission, compatibility, external effect, or
+uncertain recovery; expanded for those risks or an unclear observer. See
+[.factory/SKILL-METHODOLOGY.md](.factory/SKILL-METHODOLOGY.md) for entry, handoffs, exits, and
+retry limits. Neither route skips mandatory checks or review. JPD artifacts and certification
+semantics apply only when the typed JPD flow is invoked; an informal proof remains ordinary
+evidence. Keep missing observers unresolved and stop retries when they add no evidence or reach the
+approved budget boundary. There is no universal ceremony count.
+
 - Start from the complete user journey and compile each promise into an observable obligation. Select the smallest proof method strong enough for that obligation and risk; do not apply one universal testing ritual.
 - Use RED -> GREEN -> REFACTOR when a focused automated test is the best proof for the behavior. Preserve unit, property, integration, concurrency, CLI, and browser tests where each observes the correct boundary. Browser journey proof runs only in an explicitly observer-enabled validation environment; the committed offline gate remains browser-session-free and otherwise reports `OBSERVER_MISSING`.
 - If a promised behavior has no adequate observer, stop with `OBSERVER_MISSING`. Never treat a proxy such as HTTP acceptance as proof of delivery or rendering.

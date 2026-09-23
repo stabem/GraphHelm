@@ -43,7 +43,8 @@ route suspected instruction injection through the existing policy and typed-sign
 - `plan-council`: select a risk-specific council and preserve arguments and dissent.
 - `defect-bounty`: normalize, minimize, replay, and try to falsify journey defect claims.
 - `skill-synthesizer`: compose a task-local Skill Capsule from installed capabilities.
-- `skill-evaluator`: measure a capsule and produce a governed promotion proposal when justified.
+- `skill-evaluator`: measure a task-local capsule and produce an advisory, non-promotable evaluation
+  candidate; current package capability is advisory only.
 - `retry-provenance`: retain the initial failure and request classification of the complete chain.
 - `journey-verifier`: execute the compiled proof and report only the strongest supported result.
 
@@ -104,10 +105,11 @@ Issue #210 does not activate the checked-in MCP template. A future installer mus
 trusted canonical executable, reject a relative or bare command, validate token-file permissions,
 and activate the adapter atomically.
 
-The manifest's per-contribution surface lists are validated orchestration contracts. The current
-MCP server still exposes its fixed tool table to the session token; it does not enforce a different
-tool subset for each selected skill. Runtime policy and actor authority remain the enforcement
-boundary until scoped MCP tokens or host-enforced per-skill tool filters ship.
+The manifest's per-contribution surface lists are validated orchestration contracts. The package
+declares capability inputs, while the current CLI can opt into a digest-bound per-contribution
+capability token and redacted audit log (`apps/cli/src/commands/mcp/session.rs`; #213). A package
+declaration or host discovery still does not grant authority. Verify the active Runtime path and
+its actor policy before treating that integration as end-to-end proof.
 
 The policy and evaluator files in this data-only slice are declarative contracts. Package
 validation checks their shape and integrity but does not execute them. Version 0.1.0 deliberately
@@ -115,3 +117,8 @@ cannot encode an evaluated or eligible promotion, a Project-scope capsule, or an
 activated, or published capsule. It emits task-local advisory drafts only. A later schema version
 may add those states together with the registered deterministic implementation and governed
 lifecycle that can prove them.
+
+For ordinary development task routing, use the repository's direct-versus-expanded workflow guide:
+[workflow guide](../../../.factory/SKILL-METHODOLOGY.md). That guide preserves this
+package's `OBSERVER_MISSING`, advisory, custody, and authority boundaries; it does not turn an
+informal direct proof into a JPD certification.

@@ -4,6 +4,12 @@ Run this as your own `/loop` (dynamic, ~20-30 min). Every turn, in this order. I
 
 ## 0. The order the lanes run in (owner's restructure, 2026-09-08)
 
+Task sizing and evidence routing happen before this lane sequence. Use the direct or expanded path
+in [SKILL-METHODOLOGY.md](SKILL-METHODOLOGY.md), together with the workflow rules in `AGENTS.md`.
+The choice may reduce ceremony for a reversible low-risk edit, but it never skips the required
+gate, peer review, authority, or missing-observer rules below. Handoffs must name the next owner;
+retry only when new evidence is expected, and stop at the approved budget boundary.
+
 **A plans -> B implements -> C runs the gate -> D reviews THE HEAD THAT CARRIES the manifest -> E
 presses.** Not the head the manifest NAMES: on a normally published receipt the head IS the receipt
 commit and its manifest names the head's PARENT, so "pin what the manifest names" would pin every

@@ -14,5 +14,6 @@ serde_json.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+serde_yaml_ng.workspace = true
 chrono.workspace = true
 graphhelm-schema = { path = "../schema" }

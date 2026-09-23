@@ -911,6 +911,97 @@
             "cli:graph validate"
           ],
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/keel-policy",
+          "kind": "schema",
+          "path": "schemas/keel-policy.schema.json",
+          "sha256": "sha256:3a591ff5c2b4fb1e3ab38c401b53133396a7bdc97203e95879e2c612e12a1e94",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "policy/keel",
+          "kind": "policy",
+          "path": "policies/keel.yaml",
+          "sha256": "sha256:8c19d5d673c8cb645bf9ab071b030b756cb00544ac33432c2317ac4e8fc81990",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/keel-policy.schema.json"
+        },
+        {
+          "id": "skill/keel",
+          "kind": "skill",
+          "path": "skills/keel/SKILL.md",
+          "sha256": "sha256:591a58ac8091a42c29fbf8ffcd967f0b9e17e6714754e86ee00a31099b3be998",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "surfaces": [
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/keel-valid-policy-shipped-shape",
+          "kind": "fixture",
+          "path": "fixtures/keel/valid/policy-shipped-shape.json",
+          "sha256": "sha256:d23277ffe0fdb1199e22444f1bdf900875f4ec05f131de4a26ea3ab385291048",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/keel-invalid-ladder-strikes-per-rung-zero",
+          "kind": "fixture",
+          "path": "fixtures/keel/invalid/ladder-strikes-per-rung-zero.json",
+          "sha256": "sha256:1f49d33723ac93340d96d5352a782e70b2598352e0b80893812fa0f5d9d570a1",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/keel-invalid-surface-unknown-kind",
+          "kind": "fixture",
+          "path": "fixtures/keel/invalid/surface-unknown-kind.json",
+          "sha256": "sha256:0d55e4e6e9be09caa91d03ff17a3915cc8fa370aa8428c35ecfe8031caadab63",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
         }
       ]
     },

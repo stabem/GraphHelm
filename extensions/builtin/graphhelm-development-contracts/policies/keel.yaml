@@ -1,0 +1,58 @@
+# Keel: the development model's deterministic half (#1212).
+#
+# This version string travels WITH every verdict the classifier returns, the way
+# `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
+# rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
+# Bump `version` in the same commit as any change below.
+version: "1.1.0"
+
+# READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
+# is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
+card:
+  maxScopePaths: 12
+  maxExportedSymbols: 8
+  maxCardBytes: 4096
+
+# WRITE ECONOMY. What one node may bring into existence without a declared allowance. Zero is a
+# budget: a new dependency is never free. Overrun is refused by NAME (`keel.surface.<kind>_over_budget`),
+# never folded into a score, because a score lets a large win on one kind buy sprawl on another.
+surface:
+  newModule: 1
+  newType: 2
+  newPublicFn: 4
+  newDependency: 0
+  newTest: 2
+
+# A promise may declare an allowance at planning time (paid from the graph's budget, not argued at
+# write time). The allowance is capped here; a card asking for more is a card asking for a split.
+maxAllowance:
+  newModule: 3
+  newType: 6
+  newPublicFn: 12
+  newDependency: 1
+  newTest: 6
+
+# INWARD SPRAWL. The classifier counts declarations it can see on one added line; it does not see a
+# function grow. This cap is the stand-in until a parser and its pathogen exist: a file that gains
+# more than this in one diff is refused as `keel.body.oversized_change`.
+body:
+  maxFileLinesDelta: 400
+
+# COUNTS ARE SIGNALS (owner decision 2026-09-23, after an independent review). Surface budgets and
+# the per-file cap produce findings the reviewer reads; they refuse the diff only under `block`.
+# A hard quota invites an agent to inflate one function or drop a test to stay under a number.
+# Objective contracts (an unparseable diff, a card scope that is not a list of paths) block in
+# either mode.
+surfaceEnforcement: signal
+
+# PENALTY IS A ROUTING STATE, WHEN ENABLED. Drift and proof fold over the last `windowNodes` records of a seat into
+# a rung: full -> contract_only -> patch_only -> propose_only. Each rung is a smaller write surface,
+# not a message. Credit comes only from a passing named proof instrument; a revert refunds nothing.
+ladder:
+  # OFF until a controlled comparison (guidance alone vs guidance + measurement vs + penalties)
+  # shows penalties add value. While off, the rung is computed and reported, never applied, and
+  # every drift is recorded with its cause (card, tool, task or agent) first.
+  enabled: false
+  strikesPerRung: 2
+  creditPerProvenPromise: 1
+  windowNodes: 20

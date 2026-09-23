@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/keel-policy.schema.json",
+  "title": "Keel Policy",
+  "description": "The versioned rules file of the Keel development model. The classifier in core/policy receives this document and a unified diff and returns charges, findings and a mode; the version here travels with every verdict so a refusal can be replayed and a penalty audited. Bump `version` in the same commit as any rule change.",
+  "type": "object",
+  "required": [
+    "version",
+    "card",
+    "surface",
+    "maxAllowance",
+    "body",
+    "surfaceEnforcement",
+    "ladder"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Carried in every Classification. A verdict without it cannot name the rules it was judged under."
+    },
+    "card": {
+      "type": "object",
+      "required": [
+        "maxScopePaths",
+        "maxExportedSymbols",
+        "maxCardBytes"
+      ],
+      "additionalProperties": false,
+      "description": "Bounds on the contract card an agent loads instead of the tree. A card over any bound is refused before it is read (keel.card.*).",
+      "properties": {
+        "maxScopePaths": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "maxExportedSymbols": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "maxCardBytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536
+        }
+      }
+    },
+    "surface": {
+      "$ref": "#/$defs/surfaceBudget",
+      "description": "What one node may bring into existence without a declared allowance. Zero is a budget."
+    },
+    "maxAllowance": {
+      "$ref": "#/$defs/surfaceBudget",
+      "description": "The ceiling on what a promise may declare at planning time. The classifier caps a declared allowance here before adding it to `surface`."
+    },
+    "body": {
+      "type": "object",
+      "required": [
+        "maxFileLinesDelta"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "maxFileLinesDelta": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Added lines one file may receive in one diff; above it the change is refused as keel.body.oversized_change. The stand-in for a parser this slice does not have."
+        }
+      }
+    },
+    "ladder": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "strikesPerRung",
+        "creditPerProvenPromise",
+        "windowNodes"
+      ],
+      "additionalProperties": false,
+      "description": "How drift would change the write surface a seat may use next: full -> contract_only -> patch_only -> propose_only. Applied only when enabled.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Off until a controlled comparison shows penalties add value over guidance alone; while off the rung is reported, never applied."
+        },
+        "strikesPerRung": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Net strikes (drifts minus credits, never below zero) per rung dropped. Zero would be a ladder that never demotes and is refused here."
+        },
+        "creditPerProvenPromise": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "windowNodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "How many of the seat's most recent node records the fold reads."
+        }
+      }
+    },
+    "surfaceEnforcement": {
+      "enum": [
+        "signal",
+        "block"
+      ],
+      "description": "Whether surface budgets and the per-file cap refuse the diff (block) or only report findings (signal). Objective contracts block in either mode."
+    }
+  },
+  "$defs": {
+    "surfaceBudget": {
+      "type": "object",
+      "required": [
+        "newModule",
+        "newType",
+        "newPublicFn",
+        "newDependency",
+        "newTest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "newModule": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newType": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newPublicFn": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newDependency": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newTest": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    }
+  }
+}

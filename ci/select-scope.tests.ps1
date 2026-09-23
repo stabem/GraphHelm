@@ -15,7 +15,7 @@
 # EVERY CELL BELOW FAILS BEFORE ci/select-scope.ps1 EXISTS. That is the point of writing them
 # first: a selector that was tested after it was written is tested against what it does.
 
-$ExpectedAssertionCount = 26
+$ExpectedAssertionCount = 56
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -49,6 +49,16 @@ if ($parseErrors.Count -gt 0) {
 
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-select-scope-$([guid]::NewGuid().ToString('N'))"
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
+# A GIT REPOSITORY WITH NOTHING TRACKED (#901 slice 2): every class path is now asked which Rust files
+# read it, through `git grep`, and a root where git cannot answer widens by design. An empty index
+# answers "no reader", which is the premise the cells below were written under. The no-git answer
+# has its own cell, on a root outside this one.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& git -C $fixtureRoot init -q 2>&1 | Out-Null
+$ErrorActionPreference = $previousPreference
+$nonRepoRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-select-scope-nogit-$([guid]::NewGuid().ToString('N'))"
+[System.IO.Directory]::CreateDirectory($nonRepoRoot) | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 # A hand-built `cargo metadata --format-version 1` graph. Four crates and one edge of each kind that
@@ -92,10 +102,11 @@ New-MetadataFixture -Path $metadataPath
 function Invoke-Select {
     param(
         [Parameter(Mandatory)] [string[]] $ChangedFiles,
-        [string] $Metadata = $metadataPath
+        [string] $Metadata = $metadataPath,
+        [string] $Root = $fixtureRoot
     )
     $json = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
-        -MetadataPath $Metadata -ChangedFiles ($ChangedFiles -join ';') -RepoRoot $fixtureRoot 2>&1
+        -MetadataPath $Metadata -ChangedFiles ($ChangedFiles -join ';') -RepoRoot $Root 2>&1
     $exit = $LASTEXITCODE
     $text = ($json | ForEach-Object { [string]$_ }) -join "`n"
     $parsed = $null
@@ -186,7 +197,7 @@ try {
     # The escalation list is a DENY-LIST over a class ("a path whose change can invalidate the graph
     # the selection is derived from"), and a list of names cannot see the next member. So anything
     # the selector cannot map must widen the run, never narrow it.
-    $unmapped = Invoke-Select -ChangedFiles @('docs/whatever.md', 'core/leaf/src/lib.rs')
+    $unmapped = Invoke-Select -ChangedFiles @('docs/whatever.yaml', 'core/leaf/src/lib.rs')
     Assert-True ($null -ne $unmapped.result -and $unmapped.result.escalated -eq $true) `
         'a changed path that maps to NO crate escalates to FULL rather than being reported and skipped'
 
@@ -216,7 +227,7 @@ try {
         'and the crate beside it is still selected'
 
     # The exemption is the STORE, not the whole `.factory/` tree.
-    $otherFactory = Invoke-Select -ChangedFiles @('.factory/orchestrator-board.md', 'core/leaf/src/lib.rs')
+    $otherFactory = Invoke-Select -ChangedFiles @('.factory/orchestrator-board.yaml', 'core/leaf/src/lib.rs')
     Assert-True ($null -ne $otherFactory.result -and $otherFactory.result.escalated -eq $true) `
         'a NON-manifest file under .factory/ still escalates -- the exemption is the store, not the tree'
 
@@ -226,8 +237,169 @@ try {
             $onlyReceipt.result.escalationRule -eq 'manifest-only') `
         "a diff of run manifests alone is FULL, by its own named rule (got '$(if ($null -eq $onlyReceipt.result) { '' } else { $onlyReceipt.result.escalationRule })')"
 
+
+    # ---- #901 slice 2: WHAT IS NOT RUST BUILD INPUT, and what still is -------------------------
+    # A REAL git repository this time, because two of the rules read the tree: the gate's own
+    # `Join-Path` calls decide which `ci/` files the gate RUNS, and `git grep` decides who reads a
+    # changed Markdown file. The graph is two crates, so "selected the reader" and "selected
+    # everything" cannot pass the same cell.
+    $repo = Join-Path $fixtureRoot 'repo'
+    foreach ($dir in @('ci', 'core/leaf/src', 'tools/unrelated/src', 'apps/studio/src', 'docs')) {
+        [System.IO.Directory]::CreateDirectory((Join-Path $repo $dir)) | Out-Null
+    }
+    $files = [ordered]@{
+        # The gate RUNS helper.ps1, which RUNS deep.ps1. commented.ps1 is named only in a comment.
+        'ci/gate.ps1'           = ". (Join-Path `$PSScriptRoot 'helper.ps1')`n# . (Join-Path `$PSScriptRoot 'commented.ps1')`n"
+        'ci/helper.ps1'         = "& powershell -File (Join-Path `$repositoryRoot 'ci/deep.ps1')`n"
+        'ci/deep.ps1'           = "Write-Host deep`n"
+        'ci/commented.ps1'      = "Write-Host commented`n"
+        'ci/tool.ps1'           = "Write-Host a verifier the gate never runs`n"
+        'ci/x.tests.ps1'        = "# this suite reads docs/named-by-suite.md`n"
+        'core/leaf/src/lib.rs'  = "pub const R: &str = include_str!(`"../../../README.md`");`n"
+        'tools/unrelated/src/lib.rs' = "pub fn f() {}`n"
+        'README.md'             = "# read by core/leaf`n"
+        'docs/lonely.md'        = "nobody reads this`n"
+        'docs/named-by-suite.md' = "a suite reads this`n"
+        'apps/studio/src/a.ts'  = "export const a = 1`n"
+    }
+    foreach ($name in $files.Keys) { [System.IO.File]::WriteAllText((Join-Path $repo $name), $files[$name], $utf8NoBom) }
+    # Native stderr under 'Stop' is a terminating error in Windows PowerShell 5.1 (git prints hints
+    # on init), which would end the suite in HARNESS-BROKE rather than in a verdict.
+    $ErrorActionPreference = 'Continue'
+    & git -C $repo init -q 2>&1 | Out-Null
+    & git -C $repo add -A 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    $repoRootText = $repo.Replace('\', '/')
+    $repoMetadata = Join-Path $fixtureRoot 'repo-metadata.json'
+    $repoGraph = [ordered]@{
+        packages = @(
+            [ordered]@{ name = 'core-leaf'; id = 'core-leaf 0.1.0'; manifest_path = "$repoRootText/core/leaf/Cargo.toml"; dependencies = @() },
+            [ordered]@{ name = 'unrelated'; id = 'unrelated 0.1.0'; manifest_path = "$repoRootText/tools/unrelated/Cargo.toml"; dependencies = @() },
+            [ordered]@{ name = 'protocols'; id = 'protocols 0.1.0'; manifest_path = "$repoRootText/core/protocols/Cargo.toml"; dependencies = @() }
+        )
+    }
+    [System.IO.File]::WriteAllText($repoMetadata, ($repoGraph | ConvertTo-Json -Depth 6), $utf8NoBom)
+
+    $tool = Invoke-Select -ChangedFiles @('ci/tool.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $tool.result -and $tool.result.escalated -eq $false -and $tool.result.rustInputsChanged -eq $false) `
+        "a ci/ file the gate never runs is not Rust build input (escalated=$(if ($tool.result) { $tool.result.escalated }), rust=$(if ($tool.result) { $tool.result.rustInputsChanged }), reason '$(if ($tool.result) { $tool.result.matrixReason })')"
+    Assert-True ($null -ne $tool.result -and $tool.result.matrixReason -match 'ci-tool' -and $tool.result.psSuites -eq $true) `
+        'and it names the class ci-tool, and its suites still run'
+    $deep = Invoke-Select -ChangedFiles @('ci/deep.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $deep.result -and $deep.result.escalated -eq $true -and $deep.result.escalationRule -eq 'ci/') `
+        'CONTROL: a ci/ file the gate runs TRANSITIVELY (gate -> helper -> deep) still escalates'
+    $commented = Invoke-Select -ChangedFiles @('ci/commented.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $commented.result -and $commented.result.escalated -eq $false) `
+        'a ci/ file named only in a COMMENT of the gate is not run by it'
+    $noGate = Invoke-Select -ChangedFiles @('ci/tool.ps1')
+    Assert-True ($null -ne $noGate.result -and $noGate.result.escalated -eq $true) `
+        'CONTROL: where ci/gate.ps1 cannot be read, no ci/ file is a tool -- the closure fails wide'
+
+    $studio = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $studio.result -and $studio.result.escalated -eq $false -and $studio.result.rustInputsChanged -eq $false) `
+        'an apps/studio change is not Rust build input'
+    Assert-True ($null -ne $studio.result -and $studio.result.psSuites -eq $false) `
+        "and nothing under ci/ names it, so the suites narrow (reason '$(if ($studio.result) { $studio.result.psSuitesReason })')"
+    $studioMixed = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts', 'core/leaf/src/lib.rs') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $studioMixed.result -and $studioMixed.result.rustInputsChanged -eq $true -and @($studioMixed.result.crates) -contains 'core-leaf') `
+        'CONTROL: studio beside a crate change still selects the crate'
+
+    $lonely = Invoke-Select -ChangedFiles @('docs/lonely.md') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $lonely.result -and $lonely.result.escalated -eq $false -and $lonely.result.rustInputsChanged -eq $false) `
+        "Markdown nothing names is not Rust build input (reason '$(if ($lonely.result) { $lonely.result.matrixReason })')"
+    Assert-True ($null -ne $lonely.result -and $lonely.result.matrixReason -match 'markdown') 'and it names the class markdown'
+    $readme = Invoke-Select -ChangedFiles @('README.md') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $readme.result -and $readme.result.escalated -eq $false -and @($readme.result.crates) -contains 'core-leaf') `
+        'Markdown a crate reads (include_str!) selects THAT crate'
+    Assert-True ($null -ne $readme.result -and -not (@($readme.result.crates) -contains 'unrelated')) `
+        'CONTROL: and not a crate that does not read it'
+    $bySuite = Invoke-Select -ChangedFiles @('docs/named-by-suite.md') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $bySuite.result -and $bySuite.result.rustInputsChanged -eq $false -and $bySuite.result.psSuites -eq $true) `
+        'CONTROL: Markdown only a suite names is not Rust input, and the suites run for it'
+    $fixtureMd = Invoke-Select -ChangedFiles @('core/leaf/tests/fixtures/tree/notes.md') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $fixtureMd.result -and $fixtureMd.result.rustInputsChanged -eq $true -and @($fixtureMd.result.crates) -contains 'core-leaf') `
+        "Markdown under a tests/fixtures tree is build input for the crate that holds it -- a test may walk it without naming it (rust=$(if ($fixtureMd.result) { $fixtureMd.result.rustInputsChanged }))"
+    Assert-True ($null -ne $fixtureMd.result -and -not (@($fixtureMd.result.crates) -contains 'unrelated')) `
+        'CONTROL: and only that crate'
+    $mdNoRepo = Invoke-Select -ChangedFiles @('docs/lonely.md') -Root $nonRepoRoot
+    Assert-True ($null -ne $mdNoRepo.result -and $mdNoRepo.result.escalated -eq $true) `
+        'CONTROL: where git grep cannot answer, Markdown stays build input and escalates'
+    $suiteNoRepo = Invoke-Select -ChangedFiles @('ci/x.tests.ps1') -Root $nonRepoRoot
+    Assert-True ($null -ne $suiteNoRepo.result -and $suiteNoRepo.result.escalated -eq $true) `
+        'CONTROL: where git grep cannot say which Rust files read a ci/ suite, the suite escalates'
+
+    $crateOnly = Invoke-Select -ChangedFiles @('tools/unrelated/src/lib.rs') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $crateOnly.result -and $crateOnly.result.psSuites -eq $false) `
+        'a crate change nothing under ci/ names narrows the suites'
+    $ciMention = Invoke-Select -ChangedFiles @('core/leaf/src/lib.rs') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $ciMention.result -and $ciMention.result.psSuites -eq $false -and @($ciMention.result.crates) -contains 'core-leaf') `
+        'and a crate change still selects its crate while the suites narrow'
+    $escalatedSuites = Invoke-Select -ChangedFiles @('ci/deep.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $escalatedSuites.result -and $escalatedSuites.result.psSuites -eq $true) `
+        'CONTROL: an escalated run runs every suite'
+
+    # ---- BLOCK on #1220 (lane 3f90d6): a Rust test that WALKS ci/ is a reader of every ci/ file ----
+    # Added LAST, because every ci/ cell above is about a tree where no Rust file names `ci`.
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo 'tools/unrelated/tests')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo 'tools/unrelated/tests/walk.rs'),
+        "fn walk() { let ci = root.join(`"ci`"); let _ = std::fs::read_dir(&ci); }`n", $utf8NoBom)
+    $ErrorActionPreference = 'Continue'
+    & git -C $repo add -A 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    $walkedTool = Invoke-Select -ChangedFiles @('ci/tool.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $walkedTool.result -and $walkedTool.result.rustInputsChanged -eq $true) `
+        "a ci/ tool change is Rust input once a Rust test walks ci/ (rust=$(if ($walkedTool.result) { $walkedTool.result.rustInputsChanged }))"
+    Assert-True ($null -ne $walkedTool.result -and @($walkedTool.result.crates) -contains 'unrelated') `
+        'and the WALKER''s crate is selected'
+    Assert-True ($null -ne $walkedTool.result -and -not (@($walkedTool.result.crates) -contains 'core-leaf')) `
+        'CONTROL: and a crate that does not walk ci/ is not'
+    $walkedSuite = Invoke-Select -ChangedFiles @('ci/x.tests.ps1') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $walkedSuite.result -and @($walkedSuite.result.crates) -contains 'unrelated') `
+        'a ci/ SUITE change selects the walker too -- the class that existed before this slice'
+    # A READER IS NOT A CHANGE: a walker under an escalation directory selects its crate and does not
+    # escalate the run -- and the same file CHANGED still escalates.
+    [System.IO.Directory]::CreateDirectory((Join-Path $repo 'core/protocols/tests')) | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $repo 'core/protocols/tests/walk_studio.rs'),
+        "fn w() { let s = root.join(`"apps/studio`"); }`n", $utf8NoBom)
+    $ErrorActionPreference = 'Continue'
+    & git -C $repo add -A 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    $readByProtocols = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $readByProtocols.result -and $readByProtocols.result.escalated -eq $false -and $readByProtocols.result.rustInputsChanged -eq $true) `
+        "a reader under core/protocols/ makes studio Rust input WITHOUT escalating the run, selecting protocols=$(if ($readByProtocols.result) { @($readByProtocols.result.crates) -contains 'protocols' }) (escalated=$(if ($readByProtocols.result) { $readByProtocols.result.escalated }), reason '$(if ($readByProtocols.result) { $readByProtocols.result.escalationRule })')"
+    $protocolsChanged = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts', 'core/protocols/tests/walk_studio.rs') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $protocolsChanged.result -and $protocolsChanged.result.escalated -eq $true -and $protocolsChanged.result.escalationRule -eq 'core/protocols/') `
+        'CONTROL: the same reader, CHANGED in the diff, still escalates under its rule'
+    $cliLiteral = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $cliLiteral.result -and -not (@($cliLiteral.result.crates) -contains 'core-leaf')) `
+        'CONTROL: a crate that names neither the path nor its directory is not selected'
+    Remove-Item -LiteralPath (Join-Path $repo 'core/protocols/tests/walk_studio.rs') -Force
+    $ErrorActionPreference = 'Continue'
+    & git -C $repo add -A 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    $studioStill = Invoke-Select -ChangedFiles @('apps/studio/src/a.ts') -Metadata $repoMetadata -Root $repo
+    Assert-True ($null -ne $studioStill.result -and $studioStill.result.rustInputsChanged -eq $false) `
+        'CONTROL: a walker of ci/ does not make studio Rust input'
+
+    # ---- A RENAME SHOWS BOTH SIDES (review of #1216 by lane b9deb2) ----------------------------
+    # `git mv tools/unrelated/src/lib.rs docs/moved.md` must not read as "one Markdown file changed".
+    $ErrorActionPreference = 'Continue'
+    & git -C $repo -c user.email=t@t -c user.name=t commit -q -m base 2>&1 | Out-Null
+    $renameBase = (& git -C $repo rev-parse HEAD 2>$null | Select-Object -First 1)
+    & git -C $repo mv tools/unrelated/src/lib.rs docs/moved.md 2>&1 | Out-Null
+    & git -C $repo -c user.email=t@t -c user.name=t commit -q -m rename 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    $renameJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+        -MetadataPath $repoMetadata -RepoRoot $repo -MergeBase ([string]$renameBase).Trim() -Head HEAD 2>&1
+    $renamed = $null
+    try { $renamed = (($renameJson | ForEach-Object { [string]$_ }) -join "`n") | ConvertFrom-Json } catch { }
+    Assert-True ($null -ne $renamed -and @($renamed.changedFiles) -contains 'tools/unrelated/src/lib.rs') `
+        "a rename lists the Rust path it removed, not only the Markdown it created (changed: $(if ($renamed) { @($renamed.changedFiles) -join ',' }))"
+    Assert-True ($null -ne $renamed -and $renamed.rustInputsChanged -eq $true -and @($renamed.crates) -contains 'unrelated') `
+        'and the crate that lost the file is selected'
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $nonRepoRoot -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host ''
     if ($script:total -ne $ExpectedAssertionCount) {
         Write-Host "HARNESS-BROKE: expected $ExpectedAssertionCount assertions, ran $($script:total)" -ForegroundColor Magenta

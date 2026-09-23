@@ -8,7 +8,7 @@
 # The subject is `Read-ScopeSelection`, cut out of ci/gate.ps1 by anchor text and never retyped --
 # running gate.ps1 would run the gate.
 
-$ExpectedAssertionCount = 41
+$ExpectedAssertionCount = 61
 $ErrorActionPreference = 'Stop'
 # THE SUITE RUNS UNDER THE GATE'S OWN RULES. ci/gate.ps1:88 sets `Set-StrictMode -Version 2.0`,
 # and this file did not: the cells exercised the extracted functions under LAXER rules than
@@ -86,6 +86,10 @@ if ($start -lt 0 -or $end -le $start) {
 }
 . ([scriptblock]::Create($gateText.Substring($start, $end - $start + 2)))
 
+
+# #901 slice 2: the suites decision and the coverage record, cut by the same anchor rule.
+. ([scriptblock]::Create((Import-FunctionFrom -Text $gateText -Name 'Get-PsSuitesScope' -From 'gate.ps1')))
+. ([scriptblock]::Create((Import-FunctionFrom -Text $gateText -Name 'Get-RunCoverage' -From 'gate.ps1')))
 
 # #903: the presser's half lives in ci/merge-proof.ps1, so it is cut from THAT file by anchor.
 $proofPath = Join-Path $PSScriptRoot 'merge-proof.ps1'
@@ -266,7 +270,12 @@ try {
     Assert-True ($known.matrix -eq $false) `
         'and its matrix decision is honoured, which is the whole saving'
     Assert-True (@(Get-ScopePackageArgs -Scope $known).Count -eq 0) `
-        'and it still compiles the WORKSPACE: an empty crate list means no -p arguments, so Rust coverage is unchanged and only the matrix is skipped'
+        'and it passes no -p arguments, so no stage can mistake it for a selection of crates'
+    # #901 slice 2: THE SAVING, and the one place it may appear.
+    Assert-True ($known['rust'] -eq $false) `
+        'a selection that is empty BECAUSE no Rust input changed runs no Rust stage (rust=false)'
+    Assert-True ((Get-ScopeRecord -Selection $known).rust -eq $false) `
+        'and the RECORD says so, so the receipt cannot read as a Rust run'
 
     # CONTROL: the same shape WITHOUT the field is the old empty list, and still means FULL.
     $unexplained = Read-ScopeSelection -Path (New-SelectionFile -Name 'unexplained-empty.json' `
@@ -307,6 +316,57 @@ try {
         -Content '{"escalated":false,"crates":[],"matrix":false,"matrixReason":"skipped","rustInputsChanged":false}')
     Assert-True ($boolFalse.full -eq $false) `
         'and the REAL boolean false still narrows -- the guard rejects wrong types without rejecting the case it exists for'
+
+    # ---- #901 slice 2: `rust` IS TRUE EVERYWHERE ELSE ----------------------------------------
+    # CONTROLS for the cell above: every other branch of Read-ScopeSelection must run Rust, or the
+    # saving has leaked into a state that did not prove "no Rust input changed".
+    Assert-True ($unexplained['rust'] -eq $true) 'CONTROL: an unexplained empty list runs Rust (FULL)'
+    Assert-True ($claimed['rust'] -eq $true) 'CONTROL: rustInputsChanged TRUE runs Rust'
+    Assert-True ($stringFalse['rust'] -eq $true -and $zero['rust'] -eq $true) 'CONTROL: a wrong-typed false runs Rust'
+    Assert-True ((Read-ScopeSelection -Path '')['rust'] -eq $true) 'CONTROL: no selection at all runs Rust'
+    $crateScope = Read-ScopeSelection -Path (New-SelectionFile -Name 'rust-crates.json' `
+        -Content '{"escalated":false,"crates":["core-leaf"],"matrix":false,"matrixReason":"x","rustInputsChanged":false}')
+    Assert-True ($crateScope['rust'] -eq $true) `
+        'CONTROL: a selection that NAMES crates runs Rust even if it also claims rustInputsChanged false'
+    Assert-True ((Get-ScopeRecord -Selection ([ordered]@{ full = $false; reason = 'r'; crates = @(); matrix = $false; matrixReason = '' })).rust -eq $true) `
+        'CONTROL: a record built from a selection WITHOUT the key says Rust ran -- absent never reads as skipped'
+
+    # ---- #901 slice 2: the PowerShell suites decision fails WIDE -------------------------------
+    $suitesNone = Get-PsSuitesScope -Path ''
+    Assert-True ($suitesNone.included -eq $true) 'no selection runs every suite'
+    $suitesNo = Get-PsSuitesScope -Path (New-SelectionFile -Name 'suites-no.json' `
+        -Content '{"escalated":false,"crates":["a"],"psSuites":false,"psSuitesReason":"skipped: nothing under ci/ names it"}')
+    Assert-True ($suitesNo.included -eq $false) 'a real boolean psSuites=false narrows the suites stage'
+    Assert-True ($suitesNo.reason -match 'nothing under ci/ names it') 'and carries the selector''s own reason'
+    $suitesString = Get-PsSuitesScope -Path (New-SelectionFile -Name 'suites-string.json' `
+        -Content '{"escalated":false,"crates":["a"],"psSuites":"false"}')
+    Assert-True ($suitesString.included -eq $true) 'CONTROL: the STRING "false" runs every suite'
+    $suitesAbsent = Get-PsSuitesScope -Path (New-SelectionFile -Name 'suites-absent.json' -Content '{"escalated":false,"crates":["a"]}')
+    Assert-True ($suitesAbsent.included -eq $true) 'CONTROL: a selection without the field runs every suite'
+    $suitesEsc = Get-PsSuitesScope -Path (New-SelectionFile -Name 'suites-esc.json' `
+        -Content '{"escalated":true,"escalationRule":"ci/","crates":[],"psSuites":false}')
+    Assert-True ($suitesEsc.included -eq $true) 'CONTROL: an escalated selection runs every suite whatever psSuites says'
+    $suitesBroken = Get-PsSuitesScope -Path (New-SelectionFile -Name 'suites-broken.json' -Content '{ nope')
+    Assert-True ($suitesBroken.included -eq $true) 'CONTROL: an unreadable selection runs every suite'
+
+    # ---- #901 slice 2: coverage says what was skipped, and `complete` takes every skip -----------
+    $covAll = Get-RunCoverage -SkipPostgres $false -BuildMode 'cold'
+    Assert-True ($covAll.complete -eq $true -and $covAll.rust -eq 'included' -and $covAll.psSuites -eq 'included') `
+        'CONTROL: a run that skipped nothing is complete, with Rust and suites included'
+    $covNoRust = Get-RunCoverage -SkipPostgres $true -BuildMode 'unknown' -SkipRust $true
+    Assert-True ($covNoRust.complete -eq $false -and $covNoRust.rust -eq 'skipped') `
+        'a run with no Rust stage records rust=skipped and is not complete'
+    $covNarrow = Get-RunCoverage -SkipPostgres $false -BuildMode 'cold' -SkipPsSuites $true
+    Assert-True ($covNarrow.complete -eq $false -and $covNarrow.psSuites -eq 'narrowed') `
+        'a run with narrowed suites records psSuites=narrowed and is not complete'
+
+    # ---- #901 slice 2: what the PRESSER is told ------------------------------------------------
+    $noRustNote = Format-ScopeNote -Body ('{"scope":{"full":false,"reason":"SCOPED","crates":[],"matrix":false,"matrixReason":"skipped: no Rust build input changed","rust":false},"psSuitesScope":{"included":false,"reason":"skipped: nothing names it"}}' | ConvertFrom-Json)
+    Assert-True ($noRustNote -match 'NO RUST STAGE RAN' -and $noRustNote -match 'says nothing about Rust' -and $noRustNote -match 'NARROWED' -and $noRustNote -match 'nothing names it') `
+        "a no-Rust run's note says no Rust stage ran and names the suites narrowing (got '$noRustNote')"
+    $oldNote = Format-ScopeNote -Body ('{"scope":{"full":false,"reason":"SCOPED","crates":["a"],"matrix":true}}' | ConvertFrom-Json)
+    Assert-True ($oldNote -notmatch 'NO RUST' -and $oldNote -notmatch 'NARROWED') `
+        'CONTROL: a receipt written before slice 2 (no rust key, no psSuitesScope) reads as Rust ran and suites ran'
 
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

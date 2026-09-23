@@ -309,6 +309,9 @@ function Get-ScopeRecord {
         # `$Selection['key']` answers '' for an absent key under both. The constructor above makes
         # the key always present; this makes the reader safe even if a future producer forgets.
         matrixReason = [string]$Selection['matrixReason']
+        # #901 slice 2. ABSENT READS AS TRUE -- a producer that forgot the key ran the Rust stages,
+        # and a record must never say fewer ran than did. Only a real boolean false says "skipped".
+        rust         = -not (($Selection['rust'] -is [bool]) -and (-not $Selection['rust']))
     }
 }
 
@@ -330,6 +333,7 @@ function New-FullScope {
         crates       = @()
         matrix       = $true
         matrixReason = 'the PostgreSQL matrix runs: this is a FULL run'
+        rust         = $true
     }
 }
 
@@ -373,6 +377,40 @@ function Test-StudioScopeChanged {
     }
     $changed = $rawChanged | ForEach-Object { [string]$_ }
     return [bool]($changed | Where-Object { $_ -like 'apps/studio/*' })
+}
+
+# #901 slice 2: does this change reach the PowerShell suites? `ci/select-scope.ps1` answers in
+# `psSuites` and names why in `psSuitesReason`. FAIL WIDE, the Studio predicate's discipline above:
+# absent, unreadable, escalated, or anything but a real boolean false runs every suite. The suites
+# stage is 13-14 minutes of every gate, and it ran for a diff no suite reads.
+#
+# A SKIP STILL RUNS ONE SUITE. `ci/event-contract-sweep.tests.ps1` is the only producer of the
+# `[event-contract]` marker the manifest's `eventContractSweep` is read from, and `ci/merge-proof.ps1`
+# refuses a GREEN whose sweep did not measure. Its population is every open branch of the remote,
+# not this diff, so no diff can prove it unreached. It runs in the same stage, alone.
+function Get-PsSuitesScope {
+    param([string] $Path)
+
+    $all = [ordered]@{ included = $true; reason = 'ran: no scope selection was given' }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $all }
+    $selection = $null
+    try {
+        $selection = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    } catch {
+        return [ordered]@{ included = $true; reason = 'ran: the scope selection is unreadable' }
+    }
+    if ($null -eq $selection) { return [ordered]@{ included = $true; reason = 'ran: the scope selection parsed to nothing' } }
+    if ($selection.PSObject.Properties.Name -contains 'escalated' -and $selection.escalated) {
+        return [ordered]@{ included = $true; reason = 'ran: this is a FULL run' }
+    }
+    $field = $selection.PSObject.Properties['psSuites']
+    $why = $selection.PSObject.Properties['psSuitesReason']
+    $reason = if ($null -ne $why -and $why.Value -is [string]) { [string]$why.Value } else { '' }
+    if ($null -ne $field -and $field.Value -is [bool] -and $field.Value -eq $false) {
+        return [ordered]@{ included = $false; reason = $reason }
+    }
+    if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'ran: the selection does not say the suites are unreached' }
+    return [ordered]@{ included = $true; reason = $reason }
 }
 
 # #903: read a scope selection and decide whether this run is FULL. EVERY FAILURE PATH IS FULL --
@@ -436,10 +474,16 @@ function Read-ScopeSelection {
             $reason = [string]($selection.PSObject.Properties['matrixReason']).Value
             return [ordered]@{
                 full         = $false
-                reason       = 'SCOPED: no Rust build input changed, so no crate is selected and the workspace still compiles'
+                reason       = 'SCOPED: no Rust build input changed, so no crate is selected and no Rust stage runs'
                 crates       = @()
                 matrix       = $matrix
                 matrixReason = $reason
+                # #901 slice 2: THE ONLY PLACE `rust` IS FALSE. The comment above used to end "the
+                # workspace still compiles": the selector proved no Rust input changed and the gate
+                # then built and tested the whole workspace anyway -- 30 minutes cold, measured on the
+                # runner, spent re-proving the tree `main` already proved. A run whose diff reaches no
+                # Rust input has nothing for a Rust stage to measure. Every other branch here is `true`.
+                rust         = $false
             }
         }
         return New-FullScope -Reason 'FULL: the scope selection names no crates, which would run nothing and pass'
@@ -454,6 +498,7 @@ function Read-ScopeSelection {
         crates = $crates
         matrix = $matrix
         matrixReason = $matrixReason
+        rust = $true
     }
 }
 
@@ -471,6 +516,24 @@ $script:gateScope = Read-ScopeSelection -Path $scopeArgument
 # never pays npm; a Studio-only change (which the crate graph reads as an empty selection with
 # nothing to compile) still gets its own suite run.
 $script:studioScopeIncluded = Test-StudioScopeChanged -Path $scopeArgument
+# #901 slice 2: the two reach decisions, DECIDED ONCE beside the others. `rustStagesIncluded` is
+# false only when the selection proved no Rust build input changed (`Read-ScopeSelection`'s one
+# `rust = $false`); then every stage that compiles or runs Rust is recorded `notRun` with this reason
+# instead of executed -- through `Invoke-Stage`, so the record says so stage by stage.
+$script:rustStagesIncluded = -not (($script:gateScope['rust'] -is [bool]) -and (-not $script:gateScope['rust']))
+$script:psSuitesScope = Get-PsSuitesScope -Path $scopeArgument
+$script:scopeSkippedStages = @{}
+if (-not $script:rustStagesIncluded) {
+    foreach ($rustStage in @('contamination canary (ci-canary)', 'rustfmt', 'clippy (deny warnings)', 'workspace tests',
+            'cli suites', 'schema catalog', 'schema baseline compatibility', 'schema conformance', 'locked metadata',
+            'required-features coverage')) {
+        $script:scopeSkippedStages[$rustStage] = 'no Rust build input changed (#901)'
+    }
+    Write-Host '[gate] Rust stages SKIPPED by scope - no Rust build input changed; coverage.rust is skipped and coverage.complete is false.' -ForegroundColor Yellow
+}
+if (-not $script:psSuitesScope.included) {
+    Write-Host "[gate] PowerShell suites NARROWED by scope - only the event-contract sweep runs: $($script:psSuitesScope.reason)" -ForegroundColor Yellow
+}
 # #903: THE MATRIX DECISION, DECIDED ONCE. Measured over 169 manifests, the two PostgreSQL
 # matrices are 10.3 minutes of a 26.2-minute run -- 35% of all gate time on this board -- and
 # four of one day's seven pull requests touched neither Rust nor SQL and paid it anyway (X).
@@ -1017,6 +1080,26 @@ function Invoke-Stage {
     # -- the exact confusion every other refusal in this file exists to prevent. A reader that
     # treats $null as falsy sees "not passed", which is true; one that treats it as a verdict is
     # wrong, and `notRun` beside it says so in a word.
+    # #901 slice 2: A STAGE THE DIFF CANNOT REACH is recorded the same way -- `passed = $null`,
+    # `notRun` -- with the scope's reason as the cause, never a fabricated pass. Read through
+    # `Test-Path` because the suites that slice this function out run it without the script body.
+    if ((Test-Path 'variable:script:scopeSkippedStages') -and $script:scopeSkippedStages -and $script:scopeSkippedStages.ContainsKey($Name)) {
+        Write-Host ''
+        Write-Host "[gate] SKIPPED by scope: $Name -- $($script:scopeSkippedStages[$Name])" -ForegroundColor Yellow
+        # The capture of a stage that did not run is EMPTY, never the previous stage's: a caller that
+        # reads it next (the canary's outcome) must not judge another stage's words. Measured: left
+        # unset, the canary call below threw under StrictMode and the whole run died (e2e, #901).
+        $script:lastStageLines = @()
+        $script:stageRecords.Add([ordered]@{
+                name        = $Name
+                passed      = $null
+                notRun      = $true
+                notRunCause = "scope: $($script:scopeSkippedStages[$Name])"
+                startedUtc  = [DateTime]::UtcNow.ToString('o')
+                endedUtc    = [DateTime]::UtcNow.ToString('o')
+            })
+        return 0
+    }
     if ((-not $AlwaysRun) -and (Test-Path 'variable:script:failFastEnabled') -and $script:failFastEnabled -and (Test-Path 'variable:script:abortAfterStage') -and $script:abortAfterStage) {
         Write-Host ''
         Write-Host "[gate] SKIPPED: $Name -- the run already failed at '$($script:abortAfterStage)' (#1053; -NoFailFast runs every stage)" -ForegroundColor Yellow
@@ -2703,6 +2786,22 @@ function Get-TestArtifactManifest {
     # #1007: `-Enrolling` marks the ONE retry this function may make of itself (see the enrolment
     # block before the return); it is never passed by an outside caller.
     param([string[]] $CargoArgs = @('--workspace', '--all-features'), [switch] $Enrolling)
+
+    # #901 slice 2: NO RUST STAGE RUNS, SO NOTHING IS BUILT OR ENUMERATED. The shape is the full one,
+    # so every reader downstream reads a key rather than throwing; `buildExitCode` is `$null`, which
+    # every reader already treats as "not established" -- never 0, which would claim a build.
+    # An EMPTY generic List is a shape no real build pass produced before, and Windows PowerShell 5.1
+    # throws "Argument types do not match" on `@($emptyList)`: measured on the first no-Rust gate, at
+    # the end-of-run note, which now reads `.Count` behind a truth test instead.
+    if ((Test-Path 'variable:script:rustStagesIncluded') -and -not $script:rustStagesIncluded) {
+        return [ordered]@{
+            buildExitCode = $null; buildPassNonJsonTail = @(); artifactsEnrolled = 0
+            artifacts = (New-Object System.Collections.Generic.List[object]); outputTail = @()
+            artifactsRebuilt = 0; artifactsProvenReuse = 0; artifactsUnprovenReuse = 0; artifactsContaminated = 0
+            buildMode = 'unknown'; buildPassSecs = 0; crateInputHashSecs = 0; toolchainId = $null
+            lockfileSha256 = $null; crateInputHashError = $null; embeddedInputProblems = $null
+        }
+    }
 
     # #956: THE CLAIM INSTANT MUST EXIST BEFORE ANY ARTEFACT IS JUDGED. Every freshness verdict
     # below is `$mtimeUtc -ge $runStartUtc`, and `-ge $null` is True for every file: called before
@@ -4449,7 +4548,11 @@ function Get-RunCoverage {
     param(
         [Parameter(Mandatory)] [bool] $SkipPostgres,
         [string] $BuildMode = 'unknown',
-            [bool] $NonPullRequest = $false
+            [bool] $NonPullRequest = $false,
+        # #901 slice 2: two more skips, and `complete` takes both. Defaults are the ran-everything
+        # answer so the callers that pass `-SkipPostgres` alone keep their record unchanged.
+        [bool] $SkipRust = $false,
+        [bool] $SkipPsSuites = $false
     )
 
     # IN THE BODY, NOT AS A [ValidateSet] ATTRIBUTE. `ci/classify-run.tests.ps1` derives the run
@@ -4468,8 +4571,10 @@ function Get-RunCoverage {
     return [ordered]@{
         postgres = if ($SkipPostgres) { 'skipped' } else { 'included' }
         landing  = if ($NonPullRequest) { 'non-pr' } else { 'pr-base' }
-        complete = (-not $SkipPostgres)
+        complete = (-not $SkipPostgres) -and (-not $SkipRust) -and (-not $SkipPsSuites)
         build    = $BuildMode
+        rust     = if ($SkipRust) { 'skipped' } else { 'included' }
+        psSuites = if ($SkipPsSuites) { 'narrowed' } else { 'included' }
     }
 }
 
@@ -4634,7 +4739,12 @@ function Write-RunManifest {
             if ([string]::Equals($recordedMode, $candidate, [System.StringComparison]::Ordinal)) { $buildMode = $candidate }
         }
     }
-    $coverage = Get-RunCoverage -SkipPostgres ([bool]($script:matrixSkipped -or $script:postgresMatrixUnavailable)) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath))
+    # #901 slice 2: the two newer skips are computed ABOVE the call, which stays on ONE line because
+    # ci/gate-postgres-early.tests.ps1 lifts that line by regex and executes it. Measured: a
+    # backtick-continued call broke that suite into HARNESS-BROKE ("Incomplete string token").
+    $coverageSkipsRust = [bool]((Test-Path 'variable:script:rustStagesIncluded') -and -not $script:rustStagesIncluded)
+    $coverageSkipsPsSuites = [bool]((Test-Path 'variable:script:psSuitesScope') -and $script:psSuitesScope -and -not $script:psSuitesScope.included)
+    $coverage = Get-RunCoverage -SkipPostgres ([bool]($script:matrixSkipped -or $script:postgresMatrixUnavailable)) -BuildMode $buildMode -NonPullRequest ([bool]($NonPullRequest -or -not $LandingSnapshotPath)) -SkipRust ([bool]$coverageSkipsRust) -SkipPsSuites ([bool]$coverageSkipsPsSuites)
     # #205: the sweep's own reading, out of the full stage capture (#751) so the background-joined
     # suites stage is read like any other.
     $eventContractSweep = Get-EventContractSweepRecord -Lines $script:allStageLines
@@ -4691,6 +4801,15 @@ if ($null -ne $script:targetBuildState) { $targetSuspect = [bool] $script:target
 # run that cannot say whether its build pass succeeded has not established that it did.
 $buildPassExit = $ArtifactManifest.buildExitCode
 $buildPassSucceeded = ($buildPassExit -is [int]) -and ($buildPassExit -eq 0)
+# #901 slice 2: A RUN THAT RAN NO RUST STAGE HAS NO BUILD PASS, NO CANARY AND NO TARGET TO JUDGE.
+# The three terms are released here, for the verdict only; the RECORD is not faked -- `buildExitCode`
+# stays `$null`, `canaryPassed` is written `$null` below, `targetBuildState` is published as read,
+# and `coverage.rust` says `skipped`. They are the instruments of the Rust stages, and none ran. Only `Read-ScopeSelection`'s proven "no Rust build input
+# changed" reaches this; every other state leaves both terms exactly as they were.
+$rustScopeSkipped = (Test-Path 'variable:script:rustStagesIncluded') -and -not $script:rustStagesIncluded
+# ONE LINE, NO COLUMN-0 BRACE: several suites cut this function out at its first "`n}", and a
+# block closing at column 0 here ended their slice mid-function (measured: gate-postgres-early).
+if ($rustScopeSkipped) { $buildPassSucceeded = $true; $CanaryPassed = $true; $targetSuspect = $false }
 $passedEverything = ($script:failed.Count -eq 0) -and $CanaryPassed -and ($unprovenReuse.Count -eq 0) -and (-not $targetSuspect) -and $buildPassSucceeded
 $runClass = Get-RunClassFrom -Status $Status -PassedEverything $passedEverything
 
@@ -4821,7 +4940,14 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         # has finished by the time this is stamped, so the window it closes covers all the work that
         # could touch a shared target dir. Publication touches git, not the target dir.
         runEndUtc          = [DateTime]::UtcNow.ToString('o')
-        canaryPassed       = $CanaryPassed
+        canaryPassed       = if ($rustScopeSkipped) { $null } else { $CanaryPassed }
+        # #901 slice 2: which reach decisions this run took, in words. `coverage` carries the
+        # machine-readable half; these carry the reasons a presser reads.
+        rustStages         = [ordered]@{
+            included = -not $rustScopeSkipped
+            reason   = if ($rustScopeSkipped) { 'skipped: no Rust build input changed' } else { 'ran' }
+        }
+        psSuitesScope      = if ((Test-Path 'variable:script:psSuitesScope') -and $script:psSuitesScope) { $script:psSuitesScope } else { $null }
         # #956: the two states above, published. ABSENT IS NOT FALSE: every manifest written before
         # this change has neither field, which means NOT MEASURED and never "it ran serial".
         psSuitesStartedEarly = $script:psSuitesStartedEarly
@@ -5232,7 +5358,11 @@ $runStartUtc = [DateTime]::UtcNow
 $script:targetBuildState = Get-TargetBuildState -TargetDir $actualTargetDir
 if ($script:targetBuildState.suspect) {
     Write-Host "[gate] TARGET PROVENANCE: $($script:targetBuildState.state) -- $($script:targetBuildState.reason)" -ForegroundColor Red
-    Write-Host '[gate] Read before the first compile. The run continues and cannot report GREEN.' -ForegroundColor Red
+    if ($script:rustStagesIncluded) {
+        Write-Host '[gate] Read before the first compile. The run continues and cannot report GREEN.' -ForegroundColor Red
+    } else {
+        Write-Host '[gate] Recorded only: no Rust stage runs in this scope, so this run never opens the target.' -ForegroundColor Yellow
+    }
 } elseif ($script:targetBuildState.contaminated) {
     Write-Host "[gate] NOTE: target provenance is $($script:targetBuildState.state) -- $($script:targetBuildState.reason)" -ForegroundColor Yellow
     Write-Host '[gate] This is recorded in the manifest and does NOT redden the run; artefact freshness is still checked at the end.' -ForegroundColor Yellow
@@ -5263,7 +5393,9 @@ try {
     #
     # It aborts the way the canary does -- manifest, then exit 1 -- rather than through a new path:
     # both are "this run cannot vouch for what it would measure", and the status tells them apart.
-    if ($script:targetBuildState.suspect) {
+    # #901 slice 2: a run with no Rust stage never opens the target, so a suspect one is recorded
+    # (the manifest carries `targetBuildState`) and neither aborts this run nor is touched by it.
+    if ($script:targetBuildState.suspect -and $script:rustStagesIncluded) {
         Write-Host ''
         Write-Host "[gate] ABORTING: $($script:targetBuildState.reason)" -ForegroundColor Magenta
         Write-Host '[gate] Every stage below would run against a target this run cannot trust, and' -ForegroundColor Magenta
@@ -5282,7 +5414,8 @@ try {
     # overwrite the very marker just read, destroying the evidence of the previous run's death.
     # A run killed between here and the completion marker leaves `building` with this process id,
     # which is exactly the `interrupted` state the next run reads.
-    Write-TargetBuildState -TargetDir $actualTargetDir -State 'building' -Head ([string]$gatedHeadAtStart)
+    # #901 slice 2: no Rust stage, no claim -- the sticky marks are evidence and this run built nothing.
+    if ($script:rustStagesIncluded) { Write-TargetBuildState -TargetDir $actualTargetDir -State 'building' -Head ([string]$gatedHeadAtStart) }
 
     # #152: the canary runs FIRST and is the one stage that aborts the whole gate immediately
     # rather than accumulating alongside the rest - see the top-of-file rationale.
@@ -5343,8 +5476,11 @@ try {
     # canary has already passed at this point, which matters -- a run whose build environment cannot
     # be trusted aborts above, and starting a child before that would leak a process into a run that
     # never happens.
+    # #901 slice 2: a narrowed scope runs the one suite no diff can prove unreached (see
+    # `Get-PsSuitesScope`); the stage keeps its name, its join and its accounting.
+    $psSuitesFile = if ($script:psSuitesScope.included) { 'ci/run-ps-suites.ps1' } else { 'ci/event-contract-sweep.tests.ps1' }
     $script:psSuitesStarted = Start-BackgroundStage -Name 'ci powershell suites' -FilePath 'powershell' `
-        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')) `
+        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repositoryRoot $psSuitesFile)) `
         -WorkingDirectory $repositoryRoot
 
     # #464: Studio still runs only when its scope changed. Node's presence is checked once here so
@@ -5568,7 +5704,10 @@ try {
     # drop and move past: the stage below would run its own tests regardless, and if THAT succeeded
     # the gate would finish GREEN while the freshness population was incomplete -- the exact blind
     # spot #243 exists to close, silently restored.
-    if ($cliManifest.buildExitCode -ne 0) {
+    # #901 slice 2: read through `Test-Path` -- ci/gate-suite-artifact.tests.ps1 runs this block
+    # without the script body, where an unset flag read as $null silently dropped the failure record.
+    $cliRustSkipped = (Test-Path 'variable:script:rustStagesIncluded') -and -not $script:rustStagesIncluded
+    if ((-not $cliRustSkipped) -and $cliManifest.buildExitCode -ne 0) {
         Write-Host "[gate] cli suites - fingerprint build FAILED (exit $($cliManifest.buildExitCode)); the freshness population for this package is incomplete" -ForegroundColor Red
         foreach ($evidenceLine in $cliManifest.outputTail) { Write-Host $evidenceLine }
         $script:failed = @($script:failed) + 'cli suites (fingerprint)'
@@ -5678,7 +5817,14 @@ try {
         }
         if ($null -eq $joined) {
             # The early start failed. Same command, same place, exactly as long as before #956.
-            & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
+            # #901 slice 2: the same choice as the early start. Read through `Test-Path` because
+            # ci/gate-stage-reddens.tests.ps1 runs this block without the script body.
+            $psSuitesNarrowed = (Test-Path 'variable:script:psSuitesScope') -and $script:psSuitesScope -and (-not $script:psSuitesScope.included)
+            if ($psSuitesNarrowed) {
+                & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/event-contract-sweep.tests.ps1')
+            } else {
+                & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repositoryRoot 'ci/run-ps-suites.ps1')
+            }
         }
         # No else: `Complete-BackgroundStage` sets both instants itself, from the child's own times.
     } | Out-Null
@@ -5888,7 +6034,7 @@ try {
     # path that did not finish. Two branches' worth of prose after the stamp broke that distance;
     # one short `else` keeps the guard readable and the stamp adjacent to the flag.
     $unstampedNote = if (-not $buildPassSucceededAtEnd) {
-        "[gate] NOTE: the artefact build pass did not succeed (exit $buildExitAtEnd), so its list of $(@($artifactManifest.artifacts).Count) binary(ies) may be PARTIAL. No ledger is written and this target is stamped unproven, so the next run reuses nothing on trust and proves or rebuilds each binary itself."
+        "[gate] NOTE: the artefact build pass did not succeed (exit $buildExitAtEnd), so its list of $(if ($artifactManifest.artifacts) { $artifactManifest.artifacts.Count } else { 0 }) binary(ies) may be PARTIAL. No ledger is written and this target is stamped unproven, so the next run reuses nothing on trust and proves or rebuilds each binary itself."
     } else {
         "[gate] NOTE: $unprovenAtEnd artefact(s) this run cannot vouch for, so this target is NOT stamped as a clean reuse."
     }
@@ -5898,6 +6044,8 @@ try {
     # there is what made the next run abort before its first compile. The prose sits HERE, above the
     # guard, for the same 400-character reason as the note above: a comment inside the `else` pushed
     # the completion flag out of the stamp's reach and ci/gate-target-build-state.tests.ps1 said so.
+    # #901: no build, no ledger, no stamp -- the `elseif` below carries the flag.
+    if (-not $script:rustStagesIncluded) { Write-Host '[gate] NOTE: no Rust stage ran, so the target and its build-state marker are left exactly as they were.' -ForegroundColor DarkGray }
     if ($unprovenAtEnd -eq 0 -and $buildPassSucceededAtEnd) {
         # #904: ONLY HERE IS THE LEDGER WRITTEN, and BEFORE the stamp. Every artefact of this run
         # was either rebuilt inside the run's own window -- where the mtime rule still has full
@@ -5917,7 +6065,7 @@ try {
             Write-Host "[gate] NOTE: the artefact ledger could not be written, so the next run cannot prove a reuse: $($_.Exception.Message)" -ForegroundColor Yellow
         }
         Write-TargetBuildState -TargetDir $actualTargetDir -State 'complete' -Head ([string]$gatedHeadAtStart)
-    } else {
+    } elseif ($script:rustStagesIncluded) {
         Write-Host $unstampedNote -ForegroundColor Yellow
         Write-TargetBuildState -TargetDir $actualTargetDir -State 'unproven' -Head ([string]$gatedHeadAtStart)
     }

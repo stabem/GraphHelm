@@ -524,7 +524,23 @@ function Format-ScopeNote {
     if (& $read 'full') { return "scope: FULL ($([string](& $read 'reason')))" }
     $crates = @(& $read 'crates')
     $matrix = if (& $read 'matrix') { 'ran' } else { "skipped ($([string](& $read 'matrixReason')))" }
-    return ("scope: SCOPED to $($crates.Count) crate(s) [$($crates -join ', ')]; PostgreSQL matrix $matrix -- " +
+    # #901 slice 2: the two newer reach decisions, NAMED in the same sentence. Read by property
+    # lookup for the reason above: every receipt before slice 2 lacks both, and absent reads as ran.
+    $suitesNote = ''
+    $suitesProperty = $Body.PSObject.Properties['psSuitesScope']
+    if ($null -ne $suitesProperty -and $null -ne $suitesProperty.Value) {
+        $included = $suitesProperty.Value.PSObject.Properties['included']
+        if ($null -ne $included -and $included.Value -is [bool] -and -not $included.Value) {
+            $why = $suitesProperty.Value.PSObject.Properties['reason']
+            $suitesNote = "; PowerShell suites NARROWED to the event-contract sweep ($(if ($why) { [string]$why.Value } else { 'no reason recorded' }))"
+        }
+    }
+    $rust = & $read 'rust'
+    if ($rust -is [bool] -and -not $rust) {
+        return ("scope: NO RUST STAGE RAN -- no Rust build input changed ($([string](& $read 'matrixReason')))$suitesNote -- " +
+            'this GREEN covers the non-Rust stages only and says nothing about Rust')
+    }
+    return ("scope: SCOPED to $($crates.Count) crate(s) [$($crates -join ', ')]; PostgreSQL matrix $matrix$suitesNote -- " +
         'this GREEN covers the selection, not the workspace')
 }
 

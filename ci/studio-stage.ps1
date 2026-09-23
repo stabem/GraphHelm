@@ -3,10 +3,8 @@
     Runs `apps/studio`'s own test suite and build as one gate-callable unit (#464).
 
 .DESCRIPTION
-    `apps/studio` ships 46 vitest tests, a `tsc -b` project build, and a Vite production build --
-    none of which ran in `ci/gate.ps1` before this. This script is the thing `ci/gate.ps1` starts
-    early (`Start-BackgroundStage`) and joins later (`Complete-BackgroundStage`), the same shape
-    `ci/run-ps-suites.ps1` already has for the PowerShell suites (#956).
+    Installs locked dependencies, runs the Studio test suite, and builds TypeScript/Vite. Stops on
+    the first nonzero exit.
 
     NODE ABSENCE IS NOT A FAILURE. `node`/`npm` are not a declared prerequisite anywhere in this
     repository today (#464's own text), so a machine without them must not turn red for a gap the
@@ -16,7 +14,8 @@
     NOTE and does not create a stage for it, so there is no green entry a reader could mistake for
     tests having run.
 
-    Three steps, each named on failure: `npm ci`, `npm run typecheck`, `npm test`, `npm run build`.
+    Three steps, each named on failure: `npm ci`, `npm test`, `npm run build`. The Studio build
+    runs its TypeScript project build before Vite, as defined by apps/studio/package.json.
     Cache-first, explicit (item 4 of #464): `npm ci` against whatever `apps/studio/package-lock.json`
     and the local npm cache already hold. No network fetch is forced beyond what `npm ci` itself
     needs when the cache is cold; this script does not vendor `node_modules` or add an offline
@@ -59,11 +58,9 @@ if (-not (Test-Path -LiteralPath $StudioDir)) {
     exit 1
 }
 
-# Each step named before it runs and again if it fails: a reader of the captured tail sees which
-# of the four commands produced a given line without having to count blank-line-separated blocks.
+# Each step is named before it runs and again if it fails so captured output identifies the command.
 $steps = @(
     @{ Name = 'ci'; Arguments = @('--prefix', $StudioDir, 'ci') }
-    @{ Name = 'typecheck'; Arguments = @('--prefix', $StudioDir, 'run', 'typecheck') }
     @{ Name = 'test'; Arguments = @('--prefix', $StudioDir, 'test') }
     @{ Name = 'build'; Arguments = @('--prefix', $StudioDir, 'run', 'build') }
 )

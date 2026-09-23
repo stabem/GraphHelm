@@ -26,6 +26,21 @@ $ExpectedAssertionCount = 125
 # suite that dies early.
 $ErrorActionPreference = 'Continue'
 $script:total = 0
+$script:skipped = 0
+$script:skipReasons = @()
+# A SUM CANNOT SEE A REDISTRIBUTION BETWEEN ITS TERMS, and neither can a COUNT of skips:
+# turning a real `Assert-True` into a `Skip-Assertion` leaves `total + skipped` intact and
+# produces a skip count identical to a legitimate one (measured on a sibling suite by a
+# reviewing lane: 23 of 24, 1 skipped, rc=0, GREEN). What separates them is the REASON, so
+# every legitimate skip site is declared here and the tail refuses anything else.
+#
+# WHAT THIS DOES NOT DO, so it is not read as stronger than it is: it does not catch a skip
+# whose message was COPIED from a legitimate site, and it does not notice a legitimate site
+# firing twice. The threat it is sized for is accidental degradation, which does not inherit
+# a legal reason string; it is not a defence against someone deliberately forging one.
+$AllowedSkipReasons = @(
+    'and the ambiguity refusal is not exercised here: the volume, not the program, decided'
+)
 $script:failures = 0
 
 function Test-Reported {
@@ -76,6 +91,28 @@ function Assert-True {
         Write-Host "  FAIL: $Message" -ForegroundColor Red
     }
 }
+
+function Skip-Assertion {
+    param([Parameter(Mandatory)] [string] $Message)
+    $script:skipped++
+    $script:skipReasons += $Message
+    Write-Host "  SKIP: $Message" -ForegroundColor Yellow
+}
+
+# HARNESS SELF-CHECK, armed on every host: a SKIP must not move the pass counter. These suites
+# were rewritten so a skipped check stops counting as a pass, and the tail guard is
+# `total + skipped == expected` -- a SUM, which any redistribution between its two terms
+# satisfies. This exercises the skip path directly and leaves no residue, so it fires wherever
+# the suite runs rather than only on a host that happens to take the skip branch.
+$__selfTotal = $script:total; $__selfSkipped = $script:skipped
+Skip-Assertion 'harness self-check: a skip must not be counted as a pass'
+if ($script:total -ne $__selfTotal) {
+    Write-Host "HARNESS-BROKE: Skip-Assertion advanced the pass counter, so a skipped check is being reported as a pass" -ForegroundColor Red
+    exit 2
+}
+$script:total = $__selfTotal; $script:skipped = $__selfSkipped
+$script:skipReasons = @($script:skipReasons | Select-Object -First $__selfSkipped)
+
 
 # The SUITE has to listen in UTF-8 too, for the same reason the program does: git and the child
 # process write path bytes as UTF-8, and PowerShell decodes a native command's output with the
@@ -812,7 +849,7 @@ try {
         # ambiguous to refuse. Asserting the refusal here would fail for a property of the volume.
         Assert-True -Condition ($result.exitCode -eq 0) `
             -Message "on a case-insensitive volume the two spellings are one directory, so nothing is ambiguous (exit $($result.exitCode))"
-        Assert-True -Condition ($true) `
+        Skip-Assertion `
             -Message 'and the ambiguity refusal is not exercised here: the volume, not the program, decided'
     }
 
@@ -1247,14 +1284,22 @@ Write-Output ('asked=' + (($cache.Keys | Sort-Object) -join '|'))
 }
 
 Write-Host ''
-if ($script:total -ne $ExpectedAssertionCount) {
-    Write-Host "HARNESS-BROKE: ran $script:total assertions, expected $ExpectedAssertionCount." -ForegroundColor Magenta
+foreach ($__reason in @($script:skipReasons)) {
+    $__ok = $false
+    foreach ($__allowed in $AllowedSkipReasons) { if ($__reason -like $__allowed) { $__ok = $true; break } }
+    if (-not $__ok) {
+        Write-Host "HARNESS-BROKE: a check was SKIPPED with an undeclared reason, which is how a real assertion gets downgraded to a skip without changing any count: $__reason" -ForegroundColor Red
+        exit 2
+    }
+}
+if (($script:total + $script:skipped) -ne $ExpectedAssertionCount) {
+    Write-Host "HARNESS-BROKE: ran $script:total assertions and skipped $script:skipped, expected population $ExpectedAssertionCount." -ForegroundColor Magenta
     exit 2
 }
 
 $passed = $script:total - $script:failures
 $color = if ($script:failures -eq 0) { 'Green' } else { 'Red' }
 Write-Host "fixture setup count: $script:fixtureCount (35 pre-existing + 1 config proof); local config setup launches avoided: 210 for the pre-existing fixtures, $script:removedLocalConfigCalls equivalent for this run"
-Write-Host "$passed/$script:total passed" -ForegroundColor $color
+Write-Host "$passed/$script:total passed ($script:skipped skipped)" -ForegroundColor $color
 if ($script:failures -gt 0) { exit 1 }
 exit 0

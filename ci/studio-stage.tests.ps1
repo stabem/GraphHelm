@@ -10,13 +10,17 @@
 # Criterion this suite exists to meet (#464 item 3): prove the Studio stage can actually go RED,
 # not merely that it runs. Cells 11-13 are that proof: a fixture whose `test` script exits 1 turns
 # ci/studio-stage.ps1 red, names which step failed, and the step after it never runs.
-$ExpectedAssertionCount = 30
+$ExpectedAssertionCount = 32
+# The node-dependent cells are counted SEPARATELY from the total on purpose: see the tail.
+$ExpectedNodeDependentCount = 13
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $script:total = 0
 $script:failures = 0
+$script:skipped = 0
+$script:nodeDependent = 0
 
 function Assert-True {
     param([Parameter(Mandatory)] [bool] $Condition, [Parameter(Mandatory)] [string] $Message)
@@ -97,24 +101,43 @@ $script:nodeAvailable = [bool](Get-Command -Name 'node' -ErrorAction SilentlyCon
 [bool](Get-Command -Name 'npm' -ErrorAction SilentlyContinue)
 function Assert-NodeDependent {
     param([Parameter(Mandatory)] [scriptblock] $Condition, [Parameter(Mandatory)] [string] $Message)
+    $script:nodeDependent++
     if ($script:nodeAvailable) {
         Assert-True (& $Condition) $Message
     } else {
-        Assert-True $true "SKIPPED (node/npm not on this host, which ci/studio-stage.ps1 itself treats as optional): $Message"
+        $script:skipped++
+        Write-Host "  SKIP: node/npm not on this host, which ci/studio-stage.ps1 treats as optional: $Message" -ForegroundColor Yellow
     }
 }
 
+# HARNESS SELF-CHECK, armed on every host INCLUDING one that has node. `Assert-NodeDependent`
+# takes its skip branch only when node is absent, so on the gate host that branch never executes
+# and a regression folding skips back into passes would be invisible there. Forcing the flag
+# exercises the branch directly. Leaves no residue.
+$__selfTotal = $script:total; $__selfSkipped = $script:skipped; $__selfNode = $script:nodeAvailable
+$script:nodeAvailable = $false
+Assert-NodeDependent { $true } 'harness self-check: a skip must not be counted as a pass'
+$script:nodeAvailable = $__selfNode
+if ($script:total -ne $__selfTotal) {
+    Write-Host "HARNESS-BROKE: Assert-NodeDependent advanced the pass counter on its skip branch, so a skipped check is being reported as a pass" -ForegroundColor Red
+    exit 2
+}
+$script:total = $__selfTotal; $script:skipped = $__selfSkipped; $script:nodeDependent--
+
+
 function New-StudioFixture {
-    param([string] $TestExitCode = '0')
+    param([string] $TestExitCode = '0', [string] $BuildExitCode = '0')
     $dir = Join-Path $env:TEMP "studio-stage-fixture-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $pkg = @{
         name    = 'fixture'
         version = '1.0.0'
         scripts = @{
-            typecheck = 'node -e "process.exit(0)"'
+            # The real Studio package folds tsc into build, so a passing stage proves it does not
+            # invoke this standalone script.
+            typecheck = 'node -e "process.exit(9)"'
             test      = "node -e `"process.exit($TestExitCode)`""
-            build     = 'node -e "process.exit(0)"'
+            build     = "node -e `"process.exit($BuildExitCode)`""
         }
     }
     ($pkg | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $dir 'package.json') -Encoding utf8
@@ -176,6 +199,15 @@ try {
     Remove-Item -Recurse -Force -LiteralPath $redFixture -ErrorAction SilentlyContinue
 }
 
+$buildRedFixture = New-StudioFixture -BuildExitCode '7'
+try {
+    $result = Invoke-StudioStage -StudioDir $buildRedFixture
+    Assert-NodeDependent { $result.Code -eq 7 } "a build failure exits with its real code (got $($result.Code))"
+    Assert-NodeDependent { $result.Output -like '*STAGE_FAILED_AT=build*' } 'the build failure names the build step'
+} finally {
+    Remove-Item -Recurse -Force -LiteralPath $buildRedFixture -ErrorAction SilentlyContinue
+}
+
 # Node absence must read as a note, never as a failure and never as a pass that ran nothing. NOT
 # guarded by $script:nodeAvailable: this cell forces the CHILD's own PATH to exclude node/npm
 # regardless of what the host running this suite has, so it exercises the NODE_ABSENT path either
@@ -198,7 +230,7 @@ Assert-NodeDependent { $missingResult.Output -like '*STAGE_FAILED_AT=missing-dir
 # writes to stderr, so neither could have caught this -- these two are built specifically so one
 # does and the assertions are about what a bare `2>&1` would have done to each.
 function New-StudioStderrFixture {
-    param([string] $TypecheckExitCode = '0')
+    param([string] $BuildExitCode = '0')
     $dir = Join-Path $env:TEMP "studio-stage-stderr-fixture-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $pkg = @{
@@ -207,9 +239,9 @@ function New-StudioStderrFixture {
         scripts = @{
             # Writes to stderr AND signals its own real outcome via its exit code -- the two must
             # be read independently, which is exactly what a `2>&1` merge stops being true.
-            typecheck = "node -e `"console.error('npm warn deprecated something'); process.exit($TypecheckExitCode)`""
+            typecheck = 'node -e "process.exit(9)"'
             test      = 'node -e "process.exit(0)"'
-            build     = 'node -e "process.exit(0)"'
+            build     = "node -e `"console.error('npm warn deprecated something'); process.exit($BuildExitCode)`""
         }
     }
     ($pkg | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $dir 'package.json') -Encoding utf8
@@ -224,7 +256,7 @@ function New-StudioStderrFixture {
 # A step that WARNS (writes to stderr) and PASSES (exits 0) must still pass. This is the exact
 # shape `npm warn deprecated` has on a real, healthy install -- if this cell is red, every real
 # gate run against apps/studio would be too.
-$stderrGreenFixture = New-StudioStderrFixture -TypecheckExitCode '0'
+$stderrGreenFixture = New-StudioStderrFixture -BuildExitCode '0'
 try {
     $result = Invoke-StudioStage -StudioDir $stderrGreenFixture
     Assert-NodeDependent { $result.Code -eq 0 } "a step that writes to stderr but exits 0 must still pass the stage (got $($result.Code))"
@@ -236,11 +268,11 @@ try {
 # A step that WARNS (writes to stderr) and genuinely FAILS (a specific non-zero exit code) must
 # report THAT code, named at the step that produced it -- not a code mangled by an intervening
 # terminating error, and not silence about which step it was.
-$stderrRedFixture = New-StudioStderrFixture -TypecheckExitCode '3'
+$stderrRedFixture = New-StudioStderrFixture -BuildExitCode '3'
 try {
     $result = Invoke-StudioStage -StudioDir $stderrRedFixture
-    Assert-NodeDependent { $result.Code -eq 3 } "a step that writes to stderr and exits 3 must report exit 3, not a code an intervening error substituted (got $($result.Code))"
-    Assert-NodeDependent { $result.Output -like '*STAGE_FAILED_AT=typecheck*' } 'the failing step is still named when it also wrote to stderr'
+    Assert-NodeDependent { $result.Code -eq 3 } "a build step that writes to stderr and exits 3 must report exit 3, not a code an intervening error substituted (got $($result.Code))"
+    Assert-NodeDependent { $result.Output -like '*STAGE_FAILED_AT=build*' } 'the failing build step is still named when it also wrote to stderr'
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $stderrRedFixture -ErrorAction SilentlyContinue
 }
@@ -267,17 +299,32 @@ Assert-True ($studioStageIndex -gt $lastPostgresJoinIndex) `
 Assert-True (-not $gateText.Contains("Start-BackgroundStage -Name 'apps/studio (npm)'")) `
     'the Studio stage has no early background start that can race the loaded gate host'
 
-# The regression guard for M's finding on #1003: a `2>&1` reappearing on the npm call is exactly
-# how the stderr hazard above would come back, silently, the next time someone "simplifies" this
-# loop. Checked in the SOURCE because the two stderr cells above would only catch it if someone
-# also remembered to run them; this makes forgetting visible on its own.
+# RESTORED. This diff deleted the line below on the grounds that the behaviour fixtures cover it.
+# They do not: re-adding `2>&1` to the npm call in ci/studio-stage.ps1 leaves 31/31 green and
+# rc=0, because the fixtures reach the step through `npm run`, which does not propagate the
+# child's stderr in the shape that trips NativeCommandError. Measured by sabotage before this
+# line went back. The #1003 hazard is a SOURCE SPELLING, and a source spelling needs a witness
+# that reads the source.
 $stageText = [System.IO.File]::ReadAllText($stagePath)
 Assert-True ($stageText -notlike '*npm @($step.Arguments) 2>&1*') 'the npm call does not merge stderr into the success stream (the #1003 hazard)'
 
 Write-Host ''
-Write-Host "$($script:total - $script:failures)/$($script:total) passed"
-if ($script:total -ne $ExpectedAssertionCount) {
-    Write-Host "HARNESS-BROKE: expected $ExpectedAssertionCount assertions, ran $($script:total)" -ForegroundColor Red
+Write-Host "$($script:total - $script:failures)/$($script:total) passed; $($script:skipped) skipped"
+# A SUM CANNOT SEE A REDISTRIBUTION BETWEEN ITS TERMS. `$total + $skipped` is satisfied by
+# folding every skip back into the passes, which is precisely the change this suite exists to
+# forbid -- and the split was reported only by an unasserted Write-Host. These two checks read
+# the terms.
+if (($script:total + $script:skipped) -ne $ExpectedAssertionCount) {
+    Write-Host "HARNESS-BROKE: expected $ExpectedAssertionCount checks, ran $($script:total) assertions and skipped $($script:skipped)" -ForegroundColor Red
+    exit 2
+}
+if ($script:nodeDependent -ne $ExpectedNodeDependentCount) {
+    Write-Host "HARNESS-BROKE: expected $ExpectedNodeDependentCount node-dependent cells, reached $($script:nodeDependent)" -ForegroundColor Red
+    exit 2
+}
+$expectedSkipped = if ($script:nodeAvailable) { 0 } else { $ExpectedNodeDependentCount }
+if ($script:skipped -ne $expectedSkipped) {
+    Write-Host "HARNESS-BROKE: node/npm $(if ($script:nodeAvailable) { 'present' } else { 'absent' }) on this host, so exactly $expectedSkipped cells must be SKIPPED, but $($script:skipped) were -- a skip counted as a pass is the defect this suite forbids" -ForegroundColor Red
     exit 2
 }
 if ($script:failures -gt 0) { exit 1 }

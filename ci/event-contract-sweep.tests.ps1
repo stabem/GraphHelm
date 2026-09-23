@@ -88,6 +88,23 @@ $ExpectedAssertionCount = 117
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
+$script:skipped = 0
+$script:skipReasons = @()
+# A SUM CANNOT SEE A REDISTRIBUTION BETWEEN ITS TERMS, and neither can a COUNT of skips:
+# turning a real `Assert-True` into a `Skip-Assertion` leaves `total + skipped` intact and
+# produces a skip count identical to a legitimate one (measured on this suite by a
+# reviewing lane: 23 of 24, 1 skipped, rc=0, GREEN). What separates them is the REASON, so
+# every legitimate skip site is declared here and the tail refuses anything else.
+#
+# WHAT THIS DOES NOT DO, so it is not read as stronger than it is: it does not catch a skip
+# whose message was COPIED from a legitimate site, and it does not notice a legitimate site
+# firing twice. The threat it is sized for is accidental degradation, which does not inherit
+# a legal reason string; it is not a defence against someone deliberately forging one.
+$AllowedSkipReasons = @(
+    'NOT MEASURED: the collision cell is skipped with its reason named (*'
+    'NOT MEASURED: the HeadCount floor is skipped with the same reason; this is a note, not a pass'
+    'NOT MEASURED: the Touched floor is skipped with the same reason; this is a note, not a pass'
+)
 $script:failures = 0
 
 function Assert-True {
@@ -104,6 +121,28 @@ function Assert-Equal {
     param($Expected, $Actual, [Parameter(Mandatory)] [string] $Message)
     Assert-True -Condition ($Expected -eq $Actual) -Message "$Message (expected '$Expected', got '$Actual')"
 }
+
+function Skip-Assertion {
+    param([Parameter(Mandatory)] [string] $Message)
+    $script:skipped++
+    $script:skipReasons += $Message
+    Write-Host "  SKIP: $Message" -ForegroundColor Yellow
+}
+
+# HARNESS SELF-CHECK, armed on every host: a SKIP must not move the pass counter. These suites
+# were rewritten so a skipped check stops counting as a pass, and the tail guard is
+# `total + skipped == expected` -- a SUM, which any redistribution between its two terms
+# satisfies. This exercises the skip path directly and leaves no residue, so it fires wherever
+# the suite runs rather than only on a host that happens to take the skip branch.
+$__selfTotal = $script:total; $__selfSkipped = $script:skipped
+Skip-Assertion 'harness self-check: a skip must not be counted as a pass'
+if ($script:total -ne $__selfTotal) {
+    Write-Host "HARNESS-BROKE: Skip-Assertion advanced the pass counter, so a skipped check is being reported as a pass" -ForegroundColor Red
+    exit 2
+}
+$script:total = $__selfTotal; $script:skipped = $__selfSkipped
+$script:skipReasons = @($script:skipReasons | Select-Object -First $__selfSkipped)
+
 
 . (Join-Path $PSScriptRoot 'event-contract-sweep.ps1')
 
@@ -1089,17 +1128,12 @@ if ($null -ne $population -and $population.Known) {
     # The marker the gate reads out of this stage's capture into the manifest (`eventContractSweep`).
     $script:printedMarker = "[event-contract] NOT MEASURED -- $reason"
     Write-Host $script:printedMarker -ForegroundColor Yellow
-    Assert-True -Condition $true `
+    Skip-Assertion `
         "NOT MEASURED: the collision cell is skipped with its reason named ($reason); this is a note, not a pass"
-    # THE COUNT MUST NOT DEPEND ON THE REMOTE. The Known branch runs three assertions (the collision
-    # cell and two floors); this branch ran one, so a mute remote made the suite report INCOMPLETE
-    # (exit 2), which ci/run-ps-suites.ps1 turns into HARNESS-BROKE -- a RED stage for every PR in
-    # the repository on a network outage, the exact thing this note-not-pass design exists to prevent
-    # (lane B on #1005, GH_EVENT_CONTRACT_REMOTE pointed at nothing: 100 of 102, exit 2). Two more
-    # notes keep the count remote-independent.
-    Assert-True -Condition $true `
+    # Three remote checks are unmeasured; keep them in the expected population but out of the passed count.
+    Skip-Assertion `
         'NOT MEASURED: the HeadCount floor is skipped with the same reason; this is a note, not a pass'
-    Assert-True -Condition $true `
+    Skip-Assertion `
         'NOT MEASURED: the Touched floor is skipped with the same reason; this is a note, not a pass'
 }
 
@@ -1309,13 +1343,21 @@ try {
 }
 
 Write-Host ''
-if ($script:total -ne $ExpectedAssertionCount) {
-    Write-Host "INCOMPLETE: ran $script:total assertions, expected $ExpectedAssertionCount" -ForegroundColor Yellow
+foreach ($__reason in @($script:skipReasons)) {
+    $__ok = $false
+    foreach ($__allowed in $AllowedSkipReasons) { if ($__reason -like $__allowed) { $__ok = $true; break } }
+    if (-not $__ok) {
+        Write-Host "HARNESS-BROKE: a check was SKIPPED with an undeclared reason, which is how a real assertion gets downgraded to a skip without changing any count: $__reason" -ForegroundColor Red
+        exit 2
+    }
+}
+if (($script:total + $script:skipped) -ne $ExpectedAssertionCount) {
+    Write-Host "INCOMPLETE: ran $script:total assertions and skipped $script:skipped, expected population $ExpectedAssertionCount" -ForegroundColor Yellow
     exit 2
 }
 if ($script:failures -gt 0) {
     Write-Host "FAILED: $script:failures of $script:total" -ForegroundColor Red
     exit 1
 }
-Write-Host "PASSED: $script:total of $ExpectedAssertionCount" -ForegroundColor Green
+Write-Host "PASSED: $script:total of $ExpectedAssertionCount ($script:skipped skipped)" -ForegroundColor Green
 exit 0

@@ -1,2 +1,0 @@
-open-begin id=0 t=1787165585897789 pid=68284 thread=ThreadId(1) caller=request
-open-end id=0 t=1787165585997886 elapsed_us=100042 caller=request result=ok

@@ -1,1 +1,0 @@
-GATE_EXIT=1 at sha 85e3ca1 (captured immediately after the gate, no pipe, no trailing element)

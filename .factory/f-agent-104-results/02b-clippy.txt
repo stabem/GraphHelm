@@ -1,3 +1,0 @@
-    Checking acceptance-map v0.1.0 (F:\github\GraphHelm\.claude\worktrees\f-agent-8dc3ee\tools\acceptance-map)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
-EXIT: 0

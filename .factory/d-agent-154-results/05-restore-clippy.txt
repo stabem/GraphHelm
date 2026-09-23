@@ -1,7 +1,0 @@
-    Checking graphhelm-execution v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\core\execution)
-    Checking graphhelm-simulation v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\core\simulation)
-    Checking graphhelm-governor v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\core\governor)
-    Checking graphhelm-events v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\core\events)
-    Checking graphhelm-runtime v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\core\runtime)
-    Checking graphhelm-cli v0.1.0 (F:\github\GraphHelm\.claude\worktrees\d-agent-154\apps\cli)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 07s

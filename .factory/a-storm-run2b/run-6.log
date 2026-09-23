@@ -1,7 +1,0 @@
-
-running 1 test
-test the_storm_holds_under_eight_concurrent_agents ... PRESERVED events tree at C:\Users\gabri\AppData\Local\Temp\.tmpVde3lY
-ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 18.78s
-

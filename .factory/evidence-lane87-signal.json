@@ -1,1 +1,0 @@
-{"description":"Issue #87 landed on main: PR #137 merged as 6d389eb; lane_87's real-world work succeeded.","emittedAt":"2026-08-20T03:30:00Z","evidence":["PR #137 merged @ 6d389eb, issue #87 closed"],"id":"sig-lane87-merged","severity":"low","source":{"id":"operator-h","type":"user"},"type":"external_work_completed"}

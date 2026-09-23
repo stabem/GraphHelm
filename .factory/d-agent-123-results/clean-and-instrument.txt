@@ -1,3 +1,0 @@
-clean before gate: graphhelm-execution, graphhelm-runtime, graphhelm-cli
-gate script: ci/gate-main.ps1 from origin/main c357a5e, sha256 e8a50edbc21bc0f2
-clean recorded

@@ -1,9 +1,0 @@
-=== PHASE 5 RESULT: same stream, gated binary vs reverted binary ===
-gated   : 746 bytes  sha=c6a9de0bb6a30cd9
-reverted: 746 bytes  sha=c6a9de0bb6a30cd9
---- byte comparison ---
-IDENTICAL — no migration, no replay needed on revert
---- reverted binary raised no error? ---
-1
---- positive control (proves the binary really changed) ---
-"nodeStates":{"deploy":"succeeded","implementation":"blocked"}

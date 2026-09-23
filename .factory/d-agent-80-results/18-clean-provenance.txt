@@ -1,8 +1,0 @@
-=== CLEAN PROVENANCE, recorded beside the gate result per L's enforcement rule ===
-Before the 13-* gate run at 85e3ca1:
-  cargo clean -p graphhelm-execution graphhelm-cli graphhelm-runtime graphhelm-protocols
-  (removed 181 / 718 / 2540 / 1149 files) — all four crates this branch touches.
-Reason: shared CARGO_TARGET_DIR across worktrees; a foreign artifact can make a gate PASS
-on broken code, which is the invisible direction.
-Earlier in the slot, before run 1: cargo clean -p graphhelm-execution + graphhelm-cli after
-B's gate clobbered graphhelm-execution from their tree (unresolved-import symptom).

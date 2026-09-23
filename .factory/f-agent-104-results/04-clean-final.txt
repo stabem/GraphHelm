@@ -1,2 +1,0 @@
-     Removed 722 files, 341.2MiB total
-EXIT: 0

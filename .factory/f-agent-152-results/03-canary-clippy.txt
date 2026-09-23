@@ -1,4 +1,0 @@
-=== clippy -p ci-canary --all-targets -D warnings, after the scoping fix ===
-   Compiling ci-canary v0.1.0 (F:\github\GraphHelm\.claude\worktrees\f-agent-8dc3ee\tools\ci-canary)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
-EXIT: 0

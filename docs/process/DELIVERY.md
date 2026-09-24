@@ -37,6 +37,14 @@ body.
   head sha it read go in the first line: `Session: <ListAgents name [ref]> · Head: <sha8>`.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
+- **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
+  alike: `cargo +1.97.1 fmt --all -- --check` and
+  `cargo +1.97.1 clippy --locked -p <crate> --all-targets --all-features -- -D warnings` for each
+  touched crate. Tests alone do not catch a lint: #1269 merged with passing tests and left `main`
+  red under clippy until #1274. When `Cargo.toml`, `Cargo.lock` or a crate many others depend on
+  changes, run the workspace form (`--workspace` instead of `-p`).
+- Run tests from the **committed** head, not a dirty tree: a check that compares the branch with
+  `main` (the freeze rule) sees nothing before the commit exists.
 - The verdict is a word in the comment text: `APPROVE`, `APPROVE-WITH-RISK` (name the risk) or
   `BLOCK` (name the defect). GitHub review state stays `COMMENTED`, because every session shares
   one account.

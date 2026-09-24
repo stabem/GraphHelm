@@ -86,7 +86,7 @@ fn verify_rejects_source_mutation() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX2"));
+        .stdout(predicate::str::contains("GHKEEL002_STALE"));
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn new_untracked_source_invalidates_the_coverage_snapshot() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX2"));
+        .stdout(predicate::str::contains("GHKEEL002_STALE"));
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn scan_refuses_output_inside_the_repository_even_in_a_new_directory() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX5"));
+        .stdout(predicate::str::contains("GHKEEL005_UNSAFE_PATH"));
     assert!(!out.exists());
 }
 
@@ -264,7 +264,7 @@ fn proposal_is_source_bound_and_has_no_acceptance_promise() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX6"));
+        .stdout(predicate::str::contains("GHKEEL006_AMBIGUOUS"));
 }
 
 #[test]
@@ -284,7 +284,139 @@ fn verify_rejects_oversized_index_before_json_parsing() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX4"));
+        .stdout(predicate::str::contains("GHKEEL004_LIMIT"));
+}
+
+#[test]
+fn verify_rejects_many_json_values_before_deserialization() {
+    let d = repo();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    let mut json = String::from(
+        r#"{"schema":"keel.contract-index.v1","repo":"working-tree","snapshot_digest":"x","files":["#,
+    );
+    json.push_str(&"{},".repeat(10_000));
+    json.push_str("{}],\"omissions\":[]}");
+    fs::write(&out, json).unwrap();
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "verify",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--index",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("GHKEEL004_LIMIT"));
+}
+
+#[test]
+fn verify_reads_near_maximum_index_with_multiple_declarations() {
+    let d = repo();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    let mut json = String::from(
+        r#"{"schema":"keel.contract-index.v1","repo":"working-tree","snapshot_digest":"x","files":["#,
+    );
+    let declaration = format!(r#"{{"name":"{}","kind":"function"}}"#, "item".repeat(24));
+    let declarations = (0..10)
+        .map(|_| declaration.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    for index in 0..10_000 {
+        if index != 0 {
+            json.push(',');
+        }
+        json.push_str(&format!(
+            r#"{{"path":"src/{index}.rs","sha256":"x","bytes":1,"language":"rust","parse":"parsed","declarations":[{declarations}]}}"#
+        ));
+    }
+    json.push_str("],\"omissions\":[]}");
+    fs::write(&out, json).unwrap();
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "verify",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--index",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("GHKEEL002_STALE"));
+}
+
+#[test]
+fn verify_rejects_deep_or_long_json_before_deserialization() {
+    let d = repo();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    let mut json = String::from("{\"schema\":\"");
+    json.push_str(&"a".repeat(4097));
+    json.push_str(
+        "\",\"repo\":\"working-tree\",\"snapshot_digest\":\"x\",\"files\":[],\"omissions\":[]}",
+    );
+    fs::write(&out, json).unwrap();
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "verify",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--index",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("GHKEEL004_LIMIT"));
+}
+
+#[test]
+fn verify_rejects_json_deeper_than_the_preflight_bound() {
+    let d = repo();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    let mut json = "[".repeat(65);
+    json.push_str("null");
+    json.push_str(&"]".repeat(65));
+    fs::write(&out, json).unwrap();
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "verify",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--index",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("GHKEEL004_LIMIT"));
+}
+
+#[test]
+fn standalone_errors_do_not_echo_untrusted_paths() {
+    let d = repo();
+    let out_dir = tempfile::tempdir().unwrap();
+    let missing = out_dir.path().join("index-with-secret-sentinel.json");
+    let output = Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "verify",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--index",
+            missing.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("GHKEEL001_INDEX"));
+    assert!(!stdout.contains("secret-sentinel"));
 }
 
 #[test]
@@ -318,7 +450,7 @@ fn a_new_ignored_file_invalidates_the_coverage_snapshot() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("KIDX2"));
+        .stdout(predicate::str::contains("GHKEEL002_STALE"));
 }
 
 #[test]

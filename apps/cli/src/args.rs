@@ -62,6 +62,41 @@ pub enum TopLevel {
     Backup(AdoptionBackupArgs),
     /// Preview or apply an exact reviewed, offline configuration restore.
     Restore(AdoptionRestoreArgs),
+    /// Build, verify, or query the source-bound Keel contract index.
+    Keel(KeelArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct KeelArgs {
+    #[command(subcommand)]
+    pub command: KeelCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeelCommand {
+    /// Scan tracked repository files into an index outside the repository.
+    Index {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Refuse stale or changed index data.
+    Verify {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        index: PathBuf,
+    },
+    /// Query declarations and paths from a verified index.
+    Query {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        index: PathBuf,
+        #[arg(long)]
+        term: String,
+    },
 }
 
 #[derive(Debug, Args)]

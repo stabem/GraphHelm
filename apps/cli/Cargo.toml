@@ -36,6 +36,7 @@ pathogens = { path = "../../tools/pathogens" }
 graphhelm-tool-host = { path = "../../adapters/tool-host" }
 graphhelm-host-adoption = { path = "../../adapters/host-adoption" }
 graphhelm-simulation = { path = "../../core/simulation" }
+keel-contract-index = { path = "../../tools/keel-contract-index" }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

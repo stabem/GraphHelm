@@ -38,6 +38,17 @@ Open what the card names first. When you need more, search for the specific symb
 rather than browsing, and record in the PR body what the card was missing: that record is how cards
 get better. An incomplete card that hid a dependency is the defect to fix, not a reason to guess.
 
+For a repository where a source index would save repeated reads, create one in a private directory
+outside the repository with `graphhelm keel index --repo <repo> --out <outside-dir>/index.json`.
+Before using it, run `graphhelm keel verify --repo <repo> --index <outside-dir>/index.json`, then
+`graphhelm keel query --repo <repo> --index <outside-dir>/index.json --term <symbol>` for the
+specific card question. A changed source makes verification and query refuse the old index; rebuild
+it rather than treating a stale hit as evidence. The index reports observed code facts, not the
+user's intended behavior. Its first version extracts Rust public declarations only; unsupported
+languages and omitted paths remain coverage gaps. A zero-hit or partial result never proves
+absence. Inspect exact source when coverage or freshness cannot support the claim, and record that
+fallback with the card. Skip the index for a small task whose named files are already enough.
+
 ### 2. Spend the surface you declared
 
 Every node spends from `keel.yaml` `surface`: new modules, new types, new public functions, new

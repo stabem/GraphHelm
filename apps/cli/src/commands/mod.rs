@@ -9,6 +9,7 @@ mod gate;
 mod gateway;
 mod hash;
 mod init;
+mod keel;
 mod lint;
 mod mcp;
 mod quality;
@@ -32,8 +33,8 @@ use graphhelm_protocols::{Actor, ActorType, Clock, IdGenerator};
 
 use crate::args::{
     CredentialCommand, DevelopmentCommand, DraftCommand, EventsCommand, ExecutionCommand,
-    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeyringCommand, QualityCommand,
-    RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
+    ExtensionCommand, GateCommand, GatewayCommand, GraphCommand, KeelCommand, KeyringCommand,
+    QualityCommand, RouteCommand, SchemaCommand, SynthesizeArgs, ToolCommand, TopLevel,
 };
 use crate::output::Outcome;
 
@@ -479,6 +480,17 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Setup(args) => adoption::run(&args),
         TopLevel::Backup(args) => adoption::backup(&args),
         TopLevel::Restore(args) => adoption::restore(&args),
+        TopLevel::Keel(args) => match args.command {
+            KeelCommand::Index { repo, out } => {
+                keel::run(keel_contract_index::Operation::Scan { repo, out })
+            }
+            KeelCommand::Verify { repo, index } => {
+                keel::run(keel_contract_index::Operation::Verify { repo, index })
+            }
+            KeelCommand::Query { repo, index, term } => {
+                keel::run(keel_contract_index::Operation::Query { repo, index, term })
+            }
+        },
         TopLevel::Quality(args) => match args.command {
             QualityCommand::Certify {
                 events,

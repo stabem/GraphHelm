@@ -84,7 +84,8 @@
 #   1  external reference fragments select the referenced schema node
 #   1  common credential query/path names, including percent-encoded forms, are redacted
 #   1  the independent floor observer remains bounded after the Known reading
-$ExpectedAssertionCount = 117
+#   4  an unavailable independent listing is named (timeout, bound, exit code), a successful one -- even empty -- is not (#1247)
+$ExpectedAssertionCount = 121
 
 $ErrorActionPreference = 'Stop'
 $script:total = 0
@@ -104,6 +105,9 @@ $AllowedSkipReasons = @(
     'NOT MEASURED: the collision cell is skipped with its reason named (*'
     'NOT MEASURED: the HeadCount floor is skipped with the same reason; this is a note, not a pass'
     'NOT MEASURED: the Touched floor is skipped with the same reason; this is a note, not a pass'
+    # #1247: the population is Known but the independent listing the floors need did not answer.
+    'NOT MEASURED: the HeadCount floor needs an independent ls-remote listing, unavailable after 3 attempts (*); this is a note, not a pass'
+    'NOT MEASURED: the Touched floor is counted over the same listing (*); this is a note, not a pass'
 )
 $script:failures = 0
 
@@ -145,6 +149,37 @@ $script:skipReasons = @($script:skipReasons | Select-Object -First $__selfSkippe
 
 
 . (Join-Path $PSScriptRoot 'event-contract-sweep.ps1')
+
+<#
+.SYNOPSIS
+    Why an independent `git ls-remote` probe gave no usable listing, or $null when it did.
+.DESCRIPTION
+    #1247: the HeadCount floor re-lists the remote as a second instrument. When that listing is
+    unavailable the floors are UNMEASURED, which this file records as a skip with its reason --
+    never a red for the tree (the policy above `Get-ContractPopulation` below), and never a
+    `.Count` on `$null` under StrictMode, which crashed the suite on #1233's gate and hid the
+    reason. A probe that ANSWERED is available even with zero lines: an empty listing beside a
+    sweep that measured heads is a disagreement the floor must report, not a skip.
+#>
+function Get-ListingUnavailableReason {
+    param([AllowNull()] $Probe)
+    if ($null -eq $Probe) { return 'the probe returned nothing' }
+    if ($Probe.TimedOut) { return 'timed out' }
+    if (($Probe.PSObject.Properties.Name -contains 'OutputExceeded') -and [bool]$Probe.OutputExceeded) { return 'output bound exceeded' }
+    if ($Probe.Code -ne 0) { return "git exited $($Probe.Code)" }
+    return $null
+}
+
+# Four pure cells: the reason is named for each unavailable shape, and an answered listing is not
+# unavailable even when it is empty (the case a skip must never swallow).
+Assert-Equal 'timed out' (Get-ListingUnavailableReason ([pscustomobject]@{ Code = -1; Lines = @(); TimedOut = $true })) `
+    '#1247: a timed-out listing is unavailable, and the reason says so'
+Assert-Equal 'output bound exceeded' (Get-ListingUnavailableReason ([pscustomobject]@{ Code = -1; Lines = @(); TimedOut = $false; OutputExceeded = $true })) `
+    '#1247: an over-bound listing is unavailable, and the reason says so'
+Assert-Equal 'git exited 128' (Get-ListingUnavailableReason ([pscustomobject]@{ Code = 128; Lines = @(); TimedOut = $false })) `
+    '#1247: a failed git exit is unavailable, and the reason carries the code'
+Assert-True -Condition ($null -eq (Get-ListingUnavailableReason ([pscustomobject]@{ Code = 0; Lines = @(); TimedOut = $false }))) `
+    '#1247: an ANSWERED empty listing is available, so the floor still reds on it instead of skipping'
 
 function New-Declaration {
     param([string] $Branch, [string] $Tag, [string] $Canonical, [switch] $Remote)
@@ -1107,12 +1142,27 @@ if ($null -ne $population -and $population.Known) {
         # (a push between the sweep's listing and this one), and Touched must be at least the number of
         # heads whose ENVELOPE FILE differs from base three-dot -- SchemaPath is always in the sweep's
         # diff list, so every such head is touched by construction. A blinded diff reports 0 and sinks.
-        $lsProbe = Invoke-BoundedGit -Root $root -Arguments @('ls-remote', '--heads', $remoteName) -TimeoutSeconds 20
-        $lsOutputExceeded = $null -ne $lsProbe -and ($lsProbe.PSObject.Properties.Name -contains 'OutputExceeded') -and [bool]$lsProbe.OutputExceeded
-        $lsHeads = if ($null -ne $lsProbe -and -not $lsProbe.TimedOut -and -not $lsOutputExceeded -and $lsProbe.Code -eq 0) { @($lsProbe.Lines) } else { @() }
+        # #1247: up to three bounded attempts, because this second listing is an instrument and one
+        # slow answer is not a fact about the tree. Still unavailable after them, both floors are
+        # SKIPPED with the reason -- counted, never passed -- matching the NOT MEASURED arm below.
+        $lsProbe = $null
+        $lsUnavailable = 'not attempted'
+        foreach ($lsAttempt in 1..3) {
+            $lsProbe = Invoke-BoundedGit -Root $root -Arguments @('ls-remote', '--heads', $remoteName) -TimeoutSeconds 20
+            $lsUnavailable = Get-ListingUnavailableReason $lsProbe
+            if ($null -eq $lsUnavailable) { break }
+        }
+        if ($null -ne $lsUnavailable) {
+            Write-Host "[event-contract/floors] NOT MEASURED -- the independent ls-remote listing was unavailable after 3 attempts ($lsUnavailable)" -ForegroundColor Yellow
+            Skip-Assertion `
+                "NOT MEASURED: the HeadCount floor needs an independent ls-remote listing, unavailable after 3 attempts ($lsUnavailable); this is a note, not a pass"
+            Skip-Assertion `
+                "NOT MEASURED: the Touched floor is counted over the same listing ($lsUnavailable); this is a note, not a pass"
+        } else {
+        $lsHeads = @($lsProbe.Lines)
         $headGap = [Math]::Abs([int]$population.HeadCount - $lsHeads.Count)
         Assert-True -Condition ($lsHeads.Count -gt 0 -and $headGap -le 2) `
-            "the population's HeadCount ($($population.HeadCount)) is the remote's head listing ($($lsHeads.Count) by bounded git ls-remote, gap $headGap, race tolerance 2; unavailable=$([bool]($null -eq $lsProbe -or $lsProbe.TimedOut -or $lsOutputExceeded -or $lsProbe.Code -ne 0)))"
+            "the population's HeadCount ($($population.HeadCount)) is the remote's head listing ($($lsHeads.Count) by bounded git ls-remote, gap $headGap, race tolerance 2)"
         $envelopeFloor = 0
         foreach ($listed in $lsHeads) {
             $sha = ($listed -split '\s+')[0]
@@ -1123,6 +1173,7 @@ if ($null -ne $population -and $population.Known) {
         }
         Assert-True -Condition (@($population.Touched).Count -ge $envelopeFloor) `
             "Touched ($(@($population.Touched).Count)) is at least the number of heads whose envelope file differs from origin/main three-dot ($envelopeFloor, counted here with plain git); fewer means the sweep skipped heads it had to examine"
+        }
 } else {
     $reason = if ($null -ne $population) { $population.Reason } else { 'the sweep returned nothing' }
     # The marker the gate reads out of this stage's capture into the manifest (`eventContractSweep`).

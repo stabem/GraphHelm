@@ -284,8 +284,16 @@ $env:GRAPHHELM_PS_POOL_PID_STARTUP_OUTCOME = $probeOutcomePath
 try {
     $probeProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
         -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath
-    $probeExited = $probeProcess.WaitForExit(15000)
-    if ($probeExited) { $probeProcess.Refresh() }
+    # #1256: the child re-runs every cell above the probe branch before it exits -- 10.2 s measured
+    # on an idle box -- so 15 s failed under gate load with exited=False. This bound is failure-only
+    # (a green run returns as soon as the child exits), so it is sized for load, not for the idle box.
+    $probeExited = $probeProcess.WaitForExit(120000)
+    if ($probeExited) {
+        $probeProcess.Refresh()
+    } else {
+        # Never leave the probe child (and whatever it started) running past its verdict.
+        try { taskkill.exe /PID $probeProcess.Id /T /F 2>$null | Out-Null } catch { }
+    }
     $probeExitCode = if ($probeExited) { $probeProcess.ExitCode } else { $null }
     $probeOutcome = if (Test-Path -LiteralPath $probeOutcomePath) { [System.IO.File]::ReadAllText($probeOutcomePath) } else { '' }
 } finally {

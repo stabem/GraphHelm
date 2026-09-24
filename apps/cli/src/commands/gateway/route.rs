@@ -39,6 +39,19 @@ use serde_json::{Map, Value, json};
 use super::{Failure, finish, invalid};
 use crate::output::Outcome;
 
+#[cfg(all(test, windows))]
+struct RetryObserver {
+    signal: std::sync::mpsc::Sender<()>,
+    released: std::sync::mpsc::Receiver<()>,
+    waited: bool,
+}
+
+#[cfg(all(test, windows))]
+thread_local! {
+    static RETRY_OBSERVER: std::cell::RefCell<Option<RetryObserver>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 const COMMAND: &str = "gateway.route.set";
 /// The one profile a written route advertises, matching `setup`'s own choice. Scoring within a
 /// profile is deferred (`core/gateway/src/manifest.rs`); the tag only has to be a legal member.
@@ -491,19 +504,129 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    // SAFETY: both buffers are NUL-terminated UTF-16 strings and remain alive for the call.
-    // MoveFileEx replaces the destination directory entry; it does not open the destination for
-    // content writes, so a racing reparse point cannot redirect the manifest bytes into its target.
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
+    // This deadline bounds the number of retry iterations. A native MoveFileExW call can still
+    // block beyond it; the clock is consulted before each new call and is deliberately not used
+    // to claim a wall-clock bound for the current OS operation. It starts at the FIRST failure,
+    // after the test observer below has returned, so a test's own synchronisation never spends
+    // the window it exercises (review of #1231; the same shape #1230 landed in backup.rs).
+    let mut deadline: Option<std::time::Instant> = None;
+    loop {
+        // SAFETY: both buffers are NUL-terminated UTF-16 strings and remain alive for the call.
+        // MoveFileEx replaces the destination directory entry; it does not open the destination
+        // for content writes, so a racing reparse point cannot redirect the manifest bytes.
+        let result = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        let retryable = matches!(error.raw_os_error(), Some(5 | 32 | 33));
+        #[cfg(all(test, windows))]
+        if retryable {
+            RETRY_OBSERVER.with(|observer| {
+                if let Some(observer) = observer.borrow_mut().as_mut()
+                    && !observer.waited
+                {
+                    observer.waited = true;
+                    let _ = observer.signal.send(());
+                    let _ = observer
+                        .released
+                        .recv_timeout(std::time::Duration::from_secs(1));
+                }
+            });
+        }
+        let deadline = *deadline.get_or_insert_with(|| {
+            std::time::Instant::now()
+                .checked_add(std::time::Duration::from_millis(100))
+                .unwrap_or_else(std::time::Instant::now)
+        });
+        if !retryable || std::time::Instant::now() >= deadline {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        if std::time::Instant::now() >= deadline {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    use super::{RETRY_OBSERVER, RetryObserver, replace_file, write_atomically};
+
+    #[test]
+    fn short_reader_window_is_retried_and_publishes_new_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("manifest.json");
+        std::fs::write(&manifest, b"old manifest").unwrap();
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        let (retry_sender, retry_receiver) = mpsc::channel();
+        let (released_sender, released_receiver) = mpsc::channel();
+        RETRY_OBSERVER.with(|observer| {
+            *observer.borrow_mut() = Some(RetryObserver {
+                signal: retry_sender,
+                released: released_receiver,
+                waited: false,
+            })
+        });
+        let reader_path = manifest.clone();
+        let reader = std::thread::spawn(move || {
+            let mut held = super::super::open_manifest_no_follow(&reader_path).unwrap();
+            ready_sender.send(()).unwrap();
+            retry_receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+            let mut bytes = Vec::new();
+            held.read_to_end(&mut bytes).unwrap();
+            drop(held);
+            released_sender.send(()).unwrap();
+            bytes
+        });
+        ready_receiver.recv().unwrap();
+
+        assert!(write_atomically(&manifest, "new manifest").is_ok());
+        RETRY_OBSERVER.with(|observer| *observer.borrow_mut() = None);
+        assert_eq!(std::fs::read(&manifest).unwrap(), b"new manifest");
+        assert_eq!(reader.join().unwrap(), b"old manifest");
+    }
+
+    #[test]
+    fn persistent_reader_returns_error_and_cleans_the_temporary_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("manifest.json");
+        std::fs::write(&manifest, b"old manifest").unwrap();
+        let held = super::super::open_manifest_no_follow(&manifest).unwrap();
+
+        assert!(write_atomically(&manifest, "new manifest").is_err());
+        assert_eq!(std::fs::read(&manifest).unwrap(), b"old manifest");
+        assert!(
+            std::fs::read_dir(directory.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp"))
+        );
+        drop(held);
+    }
+
+    #[test]
+    fn persistent_reader_exposes_the_native_sharing_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("manifest.json");
+        let source = directory.path().join("source.tmp");
+        std::fs::write(&manifest, b"old manifest").unwrap();
+        std::fs::write(&source, b"new manifest").unwrap();
+        let held = super::super::open_manifest_no_follow(&manifest).unwrap();
+
+        let error = replace_file(&source, &manifest).unwrap_err();
+        assert!(matches!(error.raw_os_error(), Some(5 | 32 | 33)));
+        drop(held);
     }
 }

@@ -486,3 +486,302 @@ pub fn freeze_violation(changed_paths: &[&str]) -> Option<(String, String)> {
         .find(|path| !is_gate(path) && !is_receipt(path))?;
     Some(((*gate_side).to_owned(), (*code_side).to_owned()))
 }
+
+/// The evidence needed to decide whether one gate manifest explains a lockfile delta.
+/// The caller must provide the exact base and current bytes; an absent or unparsable side is
+/// deliberately a refusal rather than an implicit clean result.
+#[derive(Clone, Copy, Debug)]
+pub struct GateManifestChange<'a> {
+    pub path: &'a str,
+    pub base: &'a str,
+    pub current: &'a str,
+}
+
+/// Applies the freeze rule with the one narrow lockfile exception.
+///
+/// `Cargo.lock` is neutral only when it is the sole outside path (run receipts are still
+/// exempt), both lockfiles are structurally parseable, package identity and all non-gate
+/// records are unchanged, and every changed gate package dependency list is explained by a
+/// same-diff gate manifest dependency change. This keeps the public path-only rule fail-closed
+/// for callers that do not have exact base/current evidence.
+#[must_use]
+pub fn freeze_violation_with_lockfile(
+    changed_paths: &[&str],
+    base_lockfile: &str,
+    current_lockfile: &str,
+    manifests: &[GateManifestChange<'_>],
+) -> Option<(String, String)> {
+    let violation = freeze_violation(changed_paths)?;
+    if violation.1 != "Cargo.lock"
+        || changed_paths
+            .iter()
+            .filter(|path| !is_gate_path(path) && !is_run_receipt(path))
+            .count()
+            != 1
+    {
+        return Some(violation);
+    }
+
+    if !lockfile_delta_is_attributable(base_lockfile, current_lockfile, manifests, changed_paths) {
+        return Some(violation);
+    }
+    None
+}
+
+fn is_gate_path(path: &str) -> bool {
+    freeze_violation(&[path, "README.md"]).is_some()
+}
+
+fn is_run_receipt(path: &str) -> bool {
+    path.starts_with(".factory/gate-runs/")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct LockPackage {
+    fields: std::collections::BTreeMap<String, String>,
+    dependencies: BTreeSet<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Lockfile {
+    metadata: String,
+    packages: std::collections::BTreeMap<String, LockPackage>,
+}
+
+fn lockfile_delta_is_attributable(
+    base: &str,
+    current: &str,
+    manifests: &[GateManifestChange<'_>],
+    changed_paths: &[&str],
+) -> bool {
+    let Some(base_lock) = parse_lockfile(base) else {
+        return false;
+    };
+    let Some(current_lock) = parse_lockfile(current) else {
+        return false;
+    };
+    if base_lock.metadata != current_lock.metadata
+        || base_lock.packages.keys().ne(current_lock.packages.keys())
+    {
+        return false;
+    }
+
+    let manifest_paths: BTreeSet<&str> = manifests.iter().map(|manifest| manifest.path).collect();
+    let changed_manifest_paths: BTreeSet<&str> = changed_paths
+        .iter()
+        .copied()
+        .filter(|path| is_gate_path(path) && path.ends_with("Cargo.toml"))
+        .collect();
+    if manifest_paths != changed_manifest_paths || manifests.is_empty() {
+        return false;
+    }
+
+    let mut allowed_dependency_changes = std::collections::BTreeMap::new();
+    for manifest in manifests {
+        let Some(base_manifest) = parse_manifest(manifest.base) else {
+            return false;
+        };
+        let Some(current_manifest) = parse_manifest(manifest.current) else {
+            return false;
+        };
+        if base_manifest.name != current_manifest.name {
+            return false;
+        }
+        let added: BTreeSet<String> = current_manifest
+            .dependencies
+            .difference(&base_manifest.dependencies)
+            .cloned()
+            .collect();
+        let removed: BTreeSet<String> = base_manifest
+            .dependencies
+            .difference(&current_manifest.dependencies)
+            .cloned()
+            .collect();
+        allowed_dependency_changes.insert(current_manifest.name, (added, removed));
+    }
+
+    for (name, base_package) in &base_lock.packages {
+        let Some(current_package) = current_lock.packages.get(name) else {
+            return false;
+        };
+        let Some(package_name) = base_package.fields.get("name").and_then(|value| {
+            value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+        }) else {
+            return false;
+        };
+        let Some((allowed_added, allowed_removed)) = allowed_dependency_changes.get(package_name)
+        else {
+            if base_package != current_package {
+                return false;
+            }
+            continue;
+        };
+        if base_package.fields != current_package.fields {
+            return false;
+        }
+        let actual_added: BTreeSet<String> = current_package
+            .dependencies
+            .difference(&base_package.dependencies)
+            .cloned()
+            .collect();
+        let actual_removed: BTreeSet<String> = base_package
+            .dependencies
+            .difference(&current_package.dependencies)
+            .cloned()
+            .collect();
+        if actual_added != *allowed_added || actual_removed != *allowed_removed {
+            return false;
+        }
+    }
+    true
+}
+
+fn parse_lockfile(text: &str) -> Option<Lockfile> {
+    let lines: Vec<&str> = text.lines().collect();
+    let first_package = lines.iter().position(|line| line.trim() == "[[package]]")?;
+    let metadata = lines[..first_package]
+        .iter()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if metadata
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .any(|line| !line.contains('='))
+    {
+        return None;
+    }
+
+    let mut packages = std::collections::BTreeMap::new();
+    let mut index = first_package;
+    while index < lines.len() {
+        if lines[index].trim() != "[[package]]" {
+            return None;
+        }
+        index += 1;
+        let mut fields = std::collections::BTreeMap::new();
+        let mut dependencies = BTreeSet::new();
+        let mut saw_dependencies = false;
+        let mut name = None;
+        while index < lines.len() && lines[index].trim() != "[[package]]" {
+            let line = lines[index].trim();
+            index += 1;
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (key, value) = line.split_once('=')?;
+            let key = key.trim().to_owned();
+            let value = value.trim();
+            if key == "dependencies" {
+                if saw_dependencies {
+                    return None;
+                }
+                saw_dependencies = true;
+                let mut raw = value.to_owned();
+                if !raw.starts_with('[') {
+                    return None;
+                }
+                while !raw.contains(']') {
+                    let next = lines.get(index)?.trim();
+                    index += 1;
+                    raw.push_str(next);
+                }
+                let end = raw.rfind(']')?;
+                if !raw[end + 1..].trim().is_empty() {
+                    return None;
+                }
+                let items: Vec<&str> = raw[1..end].split(',').collect();
+                for (position, item) in items.iter().enumerate() {
+                    let item = item.trim();
+                    if item.is_empty() {
+                        if position == items.len() - 1 {
+                            continue;
+                        }
+                        return None;
+                    }
+                    let item = item.strip_prefix('"')?.strip_suffix('"')?;
+                    if item.is_empty() {
+                        return None;
+                    }
+                    if !dependencies.insert(item.to_owned()) {
+                        return None;
+                    }
+                }
+                continue;
+            }
+            if key.is_empty() || fields.insert(key.clone(), value.to_owned()).is_some() {
+                return None;
+            }
+            if key == "name" {
+                name = Some(value.strip_prefix('"')?.strip_suffix('"')?.to_owned());
+            }
+        }
+        let name = name?;
+        let version = fields.get("version")?;
+        let package_key = format!("{name}\0{version}");
+        if packages
+            .insert(
+                package_key,
+                LockPackage {
+                    fields,
+                    dependencies,
+                },
+            )
+            .is_some()
+        {
+            return None;
+        }
+    }
+    Some(Lockfile { metadata, packages })
+}
+
+#[derive(Debug)]
+struct Manifest {
+    name: String,
+    dependencies: BTreeSet<String>,
+}
+
+fn parse_manifest(text: &str) -> Option<Manifest> {
+    let mut package = false;
+    let mut dependency_section = false;
+    let mut name = None;
+    let mut dependencies = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.split('#').next()?.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            let header = line.strip_prefix('[')?.strip_suffix(']')?;
+            package = header == "package";
+            dependency_section = header == "dependencies"
+                || header == "dev-dependencies"
+                || header == "build-dependencies"
+                || header.ends_with(".dependencies");
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        let key = key.trim();
+        let value = value.trim();
+        if package && key == "name" {
+            name = Some(value.strip_prefix('"')?.strip_suffix('"')?.to_owned());
+        } else if dependency_section {
+            let dep_name = key.trim_matches('"').to_owned();
+            if dep_name.is_empty() {
+                return None;
+            }
+            let canonical = value
+                .split("package = \"")
+                .nth(1)
+                .and_then(|tail| tail.split('"').next())
+                .unwrap_or(&dep_name);
+            dependencies.insert(canonical.to_owned());
+        }
+    }
+    Some(Manifest {
+        name: name?,
+        dependencies,
+    })
+}

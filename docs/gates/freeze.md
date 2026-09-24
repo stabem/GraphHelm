@@ -4,6 +4,14 @@
 outside it is a hard violation — the judge and the judged never move in one pull request. It ships
 as a pure check, `freeze_violation`, in `core/quality/src/lib.rs`.
 
+`Cargo.lock` has one narrow neutral exception. A gate-only dependency change may update the
+lockfile when the exact base and current lockfiles are both parseable, the package set and every
+non-gate package record remain structurally equivalent, and each changed dependency edge in an
+existing gate package is explained by a same-diff gate `Cargo.toml`. A changed version, checksum,
+source, top-level lock metadata, package set, malformed input, unrelated dependency edge, or
+concurrent non-gate path remains a freeze violation. Callers without both lockfile snapshots keep
+the original path-only refusal.
+
 ## Where the frozen set lives — and why it is not restated here
 
 The authoritative list is the `GATE_MACHINERY` constant beside `freeze_violation`. This charter

@@ -2,7 +2,81 @@
 //! synthetic PR diff touching both a gate definition and gated code is REFUSED, and
 //! either side alone is clean.
 
-use graphhelm_quality::freeze_violation;
+use graphhelm_quality::{GateManifestChange, freeze_violation, freeze_violation_with_lockfile};
+
+const BASE_LOCK: &str = r#"# generated
+version = 4
+
+[[package]]
+name = "graphhelm-policy"
+version = "0.1.0"
+
+[[package]]
+name = "pathogens"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "serde",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+checksum = "stable"
+"#;
+
+const KEEL_LOCK: &str = r#"# generated
+version = 4
+
+[[package]]
+name = "graphhelm-policy"
+version = "0.1.0"
+
+[[package]]
+name = "pathogens"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "graphhelm-policy",
+ "serde",
+ "serde_yaml_ng",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+checksum = "stable"
+"#;
+
+const BASE_MANIFEST: &str = r#"[package]
+name = "pathogens"
+version = "0.1.0"
+
+[dependencies]
+serde = { workspace = true }
+"#;
+
+const KEEL_MANIFEST: &str = r#"[package]
+name = "pathogens"
+version = "0.1.0"
+
+[dependencies]
+graphhelm-policy = { path = "../../core/policy" }
+serde = { workspace = true }
+serde_yaml_ng = { workspace = true }
+"#;
+
+fn keel_paths() -> [&'static str; 2] {
+    ["tools/pathogens/Cargo.toml", "Cargo.lock"]
+}
+
+fn keel_manifest() -> GateManifestChange<'static> {
+    GateManifestChange {
+        path: "tools/pathogens/Cargo.toml",
+        base: BASE_MANIFEST,
+        current: KEEL_MANIFEST,
+    }
+}
 
 #[test]
 fn a_diff_touching_gate_and_gated_together_is_refused() {
@@ -24,6 +98,146 @@ fn a_diff_touching_gate_and_gated_together_is_refused() {
     assert!(
         freeze_violation(&code_only).is_none(),
         "evolving the code alone is legitimate"
+    );
+}
+
+#[test]
+fn a_keel_dependency_only_lock_delta_is_neutral() {
+    let paths = keel_paths();
+    let borrowed = paths.map(|path| path);
+    assert_eq!(
+        freeze_violation_with_lockfile(&borrowed, BASE_LOCK, KEEL_LOCK, &[keel_manifest()]),
+        None,
+        "the existing graphhelm-policy and serde_yaml_ng lock edges are explained by the changed gate manifest"
+    );
+}
+
+#[test]
+fn a_reversed_lock_dependency_delta_remains_a_freeze_violation() {
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(&paths, KEEL_LOCK, BASE_LOCK, &[keel_manifest()]).is_some(),
+        "a lockfile delta in the reverse direction cannot be explained by the manifest additions"
+    );
+}
+
+#[test]
+fn a_lockfile_version_change_remains_a_freeze_violation() {
+    let changed = KEEL_LOCK.replace("version = \"0.1.0\"", "version = \"0.1.1\"");
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(&paths, BASE_LOCK, &changed, &[keel_manifest()]).is_some()
+    );
+}
+
+#[test]
+fn a_lockfile_checksum_change_remains_a_freeze_violation() {
+    let changed = KEEL_LOCK.replace("checksum = \"stable\"", "checksum = \"tampered\"");
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(&paths, BASE_LOCK, &changed, &[keel_manifest()]).is_some()
+    );
+}
+
+#[test]
+fn a_new_lock_package_remains_a_freeze_violation() {
+    let changed = format!("{KEEL_LOCK}\n[[package]]\nname = \"unrelated\"\nversion = \"1\"\n");
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(&paths, BASE_LOCK, &changed, &[keel_manifest()]).is_some()
+    );
+}
+
+#[test]
+fn a_lock_edge_not_named_by_the_gate_manifest_remains_a_freeze_violation() {
+    let changed = KEEL_LOCK.replace(" \"serde_yaml_ng\",", " \"serde_json\",");
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(&paths, BASE_LOCK, &changed, &[keel_manifest()]).is_some()
+    );
+}
+
+#[test]
+fn an_existing_non_gate_dependency_version_change_remains_a_freeze_violation() {
+    let base = BASE_LOCK.replace(
+        "name = \"graphhelm-policy\"\nversion = \"0.1.0\"",
+        "name = \"graphhelm-policy\"\nversion = \"0.1.0\"\ndependencies = [\"sha2 0.10.9\"]",
+    );
+    let changed = KEEL_LOCK.replace(
+        "name = \"graphhelm-policy\"\nversion = \"0.1.0\"",
+        "name = \"graphhelm-policy\"\nversion = \"0.1.0\"\ndependencies = [\"sha2 0.11.0\"]",
+    );
+    assert!(
+        freeze_violation_with_lockfile(&keel_paths(), &base, &changed, &[keel_manifest()])
+            .is_some(),
+        "a non-gate package cannot switch between two existing dependency versions"
+    );
+}
+
+#[test]
+fn malformed_dependency_lists_remain_freeze_violations() {
+    for malformed in [
+        KEEL_LOCK.replace(" \"filetime\",", " \"filetime\",, "),
+        KEEL_LOCK.replace(
+            "dependencies = [",
+            "dependencies = [\n  \"serde\",\n]\ndependencies = [",
+        ),
+    ] {
+        assert!(
+            freeze_violation_with_lockfile(
+                &keel_paths(),
+                BASE_LOCK,
+                &malformed,
+                &[keel_manifest()]
+            )
+            .is_some(),
+            "malformed lockfile grammar cannot qualify the gate exception"
+        );
+    }
+}
+
+#[test]
+fn malformed_or_concurrent_lockfile_changes_remain_a_freeze_violation() {
+    let paths = keel_paths();
+    assert!(
+        freeze_violation_with_lockfile(
+            &paths,
+            BASE_LOCK,
+            "[[package]]\nname =",
+            &[keel_manifest()]
+        )
+        .is_some()
+    );
+
+    let concurrent = [
+        "tools/pathogens/Cargo.toml",
+        "Cargo.lock",
+        "apps/cli/src/main.rs",
+    ];
+    assert!(
+        freeze_violation_with_lockfile(&concurrent, BASE_LOCK, KEEL_LOCK, &[keel_manifest()])
+            .is_some()
+    );
+}
+
+#[test]
+fn the_checked_in_lockfile_and_gate_manifest_are_parseable() {
+    const LOCK: &str = include_str!("../../../Cargo.lock");
+    const MANIFEST: &str = include_str!("../../../tools/pathogens/Cargo.toml");
+    let paths = keel_paths();
+    assert_eq!(
+        freeze_violation_with_lockfile(
+            &paths,
+            LOCK,
+            LOCK,
+            &[GateManifestChange {
+                path: "tools/pathogens/Cargo.toml",
+                base: MANIFEST,
+                current: MANIFEST,
+            }],
+        ),
+        None,
+        "the semantic checker must understand the repository's real lockfile grammar"
     );
 }
 

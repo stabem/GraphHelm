@@ -918,6 +918,7 @@ dependencies = [
  "graphhelm-model-gateway",
  "graphhelm-policy",
  "graphhelm-postgres-event-store",
+ "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-quality",
  "graphhelm-runtime",

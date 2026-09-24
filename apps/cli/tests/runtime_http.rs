@@ -11,7 +11,7 @@
 //! beside the tool outcome, and the finished stream replays byte-identically twice.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -27,10 +27,30 @@ use support::{RawResponse, parse_response, raw_request, split_url};
 
 struct ServerGuard {
     child: Child,
+    process_group: graphhelm_process_tree::ProcessGroup,
+}
+
+fn create_process_group_or_terminate(
+    mut child: Child,
+) -> (Child, graphhelm_process_tree::ProcessGroup) {
+    match graphhelm_process_tree::create(&child) {
+        Ok(process_group) => (child, process_group),
+        Err(error) => {
+            // On Windows `configure` leaves the child suspended until `create` assigns the job.
+            // A failed assignment must not strand that suspended process, even on a panic path.
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("could not contain the runtime HTTP child process: {error}");
+        }
+    }
 }
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
+        // The serve process can create a descendant that inherits its stdout/stderr handles.
+        // Releasing the process tree closes those handles too; killing only `child` leaves the
+        // descendant alive and can strand a reader or keep the next test's port busy (#1234).
+        graphhelm_process_tree::close(&mut self.process_group);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -69,22 +89,29 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
     for (key, value) in &extra.env {
         command.env(key, value);
     }
-    let mut child = command.spawn().unwrap();
+    graphhelm_process_tree::configure(&mut command);
+    let child = command.spawn().unwrap();
+    let (child, process_group) = create_process_group_or_terminate(child);
+    let mut server = ServerGuard {
+        child,
+        process_group,
+    };
 
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = BufReader::new(server.child.stdout.take().unwrap());
     let mut line = String::new();
     let read = stdout.read_line(&mut line).unwrap();
     if read == 0 {
+        // Close the whole tree BEFORE reading stderr. A descendant can inherit stderr and keep
+        // this read open after the direct server has exited.
+        graphhelm_process_tree::close(&mut server.process_group);
         let mut stderr_text = String::new();
-        let _ = child
+        let _ = server
+            .child
             .stderr
             .take()
             .unwrap()
             .read_to_string(&mut stderr_text);
-        let status = child.wait().unwrap();
-        panic!(
-            "`graphhelm serve` produced no stdout before exiting (status: {status}); stderr:\n{stderr_text}"
-        );
+        panic!("`graphhelm serve` produced no stdout before exiting; stderr:\n{stderr_text}");
     }
     let started: Value = serde_json::from_str(line.trim())
         .unwrap_or_else(|error| panic!("the startup line was not valid JSON ({error}): {line:?}"));
@@ -97,11 +124,110 @@ fn serve_with(events: &Path, extra: &ServeExtra) -> (ServerGuard, String, String
     let token = read_token(&token_path(events));
     let base = format!("http://{address}");
     wait_for_health(&base);
-    (ServerGuard { child }, base, token)
+    (server, base, token)
 }
 
 fn serve(events: &Path) -> (ServerGuard, String, String) {
     serve_with(events, &ServeExtra::default())
+}
+
+/// Helper process used by `server_guard_closes_a_descendant_holding_stdout`.
+///
+/// The outer test starts this test binary with stdout piped. The helper starts a real child
+/// without replacing its standard handles, then waits. That child therefore keeps the outer
+/// pipe open after the helper exits until the process-tree guard terminates it.
+#[test]
+#[ignore = "invoked by server_guard_closes_a_descendant_holding_stdout"]
+fn runtime_http_pipe_holder_helper() {
+    assert!(
+        std::env::var_os("GRAPHHELM_RUNTIME_HTTP_PIPE_HOLDER").is_some(),
+        "this helper must be launched by the process-tree teardown test"
+    );
+
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "ping -n 30 127.0.0.1"]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        command
+    };
+
+    // Start the grandchild FIRST, then announce it. The outer test drops the guard only after
+    // this line arrives, so the descendant that inherited stdout exists when the subject runs;
+    // without the line the guard could be dropped before the grandchild was spawned, and killing
+    // the helper alone would close the pipe (review of #1235 by [df65a3]).
+    let mut grandchild = command
+        .spawn()
+        .expect("the helper starts its pipe-holding child");
+    println!("{PIPE_HOLDER_READY} pid={}", grandchild.id());
+    std::io::stdout().flush().unwrap();
+    let _ = grandchild.wait();
+}
+
+/// The line the helper prints once its stdout-inheriting grandchild is running.
+const PIPE_HOLDER_READY: &str = "GRAPHHELM_PIPE_HOLDER_READY";
+
+#[test]
+fn server_guard_closes_a_descendant_holding_stdout() {
+    // Observable contract: dropping the fixture guard closes a pipe inherited by a real
+    // descendant. Defect caught: `Child::kill` alone kills only the test server and leaves the
+    // descendant holding the pipe, so a reader can block forever. Existing runtime journey tests
+    // only exercise the direct server and cannot observe this teardown boundary.
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "runtime_http_pipe_holder_helper",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("GRAPHHELM_RUNTIME_HTTP_PIPE_HOLDER", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    graphhelm_process_tree::configure(&mut command);
+    let child = command.spawn().unwrap();
+    let (mut child, process_group) = create_process_group_or_terminate(child);
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut captured = String::new();
+        let mut line = String::new();
+        while stdout.read_line(&mut line).unwrap_or(0) > 0 {
+            if line.contains(PIPE_HOLDER_READY) {
+                let _ = ready_tx.send(());
+            }
+            captured.push_str(&line);
+            line.clear();
+        }
+        let _ = finished_tx.send(captured);
+    });
+    // ARRANGEMENT: the descendant holding the pipe exists before the subject runs, or a
+    // wrapper-only kill would pass this test too.
+    ready_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the helper must report its pipe-holding child before the guard is dropped");
+
+    drop(ServerGuard {
+        child,
+        process_group,
+    });
+
+    let captured = finished_rx
+        // Windows job close requests descendant termination asynchronously. The process-tree
+        // adapter's own drain ceiling is five seconds, and gate load has stretched that path
+        // beyond idle measurements, so this failure-only observer leaves a ten second margin.
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the process-tree guard must close an inherited stdout pipe");
+    assert!(
+        captured.contains(PIPE_HOLDER_READY),
+        "the captured stream must carry the helper's readiness line: {captured:?}"
+    );
 }
 
 fn read_token(path: &Path) -> String {
@@ -134,6 +260,114 @@ fn wait_for_health(base: &str) {
     }
 }
 
+/// The budget one connection may spend across bounded attempts. The runtime HTTP tests run
+/// alongside other integration suites, so a transiently full Windows accept backlog must not
+/// turn the caller's read timeout into an unbounded `TcpStream::connect` wait. The 30-second
+/// total is above the approximately 21-second Winsock timeout observed in the failing gate,
+/// while each attempt remains capped at 500 ms so transient capacity gets many chances to clear.
+const CONNECT_BUDGET: Duration = Duration::from_secs(30);
+
+fn should_retry_connect(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::WouldBlock
+    )
+}
+
+fn connect_with_retry_using<T, F>(
+    addresses: &[std::net::SocketAddr],
+    mut connect: F,
+) -> std::io::Result<T>
+where
+    F: FnMut(&std::net::SocketAddr, Duration) -> std::io::Result<T>,
+{
+    let deadline = Instant::now() + CONNECT_BUDGET;
+    let mut last_error = None;
+    loop {
+        let mut retryable_failure = false;
+        for address in addresses {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(last_error.unwrap_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect budget expired")
+                }));
+            }
+            match connect(address, remaining.min(Duration::from_millis(500))) {
+                Ok(stream) => return Ok(stream),
+                Err(error) => {
+                    retryable_failure |= should_retry_connect(&error);
+                    last_error = Some(error);
+                }
+            }
+        }
+        if !retryable_failure {
+            return Err(last_error.expect("at least one address must be supplied"));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(last_error.expect("the retry error was just recorded"));
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(20)));
+    }
+}
+
+fn connect_with_retry(addresses: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
+    connect_with_retry_using(addresses, |address, timeout| {
+        TcpStream::connect_timeout(address, timeout)
+    })
+}
+
+#[cfg(test)]
+mod harness_tests {
+    use super::connect_with_retry_using;
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    #[test]
+    fn first_address_failure_falls_through_to_later_address() {
+        let first = SocketAddr::from(([127, 0, 0, 1], 41_001));
+        let second = SocketAddr::from(([127, 0, 0, 1], 41_002));
+        let mut calls = Vec::new();
+        let result = connect_with_retry_using(&[first, second], |address, _timeout| {
+            calls.push(*address);
+            if *address == first {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "first address refused",
+                ))
+            } else {
+                Ok("connected")
+            }
+        });
+
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(calls, vec![first, second]);
+    }
+
+    #[test]
+    fn transient_refusal_is_retried_within_the_same_address_set() {
+        let address = SocketAddr::from(([127, 0, 0, 1], 41_003));
+        let mut attempts = 0;
+        let result = connect_with_retry_using(&[address], |_address, timeout| {
+            attempts += 1;
+            assert!(timeout <= Duration::from_millis(500));
+            if attempts == 1 {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "transient refusal",
+                ))
+            } else {
+                Ok("connected")
+            }
+        });
+
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(attempts, 2);
+    }
+}
+
 fn post_request(
     url: &str,
     token: &str,
@@ -142,7 +376,13 @@ fn post_request(
     read_timeout: Duration,
 ) -> std::io::Result<RawResponse> {
     let (host, port, path) = split_url(url);
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
+    let addresses: Vec<_> = (host.as_str(), port).to_socket_addrs()?.collect();
+    if addresses.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "no address for {host}:{port}"
+        )));
+    }
+    let mut stream = connect_with_retry(&addresses)?;
     stream.set_read_timeout(Some(read_timeout))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
 

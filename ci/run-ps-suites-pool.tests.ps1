@@ -52,7 +52,8 @@
 #   1  a missing fixture pid is a bounded harness result, not an exception
 #   1  a child invocation reports the real missing-PID startup failure
 #   1  that child invocation vouches wrapper and descendant cleanup
-$ExpectedAssertionCount = 29
+#   1  a Start-Process suite child resolves native Windows PowerShell utility commands
+$ExpectedAssertionCount = 30
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -428,6 +429,41 @@ try {
     $green = Invoke-Pool
     Assert-True ($green.exitCode -eq 0) `
         "CONTROL: a pool where every stub exits 0 gives exit 0 (got $($green.exitCode)) -- every red below is measured against this"
+
+    # A pwsh parent can pass its PowerShell Core module directory through Start-Process into a
+    # Windows PowerShell child. The Core Utility module shadows the Windows one, so Get-FileHash
+    # disappears. Launch the copied runner through the same Start-Process boundary as gate.ps1
+    # and require an actual suite child to resolve the native command.
+    $moduleStub = @'
+$ErrorActionPreference = 'Stop'
+$command = Get-Command Get-FileHash -ErrorAction Stop
+if ($command.Module.Path -notmatch '[\\/]WindowsPowerShell[\\/]') { exit 1 }
+Write-Host 'NATIVE-WINDOWS-UTILITY'
+exit 0
+'@
+    [System.IO.File]::WriteAllText((Join-Path $fixtureRoot $pinned[0]), $moduleStub, $utf8NoBom)
+    $moduleOut = Join-Path $fixtureRoot 'module-probe.out'
+    $moduleErr = Join-Path $fixtureRoot 'module-probe.err'
+    $modulePathBeforeProbe = [Environment]::GetEnvironmentVariable('PSModulePath', 'Process')
+    try {
+        # A Windows PowerShell parent normally repairs its own path. Recreate the Core-first
+        # path explicitly so this regression stays observable from either parent host.
+        $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+        if ($null -ne $pwshCommand) {
+            $coreModules = Join-Path (Split-Path $pwshCommand.Source -Parent) 'Modules'
+            if (Test-Path -LiteralPath (Join-Path $coreModules 'Microsoft.PowerShell.Utility')) {
+                [Environment]::SetEnvironmentVariable('PSModulePath', "$coreModules;$modulePathBeforeProbe", 'Process')
+            }
+        }
+        $moduleProcess = Start-Process -FilePath 'powershell.exe' -PassThru -Wait -NoNewWindow `
+            -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $fixtureRoot 'run-ps-suites.ps1')) `
+            -RedirectStandardOutput $moduleOut -RedirectStandardError $moduleErr
+    } finally {
+        [Environment]::SetEnvironmentVariable('PSModulePath', $modulePathBeforeProbe, 'Process')
+    }
+    $moduleText = [System.IO.File]::ReadAllText($moduleOut)
+    Assert-True ($moduleProcess.ExitCode -eq 0 -and $moduleText.Contains('NATIVE-WINDOWS-UTILITY')) `
+        'a real Start-Process suite child resolves the native Windows PowerShell Utility module'
 
     Write-Host ''
     Write-Host '-- the three states survive aggregation --' -ForegroundColor Cyan

@@ -27,6 +27,7 @@ members = [
   "core/quality",
   "tools/pathogens",
   "tools/development-benchmark",
+  "tools/keel-contract-index",
   "tools/ci-canary",
 ]
 

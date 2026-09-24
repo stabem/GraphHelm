@@ -345,6 +345,7 @@ $dispatchOrder = @(
 
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-ps-suites-$([guid]::NewGuid().ToString('N'))"
 $null = New-Item -ItemType Directory -Path $scratch -Force
+$nativeWindowsModules = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'
 
 try {
     $live = New-Object System.Collections.ArrayList
@@ -365,13 +366,21 @@ try {
             # missing parameter. `ci/gate-script-paths.tests.ps1` keeps every spawn under ci/ honest
             # about carrying it -- and in a pool it matters more, not less, because a prompting
             # child holds a slot forever.
-            $process = Start-Process -FilePath 'powershell' -PassThru -NoNewWindow `
-                -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $SuiteDirectory $name)) `
-                -RedirectStandardOutput $outPath -RedirectStandardError $errPath
-            # CACHE THE HANDLE ON THE VERY NEXT LINE. Without touching `.Handle`, a child that exits
-            # before we ask reports `$null` from `.ExitCode` -- the exact shape of defect (1) above,
-            # and the faster the suite the likelier it is.
-            $null = $process.Handle
+            # Start-Process inherits PSModulePath verbatim. A pwsh host may put its Core Utility
+            # module ahead of the Windows module, hiding Get-FileHash in this 5.1 child. Put the
+            # native module root first for the launch, then restore the runner's environment.
+            $originalModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Process')
+            try {
+                [Environment]::SetEnvironmentVariable('PSModulePath', "$nativeWindowsModules;$originalModulePath", 'Process')
+                $process = Start-Process -FilePath 'powershell' -PassThru -NoNewWindow `
+                    -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $SuiteDirectory $name)) `
+                    -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+                # Cache the handle immediately, before a very short-lived child can lose its
+                # readable ExitCode. Restoring the environment can happen after this boundary.
+                $null = $process.Handle
+            } finally {
+                [Environment]::SetEnvironmentVariable('PSModulePath', $originalModulePath, 'Process')
+            }
             [void]$live.Add([pscustomobject]@{ Name = $name; Process = $process; Started = [DateTime]::UtcNow })
         }
 

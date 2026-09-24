@@ -138,6 +138,41 @@ thread_local! {
     static DIAGNOSTIC_STAGE: RefCell<Option<String>> = const { RefCell::new(None) };
     #[cfg(test)]
     static DIAGNOSTIC_REQUESTED: Cell<bool> = const { Cell::new(false) };
+    #[cfg(all(test, windows))]
+    static RELEASE_ON_ATOMIC_PUBLISH_FAILURE: RefCell<Option<std::sync::mpsc::Sender<()>>> =
+        const { RefCell::new(None) };
+    #[cfg(all(test, windows))]
+    static RELEASE_ACKNOWLEDGEMENT: RefCell<Option<std::sync::mpsc::Receiver<()>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(all(test, windows))]
+fn observe_atomic_publish_failure(status: i32) {
+    eprintln!(
+        "GH_ADOPTION_ATOMIC_PUBLISH_FAILURE status=0x{:08x}",
+        status as u32
+    );
+    RELEASE_ON_ATOMIC_PUBLISH_FAILURE.with(|sender| {
+        if let Some(sender) = sender.borrow().as_ref() {
+            let _ = sender.send(());
+        }
+    });
+    RELEASE_ACKNOWLEDGEMENT.with(|acknowledgement| {
+        if let Some(receiver) = acknowledgement.borrow_mut().take() {
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("release thread must acknowledge the dropped handle");
+        }
+    });
+}
+
+#[cfg(all(test, windows))]
+fn set_release_on_atomic_publish_failure(
+    sender: Option<std::sync::mpsc::Sender<()>>,
+    acknowledgement: Option<std::sync::mpsc::Receiver<()>>,
+) {
+    RELEASE_ON_ATOMIC_PUBLISH_FAILURE.with(|slot| *slot.borrow_mut() = sender);
+    RELEASE_ACKNOWLEDGEMENT.with(|slot| *slot.borrow_mut() = acknowledgement);
 }
 pub(crate) fn unsafe_path() -> AdoptionError {
     AdoptionError {
@@ -549,6 +584,18 @@ pub(crate) fn write_atomic(parent: &File, name: &str, bytes: &[u8]) -> Result<()
     tmp.file.sync_all().map_err(|error| failed_io(&error))?;
     tmp.publish(parent, name)
 }
+
+#[cfg(windows)]
+fn destination_identity(parent: &File, name: &str) -> Result<Option<Identity>, AdoptionError> {
+    let destination = match backup::windows_open_child(parent, name, false) {
+        Ok(destination) => destination,
+        Err(error) if error.reason == AdoptionReason::CoverageIncomplete => {
+            return Err(failed());
+        }
+        Err(error) => return Err(error),
+    };
+    destination.map(|file| identity(&file)).transpose()
+}
 struct Temporary {
     file: File,
     #[cfg(unix)]
@@ -594,11 +641,13 @@ impl Temporary {
         {
             use std::mem::{offset_of, size_of};
             use std::os::windows::io::AsRawHandle;
+            use std::time::{Duration, Instant};
             use windows_sys::Wdk::Storage::FileSystem::{
                 FILE_RENAME_INFORMATION, FileRenameInformation, NtSetInformationFile,
             };
             use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
-            let name = name.encode_utf16().collect::<Vec<_>>();
+            let destination_name = name;
+            let name = destination_name.encode_utf16().collect::<Vec<_>>();
             let len = offset_of!(FILE_RENAME_INFORMATION, FileName) + name.len() * 2;
             let mut buf = vec![0usize; len.div_ceil(size_of::<usize>())];
             let info = buf.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
@@ -613,20 +662,51 @@ impl Temporary {
                 );
             }
             let mut status: IO_STATUS_BLOCK = unsafe { std::mem::zeroed() };
-            let code = unsafe {
-                NtSetInformationFile(
-                    self.file.as_raw_handle(),
-                    &mut status,
-                    info.cast(),
-                    len as u32,
-                    FileRenameInformation,
-                )
+            let source_identity = identity(&self.file)?;
+            let parent_identity = identity(parent)?;
+            let expected_destination_identity = destination_identity(parent, destination_name)?;
+            let mut retry_until = None;
+            let mut attempt = 0;
+            let result = loop {
+                let code = unsafe {
+                    NtSetInformationFile(
+                        self.file.as_raw_handle(),
+                        &mut status,
+                        info.cast(),
+                        len as u32,
+                        FileRenameInformation,
+                    )
+                };
+                if code >= 0 {
+                    self.published = true;
+                    self.file.sync_all().map_err(|error| failed_io(&error))?;
+                    break Ok(());
+                }
+                #[cfg(test)]
+                observe_atomic_publish_failure(code);
+                let retry_until =
+                    retry_until.get_or_insert_with(|| Instant::now() + Duration::from_millis(100));
+                let retryable = matches!(code as u32, 0xc000_0022 | 0xc000_0043);
+                if !retryable || attempt == 3 || Instant::now() >= *retry_until {
+                    break Err(failed_ntstatus(code, NtOperation::AtomicReplace));
+                }
+                // This clock bounds whether another native call may begin. It does not bound
+                // the duration of NtSetInformationFile itself.
+                std::thread::sleep(Duration::from_millis(20));
+                if Instant::now() >= *retry_until
+                    || identity(&self.file)? != source_identity
+                    || identity(parent)? != parent_identity
+                    || destination_identity(parent, destination_name)?
+                        != expected_destination_identity
+                {
+                    break Err(failed_ntstatus(code, NtOperation::AtomicReplace));
+                }
+                if Instant::now() >= *retry_until {
+                    break Err(failed_ntstatus(code, NtOperation::AtomicReplace));
+                }
+                attempt += 1;
             };
-            if code < 0 {
-                return Err(failed_ntstatus(code, NtOperation::AtomicReplace));
-            }
-            self.published = true;
-            self.file.sync_all().map_err(|error| failed_io(&error))?;
+            result?;
         }
         Ok(())
     }
@@ -671,5 +751,125 @@ pub(crate) fn directory_child(parent: &File, name: &str) -> Result<File, Adoptio
     #[cfg(windows)]
     {
         backup::windows_open_child(parent, name, true)?.ok_or_else(unsafe_path)
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_atomic_publish_tests {
+    use super::{set_release_on_atomic_publish_failure, write_atomic};
+    use graphhelm_protocols::adoption::AdoptionReason;
+    use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+    #[test]
+    fn destination_released_after_first_native_failure_is_published() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = crate::backup::windows_open_directory_chain(root.path(), true).unwrap();
+        let destination = root.path().join("current.json");
+        std::fs::write(&destination, b"old").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&destination)
+            .unwrap();
+        let (release_signal, release_ready) = std::sync::mpsc::channel();
+        let (release_ack, release_acknowledged) = std::sync::mpsc::channel();
+        let release = std::thread::spawn(move || {
+            release_ready.recv().unwrap();
+            drop(held);
+            release_ack.send(()).unwrap();
+        });
+        let publish_parent = parent.try_clone().unwrap();
+        let publish = std::thread::spawn(move || {
+            set_release_on_atomic_publish_failure(Some(release_signal), Some(release_acknowledged));
+            let result = write_atomic(&publish_parent, "current.json", b"new");
+            set_release_on_atomic_publish_failure(None, None);
+            result
+        });
+
+        publish.join().unwrap().unwrap();
+        release.join().unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new");
+    }
+
+    #[test]
+    fn persistent_native_refusal_stays_recovery_required_and_preserves_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = crate::backup::windows_open_directory_chain(root.path(), true).unwrap();
+        let destination = root.path().join("current.json");
+        std::fs::write(&destination, b"old").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&destination)
+            .unwrap();
+
+        let error = write_atomic(&parent, "current.json", b"new").unwrap_err();
+        drop(held);
+        assert_eq!(error.reason, AdoptionReason::RecoveryRequired);
+        let mut bytes = Vec::new();
+        std::fs::File::open(&destination)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, b"old");
+    }
+
+    #[test]
+    fn destination_denied_for_identity_read_stays_recovery_required() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = crate::backup::windows_open_directory_chain(root.path(), true).unwrap();
+        let destination = root.path().join("current.json");
+        std::fs::write(&destination, b"old").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_WRITE)
+            .open(&destination)
+            .unwrap();
+
+        let error = write_atomic(&parent, "current.json", b"new").unwrap_err();
+        drop(held);
+        assert_eq!(error.reason, AdoptionReason::RecoveryRequired);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old");
+    }
+
+    #[test]
+    fn destination_swap_after_native_failure_is_refused_and_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = crate::backup::windows_open_directory_chain(root.path(), true).unwrap();
+        let destination = root.path().join("current.json");
+        std::fs::write(&destination, b"old").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&destination)
+            .unwrap();
+        let (release_signal, release_ready) = std::sync::mpsc::channel();
+        let (release_ack, release_acknowledged) = std::sync::mpsc::channel();
+        let replacement_path = destination.clone();
+        let release = std::thread::spawn(move || {
+            release_ready.recv().unwrap();
+            drop(held);
+            std::fs::remove_file(&replacement_path).unwrap();
+            std::fs::write(&replacement_path, b"replacement").unwrap();
+            release_ack.send(()).unwrap();
+        });
+        let publish_parent = parent.try_clone().unwrap();
+        let publish = std::thread::spawn(move || {
+            set_release_on_atomic_publish_failure(Some(release_signal), Some(release_acknowledged));
+            let result = write_atomic(&publish_parent, "current.json", b"new");
+            set_release_on_atomic_publish_failure(None, None);
+            result
+        });
+
+        let error = publish.join().unwrap().unwrap_err();
+        release.join().unwrap();
+        assert_eq!(error.reason, AdoptionReason::RecoveryRequired);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"replacement");
     }
 }

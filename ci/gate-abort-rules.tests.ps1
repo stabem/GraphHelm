@@ -83,6 +83,32 @@ function Read-PidFile {
     return $null
 }
 
+function Wait-ProcessFromPidFile {
+    <#
+    .SYNOPSIS
+        Waits for a pid file and for that pid to identify a live process.
+    .DESCRIPTION
+        A readable pid is not yet a usable process identity. Under load the wrapper can publish
+        the pid just before the child is visible to Get-Process, and a child that exited quickly
+        must not be confused with a successful arrangement. Keep both observations inside one
+        bounded wait so the caller never probes Get-Process with a null identity.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [int] $TimeoutSeconds = 10
+    )
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $processId = Read-PidFile -Path $Path
+        if ($null -ne $processId) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -ne $process) { return $process }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return $null
+}
+
 function Assert-True {
     param([Parameter(Mandatory)] [bool] $Condition, [Parameter(Mandatory)] [string] $Message)
     $script:total++
@@ -258,15 +284,20 @@ Start-Sleep -Seconds 120
         # `$childProcessId` was never set. Both true, and together they are the signature of this
         # race. Measured on #1042: the identical blob 769195eb went GREEN on one head and RED on the
         # next with nothing under `ci/` changed between them.
-        $deadline = (Get-Date).AddSeconds(10)
-        $childProcessId = $null
-        while ($null -eq $childProcessId -and (Get-Date) -lt $deadline) {
-            $childProcessId = Read-PidFile -Path $pidFile
-            if ($null -eq $childProcessId) { Start-Sleep -Milliseconds 100 }
+        # WAIT FOR A PID AND A LIVE PROCESS, NOT FOR A PATH. `Out-File` creates the file before
+        # its bytes land, and under load Windows can publish the pid just before Get-Process can
+        # observe the child. If the identity never becomes usable, this is a broken observer, not
+        # a production verdict. Exit 2 after the finally below so the suite reports HARNESS-BROKE
+        # and never calls Get-Process with a null id.
+        $childProcess = Wait-ProcessFromPidFile -Path $pidFile -TimeoutSeconds 10
+        if ($null -eq $childProcess) {
+            Write-Host 'HARNESS-BROKE: the synthetic child pid never became a live process identity within 10 seconds.' -ForegroundColor Magenta
+            exit 2
         }
-        Assert-True -Condition ($null -ne $childProcessId) `
+        $childProcessId = [int]$childProcess.Id
+        Assert-True -Condition ($childProcessId -gt 0) `
             'ARRANGEMENT: the synthetic wrapper spawned its own child and recorded a READABLE pid'
-        Assert-True -Condition ($null -ne (Get-Process -Id $childProcessId -ErrorAction SilentlyContinue)) `
+        Assert-True -Condition (-not $childProcess.HasExited) `
             "ARRANGEMENT: the child ($childProcessId) is alive before the reap runs, or the cells below prove nothing"
 
         # THE SUBJECT: gate.ps1's own reap block, driven with a real Started-shaped object.
@@ -285,6 +316,8 @@ Start-Sleep -Seconds 120
         }
         Assert-True -Condition $wrapperGone `
             'the reap ends the wrapper process'
+        # NEGATIVE CONTROL: if the reap regresses to killing only the wrapper, $wrapperGone is
+        # true but this surviving descendant remains false, so the fixture fails closed.
         Assert-True -Condition $childGone `
             "and the wrapper's own child ($childProcessId) too -- the whole tree, not just the process gate.ps1 held a handle to"
     } finally {

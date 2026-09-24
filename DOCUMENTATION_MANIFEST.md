@@ -6,12 +6,12 @@
 | `CHANGELOG.md` | 931 | 133 |
 | `CODEX_BOOTSTRAP_PROMPT.md` | 19003 | 2548 |
 | `MASTER_PRD.md` | 22719 | 3247 |
-| `README.md` | 7261 | 747 |
+| `README.md` | 18746 | 2291 |
 | `SPEC_COMMIT` | 42 | 1 |
 | `VERSION` | 12 | 1 |
 | `docs/DECISION_REGISTER.md` | 6402 | 981 |
 | `docs/GLOSSARY.md` | 3722 | 497 |
-| `docs/INDEX.md` | 1500 | 117 |
+| `docs/INDEX.md` | 2486 | 199 |
 | `docs/acceptance/install-rehearsal-2026-09-13.md` | 29043 | 2905 |
 | `docs/agents/AGENTS_SKILLS_PLUGINS.md` | 10310 | 1458 |
 | `docs/architecture/DATA_AND_PROTOCOLS.md` | 13420 | 1257 |
@@ -22,6 +22,7 @@
 | `docs/graph-engineer/GRAPH_DSL_SPEC.md` | 12030 | 1313 |
 | `docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md` | 13890 | 1810 |
 | `docs/harness/HARNESS_SPEC.md` | 20052 | 2708 |
+| `docs/harness/KEEL_PARADIGMS_PAPER.md` | 19398 | 2910 |
 | `docs/install/GETTING_STARTED.md` | 20358 | 2585 |
 | `docs/models/UNIVERSAL_MODEL_GATEWAY.md` | 10933 | 1475 |
 | `docs/open-source/GOVERNANCE_AND_LICENSING.md` | 9324 | 1304 |

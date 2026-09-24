@@ -40,8 +40,15 @@ whose subject is measuring instead of remembering, that is the worst place to pu
 number.) One
 rule, one place; a second copy is a second thing to correct, and whichever copy is corrected last
 starts lying. That is what makes a pass hold until the merge instead
-of dying at the next push. **A docs-only PR is not exempt**: if its body or its diff changes after a
-pass, that pass died with it and is requested again.
+of dying at the next push. **A pass vouches for two things and dies only when one of them changes**
+(Keel, owner decision 2026-09-23): the HEAD it read, and the CLOSING SET of the PR (the union of
+issues the title, body and commit messages would close, as `ci/closing-keywords.ps1` reads it). A new
+commit kills every pass, docs-only PRs included. A body edit kills a pass only when it changes the
+closing set; the presser checks that at press time with `ci/closing-keywords.ps1`, which is the
+instrument, not the edit timestamp. A body edit that changes only prose leaves the passes standing:
+any reviewer who disagrees with the new text says so in a comment, and that comment is a BLOCK like
+any other. (Before this rule, any body edit killed every pass; on #1199 that cost two review rounds
+for an edit that added the reviewers' own accepted risks and changed nothing a machine reads.)
 
 **Name a gap WITHOUT a closing keyword.** The squash reads the PR title and the commit messages, and the
 parser does not read negation: `follow-up: closes #NNNN` beside a number that must stay open CLOSES it,

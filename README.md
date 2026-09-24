@@ -66,6 +66,110 @@ so a script must read the `attention` field rather than the exit code.
 
 GraphHelm is a local-first platform in which the user controls, through a visual interface, an agentic infrastructure running on their own VPS. Each request is classified, decomposed, and converted into an execution graph specific to the scenario. The system selects or creates agents, models, tools, context, isolation, tests, and reviews without relying on fixed domain-specific workflows.
 
+## The methodology
+
+GraphHelm is not only a runtime; it installs a way of working into an existing agent environment
+and enforces it with code rather than prose. Three pieces fit together: **adoption** puts the
+method into your Claude Code or Codex setup reversibly; **Journey-Proven Development (JPD)** makes
+an observable promise the unit of work; **Keel** bounds what an agent may read and write and
+carries a watchdog that records drift and, only if a controlled comparison shows it helps, narrows what a seat may write. The reasoning behind
+the paradigm choices is in the position paper
+[docs/harness/KEEL_PARADIGMS_PAPER.md](docs/harness/KEEL_PARADIGMS_PAPER.md); the normative text is
+[docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) and the Keel
+specification [docs/superpowers/specs/2026-09-22-keel-development-model.md](docs/superpowers/specs/2026-09-22-keel-development-model.md).
+
+### 1. Adoption: `graphhelm setup`, reviewed and reversible
+
+`graphhelm setup` inventories the host as it is (instruction files, rules, skills, plugins, MCP
+servers, settings — links recorded, never followed), decides only what exists, and leaves every
+instruction file to the owner. The owner answers each one; the answers become a sealed plan whose
+digest is the only thing `--apply` accepts. A private backup precedes the first write, and
+`graphhelm restore` returns the original bytes without a running Runtime, model or host.
+
+```mermaid
+flowchart LR
+  A["graphhelm setup --dry-run"] --> B["Inventory<br/>(what exists, incl. linked)"]
+  B --> C{"Decision per item"}
+  C -->|"tools, settings, MCP"| D["keep"]
+  C -->|"instruction files"| E["unresolved<br/>(owner decides)"]
+  E --> F["--resolve item=keep<br/>--resolve item=replace:file"]
+  D --> G["--out plan.json<br/>(private, sealed digest)"]
+  F --> G
+  G --> H["--plan plan.json<br/>(preview, no mutation)"]
+  H --> I["--apply plan.json --accept sha256:…"]
+  I --> J["backup, then journaled apply"]
+  J --> K["installed_unverified<br/>(files only; no trusted observer)"]
+  K --> L["graphhelm restore --backup original"]
+  L --> M["original bytes back;<br/>later user edits kept or reported as conflict"]
+```
+
+### 2. Journey-Proven Development: a promise is the unit of work
+
+Every change starts as a promise a user could observe. The promise is compiled into an obligation
+that names its proof instrument (the command whose output decides it). Only then is code written.
+A missing instrument is a first-class result, `OBSERVER_MISSING`, never a green proxy; a retry is
+linked to its first failure and never erases it.
+
+```mermaid
+flowchart TD
+  P["User promise<br/>(observable outcome)"] --> O["Observation obligation<br/>+ proof instrument"]
+  O --> Q{"Instrument exists?"}
+  Q -->|no| OM["OBSERVER_MISSING<br/>(unresolved, not green)"]
+  Q -->|yes| W["Write the smallest change"]
+  W --> R["Run the instrument"]
+  R --> E{"Evidence supports<br/>the promise?"}
+  E -->|no| RT["Record failure;<br/>retry linked to first attempt"]
+  RT --> W
+  E -->|yes| G["Gate: rustfmt · clippy · tests ·<br/>schema catalog · conformance"]
+  G --> PR["Two independent passes<br/>from two lanes, sha-pinned"]
+  PR --> MG["Merge by a third lane<br/>with the receipt for that head"]
+  MG --> V["Post-merge verification<br/>on the merged revision"]
+```
+
+### 3. Keel: bounded writing, and a watchdog that records drift
+
+Keel is the paradigm GraphHelm installs for code written by agents. An agent starts from a
+**contract card** (scope as a file list, exported symbols, criteria naming their instrument), then
+searches specific code on purpose and records any context the card was missing. Each node declares
+a **write surface** — new modules, types, public functions, dependencies, tests — and a
+deterministic classifier charges the diff and reports overruns **by rule id**; only objective
+contracts are refused. A test is admitted against a **named defect**, with the smallest proof that
+catches it; mutation is used only when it adds evidence the existing proof lacks. Drift and proof
+fold into a **rung** per seat; the ladder that would narrow what a seat may write is implemented but
+off (`ladder.enabled: false`). The rules file is versioned and its version travels with every
+verdict.
+
+```mermaid
+flowchart TD
+  C["Contract card<br/>(paths, symbols, criteria, refusals)"] --> B{"Card within bounds?"}
+  B -->|no| CR["refused: keel.card.*<br/>(split the promise)"]
+  B -->|yes| S["Declare write surface<br/>+ allowance (capped)"]
+  S --> W["Agent writes the diff"]
+  W --> K["classify_write<br/>(Rust · TS · Python line grammar)"]
+  K --> T{"Charges within<br/>budget for this rung?"}
+  T -->|no| RF["signal by rule id (reported, not refused):<br/>keel.surface.*_over_budget<br/>keel.body.oversized_change"]
+  RF --> D["Drift recorded<br/>(rule id, policy version, diff hash, actor)"]
+  T -->|yes| TS["Test born against a named defect<br/>(criterion id, smallest adequate proof;<br/>mutation only when it adds evidence)"]
+  TS --> PF{"Proof passes?"}
+  PF -->|no| D
+  PF -->|yes| CRD["Credit recorded"]
+  D --> L["Ladder fold over the seat's history"]
+  CRD --> L
+  L --> M{"Rung (specified; ladder.enabled: false<br/>until the A/B/C comparison)"}
+  M --> F["full"]
+  M --> CO["contract_only<br/>(no new module, type, dependency)"]
+  M --> PO["patch_only<br/>(existing bodies only)"]
+  M --> PR["propose_only<br/>(plan for another seat)"]
+  RF --> RP["Reviewer reads the signal;<br/>repair is the smallest diff that removes it"]
+  RP --> W
+```
+
+**Today Keel is guidance and measurement, not punishment.** The classifier reports what a diff adds and blocks only objective contracts; the rung ladder in the diagram is implemented but disabled in the rules file (`ladder.enabled: false`) and drives nothing until a controlled comparison shows penalties add value (paper, section 7a). Slice 1 landed in #1213: the specification, the rules file
+(`extensions/builtin/graphhelm-development-contracts/policies/keel.yaml`) with its schema, fixtures
+and entry skill, and `core/policy::keel` with tests at both sides of every bound. The registered
+gate with its pathogen suite, the penalty fold over the Event Store, and the contract index served
+by the context compiler are the next slices, tracked in #1212.
+
 ## Foundation Graph Kernel
 
 The first executable milestone is written in Rust 1.97.1. It provides offline YAML/JSON validation, semantic hashing, immutable versions, deterministic lint and policy, transactional drafts, waivers, side-effect-free simulation, an append-only Event Store, replay, and a JSON CLI.

@@ -36,6 +36,8 @@
 
 - [Dynamic harness](harness/HARNESS_SPEC.md)
 - [Journey-Proven Development](harness/JOURNEY_PROVEN_DEVELOPMENT.md)
+- [Keel: the development model — position paper](harness/KEEL_PARADIGMS_PAPER.md)
+- [Keel specification](superpowers/specs/2026-09-22-keel-development-model.md)
 - [Graph Engineer guide](graph-engineer/GRAPH_ENGINEER_GUIDE.md)
 - [Graph DSL](graph-engineer/GRAPH_DSL_SPEC.md)
 

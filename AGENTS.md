@@ -155,6 +155,8 @@ semantics apply only when the typed JPD flow is invoked; an informal proof remai
 evidence. Keep missing observers unresolved and stop retries when they add no evidence or reach the
 approved budget boundary. There is no universal ceremony count.
 
+### Proof rules
+
 - Start from the complete user journey and compile each promise into an observable obligation. Select the smallest proof method strong enough for that obligation and risk; do not apply one universal testing ritual.
 - Use RED -> GREEN -> REFACTOR when a focused automated test is the best proof for the behavior. Preserve unit, property, integration, concurrency, CLI, and browser tests where each observes the correct boundary. Browser journey proof runs only in an explicitly observer-enabled validation environment; the committed offline gate remains browser-session-free and otherwise reports `OBSERVER_MISSING`.
 - If a promised behavior has no adequate observer, stop with `OBSERVER_MISSING`. Never treat a proxy such as HTTP acceptance as proof of delivery or rendering.
@@ -169,6 +171,59 @@ approved budget boundary. There is no universal ceremony count.
 - Reject unconditional passes, mock self-confirmation, assertions over values created by the test, and checks that merely freeze incidental source spelling or private call order. Preserve tests for real architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility, and platform contracts.
 - Runtime-affecting configuration needs behavioral evidence; parsing or shape validation alone is not proof. Report passed, failed, skipped, and unobserved separately. A skipped or unavailable observer never counts as a pass, and an unobserved promise remains unresolved.
 - This policy is versioned on `main`. Merging it does not update existing branches or installed skill copies; lanes must integrate the `main` change and reload or reinstall their bundled skills before relying on it. Bundled skills remain self-contained and must not depend on repository-external paths.
+
+
+### Keel: how code is written here
+
+Keel is this repository's development model for code written by agents. Its goal, in order:
+**quality preserved first, then the lowest total cost per proven delivery** — every attempt,
+repair, review and watchdog run counted, not tokens alone. The reasoning is in
+[docs/harness/KEEL_PARADIGMS_PAPER.md](docs/harness/KEEL_PARADIGMS_PAPER.md); the specification and
+the rules file landed in #1213. **Keel is guidance and measurement today, not punishment.** Its
+counts are reported, not enforced, except where a contract is objective (below). Penalties that
+narrow what a seat may write stay off until a controlled comparison shows they add value over
+guidance alone (paper, section 7).
+
+**Keel is proportional. Use only as much of it as the change needs.**
+
+| The change | What Keel asks |
+|---|---|
+| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
+| A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
+| New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
+| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |
+
+**The four moves, when Keel applies:**
+
+1. **Start from the promise.** State what changes, what must keep working, and the command that
+   observes each. The card names paths, not globs.
+2. **Start from the card, then search on purpose.** Open what the card names first. When you need
+   more, search for the specific symbol or caller rather than browsing, and record in the PR body
+   what context the card was missing: that record is how cards get better.
+3. **Add only surface the promise needs.** Prefer extending an existing body or reusing a proven
+   symbol over a new type, layer or helper. A new interface needs real callers; a producer and its
+   consumer may arrive in the same change when both are proven there. Counts of new modules, types,
+   functions and tests are signals for the reviewer, never a quota: do not inflate a function or
+   drop a test to stay under a number.
+4. **Prove with the smallest adequate observer.** Name the criterion and the defect a test would
+   catch, assert against a value the code under test did not produce, mock only I/O, clock and
+   randomness. Mutation testing is used only when it adds evidence the existing proof lacks; it is
+   not an admission ritual (the meaningful-test rule above governs).
+
+**What is enforced (objective contracts only):** the gate, the two passes and the merge checklist
+as before; a new dependency is named in the PR body; a card lists paths rather than globs. **What is
+never inferred from size:** a small diff is not a safe diff. A one-line change can remove a
+permission check, so risk is read from what the change touches, not from how much it adds.
+
+**Keel optimises time as well:** a gate runs only what the change can reach (`ci/select-scope.ps1`;
+`ci/docs-only.ps1`, #1216). A check that ran without being reachable is drift in the method,
+recorded with the rule that caused it and fixed with a control that still runs the check when the
+change does reach it. Every doubt runs everything.
+
+**Drift is recorded with its cause.** When a rule fires, record whether the cause was the card, the
+tool, the task or the agent before anyone restricts anything. A pass is bound to the head it read and
+to the PR's closing set (`.factory/lane-loop.md`, section 0); a prose-only edit of the PR body does
+not kill it.
 
 ## Foundation Graph Kernel constraints
 

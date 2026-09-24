@@ -62,12 +62,13 @@ param(
     [string] $Base = 'origin/main',
     [string] $SchemaPath = 'schemas/event-envelope.schema.json',
     # 600, not 300, and the number is arithmetic rather than taste. Measured on #1005 (lane B, 30/30
-    # sampled): T ~= 13 s + 0.208 s per UNCHANGED head + 7.9 s per CHANGED head. At today's 302 heads
-    # and 15 changed the sweep takes ~170-190 s; at 300 s the ceiling was crossed at ~29 changed heads,
-    # i.e. fourteen more schema-touching branches -- and past the ceiling this is not slow, it is
-    # NOT MEASURED, which merge-proof turns into a refusal of EVERY merge in the repository. 600 s
-    # moves the cliff to ~67 changed heads. The sensitive axis is changed heads, which the cheap diff
-    # does not help; a per-changed-head cost below 7.9 s is the real fix and is not in this change.
+    # sampled): T ~= 13 s + 0.208 s per UNCHANGED head + 7.9 s per CHANGED head. At today's 302
+    # heads and 15 changed the sweep takes ~170-190 s; at 300 s the ceiling was crossed at ~29
+    # changed heads, i.e. fourteen more schema-touching branches -- and past the ceiling this is not
+    # slow, it is NOT MEASURED, which merge-proof (retired 2026-09-24) turned into a refusal of
+    # EVERY merge. 600 s moves the cliff to ~67 changed heads. The sensitive axis is changed heads,
+    # which the cheap diff does not help; a per-changed-head cost below 7.9 s is the real fix and is
+    # not in this change.
     #
     # THE TRADE, NAMED: 600 buys headroom in changed heads and raises the worst-case wall clock of
     # the `ci powershell suites` stage, which #1053 is trying to shrink. What it does NOT do is let a

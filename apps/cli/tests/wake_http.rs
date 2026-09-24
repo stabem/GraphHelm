@@ -2555,7 +2555,7 @@ fn a_dead_serve_degrades_to_timeout_and_a_plain_read_never_to_wrong() {
 // Hotfix #55: concurrent sweeps must never double-consume a lease. Found live on the
 // factory pair store (two sweeps raced read->append; the second consumption had no live
 // lease and the fold refused the WHOLE stream on every later replay — the archived
-// evidence lives in .factory/archive/pair-events-corrupted-2026-08-16, preserved intact).
+// evidence was a local, never-committed copy under the retired `.factory/`).
 // ---------------------------------------------------------------------------------------------
 
 /// Two mutations fired at the same instant (a real barrier, not luck) while ONE lease is

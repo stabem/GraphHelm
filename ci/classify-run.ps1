@@ -409,8 +409,8 @@ if ($UnrelatedTestFile -or $UnrelatedIssue -or $FailThenPassObserved) {
         # EACH CALL'S STATUS IS READ, and that is the other half of the hazard the comment above
         # describes. The 'Continue' window stops a CHATTY git from aborting this block; it does not
         # make a git that FAILED look like anything other than a git that found nothing. `git log
-        # origin/main..HEAD` exits 128 with empty output wherever refs/remotes/origin/main is
-        # absent -- ci/gate-runner.ps1 documents repairing exactly that for `--single-branch` clones
+        # origin/main..HEAD` exits 128 with empty output wherever refs/remotes/origin/main is absent
+        # -- the gate runner (retired 2026-09-24) repaired exactly that for `--single-branch` clones
         # in this same factory -- and the committed range then contributes nothing to $touched.
         #
         # WHICH DIRECTION THAT MISTAKE FALLS IS THE POINT, and the comment below on

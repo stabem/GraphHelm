@@ -155,7 +155,7 @@
 
     AND IT IS STILL HAPPENING, WHICH IS THE POINT OF WRITING IT DOWN. A fifth instance, 2026-09-07,
     a different author again, caught on a pull request that was otherwise ready to press -- two
-    passes, a GREEN gate, `merge-proof` SATISFIED:
+    passes, a GREEN gate, `merge-proof` (retired 2026-09-24) SATISFIED:
 
       pull request 966
         body     : #841, #925        <- #925 cited inside a code span, in "Notes for reviewers"

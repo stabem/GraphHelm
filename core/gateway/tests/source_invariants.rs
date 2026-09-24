@@ -187,7 +187,7 @@ fn the_gateway_crate_depends_on_exactly_the_declared_crates() {
 /// `std::net` is checked for concrete I/O-performing types (`TcpStream`, `TcpListener`,
 /// `UdpSocket`, `ToSocketAddrs`) rather than the bare `std::net` path. `manifest.rs` legitimately
 /// imports `std::net::Ipv4Addr` (Task 1,
-/// `docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 1 Step 4) to decide whether a
+/// gateway-slice plan, Task 1 Step 4) to decide whether a
 /// `baseUrl` host is loopback: that is a pure value-type parse-and-compare, not a network call —
 /// nothing under `src/` ever opens a socket. Banning the bare `std::net` path would fail this
 /// invariant on that already-reviewed, already-tested code without catching anything real; banning

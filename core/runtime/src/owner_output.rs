@@ -1,6 +1,6 @@
 //! `OwnerOutputValidator` (#221): validates and renders the final owner-facing response.
 //!
-//! THE CENTRAL INVARIANT (design blueprint §3, `.factory/e-agent-221-blueprint.md`): no sequence
+//! THE CENTRAL INVARIANT (owner-output blueprint §3): no sequence
 //! of valid inputs produces a `Result`-slot phrase that contradicts `result.status`. The phrase is
 //! DERIVED from [`TaskOutcome`] by this module's own code — never accepted as caller-supplied
 //! text — which is the same structural move #200's `status` tag made for the slot-lock read: the
@@ -350,7 +350,7 @@ const fn result_phrase(status: TaskOutcome) -> &'static str {
 
 /// Refusal codes this task owns. Not yet allocated in the shared
 /// `graphhelm_protocols::DevelopmentRefusalCode` vocabulary — see
-/// `.factory/e-agent-221-refusal-code-gap.md` and issue #217 comment `5394028501`. Placeholder
+/// design note #221 and issue #217 comment `5394028501`. Placeholder
 /// local type until that's resolved; T3 is the first test to construct one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerOutputError {

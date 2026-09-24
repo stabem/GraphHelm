@@ -3577,7 +3577,7 @@ fn a_gated_nodes_release_is_the_owners_act_and_the_drivers_own_hops_are_not() {
     );
 }
 
-/// Issue #89's guard, per `.factory/d-agent-mode-semantics.md`'s ratified Option B: `mode`
+/// Issue #89's guard, per the ratified Option B of the mode-semantics note (#89): `mode`
 /// governs `decide_mutation`'s verdict ONLY (`core/governor/src/inflight.rs:112-118`, already
 /// covered directly by that crate's own unit tests); dispatch is a separate axis this test
 /// asserts is untouched by it. Nothing in `apps/cli/tests/` previously ran a graph in `manual`

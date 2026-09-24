@@ -121,7 +121,7 @@ fn typesafe_is_a_legal_direct_api_provider() {
 
 #[test]
 fn timeout_seconds_defaults_and_can_be_overridden() {
-    // Milestone 05b Task 5 (docs/superpowers/plans/2026-08-14-gateway-slice.md): Task 1 shipped
+    // Milestone 05b Task 5 (gateway-slice plan): Task 1 shipped
     // no per-route timeout; the native-runtime adapter needs one, so Task 5 added
     // `timeoutSeconds` here with a default rather than requiring every existing manifest to
     // declare it.

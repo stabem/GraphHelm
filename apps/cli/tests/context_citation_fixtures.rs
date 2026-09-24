@@ -3,7 +3,7 @@
 //! **Scope provenance.** This file and
 //! `extensions/builtin/graphhelm-development-contracts/schemas/context-citation-case.schema.json`
 //! entered #222's strict file list by **scope amendment 5**, in the issue body. The amendment's
-//! own text is committed at `.factory/b-agent-222-scope-amendment-5.md`.
+//! own text was committed as the scope amendment 5 (#222) note.
 //!
 //! **Why fixtures at all, when unit tests already cover this.** L's gate 3 on #222 requires the
 //! citation-spoofing threat to exist as a *fixture*, not only as a Rust test — a case in the shared

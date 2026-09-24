@@ -1,7 +1,7 @@
 //! Credential broker over `graphhelm_events::EvidenceProtector<SealedKeyProvider>`.
 //!
 //! `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §7 describes the broker; this module implements the
-//! Milestone 05b subset of it (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 3): a
+//! Milestone 05b subset of it (gateway-slice plan, Task 3): a
 //! durable, revocable, route-scoped store for BYOK credentials, built entirely out of the sealing
 //! primitives `core/events` already provides. It invents no cryptography of its own — `store`
 //! seals a value with [`EvidenceProtector::seal`] and `lease` opens it with

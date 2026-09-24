@@ -93,7 +93,7 @@ pub trait ToolPort: Send + Sync {
 ///
 /// **This reader is workspace-scoped: it reports the identity of what it would serve NOW, and
 /// cannot read at a historical generation.** That is a decision, not an omission — see
-/// `.factory/h-agent-219-blueprint.md` section 8. Its consequence is that a stale coordinate has
+/// design note #219, section 8. Its consequence is that a stale coordinate has
 /// TWO permitted exits rather than three: reindex, or refuse `index_stale`. Serving
 /// snapshot-owned bytes from an earlier generation is not available, so nothing in this lane may
 /// be written as though it were.

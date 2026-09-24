@@ -87,8 +87,9 @@ write the code, two independent reviewer subagents with fresh context write the 
 gate runs through the registered runner before the passes, and the planner presses. The
 identity line names the subagent and the spawning session so the comment is addressable
 (`Lane: <letter> · Session: subagent-<name> of <ListAgents name> [ref] · Head: <sha8>`). This
-mapping is written into `.factory/lane-loop.md` §0 by this slice, because a rule that lives only
-in chat is the defect that file exists to end.
+mapping was written into the lane loop §0 by this slice (retired 2026-09-24; see
+`docs/process/DELIVERY.md`, History), because a rule that lives only in chat is the defect that
+file existed to end.
 
 ## 3. The surfaces, exactly
 

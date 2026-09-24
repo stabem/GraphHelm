@@ -62,10 +62,9 @@ impl<'de> Deserialize<'de> for SafeCode {
 
 /// The closed vocabulary of refusal reason codes for the customs pipeline.
 ///
-/// TRANSCRIBED, NOT INVENTED. Source: `.factory/b-agent-159-blueprint.md` §2d, read at
-/// `origin/k-162-dlq-sweep` — the file is not on `main` because the merge that would put it there
-/// is built and waiting on the owner. Anyone re-deriving this list should read that section rather
-/// than trust this comment.
+/// TRANSCRIBED, NOT INVENTED. Source: design note #159, §2d (first read at
+/// `origin/k-162-dlq-sweep`, before it reached `main`). Anyone re-deriving this list should read
+/// that section rather than trust this comment.
 ///
 /// **The source enumerates NINE, and #160 asks for eight.** §2d lists nine names and marks the
 /// last as "the ninth added by amendment: J's custody finding, 2e"; §8 of the same document still

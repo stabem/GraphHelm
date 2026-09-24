@@ -155,7 +155,7 @@ try {
     }
     Assert-True ($anchorsFound -and $between.Count -eq 0) `
         "no statement runs between the poison and the body, so nothing can overwrite it (anchors found: $anchorsFound; offending lines: $($between.Count)$(if ($between.Count) { ' -> ' + ($between -join ' | ') }))"
-    Assert-True ($gateText.IndexOf('$MuteStageExitCode = 99', [System.StringComparison]::Ordinal) -ge 0) 'the sentinel is the named 99, the value merge-proof already runs behind'
+    Assert-True ($gateText.IndexOf('$MuteStageExitCode = 99', [System.StringComparison]::Ordinal) -ge 0) 'the sentinel is the named 99, not a bare literal'
     Assert-True ($gateText.IndexOf('$global:LASTEXITCODE = 0', [System.StringComparison]::Ordinal) -lt 0) 'and nothing clears the code to 0 before a body, which would turn every mute body into a pass'
 
     Write-Host ''

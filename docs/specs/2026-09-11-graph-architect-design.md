@@ -1,8 +1,8 @@
 # Graph Architect — design (the first compile)
 
 Base for every citation: `origin/main` @ `585fa0c2` (2026-09-11). Issue anchor: #107 ("nothing
-synthesizes a graph from a prompt"). Consumed as decided: `.factory/b-agent-107-blueprint.md`
-(B, 2026-08-19) and the two contradictions the M11 consolidation named against it, #183 and
+synthesizes a graph from a prompt"). Consumed as decided: design note #107
+(B, 2026-08-19; `docs/process/DELIVERY.md`, History) and the two contradictions the M11 consolidation named against it, #183 and
 #184. PRD §10 (dynamic harness), §24 (first vertical slice), §25 steps 5–6; `docs/harness/
 HARNESS_SPEC.md` §4 (the compilation pipeline, of which this slice builds ONE box, the Graph
 Architect, with a caller-supplied profile and a code-derived catalog).

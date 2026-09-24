@@ -238,8 +238,8 @@ evidence and returns structured diagnostics also remains open under #211.
 
 ## 8. Provenance
 
-Expectations were sealed before each fixture existed, append-only, in
-`.factory/n-agent-226-sabotage-expectations.md`. Corrections there are added below the original with
+Expectations were sealed before each fixture existed, append-only, in the #226 sabotage
+expectation record (never committed to `main`). Corrections there are added below the original with
 a pointer rather than edited in place, so an entry that changed can be read against what it replaced
 — including the several corrections that measurement forced along the way.
 
@@ -364,7 +364,7 @@ fixture, since the field is present and well-formed.
 - The historical measurement above established the pre-protection state at its recorded base. It
   is not a claim that the obligation remains unrecorded after `JourneyContractGate` landed.
 
-Sealed expectation record: `.factory/n-agent-226-sabotage-expectations.md` (S1, ADDENDUM-1/4/8).
+Sealed expectation record: the #226 sabotage expectation record (S1, ADDENDUM-1/4/8).
 
 ---
 
@@ -443,7 +443,7 @@ is well-formed and self-consistent, and any consumer that derives it differently
 as a fixture-local convention, not as a claim about the wire rule.
 
 Full expectation record, sealed before these files existed:
-`.factory/n-agent-226-sabotage-expectations.md` (S2, ADDENDUM-2, ADDENDUM-3).
+the #226 sabotage expectation record (S2, ADDENDUM-2, ADDENDUM-3).
 
 **Transition to MARKED — protection landed in #616.** The measurement above is kept as written: it
 is still a true record of what was red and when. The protection is the retrieval-plan compiler
@@ -549,7 +549,7 @@ shipped, and the refusal names the section that lost it.
 `wireHash` to `^sha256:[0-9a-f]{64}$`. Whether that asymmetry is deliberate is **not measured and
 not mine**; recorded so it is not lost, and not counted as a finding of this task.
 
-Sealed expectation record: `.factory/n-agent-226-sabotage-expectations.md` (S4, ADDENDUM-5/6).
+Sealed expectation record: the #226 sabotage expectation record (S4, ADDENDUM-5/6).
 
 ---
 
@@ -641,7 +641,7 @@ path the design argued was safe.
 - The divergence above is measured by READING both implementations, not by executing them.
 - Whether #221/#223 will screen at all is unknown; that is what the red window is for.
 
-Sealed expectation record: `.factory/n-agent-226-sabotage-expectations.md` (S5a, ADDENDUM-7).
+Sealed expectation record: the #226 sabotage expectation record (S5a, ADDENDUM-7).
 
 ## Appendix B — the MARKED entries
 
@@ -820,4 +820,4 @@ sealed record as a narrow `legal-vs-produced` note. It is **not** counted here: 
 empty, so a guard for it would pass vacuously forever, and counting it as coverage would be the
 exact error this file exists to avoid.
 
-Sealed expectation record: `.factory/n-agent-226-sabotage-expectations.md`.
+Sealed expectation record: the #226 sabotage expectation record.

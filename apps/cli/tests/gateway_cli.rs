@@ -1,4 +1,4 @@
-//! `graphhelm gateway` CLI suite (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 6):
+//! `graphhelm gateway` CLI suite (gateway-slice plan, Task 6):
 //! `routes`, `probe`, and `credential set|remove`, spawned as a compiled binary exactly like every
 //! other CLI suite (`execution_cli.rs`'s `command()` pattern).
 

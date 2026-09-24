@@ -62,7 +62,7 @@ fn with_mis_burn(session: &str, at_sequence: u64) -> ExecutionProjection {
 /// path's own filter drops a stale capture, so the fold's mis-burn arm fires only for a
 /// consumption written by something else: a direct append, an older binary, or a bug. The
 /// remedy is provenance -- *check who is writing to this store* -- which is why it belongs in
-/// attention rather than in the wake surfaces alone (`.factory/c-agent-119-design.md`).
+/// attention rather than in the wake surfaces alone (design note #119).
 ///
 /// The PRESENCE member of the absence-guard pair: without this cell, the "raises nothing"
 /// assertion below would pass just as well if the predicate were never reached at all.

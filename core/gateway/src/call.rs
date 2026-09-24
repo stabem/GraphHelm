@@ -1,6 +1,6 @@
 //! Wire-neutral types for one model call and its reply.
 //!
-//! `docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 4 places these here, rather than in
+//! The gateway-slice plan's Task 4 places these here, rather than in
 //! `adapters/model-gateway`, so a later milestone (05d, the execution-side consumer) can depend on
 //! them without pulling in the adapter crate's `ureq`/subprocess machinery. Both the BYOK adapters
 //! (`adapters/model-gateway/src/byok.rs`) and the native-runtime adapters (Task 5) construct these

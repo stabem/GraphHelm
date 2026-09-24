@@ -231,7 +231,8 @@ Assert-True -Condition ($unflagged.Count -eq 0) `
 # #963: `Start-Process` IS one of those spawns, and the complement skipped every one of them.
 # `GetCommandName()` returns `Start-Process`, never the host it launches, so a name filter alone
 # never saw `ci/gate.ps1`'s stage spawn -- the single most important spawn in this repository -- nor
-# `ci/gate-runner.ps1`'s hidden gate. Both carry `-NoProfile` today, so the RULE above governs them;
+# `ci/gate-runner.ps1`'s hidden gate (the runner was retired on 2026-09-24). Both carried
+# `-NoProfile`, so the RULE above governed them;
 # take that token away and, before this widening, nothing did. Measured, with a seventh spawn site
 # present so the vacuity floor kept its count of six:
 #
@@ -243,10 +244,11 @@ Assert-True -Condition ($unflagged.Count -eq 0) `
 # tree. `ci/` legitimately starts non-PowerShell processes -- `ci/postgres.ps1` spawns `pg_ctl` in
 # this exact shape -- and a widening that counted every `Start-Process` would end up demanding
 # `-NoProfile` from `pg_ctl`. So a `Start-Process` is a spawn only when its target RESOLVES to a
-# PowerShell host, and all three shapes in this tree resolve:
+# PowerShell host, and all three shapes resolve (the positional one lived in the retired runner; a
+# fixture below keeps it covered):
 #
 #   -FilePath 'powershell.exe'    a literal
-#   Start-Process powershell      the first positional argument -- ci/gate-runner.ps1:335
+#   Start-Process powershell      the first positional argument -- ci/gate-runner.ps1:335 (retired)
 #   -FilePath $hostExe            a variable, followed to its assignment, which in ci/gate.ps1 is
 #                                 `if (...) { 'pwsh' } else { 'powershell' }`: two constants, and
 #                                 one branch naming a host is enough
@@ -401,7 +403,7 @@ Assert-True -Condition ($foreignSpawn.Count -eq 0) `
 
 $positionalSpawn = @(Get-HostSpawnCommands -Name 'fixture.ps1' -Text "`$proc = Start-Process powershell -ArgumentList '-ExecutionPolicy', 'Bypass', '-Command', `$inner -PassThru")
 Assert-True -Condition (($positionalSpawn.Count -eq 1) -and (-not $positionalSpawn[0].HasNoProfile)) `
-    -Message 'the host given POSITIONALLY resolves too -- that is ci/gate-runner.ps1 shape, and -FilePath alone would miss it'
+    -Message 'the host given POSITIONALLY resolves too -- the shape the retired gate runner used, and -FilePath alone would miss it'
 
 # ci/gate.ps1's own shape, reduced: the target is a variable whose assignment is a conditional, so
 # resolving it means reading both branches.
@@ -490,7 +492,7 @@ try {
 #
 #     accepts at most 1 arg(s), received 2      exit 1
 #
-# Measured on this machine. In ci/gate-runner.ps1 that made EVERY queue entry unresolvable -- the
+# Measured on this machine. In ci/gate-runner.ps1 (retired 2026-09-24) that made EVERY queue entry unresolvable -- the
 # runner reported "waiting: pull request not resolvable" for all of them, so the queue accepted work
 # and delivered none, and the failure looked like patience rather than a defect (X, on #928).
 #
@@ -545,7 +547,7 @@ try {
 #                  space. Fine when nothing downstream parses the separator; silent data change when
 #                  something does. Named here because this file used to prescribe it without saying so.
 #   `\"` escaping  works against real gh and reaches jq byte-identical -- but THIS GUARD REJECTS
-#                  IT, measured by planting it at ci/merge-proof.ps1:633. Known limitation, not an
+#                  IT, measured by planting it at ci/merge-proof.ps1:633 (since retired). Known limitation, not an
 #                  oversight: the scanner reads source TEXT and cannot tell an escaped quote from a
 #                  bare one.
 #
@@ -634,8 +636,8 @@ function Find-StaticJqArguments {
             $values = Get-StaticExternalArgumentTokens -Command $command
             if ($null -eq $values) { continue }
             for ($i = 0; $i -lt $values.Count; $i++) {
-                # BOTH SPELLINGS. `gh` accepts `-q` as well as `--jq`, and `.factory/MERGE-CHECKLIST.md`
-                # already writes `-q` five times with spaces and embedded quotes. Matching only the
+                # BOTH SPELLINGS. `gh` accepts `-q` as well as `--jq`, and the merge checklist (retired
+                # 2026-09-24) wrote `-q` five times with spaces and embedded quotes. Matching only the
                 # long form left the identical hazard invisible under the short one.
                 if ($values[$i].Known -and $values[$i].Value -cin @('--jq', '-q') -and $i + 1 -lt $values.Count `
                     -and $values[$i + 1].Known) {

@@ -1,9 +1,10 @@
 # #1053 item 7: the gate stops paying for stages nobody will read, and records that it did.
 #
-# Measured over the 370 records in .factory/gate-runs: 39 % of runs are RED; a red run medians
-# 1734 s against GREEN's 1664 s; the FIRST failing stage ends at a median of 795 s. So a red gate
-# spends a further ~940 s after its answer is known. 56 % of red runs have exactly ONE failing
-# stage, so for most of them nothing a reader would have used is skipped.
+# Measured over the 370 gate receipts committed before the receipt store was retired (2026-09-24):
+# 39 % of runs are RED; a red run medians 1734 s against GREEN's 1664 s; the FIRST failing stage
+# ends at a median of 795 s. So a red gate spends a further ~940 s after its answer is known. 56 %
+# of red runs have exactly ONE failing stage, so for most of them nothing a reader would have used
+# is skipped.
 #
 # THE DANGER IS NOT THE SKIP, IT IS HOW THE SKIP IS RECORDED. `passed = $null` with `notRun = $true`
 # is the whole design: `$false` fabricates a failure the run never observed, `$true` fabricates a

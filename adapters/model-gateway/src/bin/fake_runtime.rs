@@ -1,6 +1,6 @@
 //! Test-fixture binary imitating an official host CLI (Claude Code or Codex) for
 //! `adapters/model-gateway/src/runtime.rs`'s native-runtime adapter tests
-//! (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 5).
+//! (gateway-slice plan, Task 5).
 //!
 //! This is not a claim about any real CLI's exact behavior. The "happy shapes" printed here are
 //! this repository's documented understanding as of Milestone 05b of what `claude`/`codex` print;

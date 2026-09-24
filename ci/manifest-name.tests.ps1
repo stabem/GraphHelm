@@ -4,10 +4,10 @@
 # directory this script creates and removes itself, so running it needs no slot, no cargo, and no
 # coordination with any other lane.
 #
-# Every Get-ChildItem count below is wrapped in @(). PowerShell collapses an EMPTY result to
-# $null, so `.Count` throws under StrictMode and a genuine zero cannot be asserted -- the exact
-# defect I fixed in ci/gate-run-overlap.ps1 for #653, met again in my own test file. A zero has
-# to be a zero on both sides of the instrument.
+# Every Get-ChildItem count below is wrapped in @(). PowerShell collapses an EMPTY result to $null,
+# so `.Count` throws under StrictMode and a genuine zero cannot be asserted -- the exact defect I
+# fixed in ci/gate-run-overlap.ps1 (since retired) for #653, met again in my own test file. A zero
+# has to be a zero on both sides of the instrument.
 #
 # Homegrown PASS/FAIL/HARNESS-BROKE harness with a declared expected count, matching
 # ci/slot-lock.tests.ps1. The declared total is the point: on the sibling suite for #638 I declared

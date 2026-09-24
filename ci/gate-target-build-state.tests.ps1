@@ -5,11 +5,11 @@
 # `$freshBuild = ($mtimeUtc -ge $runStartUtc)`) is correct and useless early: at the instant before
 # a build, NOTHING has been rebuilt, so every artefact of every reused target predates the run's
 # start. Measured on this box: 77 of 77 test executables in `D:/graphhelm-target-g` fail that
-# predicate at run start, and across the 128 manifests in `.factory/gate-runs/` only 9 of 27
-# observed reuses were actually contaminated. An early check keyed on age -- or on the canary
-# nonce, which `Write-CanaryNonce` rotates unconditionally every run -- flags all 27 and is wrong
-# two times in three. A guard that cries wolf two times in three is one the fleet learns to skip,
-# and it then occupies the place where the real check would go.
+# predicate at run start, and across the 128 gate receipts committed at the time (the receipt
+# store was retired 2026-09-24) only 9 of 27 observed reuses were actually contaminated. An early
+# check keyed on age -- or on the canary nonce, which `Write-CanaryNonce` rotates unconditionally
+# every run -- flags all 27 and is wrong two times in three. A guard that cries wolf two times in
+# three is one the fleet learns to skip, and it then occupies the place where the real check would go.
 #
 # So the property under test is DISCRIMINATION, not detection. A function that returns
 # "contaminated" always detects every contamination and is exactly the instrument measured above;
@@ -363,19 +363,20 @@ try {
     Write-Host ''
     Write-Host '-- the STATUS, which is the only field anything downstream reads --' -ForegroundColor Cyan
 
-    # THE CELL THE FIRST DRAFT DID NOT HAVE, and its absence let a false claim ship twice.
-    # That draft fed the verdict into `instrumentSuspect` and printed "the run continues and cannot
-    # report GREEN". Measured after Codex asked: `merge-proof.ps1` requires `status == GREEN` and
-    # mentions `instrumentSuspect` ZERO times, and the status was derived from the failed-stage
-    # count alone -- so a contaminated target with every stage passing produced GREEN, exit 0, and a
-    # manifest merge-proof accepts. The flag was recorded, not enforced, and nothing here could tell
-    # the two apart because no cell called the rule that decides.
+    # THE CELL THE FIRST DRAFT DID NOT HAVE, and its absence let a false claim ship twice. That
+    # draft fed the verdict into `instrumentSuspect` and printed "the run continues and cannot
+    # report GREEN". Measured after Codex asked: `merge-proof.ps1` (retired 2026-09-24) required
+    # `status == GREEN` and mentioned `instrumentSuspect` ZERO times, and the status was derived
+    # from the failed-stage count alone -- so a contaminated target with every stage passing
+    # produced GREEN, exit 0, and a manifest merge-proof accepted. The flag was recorded, not
+    # enforced, and nothing here could tell the two apart because no cell called the rule that
+    # decides.
     . ([scriptblock]::Create((Get-GateFunctionText -Name 'Get-GateStatus')))
 
     Assert-True -Condition ((Get-GateStatus -FailedStageCount 0 -TargetSuspect $false) -ceq 'GREEN') `
         'a clean run on a sound target is GREEN'
     Assert-True -Condition ((Get-GateStatus -FailedStageCount 0 -TargetSuspect $true) -cne 'GREEN') `
-        'and a suspect target is NOT GREEN -- the field merge-proof actually reads'
+        'and a suspect target is NOT GREEN -- the field anything downstream reads'
     Assert-True -Condition ((Get-GateStatus -FailedStageCount 0 -TargetSuspect $true) -ceq 'HARNESS-BROKE') `
         'it is HARNESS-BROKE, not RED: the tree did not fail, the run could not vouch for what it measured'
     # Failure is the more specific fact, and this also stops the rule from being satisfied by

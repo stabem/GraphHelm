@@ -3,7 +3,7 @@
 //!
 //! `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §6.3/§13 describes native-runtime routes; this module
 //! implements the Milestone 05b subset of it
-//! (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 5): one [`RuntimeAdapter`] per
+//! (gateway-slice plan, Task 5): one [`RuntimeAdapter`] per
 //! `native_runtime` [`ModelRoute`], spawning `route.command.program` with `route.command.args`
 //! under an environment that structurally cannot carry gateway/broker material, sending the
 //! prompt over stdin (never argv, never an environment variable), bounding the wait with the

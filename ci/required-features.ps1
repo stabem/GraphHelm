@@ -49,7 +49,7 @@ param(
     # The caller writes it OUTSIDE the repository. A temp file inside a worktree makes
     # `dirtyDiffHash` non-null and the gate correctly refuses to commit a manifest into a tree
     # holding changes it did not make -- measured twice on 2026-09-05, by two lanes, and recorded in
-    # ci/gate-runner.ps1's own header.
+    # the gate runner's own header (retired 2026-09-24).
     [string] $TranscriptPath,
     # Package names this run actually selected (`ci/gate.ps1`'s `$script:gateScope.crates`), passed
     # rather than re-read from the scope selection file: that parsing already happened once in
@@ -73,9 +73,9 @@ Set-StrictMode -Version 2.0
 
 # WHY THIS FILE RETURNS EARLY WHEN DOT-SOURCED. The suite needs the two functions without running
 # anything, and a file that does its work on load cannot be tested without doing that work. Measured
-# in both directions on `.factory/tools/target-inventory.ps1` (#940) after the same problem: a guard
-# that silently skipped its body under `-File` would make the tool print nothing and exit 0, which
-# reads exactly like a clean answer.
+# in both directions on the target-inventory tool (#940, retired 2026-09-24) after the same problem:
+# a guard that silently skipped its body under `-File` would make the tool print nothing and exit 0,
+# which reads exactly like a clean answer.
 $script:RequiredFeaturesDotSourced = $MyInvocation.InvocationName -eq '.'
 
 <#

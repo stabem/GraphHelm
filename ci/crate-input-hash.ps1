@@ -11,12 +11,12 @@
 # nobody compiled, and does it silently. So every choice below is made toward the safe side, and
 # the ones that are not obvious say why.
 #
-# WHAT THIS FILE IS NOT. It writes no shard, reads no shard, and merge-proof does not call it yet.
-# Shard storage belongs to #902's runner and per-crate scope to #903, both in flight in other
-# lanes; putting a store here would give one file two owners. This is the key those two need, and
-# it is the half that has to be right BEFORE anything reuses a proof. Composition is separated
-# from gathering for the same reason the rest of ci/ separates them: the composition is a pure
-# function, so its properties can be measured without a repository, a toolchain, or a slot.
+# WHAT THIS FILE IS NOT. It writes no shard, reads no shard, and merge-proof (retired 2026-09-24)
+# never called it. Shard storage belongs to #902's runner and per-crate scope to #903, both in
+# flight in other lanes; putting a store here would give one file two owners. This is the key those
+# two need, and it is the half that has to be right BEFORE anything reuses a proof. Composition is
+# separated from gathering for the same reason the rest of ci/ separates them: the composition is a
+# pure function, so its properties can be measured without a repository, a toolchain, or a slot.
 
 Set-StrictMode -Version Latest
 

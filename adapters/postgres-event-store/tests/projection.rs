@@ -623,8 +623,8 @@ impl ProjectionRepository for MismatchedProjectionRepository {
 }
 
 /// `GHPROJ001_WATERMARK_MISMATCH` was shipped in milestone 03 with no test ever observed to
-/// produce it (see `.superpowers/sdd/2026-08-09-production-event-evidence-store/
-/// final-review-findings.md:591`). It is raised in exactly one place,
+/// produce it (see the event-evidence-store SDD record, `final-review-findings.md`).
+/// It is raised in exactly one place,
 /// `ProjectionRebuilder::rebuild` (`core/events/src/projection.rs`), when a stored generation's
 /// identity does not match the one requested to resume — a defense-in-depth guard against a
 /// storage layer that hands back the wrong generation. This test drives that guard directly with

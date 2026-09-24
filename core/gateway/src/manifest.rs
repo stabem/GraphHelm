@@ -1,7 +1,7 @@
 //! Route manifest types and structural validation.
 //!
 //! `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §4 defines the route manifest; this module implements
-//! the Milestone 05b subset of it (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 1): the
+//! the Milestone 05b subset of it (gateway-slice plan, Task 1): the
 //! two transports the gateway drives this milestone — a direct HTTPS API call the gateway places
 //! itself, or an official CLI the gateway spawns as a native runtime and lets authenticate on its
 //! own — and the structural rule that keeps their billing and authentication mutually exclusive
@@ -38,7 +38,7 @@ pub const MAX_TIMEOUT_SECONDS: u64 = 86_400;
 ///
 /// Task 1 shipped no per-route timeout field at all — nothing in this milestone's manifest shape
 /// needed one yet. Milestone 05b Task 5
-/// (`docs/superpowers/plans/2026-08-14-gateway-slice.md`) adds this field and constant: the
+/// (gateway-slice plan) adds this field and constant: the
 /// native-runtime adapter (`adapters/model-gateway/src/runtime.rs`) spawns an official CLI as a
 /// subprocess and must bound how long it waits before killing a hung one, and a spawned CLI's own
 /// work can legitimately take much longer than one HTTP call, which is worth a real per-route
@@ -476,10 +476,10 @@ fn validate_direct_api(route: &ModelRoute) -> Result<(), ManifestError> {
         });
     }
 
-    // Milestone 05b Task 4 (docs/superpowers/plans/2026-08-14-gateway-slice.md): the BYOK
+    // Milestone 05b Task 4 (gateway-slice plan): the BYOK
     // adapters in `adapters/model-gateway/src/byok.rs` speak exactly two chat provider wire
     // formats. `typesafe` is served by `adapters/model-gateway/src/systemone.rs` on the JUDGE
-    // door only (docs/superpowers/plans/2026-09-16-architect-judgments.md Task 3): a System One
+    // door only (architect-judgments plan, Task 3): a System One
     // model answers typed questions and never drafts text. A `direct_api` route naming any other
     // provider would parse here but have no adapter able to place its call — refusing it at
     // manifest load time turns that into a load-time error instead of a confusing runtime one

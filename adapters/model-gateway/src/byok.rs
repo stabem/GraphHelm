@@ -2,7 +2,7 @@
 //!
 //! `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2/§7 describes direct-API routes; this module
 //! implements the Milestone 05b subset of it
-//! (`docs/superpowers/plans/2026-08-14-gateway-slice.md` Task 4): one [`ByokAdapter`] per
+//! (gateway-slice plan, Task 4): one [`ByokAdapter`] per
 //! `direct_api` [`ModelRoute`], dispatching on [`ModelRoute::provider`] to the wire shape a
 //! request/response actually has for that provider, and mapping every non-success outcome onto
 //! the closed [`GatewayError`] taxonomy `core/gateway` already owns.

@@ -1,10 +1,11 @@
 # #1053 item 8: the PowerShell suites run in a pool, and this file is what the pool had to earn.
 #
-# The stage was 658.2 s on the gate that first measured the rest of #1053 -- larger than
-# `workspace tests` -- purely because `ci/run-ps-suites.ps1` walked a `foreach`. Running the same
-# 48 children six at a time took it to ~365-490 s, and the remaining floor is one suite:
-# `merge-proof.tests.ps1` alone measured 487.7 s against a pool wall of 488.6 s. The pool is
-# therefore already optimal; what is left is inside that suite, not in this scheduler.
+# The stage was 658.2 s on the gate that first measured the rest of #1053 -- larger than `workspace
+# tests` -- purely because `ci/run-ps-suites.ps1` walked a `foreach`. Running the same 48 children
+# six at a time took it to ~365-490 s, and the remaining floor was one suite:
+# `merge-proof.tests.ps1` (retired 2026-09-24) alone measured 487.7 s against a pool wall of
+# 488.6 s. The pool was therefore already optimal; what was left was inside that suite, not in
+# this scheduler.
 #
 # WHY THIS FILE EXISTS RATHER THAN A GREEN RUN. A pool converts a verdict into an aggregation, and
 # every way an aggregation can lie is quiet. The first prototype of this change returned an EMPTY

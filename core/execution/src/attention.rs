@@ -483,7 +483,7 @@ pub enum AttentionReason {
     /// filters a stale capture before it is ever appended, so this arm fires only for a
     /// consumption written by something else: a direct append, an older binary, or a future
     /// bug. The operator's action is *check who is writing to this store*, and the variant
-    /// says so (`.factory/c-agent-119-design.md`).
+    /// says so (design note #119).
     ///
     /// Carries the SESSION because that is the actionable identifier, and one reason per
     /// session because the record is `BTreeMap<session, WakeMisBurn>` with overwriting

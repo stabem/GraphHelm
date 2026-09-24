@@ -4,7 +4,7 @@
 //! This first test grounds the precondition every later test depends on:
 //! `ValidatedExtensionPackage` must actually carry each contribution's own `surfaces`/`effects`/
 //! `permissions`/`requires.capabilities` -- today (before #213) it validates them and discards
-//! them, per the blueprint's own measurement (`.factory/e-agent-213-blueprint.md` §1.3).
+//! them, per the blueprint's own measurement (design note #213, §1.3).
 
 use std::fs;
 use std::path::{Path, PathBuf};

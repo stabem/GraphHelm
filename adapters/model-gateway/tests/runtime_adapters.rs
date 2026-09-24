@@ -3,8 +3,7 @@
 //! Mirrors `tests/byok_adapters.rs`'s spirit (a from-scratch fixture the adapter is exercised
 //! against) but over a real subprocess instead of a fake HTTP server: every test here spawns
 //! `src/bin/fake_runtime.rs`, compiled by Cargo alongside this test binary and located through
-//! `env!("CARGO_BIN_EXE_fake_runtime")` (`docs/superpowers/plans/2026-08-14-gateway-slice.md`
-//! Task 5).
+//! `env!("CARGO_BIN_EXE_fake_runtime")` (gateway-slice plan, Task 5).
 
 use std::fs;
 use std::io;

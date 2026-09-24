@@ -2068,8 +2068,8 @@ try {
     # #725, case 1. `-SkipPostgres` skips both PostgreSQL passes and the manifest said `GREEN` with
     # nothing recording that the run was partial, so a persistence-affecting change could be
     # certified by a gate the repository itself prints "is not a full gate" about. The producer has
-    # to record the fact before any consumer can refuse it, and `merge-proof` can only check fields
-    # the manifest carries.
+    # to record the fact before any consumer can refuse it, and a verifier (`merge-proof`, retired
+    # 2026-09-24) can only check fields the manifest carries.
     $coverageFn = ([System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$null)).Find({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -2095,7 +2095,7 @@ try {
     # with an automatically discovered `build.rs` sitting untracked recorded a NULL hash -- the value
     # that reads as "the worktree was exactly the commit" -- while measuring a tree no commit
     # contains. The value was present and honest about the wrong question, which is why neither of
-    # merge-proof's refusals could catch it.
+    # merge-proof's refusals (retired 2026-09-24) could catch it.
     $dirtFn = ([System.Management.Automation.Language.Parser]::ParseFile($gatePath, [ref]$null, [ref]$null)).Find({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -2125,8 +2125,8 @@ try {
         # THE CASE EVERY ORDINARY RUN IS IN, and the one that made the merge proof unsatisfiable.
         # `Write-CanaryNonce` rewrites the tracked nonce before the run starts, so `git diff HEAD`
         # is NON-EMPTY on every gate invocation. Deciding dirtiness from the diff recorded a
-        # non-null hash every time -- 29 of 29 manifests in this worktree -- and merge-proof refuses
-        # a non-null `dirtyDiffHash`. The porcelain is what decides, so a tree whose only change is
+        # non-null hash every time -- 29 of 29 manifests in this worktree -- and merge-proof (retired
+        # 2026-09-24) refused a non-null `dirtyDiffHash`. The porcelain is what decides, so a tree whose only change is
         # the gate's own artefact is CLEAN however much diff text that artefact produces.
         $nonceOnly = Get-WorktreeDirt `
             -Diff "diff --git a/tools/ci-canary/src/nonce.rs b/tools/ci-canary/src/nonce.rs`n-old`n+new" `

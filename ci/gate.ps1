@@ -293,8 +293,8 @@ function Get-ScopePackageArgs {
 # #903: what the MANIFEST records about the scope. Separate from Read-ScopeSelection because the
 # decision and the record are different jobs: the decision picks what runs, this says what ran so a
 # later reader can tell a GREEN that covered the workspace from a GREEN that covered two crates.
-# A scoped run that does not record its scope is unauditable -- `merge-proof` and the presser would
-# both read "GREEN" and neither could tell which one they had.
+# A scoped run that does not record its scope is unauditable -- every reader of the manifest would
+# read "GREEN" and none could tell which one they had.
 function Get-ScopeRecord {
     param([Parameter(Mandatory)] [object] $Selection)
 
@@ -385,8 +385,8 @@ function Test-StudioScopeChanged {
 # stage is 13-14 minutes of every gate, and it ran for a diff no suite reads.
 #
 # A SKIP STILL RUNS ONE SUITE. `ci/event-contract-sweep.tests.ps1` is the only producer of the
-# `[event-contract]` marker the manifest's `eventContractSweep` is read from, and `ci/merge-proof.ps1`
-# refuses a GREEN whose sweep did not measure. Its population is every open branch of the remote,
+# `[event-contract]` marker the manifest's `eventContractSweep` is read from (`merge-proof`, retired
+# 2026-09-24, refused a GREEN whose sweep did not measure). Its population is every open branch of the remote,
 # not this diff, so no diff can prove it unreached. It runs in the same stage, alone.
 function Get-PsSuitesScope {
     param([string] $Path)
@@ -553,8 +553,8 @@ $script:matrixSkipped = $skipPostgresFlag -or (-not $script:gateScope.matrix)
 Write-Host "[gate] scope: $($script:gateScope.reason)" -ForegroundColor Cyan
 
 $toolchain = '+1.97.1'
-# #896: the exit code a stage body reports when it set none. 99 is the sentinel this repository
-# already runs merge-proof behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
+# #896: the exit code a stage body reports when it set none. 99 is the sentinel `merge-proof`
+# (retired 2026-09-24) also ran behind; here it is what `Invoke-Stage` poisons `$LASTEXITCODE` with.
 $MuteStageExitCode = 99
 
 # #1053 item 7: FAIL-FAST IS A DECISION THE RUN MAKES ONCE, HERE -- not a property Invoke-Stage
@@ -1067,7 +1067,8 @@ function Invoke-Stage {
 
     # #1053 item 7: A STAGE NOBODY WILL READ IS NOT WORTH PAYING FOR, AND ITS ABSENCE IS RECORDED.
     #
-    # Measured over the 370 records in .factory/gate-runs: 39 % of runs are RED, a red run medians
+    # Measured over the 370 receipts committed to .factory/gate-runs before the store was retired on
+    # 2026-09-24: 39 % of runs are RED, a red run medians
     # 1734 s against GREEN's 1664 s, and the FIRST failing stage ends at a median of 795 s -- so a
     # red gate spends a further 940 s after its answer is already known. 56 % of red runs have
     # exactly ONE failing stage, so for most of them this skips nothing a reader would have used;
@@ -1603,7 +1604,7 @@ function Write-SlotEvent {
 
 # #200: Read-SlotLockSnapshot moved to ci/slot-lock.ps1 (with Test-SlotLockPathMatchesTargetDirShape
 # and Test-SlotLockSnapshotsIdentical) so these functions can be unit-tested in isolation - see
-# ci/slot-lock.tests.ps1 and .factory/e-agent-200-design.md for the full account of why a boolean
+# ci/slot-lock.tests.ps1 and design note #200 for the full account of why a boolean
 # `present` field could not tell "genuinely no lock" apart from "looked in the wrong place", and why
 # that distinction is now a `status` tag with three states instead of two.
 . (Join-Path $PSScriptRoot 'slot-lock.ps1')
@@ -3147,7 +3148,8 @@ function Get-TargetBuildState {
         correct and useless this early: at the instant before a build nothing has been rebuilt, so
         every artefact of every reused target predates the run's start. Measured: 77 of 77 test
         executables in a real target fail that predicate at run start, while across the 128
-        manifests in `.factory/gate-runs/` only 9 of 27 observed reuses were actually contaminated.
+        manifests then committed in `.factory/gate-runs/` only 9 of 27 observed reuses were actually
+        contaminated.
         The canary nonce is no better a key -- `Write-CanaryNonce` rotates it unconditionally every
         run (#152), so a nonce-keyed check also flags all 27. An early guard wrong two times in
         three is one the fleet learns to skip, and it then occupies the place where a real one
@@ -3460,9 +3462,10 @@ function Get-GateStatus {
         #455: the run's status, as a rule a cell can call.
 
         Extracted from an inline `if` at the caller because the claim it carries could not otherwise
-        be tested: `merge-proof.ps1` requires `status == GREEN` and reads neither `overallPassed` nor
-        `instrumentSuspect` -- measured, the latter appears there zero times -- so the STATUS is the
-        only field that gates anything, and a rule that decides it belongs where a cell can reach it.
+        be tested: `merge-proof.ps1` (retired 2026-09-24) required `status == GREEN` and read neither
+        `overallPassed` nor `instrumentSuspect` -- measured, the latter appeared there zero times --
+        so the STATUS was the only field that gated anything, and a rule that decides it belongs
+        where a cell can reach it.
 
         HARNESS-BROKE and not RED for a suspect target. RED is a claim about the tree, and the tree
         did not fail: the run could not vouch for what it measured, which is the third state this
@@ -3875,7 +3878,7 @@ function Get-HeadProvenance {
                             # Every one of these comparisons decides something -- which pull request this head belongs
                             # to, whether the ref still holds the commit this run is about to certify, whether the
                             # manifest on disk is the one that was published -- and each was deciding it with a comparer
-                            # that treats different strings as the same string. Found in ci/merge-proof.ps1 first, where
+                            # that treats different strings as the same string. Found in ci/merge-proof.ps1 (since retired) first, where
                             # a status of GREEN plus a weightless code point read as GREEN; this file has the same
                             # operator in ten places, and one of them is a compare-and-swap.
                             $matching = @($candidates | Where-Object {
@@ -4521,8 +4524,8 @@ function Get-RunCoverage {
         -- to the console, which is read once by whoever started it. The manifest is read by
         everything afterwards, and it said `GREEN` with nothing distinguishing a partial run from a
         complete one. So a persistence-affecting change could be certified by a run the repository
-        itself says did not cover persistence, and `ci/merge-proof.ps1` could not refuse it, because
-        a verifier can only check fields the producer wrote.
+        itself says did not cover persistence, and `ci/merge-proof.ps1` (retired 2026-09-24) could not
+        refuse it, because a verifier can only check fields the producer wrote.
 
         TWO FIELDS, and the second is not redundant. `postgres` names WHICH coverage was skipped, so
         a future consumer can decide per subject; `complete` answers the question every consumer has
@@ -4530,8 +4533,8 @@ function Get-RunCoverage {
         skip switch is added, which a consumer matching on `postgres` alone would silently miss.
 
         #904 ADDS A THIRD KEY, `build`, AND DELIBERATELY DOES NOT TOUCH `complete`. A warm run ran
-        every stage: it IS complete, and flipping that would make `ci/merge-proof.ps1` refuse every
-        warm run outright -- the whole saving, refused by the verifier. What a reader wants to know
+        every stage: it IS complete, and flipping that would have made `ci/merge-proof.ps1` refuse
+        every warm run outright -- the whole saving, refused by the verifier. What a reader wants to know
         is a different question ("did this run compile, or reuse?"), so it gets a different field.
 
         `-BuildMode` IS NOT MANDATORY, and that is measured rather than stylistic. Under the gate's
@@ -4586,9 +4589,9 @@ function Get-WorktreeDirt {
         `dirtyDiffHash` was computed from `git diff HEAD`, which omits untracked paths. A run with
         an automatically discovered `build.rs` sitting untracked therefore recorded a NULL hash --
         the value that reads as "the worktree was exactly the commit" -- while cargo compiled a tree
-        no commit contains. `ci/merge-proof.ps1` refuses a non-null hash and refuses the field being
-        absent, and neither refusal helps: the value was present and honest about the wrong
-        question.
+        no commit contains. `ci/merge-proof.ps1` (retired 2026-09-24) refused a non-null hash and
+        refused the field being absent, and neither refusal helped: the value was present and honest
+        about the wrong question.
 
         THE TWO EXCLUSIONS ARE WHAT KEEP THIS FROM FREEZING THE BOARD, and they are the publisher's
         own, deliberately: the manifest store gains a file per run BY DESIGN (#674(a)) and
@@ -4630,8 +4633,8 @@ function Get-WorktreeDirt {
     # WHY THAT ORDER MATTERS, MEASURED: `git diff HEAD` is non-empty on EVERY ordinary gate run,
     # because `Write-CanaryNonce` rewrites the tracked `tools/ci-canary/src/nonce.rs` before the run
     # starts (#152, by design). Deciding from the diff therefore recorded a non-null hash every
-    # time -- 29 of 29 manifests in this worktree -- and `ci/merge-proof.ps1` refuses a non-null
-    # `dirtyDiffHash` with "the gate ran with uncommitted edits". So the merge proof could not be
+    # time -- 29 of 29 manifests in this worktree -- and `ci/merge-proof.ps1` (retired 2026-09-24)
+    # refused a non-null `dirtyDiffHash` with "the gate ran with uncommitted edits". So the merge proof could not be
     # satisfied by ANY run the gate has ever produced: the producer's own artefact permanently
     # failed the consumer's check.
     #
@@ -4695,25 +4698,23 @@ function Write-RunManifest {
     # limit rather than papered over: this detects movement that LASTS, not movement that returns.
     $provenance = Get-HeadProvenance -HeadSha $headSha -BranchRef $script:gatedBranchAtStart
     # #993 (Codex, "preserve supplied PR provenance in offline manifests"): when the gate host has
-    # no `gh` and no server, Get-HeadProvenance answers null for both load-bearing top-level fields
-    # and `Test-ManifestVouches` refuses the manifest before the supplied landing snapshot -- which
-    # DOES identify the PR and this head, captured online -- can say anything. So a supplied-pr
-    # snapshot fills exactly those two fields, only when the lookup found NOTHING (a measured value,
-    # including a measured `pushed: false`, is never overwritten), with reasons naming the source.
-    # merge-proof re-verifies the snapshot against the LIVE PR at press time
-    # (Test-ManifestLandingSnapshot: number, base ref, base sha, merge-base) -- BUT ONLY ONCE
-    # origin/main's gate.ps1 defines Get-LandingSnapshot (#733: the proof runs from main's copy, and
-    # merge-proof:624 arms the landing proof from main's AST). Until that lands, including for this
-    # PR's own receipts, the two fields are the snapshot's CLAIM and the reason strings say so.
+    # no `gh` and no server, Get-HeadProvenance answers null for both load-bearing top-level fields,
+    # and `merge-proof`'s `Test-ManifestVouches` refused such a manifest before the supplied landing
+    # snapshot -- which DOES identify the PR and this head, captured online -- could say anything.
+    # So a supplied-pr snapshot fills exactly those two fields, only when the lookup found NOTHING (a
+    # measured value, including a measured `pushed: false`, is never overwritten), with reasons
+    # naming the source. `merge-proof` (retired 2026-09-24) re-verified the snapshot against the
+    # LIVE PR at press time (Test-ManifestLandingSnapshot: number, base ref, base sha, merge-base);
+    # nothing does now, so the two fields are the snapshot's CLAIM and the reason strings say so.
     if ($null -ne $mergeTargetSnapshot -and [string]::Equals([string]$mergeTargetSnapshot.mode, 'supplied-pr', [System.StringComparison]::Ordinal) -and
         [string]::Equals([string]$mergeTargetSnapshot.head, [string]$headSha, [System.StringComparison]::Ordinal)) {
         if ($null -eq $provenance.pullRequest -and $mergeTargetSnapshot.pullRequest -is [int]) {
             $provenance.pullRequest = [int]$mergeTargetSnapshot.pullRequest
-            $provenance.pullRequestReason = "gh could not look ($($provenance.pullRequestReason)); taken from the supplied landing snapshot -- a CLAIM of the snapshot, checked by merge-proof against the live PR only once origin/main's gate defines Get-LandingSnapshot (the landing proof is inert before that)"
+            $provenance.pullRequestReason = "gh could not look ($($provenance.pullRequestReason)); taken from the supplied landing snapshot -- a CLAIM of the snapshot, not re-verified against the live PR"
         }
         if ($null -eq $provenance.pushed) {
             $provenance.pushed = $true
-            $provenance.pushedReason = "no server to ask ($($provenance.pushedReason)); the supplied landing snapshot named this commit as the PR's head when captured online -- a CLAIM of the snapshot, checked by merge-proof against the live PR only once origin/main's gate defines Get-LandingSnapshot (the landing proof is inert before that)"
+            $provenance.pushedReason = "no server to ask ($($provenance.pushedReason)); the supplied landing snapshot named this commit as the PR's head when captured online -- a CLAIM of the snapshot, not re-verified against the live PR"
         }
     }
     # BOTH READS, because a tree is the commit it names only when nothing is modified AND nothing
@@ -4885,8 +4886,8 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         untrackedPaths     = @($dirt.untracked)
         # #725: WHAT THIS RUN COVERED. `status` says the stages passed; this says which of them ran
         # at all. Without it a `-SkipPostgres` run -- every run on a machine without PostgreSQL --
-        # is indistinguishable from a full gate to `ci/merge-proof.ps1`, which can only check fields
-        # the producer wrote.
+        # is indistinguishable from a full gate to any reader of the manifest, which can only check
+        # fields the producer wrote.
         coverage           = $coverage
         # #207 follow-up: which gated targets this run's SCOPE excluded from the required-features
         # check, so a reader can tell "SCOPED, and nothing gated was excluded" from "SCOPED, and the
@@ -5017,7 +5018,7 @@ $instrumentSuspect = ($unprovenReuse.Count -gt 0) -or (-not $CanaryPassed) -or $
         # touched for the whole run. See Test-SlotLockSnapshotsIdentical in ci/slot-lock.ps1.
         slotLockStartEndIdentical = Test-SlotLockSnapshotsIdentical -Start $SlotLockAtStart -End $SlotLockAtEnd
         # #903: WHAT THIS RUN COVERED. A GREEN over two crates and a GREEN over the workspace are
-        # the same word; this is the field that tells them apart, and merge-proof prints it.
+        # the same word; this is the field that tells them apart.
         scope              = Get-ScopeRecord -Selection $script:gateScope
         instrumentSuspect  = $instrumentSuspect
         # #455: what the target looked like BEFORE this run compiled anything. Recorded whole --
@@ -5306,8 +5307,9 @@ if ($gatedBranchAtStart -and $gatedHeadAtStart) {
 # machine on 2026-09-05 because the slot's reader had no consumer and its producer had no caller
 # (ci/slot-lock.ps1, #700). This is both halves connected: the gate is the durable process the pair
 # names -- its own pid and start time, at the precision Test-SlotHolderLiveness parses -- and it
-# waits on a live or unreadable holder, inherits the wrapper's claim when the exported pair matches
-# (MERGE-CHECKLIST: the wrapper claims, then launches), and reclaims only a pair the OS says is dead.
+# waits on a live or unreadable holder, inherits a wrapper's claim when the exported pair matches
+# (the merge checklist, retired 2026-09-24, had the wrapper claim, then launch), and reclaims only a
+# pair the OS says is dead.
 # The lock path is Get-SlotLockPath over Get-SlotDir, and GRAPHHELM_SLOT_LOCK_PATH is defaulted to it
 # so Read-SlotLockSnapshot below reads the same file instead of answering 'not set' every run.
 $slotLockPath = Get-SlotLockPath -SlotDir (Get-SlotDir)
@@ -5688,9 +5690,9 @@ try {
     # interference -- servers, ports, temp dirs. nextest gives each TEST its own process, so the
     # interference the loop could only catch BETWEEN binaries is now caught between tests as well.
     #
-    # WHAT IS LOST, stated plainly: 58 stage names become one. No automated consumer reads them --
-    # `ci/merge-proof.ps1` reads no stage name at all and `.factory/MERGE-CHECKLIST.md` reads only
-    # the set of FAILED stage names, which survives. On a red, nextest names the failing TEST, which
+    # WHAT IS LOST, stated plainly: 58 stage names become one. No automated consumer read them --
+    # `ci/merge-proof.ps1` read no stage name at all and the merge checklist read only the set of
+    # FAILED stage names, which survives (both retired 2026-09-24). On a red, nextest names the failing TEST, which
     # is a finer address than the binary the loop would have named.
     #
     # #243's PROPERTY SURVIVES, expressed per package instead of per suite: fingerprint the unit
@@ -5745,7 +5747,8 @@ try {
     # crate's entire dependency chain under the TEST profile, recompiled all of it to change one
     # debuginfo level.
     #
-    # THE MEASUREMENT THAT NAMES IT A BUILD, from the 370 records in .factory/gate-runs: `schema
+    # THE MEASUREMENT THAT NAMES IT A BUILD, from the 370 receipts committed to .factory/gate-runs
+    # before the store was retired on 2026-09-24: `schema
     # catalog` n=358, p10 51.7 s, median 73.2 s, p90 153.3 s -- while the two stages below it, which
     # reuse the binary it just built, cost 0.7 s and 0.5 s. One program answering three questions
     # cannot be a hundred times slower on the first for any reason but compiling.
@@ -6216,11 +6219,11 @@ try {
     # #455: a suspect target reaches the STATUS, because that is the only field anything downstream
     # reads (Codex P1 on #1009, and it was right about a claim I had published twice).
     # `$passedEverything` and `instrumentSuspect` are computed inside Write-RunManifest and are
-    # recorded, not enforced: `merge-proof.ps1` requires `status == GREEN` and never reads either of
-    # them -- measured, `instrumentSuspect` appears in that file zero times. So the first draft's
-    # console line "the run continues and cannot report GREEN" was FALSE: every stage passing on a
-    # target left broken by a previous run produced GREEN, exit 0, and a manifest merge-proof
-    # accepts.
+    # recorded, not enforced: `merge-proof.ps1` (retired 2026-09-24) required `status == GREEN` and
+    # never read either of them -- measured, `instrumentSuspect` appeared in that file zero times. So
+    # the first draft's console line "the run continues and cannot report GREEN" was FALSE: every
+    # stage passing on a target left broken by a previous run produced GREEN, exit 0, and a manifest
+    # merge-proof accepted.
     #
     # HARNESS-BROKE, not RED. RED is a claim about the tree, and the tree did not fail -- the run
     # could not vouch for what it measured, which is exactly the third state this vocabulary already

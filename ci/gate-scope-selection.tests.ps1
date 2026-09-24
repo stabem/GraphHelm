@@ -147,8 +147,8 @@ try {
     Assert-True ($narrow.matrix -eq $false) 'and the matrix decision travels with it'
 
     # ---- the manifest's `scope` object -------------------------------------------------------
-    # A scoped run that does not RECORD what it skipped is unauditable: `merge-proof` and the
-    # presser would read a GREEN that covered a fraction of the workspace and could not tell.
+    # A scoped run that does not RECORD what it skipped is unauditable: a reader of its manifest
+    # would see a GREEN that covered a fraction of the workspace and could not tell.
     $fullRecord = Get-ScopeRecord -Selection (Read-ScopeSelection -Path '')
     Assert-True ($fullRecord.full -eq $true) 'the record says a FULL run was full'
     Assert-True (-not [string]::IsNullOrWhiteSpace([string]$fullRecord.reason)) `

@@ -3,7 +3,7 @@
 # Dot-sources ONLY slot-lock.ps1, never gate.ps1. These functions have no cargo dependency, no
 # slot dependency, and no repository dependency - they read one env var and (at most) one file
 # under a throwaway temp directory this script creates and removes itself. Writing and running
-# this file needs no machine coordination; see .factory/e-agent-200-design.md for the sealed
+# this file needs no machine coordination; see design note #200 for the sealed
 # predictions these cases were written FROM, before any of ci/slot-lock.ps1 existed.
 #
 # Homegrown PASS/FAIL harness, not Pester: this repository has never carried a Pester dependency
@@ -118,8 +118,8 @@ try {
         "holder: pid=$PID start=$shiftedStart")
     Assert-Equal -Expected 'dead' -Actual (Read-SlotLockSnapshot).holderVerdict -Message '#700: a recycled pid reads dead'
 
-    # (3) INDETERMINATE by omission: a lock with no holder line at all. slot-claim.sh's own comment
-    # promises this degrades to indeterminate rather than to dead -- an unattributable lock must
+    # (3) INDETERMINATE by omission: a lock with no holder line at all. The retired slot-claim.sh's
+    # own comment promised this degrades to indeterminate rather than to dead -- an unattributable lock must
     # never be declared recoverable, which is the fail-CLOSED direction.
     Set-Content -LiteralPath $lockFile -Encoding utf8 -Value @(
         'HELD by tester | stamp | lane | STATUS: working',
@@ -154,7 +154,7 @@ try {
     # parseable - and STILL must not answer `present`, because the configured path matches the
     # exact shape (`graphhelm-target-*`) already proven wrong for a machine-wide lock. Content is
     # representative of the real stale record the orchestrator preserved (see
-    # .factory/e-agent-200-design.md Fixture C for the sha256-verified snapshot this is modeled
+    # design note #200, Fixture C, for the sha256-verified snapshot this is modeled
     # on); this test seeds its own bytes rather than reading that snapshot file directly, so the
     # test stays hermetic on a machine that doesn't have it.
     Write-Host "`n=== Fixture C: configured path matches target-dir shape -> indeterminate, never present ==="
@@ -245,9 +245,9 @@ try {
     # specific reason and would have failed in the gate. (Codex on #686 raised presence; the
     # measurement found identity, which is worse.)
     #
-    # So the gate stays PowerShell-only and the writer is covered by
-    # .factory/tools/slot-holder.tests.sh, run by hand. That coverage is NOT GATED, and #700
-    # carries it alongside the reader's missing consumer.
+    # So the gate stays PowerShell-only and the writer was covered by
+    # slot-holder.tests.sh, run by hand, until it was retired on 2026-09-24. That coverage was NOT
+    # GATED, and #700 carried it alongside the reader's missing consumer.
 
     # --- #624: the query-failure classification, extracted so it can be reached at all ----------
     Write-Host ""
@@ -329,7 +329,7 @@ try {
     if (Test-FnPresent 'Get-SlotLockPath') {
         Remove-Item Env:\GRAPHHELM_SLOT_LOCK_PATH -ErrorAction SilentlyContinue
         # Path.Combine, not Join-Path: Join-Path validates the DRIVE and throws DriveNotFound for X: here.
-        Assert-Equal -Expected ([System.IO.Path]::Combine('X:\some-slot', 'SLOT.lock')) -Actual (Get-SlotLockPath -SlotDir 'X:\some-slot') -Message '#700 (b1) unset env: <slotdir>\SLOT.lock, the file slot-claim.sh already uses'
+        Assert-Equal -Expected ([System.IO.Path]::Combine('X:\some-slot', 'SLOT.lock')) -Actual (Get-SlotLockPath -SlotDir 'X:\some-slot') -Message '#700 (b1) unset env: <slotdir>\SLOT.lock, the file the retired slot-claim.sh used'
         $env:GRAPHHELM_SLOT_LOCK_PATH = 'Y:\override\the.lock'
         Assert-Equal -Expected 'Y:\override\the.lock' -Actual (Get-SlotLockPath -SlotDir 'X:\some-slot') -Message '#700 (b2) GRAPHHELM_SLOT_LOCK_PATH wins when set, so tests and the reader agree on the path'
     } else { 1..2 | ForEach-Object { Assert-True -Condition $false -Message "#700 (b$_) Get-SlotLockPath is absent" } }
@@ -347,7 +347,7 @@ if (Test-FnPresent 'New-SlotClaim') {
     Assert-True -Condition (-not $second) -Message '#700 (c2) a claim on a held path returns false: create-or-fail, the kernel refused'
     $bytesAfter = [System.IO.File]::ReadAllBytes($claimPath)
     Assert-True -Condition ([System.Linq.Enumerable]::SequenceEqual([byte[]]$bytesBefore, [byte[]]$bytesAfter)) -Message '#700 (c3) the refused claim wrote NOTHING: the holder file is byte-identical'
-    Assert-True -Condition (($bytesBefore.Length -ge 3) -and -not ($bytesBefore[0] -eq 0xEF -and $bytesBefore[1] -eq 0xBB -and $bytesBefore[2] -eq 0xBF) -and -not ([System.Text.Encoding]::UTF8.GetString($bytesBefore).Contains("`r"))) -Message '#700 (c4) no BOM and LF only, so head -1 in slot-claim.sh reads the same bytes'
+    Assert-True -Condition (($bytesBefore.Length -ge 3) -and -not ($bytesBefore[0] -eq 0xEF -and $bytesBefore[1] -eq 0xBB -and $bytesBefore[2] -eq 0xBF) -and -not ([System.Text.Encoding]::UTF8.GetString($bytesBefore).Contains("`r"))) -Message '#700 (c4) no BOM and LF only, so head -1 (as the retired slot-claim.sh used it) reads the same bytes'
 } else { 1..4 | ForEach-Object { Assert-True -Condition $false -Message "#700 (c$_) New-SlotClaim is absent" } }
 
 Write-Host "`n=== #700 (d) Remove-SlotClaim: release only what is yours ==="
@@ -420,8 +420,8 @@ try {
 }
 
 Write-Host "`n=== #700 (e6/e7) the wrapper's claim is INHERITED by the gate it launched, never waited on ==="
-# .factory/MERGE-CHECKLIST.md: the WRAPPER claims the slot with slot-claim.sh before launching the gate, and
-# slot-claim.sh tells the shell to export GRAPHHELM_HOLDER_PID / GRAPHHELM_HOLDER_START. A gate started
+# The merge checklist (retired 2026-09-24): the WRAPPER claimed the slot with slot-claim.sh before launching the
+# gate, and slot-claim.sh told the shell to export GRAPHHELM_HOLDER_PID / GRAPHHELM_HOLDER_START. A gate started
 # inside that claim must recognise it as ITS OWN LANE'S -- by the exported pair equalling the lock's pair --
 # or it waits on itself for the whole budget. Parentage is not the signal: a detached gate's parent dies.
 $inhDir = New-TempTestDir -Name 'slot-inherit-700'

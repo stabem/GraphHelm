@@ -1,7 +1,7 @@
 //! The System One adapter: `POST {baseUrl}/v1/systemone` with a Bearer key, a [`JudgeRequest`]
 //! body and a [`JudgeReply`] reply (docs.typesafe.ai/api). Mirrors `byok.rs`'s shape over the
 //! same [`HttpTransport`]; serves the JUDGE door only
-//! (`docs/superpowers/plans/2026-09-16-architect-judgments.md` D1): a chat provider here, or
+//! (architect-judgments plan, D1): a chat provider here, or
 //! this provider on the draft door (`byok.rs`), is [`GatewayError::UnsupportedCapability`] before
 //! any request is built.
 

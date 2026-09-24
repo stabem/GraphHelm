@@ -26,9 +26,10 @@
 #     link.exe   52 s, 51 s          rust-lld   50 s, 48 s        (291 crates, 267 binaries, 0 Fresh)
 #
 # ~3 s, on a build pass that is ~0.2 % of a gate. That does not buy a new failure mode in the one
-# instrument this project has, so it was NOT shipped. `docs/superpowers/plans/2026-09-19-gate-under-five-minutes.md`
-# carries the numbers. Note also that `-C linker-features=+lld`, which reads like the modern
-# spelling, is UNSTABLE at 1.97.1 and refuses without `-Z unstable-options`.
+# instrument this project has, so it was NOT shipped. The gate-under-five-minutes plan (see
+# docs/process/DELIVERY.md, "History") carries the numbers. Note also that
+# `-C linker-features=+lld`, which reads like the modern spelling, is UNSTABLE at 1.97.1 and
+# refuses without `-Z unstable-options`.
 #
 # Same homegrown PASS/FAIL harness as the sibling gate suites; this repository carries no Pester.
 # Exit codes: 0 all passed, 1 an assertion failed, 2 the harness could not vouch for the run.

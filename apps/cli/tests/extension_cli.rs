@@ -1427,7 +1427,7 @@ fn every_mcp_tools_entry_names_a_tool_the_binary_actually_serves() {
 // -------------------------------------------------------------------------------------------
 // #285: publication, hostViews, composition were declared in every manifest's spec.contracts
 // and read by nothing. formatVersion, missingCapabilityResult, activation stay advisory
-// (blueprint .factory/e-agent-285-blueprint.md) -- pinned below so a future accidental
+// (design note #285) -- pinned below so a future accidental
 // enforcement attempt is a visible test change, not a silent behavior shift.
 // -------------------------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 //! `graphhelm gateway` — CLI surface for the Universal Model Gateway's route manifest, quota-free
-//! health probe, and credential broker (`docs/superpowers/plans/2026-08-14-gateway-slice.md`
+//! health probe, and credential broker (gateway-slice plan,
 //! Task 6). Three failure classes, following every sibling command family's own redaction-safe
 //! `Failure` pattern (`commands::events`, `commands::execution`):
 //!
@@ -218,7 +218,7 @@ pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
 /// `std::env::var` hands back an owned `String` copied out of the process environment by the
 /// standard library itself — the OS's/CRT's own copy of the variable is beyond anything this
 /// process can zeroize (PR review IMPORTANT 5b's honest limit: see
-/// `docs/superpowers/plans/2026-08-14-gateway-slice.md`'s honest-limits section, which now notes
+/// the gateway-slice plan's honest-limits section, which notes
 /// this alongside `ureq`'s/the OS's own retained copies). What this function *does* control is
 /// never letting a second, unzeroized copy of that string exist afterward:
 /// [`String::into_bytes`] reuses the same allocation (no copy), which is immediately moved into a

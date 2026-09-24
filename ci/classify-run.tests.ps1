@@ -541,8 +541,8 @@ try {
 # script then RECORDS `unrelatedTestFileVerifiedAgainstDiff = $true` -- a red attributed away from
 # the author's own diff, in the ledger, with the verification field saying it was checked.
 #
-# THE MISSING REF IS NOT HYPOTHETICAL: ci/gate-runner.ps1 documents and repairs `--single-branch`
-# clones in this same factory, where nothing populates refs/remotes/origin/main.
+# THE MISSING REF IS NOT HYPOTHETICAL: the gate runner (retired 2026-09-24) documented and repaired
+# `--single-branch` clones in this same factory, where nothing populates refs/remotes/origin/main.
 function New-GitShim {
     <#
       .SYNOPSIS

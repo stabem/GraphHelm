@@ -679,7 +679,7 @@ pub enum ExecutionCommand {
         // same provider, same environment variable, same 32 bytes — and the signal then records,
         // sealed, on a store created without one. The operator was blocked by not knowing that
         // command. An earlier version made the pair genuinely optional behind `--unsealed`; it
-        // reversed the rule in `docs/superpowers/plans/2026-08-14-real-executor.md:396-406`
+        // reversed the rule in the real-executor plan
         // ("refusing to run without a keyring rather than silently skipping the seal") to solve a
         // problem that already had a compliant answer, and was withdrawn.
         #[arg(long)]

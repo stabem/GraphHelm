@@ -74,7 +74,7 @@ pub fn run(
 /// the reason where the refusal is — the second remedy the issue itself offered.
 ///
 /// The first attempt at this fix made the pair optional behind `--unsealed`. It was withdrawn: it
-/// reversed the rule recorded in `docs/superpowers/plans/2026-08-14-real-executor.md:396-406`
+/// reversed the rule recorded in the real-executor plan
 /// ("refusing to run without a keyring rather than silently skipping the seal") to solve a problem
 /// that already had a compliant answer, and — because this command reads invocation flags and never
 /// the store — it also let an operator on a SEALED store skip the seal by forgetting two flags.

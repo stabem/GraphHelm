@@ -19,8 +19,9 @@
 # measure the runtime would be measuring the wrong edition while reporting it as the right one.
 #
 # THE SWEEP JOINS WRAPPED PIPELINES, AND THAT IS NOT A DETAIL. The report that opened #762 listed
-# six sites in ci/gate.ps1 and stated that ci/merge-proof.ps1 had none. Its instrument was a
-# per-LINE match, and ci/merge-proof.ps1's two instances put the stopper on the CONTINUATION line:
+# six sites in ci/gate.ps1 and stated that ci/merge-proof.ps1 (retired 2026-09-24) had none. Its
+# instrument was a per-LINE match, and ci/merge-proof.ps1's two instances put the stopper on the
+# CONTINUATION line:
 #
 #     $rawPaths = @(& git ... ls-tree ... 2>$null |
 #             Select-Object -First ($MaxManifests + 1))
@@ -29,12 +30,12 @@
 # A same-line instrument reads that file as clean. Joining continuations is what found them, so the
 # join is asserted by its own canary below rather than assumed.
 #
-# AND A DELIBERATE STOP IS NOT A DEFECT. In ci/merge-proof.ps1 the stop is load-bearing: it bounds
-# what is READ from an untrusted store rather than what survives the read, so the general remedy for
-# this ticket -- capture, read the code, then reduce -- is the very unbounded read that file went to
-# trouble to prevent. Those sites carry a `762-DELIBERATE-STOP` marker and are PINNED BY NAME below,
-# so a waiver cannot be added silently: a new marker fails this suite until someone moves the pin
-# and says why.
+# AND A DELIBERATE STOP IS NOT A DEFECT. In ci/merge-proof.ps1 the stop was load-bearing: it bounded
+# what was READ from an untrusted store rather than what survived the read, so the general remedy
+# for this ticket -- capture, read the code, then reduce -- was the very unbounded read that file
+# went to trouble to prevent. Such sites carry a `762-DELIBERATE-STOP` marker and are PINNED BY NAME
+# below (none remain since that file was retired), so a waiver cannot be added silently: a new
+# marker fails this suite until someone moves the pin and says why.
 
 $ExpectedAssertionCount = 12
 $ErrorActionPreference = 'Stop'
@@ -148,7 +149,7 @@ try {
         -Message "the sweep finds the defect when one is put in front of it (found $($hitA.Count))"
 
     # (B) THE WRAPPED SHAPE -- the one the report's per-line instrument could not see, and the one
-    # that hid ci/merge-proof.ps1's two real instances.
+    # that hid the two real instances in ci/merge-proof.ps1 (since retired).
     $wrapped = New-Canary -Name 'wrapped' -Lines @(
         '$paths = @(& git ls-tree -r --name-only HEAD 2>$null |',
         '        Select-Object -First ($Max + 1))',

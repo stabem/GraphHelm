@@ -101,7 +101,7 @@ Before implementation:
 2. Do not modify or discard existing uncommitted work.
 3. If `AGENTS.md` does not exist, create it from the canonical specifications. It must contain exact repository commands, architectural invariants, dependency boundaries, testing requirements, security rules, and documentation precedence. Do not generate a generic file and leave it unreviewed.
 4. Create a dependency-ordered program plan index at:
-   `docs/superpowers/plans/2026-08-08-graphhelm-program-plan-index.md`
+   `docs/plans/2026-08-08-graphhelm-program-plan-index.md`
 5. Decompose the complete product into independently testable subsystem plans. At minimum cover:
    - protocols and schemas;
    - Graph DSL and Graph Engine;
@@ -118,7 +118,7 @@ Before implementation:
    - SSH/Docker bootstrap;
    - observability, replay, export, conformance, SDKs, CLI, packaging, and releases.
 6. Create the detailed implementation plan for the first milestone at:
-   `docs/superpowers/plans/2026-08-08-graphhelm-foundation-graph-kernel.md`
+   `docs/plans/2026-08-08-graphhelm-foundation-graph-kernel.md`
 7. The detailed plan must name exact files, interfaces, types, tests, commands, expected failing states, expected passing states, and commit boundaries. It must be executable by an engineer with no prior context.
 8. Self-review the plan for specification coverage, placeholders, contradictions, type consistency, and scope.
 9. Create an isolated worktree and branch named `feat/foundation-graph-kernel` before touching implementation files.

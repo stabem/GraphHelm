@@ -629,7 +629,7 @@ fn respond(status: StatusCode, output: CommandOutput) -> Response {
 }
 
 /// Maps one `execution::Failure` onto an HTTP response in the standard four-key envelope, per the
-/// endpoint contract's failure-mapping table (`docs/superpowers/plans/2026-08-13-public-runtime-api.md`):
+/// endpoint contract's failure-mapping table (public-runtime-api plan):
 /// argument/validation problems (`GHCLI001_ARGUMENT_INVALID`, `GHCLI003_SIGNAL_INVALID`,
 /// `GHCLI004_SIGNAL_UNRECORDABLE`) → 400; precondition refusals the commands already produce
 /// (`GHCLI005_EXECUTION_STATE`) → 409; store conflicts (`GHE001_SEQUENCE_CONFLICT`,

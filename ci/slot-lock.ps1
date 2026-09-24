@@ -3,7 +3,7 @@
 # functions can be unit-tested in isolation (ci/slot-lock.tests.ps1) without executing the rest of
 # the gate - gate.ps1 dot-sources this file rather than defining the functions inline.
 #
-# THE DEFECT THIS REPLACES (full account: .factory/e-agent-200-design.md): the old
+# THE DEFECT THIS REPLACES (full account: design note #200): the old
 # Read-SlotLockSnapshot derived the lock's location from $env:CARGO_TARGET_DIR, which is a
 # PER-LANE variable (each lane gets its own D:/graphhelm-target-<lane>), while SLOT.lock is a
 # MACHINE-WIDE coordination singleton. That was always a category error, not just a stale path -
@@ -61,14 +61,15 @@ function Test-SlotLockPathMatchesTargetDirShape {
 # form instead, not the raw JSON string.
 # #700: the holder pair, read out of the lock's own text.
 #
-# `slot-claim.sh` writes `holder: pid=<pid> start=<iso8601>` as the last line of the claim. The
+# `slot-claim.sh` (retired 2026-09-24) wrote `holder: pid=<pid> start=<iso8601>` as the last line
+# of the claim, the same line New-SlotClaim below writes. The
 # snapshot carried that text as `content` and nothing extracted the pair, which is why
 # `Test-SlotHolderLiveness` had ZERO non-test callers: the reader had no caller because nothing
 # produced its two arguments in-process. The gap was a parse, not a policy.
 #
 # ABSENT IS NOT MALFORMED, and neither is death. A lock with no holder line returns empty strings,
 # which `Test-SlotHolderLiveness` answers 'indeterminate' for -- the promise `slot-claim.sh:226`
-# already makes in writing ("DEGRADES SAFELY: unset -> written empty -> ... 'indeterminate'").
+# made in writing ("DEGRADES SAFELY: unset -> written empty -> ... 'indeterminate'").
 # An unattributable lock must never be declared recoverable.
 function Get-SlotHolderPairFromContent {
     param([Parameter(Mandatory)] [AllowEmptyString()] [AllowNull()] [string] $Content)
@@ -237,8 +238,8 @@ function Get-SlotHolderVerdict {
 }
 
 # NOT WIRED YET, and dated so the gap has an age (2026-09-02, K's review of #686). Measured on
-# that branch: this function has ZERO non-test callers, and .factory/tools/slot-claim.sh has zero
-# callers of its own. Stale-lock recovery is DEFINED, not connected -- the reader can answer, and
+# that branch: this function had ZERO non-test callers, and slot-claim.sh (retired 2026-09-24) had
+# zero callers of its own. Stale-lock recovery is DEFINED, not connected -- the reader can answer, and
 # nothing asks it, because nothing writes a pair either. A reader with no writer and a writer with
 # no caller are the same gap from opposite ends, and #700 carries both. The recovery rule itself is
 # #619's and deliberately not here.
@@ -337,8 +338,8 @@ function Test-SlotHolderLiveness {
 # ============================================================================================
 
 # ONE spelling of where the lock lives. `GRAPHHELM_SLOT_LOCK_PATH` wins when set -- it is what
-# Read-SlotLockSnapshot already reads -- otherwise `<slotdir>/SLOT.lock`, the file
-# .factory/tools/slot-claim.sh already claims. The gate passes its own Get-SlotDir in, so the
+# Read-SlotLockSnapshot already reads -- otherwise `<slotdir>/SLOT.lock`, the file the retired
+# slot-claim.sh claimed. The gate passes its own Get-SlotDir in, so the
 # 'D:/graphhelm-slot' default is not spelled a second time here.
 function Get-SlotLockPath {
     param([Parameter(Mandatory)] [string] $SlotDir)
@@ -364,7 +365,7 @@ function Get-SlotHolderIdentity {
     return [ordered]@{ pid = $value; startUtc = [string]$pair.startUtc }
 }
 
-# Create-or-fail, the same primitive slot-claim.sh gets from `noclobber`: FileMode.CreateNew is
+# Create-or-fail, the same primitive the retired slot-claim.sh got from `noclobber`: FileMode.CreateNew is
 # refused by the kernel when the file exists, so two claimants can never both believe they won.
 # Returns $true on a claim, $false when the create was refused -- and writes NOTHING in the
 # second case. UTF-8 without BOM and LF only, so `head -1` in the bash tool reads the same bytes.
@@ -419,11 +420,11 @@ function Remove-SlotClaim {
 # three of them mean "do not run" for three different reasons:
 #   claimed     this process wrote the lock; it releases it in its finally
 #   inherited   the lock is held by the pair this process was handed in GRAPHHELM_HOLDER_PID/START
-#               -- the wrapper's claim (MERGE-CHECKLIST: the wrapper claims, then launches). Not
+#               -- a wrapper's claim (the retired merge checklist: the wrapper claims, then launches). Not
 #               ours to release. Parentage is NOT the signal: a detached gate's parent dies.
 #   expired     a live or unreadable holder outlasted the budget; nothing was touched
 #   path-fault  the create failed and no file exists: a path/permission fault, not contention
-#               (the same distinction slot-claim.sh draws before it says "held")
+#               (the same distinction the retired slot-claim.sh drew before it said "held")
 #
 # 'dead' -- the pair's process is gone, or a recycled pid carries a different start time -- is the
 # one case this function recovers, by deleting and re-claiming, and it says so on the ledger with

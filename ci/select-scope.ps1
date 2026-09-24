@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     Maps every changed path to its crate, expands to all transitive dependents over BOTH
-    `dependencies` and `dev-dependencies`, and prints the selection as JSON for the gate and for
-    `merge-proof` to record. It runs nothing and decides nothing about colour: it answers "which
+    `dependencies` and `dev-dependencies`, and prints the selection as JSON for the gate to act on
+    and record. It runs nothing and decides nothing about colour: it answers "which
     crates can this change reach", and the caller runs them.
 
     IT FAILS CLOSED, AND THAT IS THE WHOLE DESIGN. The escalation list below is a deny-list over a
@@ -144,8 +144,8 @@ if ($changed.Count -eq 0) {
 # runs stay on the escalation list: a change to the gate changes what every other stage measures,
 # which is a different claim from "a suite for the gate changed". Adding a member here is loosening
 # an escalation, so it is an edit a reviewer sees and a cell has to survive. (`ci/merge-proof.ps1`
-# used to be named here too. It is a verifier the PRESSER runs after the gate, not a stage the gate
-# runs, so it cannot change what a Rust stage measures; its own suite still runs on every change.)
+# used to be named here too. It was a verifier the PRESSER ran after the gate, not a stage the gate
+# runs, so it could not change what a Rust stage measures; it was retired on 2026-09-24.)
 #
 # #901 slice 2 ADDS TWO MEMBERS, and neither is a hand-written list.
 #
@@ -154,8 +154,9 @@ if ($changed.Count -eq 0) {
 #            `ci/gate.ps1`, followed transitively through the files it names (plus this selector,
 #            which decides the gate's scope). Measured 2026-09-23: that closure is 15 files, and it
 #            leaves out `gate-runner.ps1`, `merge-proof.ps1`, `classify-run.ps1`,
-#            `closing-keywords.ps1`, `gate-queue.ps1` -- the verifiers and the runner, which carry
-#            most of the fleet's `ci/` churn and cannot change what a Rust stage measures. Their
+#            `closing-keywords.ps1`, `gate-queue.ps1` -- the verifiers and the runner, which carried
+#            most of the fleet's `ci/` churn and cannot change what a Rust stage measures (the
+#            runner, the queue and `merge-proof.ps1` were retired on 2026-09-24). Their
 #            suites still run: every `ci/` path reaches the suites stage below. A closure that could
 #            not be derived claims every `ci/` file, so the failure widens.
 #   studio   `apps/studio/*`, a Node project with its own stage (`Test-StudioScopeChanged` in the
@@ -225,7 +226,7 @@ function Test-KnownNonBuildInput {
 # files would: a reader in a crate selects that crate, a reader under `schemas/` escalates, a reader
 # nobody owns escalates as unmapped. No reader at all means no build input: class `markdown`.
 #
-# The same "a mention counts as a read" rule `ci/docs-only.ps1` uses (#901 slice 1), and wide for the
+# The same "a mention counts as a read" rule `ci/docs-only.ps1` (retired 2026-09-24) used (#901 slice 1), and wide for the
 # same reason. `extensions/` stays out: its package digests bind the raw bytes of its Markdown.
 # FAIL WIDE: git grep answering anything but 0 or 1 leaves the `.md` as build input, where it
 # reaches the unmapped rule and escalates.
@@ -319,7 +320,8 @@ function Get-MarkdownReaders {
 # itself, `Cargo.toml` and `schemas/` -- every one of which escalates above, so an escalated run
 # never reaches this block and keeps the suites. What is left here is a narrow run over crates.
 #
-# THE REACH RULE IS TEXTUAL AND WIDE ON PURPOSE -- the rule `ci/docs-only.ps1` uses: a MENTION
+# THE REACH RULE IS TEXTUAL AND WIDE ON PURPOSE -- the rule `ci/docs-only.ps1` (retired 2026-09-24)
+# used: a MENTION
 # counts as a read. A changed path reaches the suites when the text under `ci/` names the path
 # itself, any ancestor directory of it two segments deep or more (`core/events`), or -- for a file
 # that is not Rust source -- its basename. A Rust source basename is excluded because `lib.rs` and
@@ -466,8 +468,9 @@ foreach ($package in $metadata.packages) {
 }
 
 # THE GATE'S OWN RECEIPT IS NOT BUILD INPUT -- the same reasoning #899 used for the freeze rule.
-# #674(a) makes every authoritative run commit its manifest under this prefix onto the branch it
-# judged, so from a branch's SECOND run on the store is always in the diff. Left to the unmapped
+# #674(a) made every authoritative run commit its manifest under this prefix onto the branch it
+# judged, so from a branch's SECOND run on the store was always in the diff. The store has been
+# git-ignored scratch since 2026-09-24, but a branch cut before then still carries receipts. Left to the unmapped
 # rule below it maps to no crate and escalates the run to FULL, every time, for ever.
 #
 # Measured on #919's real range, where the only other changed file was one `apps/cli` test:

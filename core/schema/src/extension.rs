@@ -1765,8 +1765,7 @@ fn contribution_artifact_flow_refs(contributions: &[(usize, Contribution)]) -> B
 /// #285: six `spec.contracts` fields were declared in every shipped manifest and read by
 /// nothing — `additionalProperties: true` on `contracts` (`schemas/extension.schema.json`) means
 /// the schema layer never knew these keys existed either, so this is the only place any of them
-/// is ever checked. Per-field verdicts, not one shared rule (blueprint
-/// `.factory/e-agent-285-blueprint.md` §2):
+/// is ever checked. Per-field verdicts, not one shared rule (design note #285, §2):
 ///
 /// - `publication`: ENFORCED below. A package declaring anything but `"governor-only"`
 ///   misrepresents how it may be published — B's own demonstrated exploit

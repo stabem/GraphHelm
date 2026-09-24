@@ -124,9 +124,9 @@ if ($vanished.Count -gt 0) {
 #
 # TWO ORDERS, DELIBERATELY. Dispatch is longest-first (by file size, DERIVED from the tree rather
 # than a hand-kept list that would rot); replay is alphabetical. Longest-first is worth more than
-# any throttle value here: `merge-proof.tests.ps1` and `gate-manifest-provenance.tests.ps1` are
-# together over 300 KB of the set and dominate the wall clock, so starting them last would make the
-# pool no faster than the loop it replaces.
+# any throttle value here: when this was written, `merge-proof.tests.ps1` (retired 2026-09-24) and
+# `gate-manifest-provenance.tests.ps1` were together over 300 KB of the set and dominated the wall
+# clock, so starting them last would have made the pool no faster than the loop it replaced.
 $throttle = 6
 if (-not [string]::IsNullOrWhiteSpace($env:GRAPHHELM_PS_SUITES_THROTTLE)) {
     $parsedThrottle = 0
@@ -139,11 +139,11 @@ if (-not [string]::IsNullOrWhiteSpace($env:GRAPHHELM_PS_SUITES_THROTTLE)) {
         Write-Host "[suites] GRAPHHELM_PS_SUITES_THROTTLE='$($env:GRAPHHELM_PS_SUITES_THROTTLE)' is not a positive integer; running SERIALLY." -ForegroundColor Yellow
     }
 }
-# A CEILING, NOT A SCHEDULE. The slowest suite measured here is `merge-proof.tests.ps1` at 487.7 s,
-# so 1800 is roughly 3.7x the real floor -- far enough that a healthy suite never trips it and near
-# enough that a wedged one does not hold the gate for an hour with no colour. Overridable only so
-# `ci/run-ps-suites-pool.tests.ps1` can exercise the kill path in under a second; an unreadable
-# value keeps the shipped ceiling rather than inventing one.
+# A CEILING, NOT A SCHEDULE. The slowest suite measured here was `merge-proof.tests.ps1` (retired
+# 2026-09-24) at 487.7 s, so 1800 was roughly 3.7x the real floor then -- far enough that a healthy
+# suite never trips it and near enough that a wedged one does not hold the gate for an hour with no
+# colour. Overridable only so `ci/run-ps-suites-pool.tests.ps1` can exercise the kill path in under
+# a second; an unreadable value keeps the shipped ceiling rather than inventing one.
 $SuiteTimeoutSeconds = 1800
 if (-not [string]::IsNullOrWhiteSpace($env:GRAPHHELM_PS_SUITE_TIMEOUT_SECONDS)) {
     $parsedTimeout = 0

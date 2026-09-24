@@ -751,9 +751,10 @@ if ($AsJson) {
     # line was added to end, surviving in the one mode nobody looks at.
     #
     # The shape changes from a bare array to `{ tree, sites }`. MEASURED before changing it: no
-    # caller in this repository passes `-AsJson` (`git grep AsJson` over ci/, .factory/, apps/,
-    # tools/, core/ finds only this script), so there is no consumer to break -- and provenance
-    # BESIDE the JSON on another stream would be the same absence one pipe along.
+    # caller in this repository passed `-AsJson` (`git grep AsJson` over ci/, the since-retired
+    # process directory, apps/, tools/, core/ found only this script), so there is no consumer to
+    # break -- and provenance BESIDE the JSON on another stream would be the same absence one pipe
+    # along.
     [ordered]@{
         tree  = if ($Path) { 'not asked -- an explicit -Path was given' } else { Get-TreeProvenance -Root $script:sweepRoot -ScannedPaths $files -HeadBefore $script:sweepHeadBefore -ReflogBefore $script:sweepReflogBefore }
         sites = @($found)

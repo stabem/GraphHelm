@@ -5,11 +5,12 @@
 # running immediately after a `cli:` loop that just built this exact crate's whole dependency chain
 # under the TEST profile -- recompiled it all again to change one debuginfo level.
 #
-# Measured over the 370 records in .factory/gate-runs: `schema catalog` n=358, p10 51.7 s,
-# median 73.2 s, p90 153.3 s -- while `schema baseline compatibility` (0.7 s) and `schema
-# conformance` (0.5 s), which reuse the binary `schema catalog` just built, are free. That asymmetry
-# is the proof the cost is a BUILD and not schema work: the same program answering three questions
-# cannot be a hundred times slower on the first one for any other reason.
+# Measured over the 370 gate receipts committed before the receipt store was retired (2026-09-24):
+# `schema catalog` n=358, p10 51.7 s, median 73.2 s, p90 153.3 s -- while `schema baseline
+# compatibility` (0.7 s) and `schema conformance` (0.5 s), which reuse the binary `schema catalog`
+# just built, are free. That asymmetry is the proof the cost is a BUILD and not schema work: the
+# same program answering three questions cannot be a hundred times slower on the first one for any
+# other reason.
 #
 # `--profile test` on all three makes them reuse the loop's unit. It changes exactly one compiler
 # flag (`-C debuginfo=2` -> `-C debuginfo=1`); feature resolution, opt-level, debug-assertions,

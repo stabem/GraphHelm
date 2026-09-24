@@ -1,5 +1,5 @@
 //! #221: `OwnerOutputValidator` — red-first per the sealed plan in
-//! `.factory/e-agent-221-blueprint.md` §7 (T1-T12). One test at a time, TDD literal.
+//! the owner-output blueprint §7 (T1-T12). One test at a time, TDD literal.
 
 use std::path::Path;
 

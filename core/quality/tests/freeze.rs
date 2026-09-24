@@ -271,7 +271,7 @@ const NOT_GATE_MACHINERY: &str = "README.md";
 /// moment the PR merges.
 ///
 /// **And the set is not hypothetically mobile -- it has already moved once, unwatched.**
-/// `.factory/h-agent-211-surface-blueprint.md:92` records it as `[&str; 3]`; it is `[&str; 4]`
+/// Design note #211 records it as `[&str; 3]`; it is `[&str; 4]`
 /// today. A seal in that same document points AT this constant (line 407) and noticed the growth
 /// in neither direction. The set moves, things are aimed at it, and nobody was looking. (Found by
 /// N while reviewing #402.)
@@ -304,7 +304,7 @@ const NOT_GATE_MACHINERY: &str = "README.md";
 /// One assertion per prefix rather than a loop over an array, deliberately. A loop would put the
 /// prefixes back into a list, and a list element is exactly what deletes without comment.
 ///
-/// This is not hypothetical. `.factory/h-agent-211-surface-blueprint.md` records a sealed claim
+/// This is not hypothetical. Design note #211 records a sealed claim
 /// whose death condition is *"`GATE_MACHINERY` stops listing `tools/pathogens/`"* -- another
 /// lane's prediction depends on this set not shrinking, and before this test nothing would have
 /// told them it had. (#342)
@@ -443,12 +443,14 @@ fn every_frozen_prefix_matches_at_least_one_tracked_file() {
 
 /// The gate's OWN run manifest is not gated code (#898).
 ///
-/// #674(a) makes every authoritative gate commit its manifest under `.factory/gate-runs/` onto the
+/// #674(a) made every authoritative gate commit its manifest under `.factory/gate-runs/` onto the
 /// branch it judged. Read as "code side" by `freeze_violation`, that receipt paired with any
 /// gate-machinery path -- so every branch touching `core/quality/` or `tools/pathogens/` was RED at
 /// `this_branch_does_not_move_the_judge_and_the_judged_together` from its SECOND run on, and a
-/// gate-machinery change could never carry the GREEN manifest `merge-proof` requires. The rule
-/// condemned its own receipt. Measured on #859's third gate (manifest `c6887f05`).
+/// gate-machinery change could never carry the GREEN manifest `merge-proof` (retired
+/// 2026-09-24) required. The rule condemned its own receipt. Measured on #859's third gate
+/// (manifest `c6887f05`). Receipts are no longer committed, but `ci/gate.ps1` still writes its
+/// manifests under that prefix, so the exemption stays.
 ///
 /// The exemption is the store's prefix and nothing wider, and the three controls below are what
 /// keep it from becoming a bypass: the real pairing still refuses, code-only stays clean, and a

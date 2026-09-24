@@ -8935,6 +8935,61 @@ fn http_credential_rotation_preserves_shared_route_scope() {
     );
 }
 
+/// #1182: the same shape as the cell above, except the two routes point at DIFFERENT vendors
+/// under the one `openai` wire format and one shared reference. Rotating from `route_a` must not
+/// keep `route_b` in the scope: it would lease the new key and send it to another host.
+#[test]
+fn http_credential_rotation_drops_a_shared_route_on_another_endpoint() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, _manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    for (id, base_url) in [
+        ("route_a", "https://api.example.com"),
+        ("route_b", "https://api.other-vendor.example"),
+    ] {
+        let (status, reply) = put_json(
+            &format!("{base}/v1/gateway/routes"),
+            &token,
+            &serde_json::json!({
+                "id": id,
+                "provider": "openai",
+                "baseUrl": base_url,
+                "model": "model",
+                "credentialRef": "cred_shared",
+                "replace": true,
+            }),
+        );
+        assert_eq!(status, 200, "{reply}");
+    }
+    let (status, first) = put_json(
+        &format!("{base}/v1/gateway/credentials/cred_shared"),
+        &token,
+        &serde_json::json!({
+            "value": "first-secret",
+            "provider": "openai",
+            "usableBy": ["route_a", "route_b"],
+        }),
+    );
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(
+        first["data"]["routes"],
+        serde_json::json!(["route_a", "route_b"]),
+        "control: before the rotation both routes hold the reference"
+    );
+    let (status, rotated) = put_json(
+        &format!("{base}/v1/gateway/credentials/cred_shared"),
+        &token,
+        &serde_json::json!({
+            "value": "rotated-secret",
+            "provider": "openai",
+            "usableBy": ["route_a"],
+        }),
+    );
+    assert_eq!(status, 200, "{rotated}");
+    assert_eq!(rotated["data"]["routes"], serde_json::json!(["route_a"]));
+}
+
 #[test]
 fn gateway_mutations_cannot_override_the_resources_configured_at_startup() {
     let directory = tempfile::tempdir().unwrap();

@@ -601,6 +601,11 @@ fn preserving_scope_serializes_concurrent_rotations_and_checks_fresh_provider() 
                         usable_by: vec!["route_b".to_owned()],
                     },
                     sentinel_bytes(),
+                    &[
+                        "route_a".to_owned(),
+                        "route_b".to_owned(),
+                        "route_c".to_owned(),
+                    ],
                 )
                 .await
                 .unwrap();
@@ -621,6 +626,11 @@ fn preserving_scope_serializes_concurrent_rotations_and_checks_fresh_provider() 
                         usable_by: vec!["route_c".to_owned()],
                     },
                     sentinel_bytes(),
+                    &[
+                        "route_a".to_owned(),
+                        "route_b".to_owned(),
+                        "route_c".to_owned(),
+                    ],
                 )
                 .await
                 .unwrap();
@@ -661,10 +671,128 @@ fn preserving_scope_serializes_concurrent_rotations_and_checks_fresh_provider() 
                     usable_by: vec!["route_d".to_owned()],
                 },
                 sentinel_bytes(),
+                &[],
             )
             .await
             .unwrap_err();
         assert!(matches!(error, BrokerError::ProviderMismatch { .. }));
+    });
+}
+
+const ROTATED: &str = "sk-ROTATED-fedcba9876543210";
+
+fn rotated_bytes() -> SecretBytes {
+    SecretBytes::new(ROTATED.as_bytes().to_vec())
+}
+
+fn shared_reference(usable_by: &[&str]) -> SecretReference {
+    SecretReference {
+        id: "shared_scope".to_owned(),
+        provider: "openai".to_owned(),
+        usable_by: usable_by.iter().map(|route| (*route).to_owned()).collect(),
+    }
+}
+
+/// #1182: `provider` is a wire format, not a vendor. Two routes can share `openai` and one
+/// reference while pointing at two vendors. Rotating the value from one of them must not hand
+/// the new key to the other unless the caller vouched that it reaches the same endpoint; the
+/// plain union this replaced did exactly that.
+#[test]
+fn a_rotation_keeps_only_the_existing_routes_named_as_endpoint_peers() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+
+    block_on(async {
+        let mut broker = create_broker(broker_dir.path(), keyring_dir.path()).await;
+        broker
+            .store(
+                shared_reference(&["openai_route", "other_vendor"]),
+                sentinel_bytes(),
+            )
+            .await
+            .unwrap();
+
+        let rotated = broker
+            .store_preserving_existing_scope(
+                shared_reference(&["openai_route"]),
+                rotated_bytes(),
+                &["openai_route".to_owned()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rotated.usable_by, vec!["openai_route"]);
+
+        let error = lease_error(broker.lease("shared_scope", "other_vendor").await);
+        assert!(
+            matches!(error, BrokerError::NotUsableByRoute { .. }),
+            "the route on another endpoint must lose the reference, got {error:?}"
+        );
+        let leased = broker.lease("shared_scope", "openai_route").await.unwrap();
+        assert_eq!(leased.expose(<[u8]>::to_vec), ROTATED.as_bytes());
+    });
+}
+
+/// #1182, the control for the cell above: a route the caller DOES name as a peer keeps the
+/// reference, and it leases the rotated value rather than the old one.
+#[test]
+fn a_rotation_keeps_an_endpoint_peer_and_hands_it_the_rotated_value() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+
+    block_on(async {
+        let mut broker = create_broker(broker_dir.path(), keyring_dir.path()).await;
+        broker
+            .store(shared_reference(&["route_a", "route_b"]), sentinel_bytes())
+            .await
+            .unwrap();
+
+        let rotated = broker
+            .store_preserving_existing_scope(
+                shared_reference(&["route_a"]),
+                rotated_bytes(),
+                &["route_a".to_owned(), "route_b".to_owned()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rotated.usable_by, vec!["route_a", "route_b"]);
+        let leased = broker.lease("shared_scope", "route_b").await.unwrap();
+        assert_eq!(leased.expose(<[u8]>::to_vec), ROTATED.as_bytes());
+    });
+}
+
+/// #1182: revocation withdrew every route. Rotating the value re-authorizes exactly the routes
+/// the caller names — even ones it lists as endpoint peers are not given back — and the
+/// reference is live again for those alone.
+#[test]
+fn rotating_a_revoked_reference_authorizes_only_the_named_routes() {
+    let broker_dir = tempfile::TempDir::new().unwrap();
+    let keyring_dir = tempfile::TempDir::new().unwrap();
+
+    block_on(async {
+        let mut broker = create_broker(broker_dir.path(), keyring_dir.path()).await;
+        broker
+            .store(shared_reference(&["route_a", "route_b"]), sentinel_bytes())
+            .await
+            .unwrap();
+        broker.revoke("shared_scope").await.unwrap();
+
+        let rotated = broker
+            .store_preserving_existing_scope(
+                shared_reference(&["route_a"]),
+                rotated_bytes(),
+                &["route_a".to_owned(), "route_b".to_owned()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(rotated.usable_by, vec!["route_a"]);
+
+        let error = lease_error(broker.lease("shared_scope", "route_b").await);
+        assert!(
+            matches!(error, BrokerError::NotUsableByRoute { .. }),
+            "a revoked route must not come back through a rotation, got {error:?}"
+        );
+        let leased = broker.lease("shared_scope", "route_a").await.unwrap();
+        assert_eq!(leased.expose(<[u8]>::to_vec), ROTATED.as_bytes());
     });
 }
 

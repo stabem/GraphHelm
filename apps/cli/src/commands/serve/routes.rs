@@ -3840,6 +3840,7 @@ pub(super) async fn gateway_credential_set(
         );
     };
     let broker = model.broker_dir.clone();
+    let manifest = model.manifest_path.clone();
     let keyring = wiring.keyring_dir.clone();
     let key_id = wiring.key_id.clone();
 
@@ -3908,7 +3909,7 @@ pub(super) async fn gateway_credential_set(
 
     match tokio::task::spawn_blocking(move || {
         crate::commands::gateway::credential::set_value_preserving_scope(
-            &broker, &keyring, &key_id, &reference, &provider, routes, value,
+            &broker, &keyring, &key_id, &manifest, &reference, &provider, routes, value,
         )
     })
     .await

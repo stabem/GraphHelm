@@ -367,16 +367,30 @@ impl CredentialBroker {
         Ok(())
     }
 
-    /// Rotates a credential while preserving every route already authorized for its reference.
+    /// Rotates a credential, keeping only those already-authorized routes that reach the SAME
+    /// endpoint as the rotation (#1182).
     ///
     /// Unlike a caller-side `list` followed by [`Self::store`], this reloads the current index
     /// after acquiring the broker lock. Two HTTP rotations can therefore add different routes
     /// without one replacing the other's freshly-added scope. Provider changes fail closed based
     /// on that same fresh entry.
+    ///
+    /// WHICH EXISTING ROUTES SURVIVE. The sealed value is REPLACED, so every route that keeps the
+    /// reference will be handed the new key. `provider` is a wire format, not a vendor: two routes
+    /// can share `openai` and still point at different vendors, and a plain union once handed a
+    /// rotated OpenAI key to a route that transmits to another vendor. So an existing route is kept
+    /// only when the caller names it in `endpoint_peers` — the routes it has verified reach the
+    /// same endpoint as the ones being rotated. An empty slice keeps nothing: the reference is
+    /// scoped to `reference.usable_by` alone, which fails closed for any route left out.
+    ///
+    /// A REVOKED reference keeps nothing, whatever the peers: revocation withdrew every route,
+    /// and rotating the value is not a decision to give any of them back. Only the routes the
+    /// caller names in `reference.usable_by` are authorized afterwards.
     pub async fn store_preserving_existing_scope(
         &mut self,
         reference: SecretReference,
         value: SecretBytes,
+        endpoint_peers: &[String],
     ) -> Result<SecretReference, BrokerError> {
         validate_reference(&reference)?;
         let SecretReference {
@@ -405,7 +419,15 @@ impl CredentialBroker {
             if existing.provider != provider {
                 return Err(BrokerError::ProviderMismatch { id });
             }
-            usable_by.extend(existing.usable_by.iter().cloned());
+            if !existing.revoked {
+                usable_by.extend(
+                    existing
+                        .usable_by
+                        .iter()
+                        .filter(|route| endpoint_peers.contains(route))
+                        .cloned(),
+                );
+            }
             usable_by.sort();
             usable_by.dedup();
         }

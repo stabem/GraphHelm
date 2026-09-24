@@ -12,7 +12,7 @@ use graphhelm_model_gateway::broker::{CredentialBroker, SecretReference};
 use serde_json::json;
 
 use super::{
-    Failure, broker_failure, credential_error, finish, invalid, passphrase_from_env,
+    Failure, broker_failure, credential_error, finish, invalid, load_manifest, passphrase_from_env,
     require_keyring_directory, runtime,
 };
 use crate::output::Outcome;
@@ -54,18 +54,26 @@ pub(in crate::commands) fn set(
 /// line and is shared: the keyring precondition, the passphrase from the process environment, the
 /// reference's own charset and bound inside `CredentialBroker::store`, and a reply that names the
 /// reference and never the value.
-/// HTTP rotation keeps the broker's existing route scope. The browser only knows the route it is
-/// editing, while a credential reference may intentionally be shared by several routes; replacing
-/// the scope with the browser's one-item list would silently revoke the other routes.
+/// HTTP rotation keeps the broker's existing route scope, but only for the routes that reach the
+/// same endpoint (#1182). The browser only knows the route it is editing, while a credential
+/// reference may intentionally be shared by several routes; replacing the scope with the
+/// browser's one-item list would silently revoke the other routes. Keeping EVERY other route
+/// would hand the rotated key to a route that sends it to a different vendor under the same wire
+/// format, so the peers are read from `manifest_path`: a route is a peer when its provider and
+/// base URL equal those of a route being rotated. An unreadable manifest, or a rotated route it
+/// does not name, yields no peers, and the rotation then fails closed to `usable_by` alone.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::commands) fn set_value_preserving_scope(
     broker_dir: &Path,
     keyring_dir: &Path,
     key_id: &str,
+    manifest_path: &Path,
     reference: &str,
     provider: &str,
     usable_by: Vec<String>,
     value: SecretBytes,
 ) -> Outcome {
+    let peers = endpoint_peers(manifest_path, &usable_by);
     finish(
         SET_COMMAND,
         store_preserving_scope(
@@ -75,10 +83,40 @@ pub(in crate::commands) fn set_value_preserving_scope(
             reference,
             provider,
             usable_by,
+            &peers,
             value,
         ),
         |summary| summary,
     )
+}
+
+/// The manifest routes that reach the same endpoint — equal provider and equal base URL, a
+/// trailing `/` ignored — as any route in `rotated`. Empty when the manifest cannot be read or
+/// names none of `rotated`: no evidence of a shared endpoint is never read as one.
+fn endpoint_peers(manifest_path: &Path, rotated: &[String]) -> Vec<String> {
+    let Ok(manifest) = load_manifest(manifest_path) else {
+        return Vec::new();
+    };
+    let endpoint = |route: &graphhelm_gateway::manifest::ModelRoute| {
+        (
+            route.provider().to_owned(),
+            route
+                .base_url()
+                .map(|url| url.trim_end_matches('/').to_owned()),
+        )
+    };
+    let targets: Vec<_> = manifest
+        .routes()
+        .iter()
+        .filter(|route| rotated.iter().any(|id| id == route.id()))
+        .map(endpoint)
+        .collect();
+    manifest
+        .routes()
+        .iter()
+        .filter(|route| targets.contains(&endpoint(route)))
+        .map(|route| route.id().to_owned())
+        .collect()
 }
 
 pub(in crate::commands) fn remove(
@@ -132,6 +170,7 @@ fn store(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn store_preserving_scope(
     broker_dir: &Path,
     keyring_dir: &Path,
@@ -139,6 +178,7 @@ fn store_preserving_scope(
     reference: &str,
     provider: &str,
     usable_by: Vec<String>,
+    peers: &[String],
     value: SecretBytes,
 ) -> Result<serde_json::Value, Failure> {
     require_keyring_directory(keyring_dir)?;
@@ -148,6 +188,7 @@ fn store_preserving_scope(
     let key_id = key_id.to_owned();
     let reference = reference.to_owned();
     let provider = provider.to_owned();
+    let peers = peers.to_vec();
     runtime()?.block_on(async move {
         let mut broker =
             CredentialBroker::open_or_create(&broker_dir, &keyring_dir, &key_id, passphrase)
@@ -159,7 +200,7 @@ fn store_preserving_scope(
             usable_by,
         };
         let reference_value = broker
-            .store_preserving_existing_scope(reference_value, value)
+            .store_preserving_existing_scope(reference_value, value, &peers)
             .await
             .map_err(|error| match error {
                 graphhelm_model_gateway::broker::BrokerError::ProviderMismatch { .. } => {

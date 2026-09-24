@@ -47,8 +47,8 @@ docs/acceptance/demos/** -text
 # Executable scripts are LF because CRLF is a FUNCTIONAL defect in them, not a cosmetic one: a
 # carriage return in a shebang stops it resolving, and a stray CR surviving into a variable
 # compares unequal to the value it looks identical to. This is not hypothetical here.
-# `.factory/tools/slot-claim.sh` carries hand-written CR and BOM stripping because the problem was
-# met and worked around IN THE SCRIPT instead of being fixed at the path -- and a workaround in one
+# The retired `slot-claim.sh` runner script carried hand-written CR and BOM stripping because the
+# problem was met and worked around IN THE SCRIPT instead of being fixed at the path -- and a workaround in one
 # script does nothing for the next one written.
 #
 # Measured before this rule: 23 of the repository's 29 committed scripts had NO eol attribute and

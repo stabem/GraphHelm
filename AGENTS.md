@@ -60,8 +60,9 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
 ```
 
-There is **no gate** today (owner order, 2026-09-24): `ci/gate.ps1` and its queued runners are
-off, and a green receipt is not a merge requirement. The evidence for a change is the tests the
+There is **no gate** (owner order, 2026-09-24). The queued runners, the receipt store and
+`merge-proof` are retired; `ci/gate.ps1` remains only as an optional full local check that nothing
+requires and nothing merges on. The evidence for a change is the tests the
 change can reach, run by the author and again by the reviewer, and named in the PR
 ([docs/process/DELIVERY.md](docs/process/DELIVERY.md)). The individual commands:
 

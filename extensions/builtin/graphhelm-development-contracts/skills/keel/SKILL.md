@@ -95,8 +95,9 @@ not being punished for its past — it is being routed to the moves that cannot 
 
 ### 5. Spend time only where the change reaches
 
-Keel optimises time as well as tokens. Run the focused checks the change can affect, then the
-gate; the gate itself narrows to what the change reaches (`ci/select-scope.ps1`, `ci/docs-only.ps1`).
+Keel optimises time as well as tokens. Run the tests the change can reach and name each command and
+its result in the pull request; a reviewer runs them again. Do not run a full build for a change no
+code reads.
 If you see a check run that your change could not have affected — a full build for a Markdown edit,
 a crate's tests for a file no crate compiles — record it with the rule that caused it and propose the
 narrower path with a control that still runs the check when the change does reach it. Never narrow

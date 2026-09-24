@@ -28,7 +28,6 @@ $PinnedSuites = @(
     'frozen-release-guard.tests.ps1',
     'closing-keywords.tests.ps1',
     'crate-input-hash.tests.ps1',
-    'docs-only.tests.ps1',
     'event-contract-sweep.tests.ps1',
     'exit-code-shape.tests.ps1',
     'gate-incremental.tests.ps1',
@@ -42,14 +41,10 @@ $PinnedSuites = @(
     'gate-fail-fast.tests.ps1',
     'gate-manifest-provenance.tests.ps1',
     'gate-nextest.tests.ps1',
-    'gate-passes.tests.ps1',
     'gate-postgres-count.tests.ps1',
     'gate-postgres-early.tests.ps1',
     'gate-postgres-evidence.tests.ps1',
-    'gate-queue.tests.ps1',
-    'gate-runner.tests.ps1',
     'gate-run-abort.tests.ps1',
-    'gate-run-overlap.tests.ps1',
     'gate-rustfmt-path-length.tests.ps1',
     'gate-slot-claim.tests.ps1',
     'gate-slot-wait.tests.ps1',
@@ -65,18 +60,13 @@ $PinnedSuites = @(
     'schema-stage-profile.tests.ps1',
     'gate-verdict.tests.ps1',
     'manifest-name.tests.ps1',
-    'merge-proof-from-main.tests.ps1',
-    'merge-proof.tests.ps1',
     'run-ps-suites-pool.tests.ps1',
     'normalize-script-eol.tests.ps1',
     'gate-scope-selection.tests.ps1',
     'select-scope.tests.ps1',
-    'slot-claim.tests.ps1',
     'slot-lock.tests.ps1',
     'studio-stage.tests.ps1',
-    'target-inventory.tests.ps1',
-    'test-count.tests.ps1',
-    'delivery-time.tests.ps1'
+    'test-count.tests.ps1'
 )
 
 $discovered = @(

@@ -54,10 +54,7 @@ function Assert-True {
 
 # PINNED BY NAME, never by line number: line numbers rot on the next edit above them, and a pin that
 # rots gets relaxed instead of read. A file+variable pair survives edits moving the file underneath.
-$PinnedWaivers = @(
-    'merge-proof.ps1|$rawPaths',
-    'merge-proof.ps1|$rawTip'
-)
+$PinnedWaivers = @()
 
 $NativeCall = '&\s*(git|gh|cargo|npm|node|powershell(\.exe)?|pwsh)\b'
 $Stopper = 'Select-Object\s+(-\w+\s+)*-(First|Index)\b'
@@ -229,8 +226,8 @@ try {
         -Message "the sweep read at least one script under ci/ (read $($scripts.Count))"
 
     $swept = @($scripts | ForEach-Object { $_.Name })
-    Assert-True -Condition (($swept -contains 'gate.ps1') -and ($swept -contains 'merge-proof.ps1')) `
-        -Message 'and the two files this ticket names are IN the population, not merely near it'
+    Assert-True -Condition ($swept -contains 'gate.ps1') `
+        -Message 'and gate.ps1, the file this ticket names that still exists, is IN the population, not merely near it'
 
     Assert-True -Condition ($records.Count -gt 0) `
         -Message "and the pattern still matches something in this tree, so a clean answer below is about the tree rather than about the pattern (matched $($records.Count) statements)"

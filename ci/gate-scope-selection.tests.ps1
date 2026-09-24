@@ -8,7 +8,7 @@
 # The subject is `Read-ScopeSelection`, cut out of ci/gate.ps1 by anchor text and never retyped --
 # running gate.ps1 would run the gate.
 
-$ExpectedAssertionCount = 61
+$ExpectedAssertionCount = 55
 $ErrorActionPreference = 'Stop'
 # THE SUITE RUNS UNDER THE GATE'S OWN RULES. ci/gate.ps1:88 sets `Set-StrictMode -Version 2.0`,
 # and this file did not: the cells exercised the extracted functions under LAXER rules than
@@ -91,17 +91,6 @@ if ($start -lt 0 -or $end -le $start) {
 . ([scriptblock]::Create((Import-FunctionFrom -Text $gateText -Name 'Get-PsSuitesScope' -From 'gate.ps1')))
 . ([scriptblock]::Create((Import-FunctionFrom -Text $gateText -Name 'Get-RunCoverage' -From 'gate.ps1')))
 
-# #903: the presser's half lives in ci/merge-proof.ps1, so it is cut from THAT file by anchor.
-$proofPath = Join-Path $PSScriptRoot 'merge-proof.ps1'
-$proofText = [System.IO.File]::ReadAllText($proofPath)
-$noteStart = $proofText.IndexOf('function Format-ScopeNote {', [System.StringComparison]::Ordinal)
-$noteEnd = if ($noteStart -ge 0) { $proofText.IndexOf("`n}", $noteStart, [System.StringComparison]::Ordinal) } else { -1 }
-if ($noteStart -lt 0 -or $noteEnd -le $noteStart) {
-    Write-Host 'HARNESS-BROKE: Format-ScopeNote was not found in merge-proof.ps1' -ForegroundColor Magenta
-    exit 2
-}
-. ([scriptblock]::Create($proofText.Substring($noteStart, $noteEnd - $noteStart + 2)))
-
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-gate-scope-$([guid]::NewGuid().ToString('N'))"
 [System.IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -173,23 +162,6 @@ try {
         "a scoped run records the crates it ran (full=$($narrowRecord.full), crates=$(@($narrowRecord.crates) -join ','))"
     Assert-True ($narrowRecord.matrix -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$narrowRecord.matrixReason)) `
         'and records the matrix decision WITH its reason, not a bare false'
-
-
-    # ---- what the PRESSER is told, which is the point of recording it at all -------------------
-    # ABSENT IS NOT FULL. A manifest written before #903 has no scope object, and inventing
-    # "FULL" for it would be a reassurance nobody measured -- the same shape as a bare `false`.
-    Assert-True ([string]::IsNullOrEmpty((Format-ScopeNote -Body ('{"status":"GREEN"}' | ConvertFrom-Json)))) `
-        'a manifest with no scope object produces NO note, rather than an invented FULL'
-    Assert-True ([string]::IsNullOrEmpty((Format-ScopeNote -Body $null))) `
-        'and a null body produces no note rather than throwing at the presser'
-
-    $fullNote = Format-ScopeNote -Body ('{"scope":{"full":true,"reason":"FULL: no scope selection was given","crates":[],"matrix":true}}' | ConvertFrom-Json)
-    Assert-True ($fullNote -match 'FULL' -and $fullNote -match 'no scope selection') `
-        "a full run's note says FULL and carries the reason (got '$fullNote')"
-
-    $scopedNote = Format-ScopeNote -Body ('{"scope":{"full":false,"reason":"SCOPED","crates":["a","b"],"matrix":false,"matrixReason":"nothing reaches the adapter"}}' | ConvertFrom-Json)
-    Assert-True ($scopedNote -match '2 crate' -and $scopedNote -match 'not the workspace' -and $scopedNote -match 'nothing reaches the adapter') `
-        "a scoped run's note names the count AND says the GREEN is not the workspace (got '$scopedNote')"
 
 
     # ---- what cargo is actually told -----------------------------------------------------------
@@ -359,14 +331,6 @@ try {
     $covNarrow = Get-RunCoverage -SkipPostgres $false -BuildMode 'cold' -SkipPsSuites $true
     Assert-True ($covNarrow.complete -eq $false -and $covNarrow.psSuites -eq 'narrowed') `
         'a run with narrowed suites records psSuites=narrowed and is not complete'
-
-    # ---- #901 slice 2: what the PRESSER is told ------------------------------------------------
-    $noRustNote = Format-ScopeNote -Body ('{"scope":{"full":false,"reason":"SCOPED","crates":[],"matrix":false,"matrixReason":"skipped: no Rust build input changed","rust":false},"psSuitesScope":{"included":false,"reason":"skipped: nothing names it"}}' | ConvertFrom-Json)
-    Assert-True ($noRustNote -match 'NO RUST STAGE RAN' -and $noRustNote -match 'says nothing about Rust' -and $noRustNote -match 'NARROWED' -and $noRustNote -match 'nothing names it') `
-        "a no-Rust run's note says no Rust stage ran and names the suites narrowing (got '$noRustNote')"
-    $oldNote = Format-ScopeNote -Body ('{"scope":{"full":false,"reason":"SCOPED","crates":["a"],"matrix":true}}' | ConvertFrom-Json)
-    Assert-True ($oldNote -notmatch 'NO RUST' -and $oldNote -notmatch 'NARROWED') `
-        'CONTROL: a receipt written before slice 2 (no rust key, no psSuitesScope) reads as Rust ran and suites ran'
 
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -45,7 +45,8 @@ body.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges. There is no gate and no separate presser.
+The reviewer who approved merges. There is no gate and no separate presser. `ci/gate.ps1` still
+exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named.
 2. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.

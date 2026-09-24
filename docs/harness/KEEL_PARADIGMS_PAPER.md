@@ -127,11 +127,12 @@ the way every registered gate in this repository already does.
 
 **Law 6 — Verification is proportional to what the change can reach.** Added on 2026-09-23 by
 owner order: Keel also optimises time. The unit of cost is the whole delivery, so a check the change
-cannot affect is cost with no evidence bought. A gate runs what the change can reach: Markdown no code
-reads is not built (`ci/docs-only.ps1`), a Rust edit runs the crates that depend on it
-(`ci/select-scope.ps1`), and only the gate itself, the schemas, the protocols or the dependency graph
-run everything. The two failure directions are not symmetric: running too little ships a defect, so
-every doubt still widens to the full gate; running too much only wastes time, so it is corrected, not
+cannot affect is cost with no evidence bought. Verification runs what the change can reach: Markdown
+no code reads needs no build, a Rust edit runs the tests of the crates that depend on it, and only
+the schemas, the protocols or the dependency graph run the whole workspace. Since 2026-09-24 there is
+no separate gate: the author and one reviewer run the reached tests and name them in the pull
+request. The two failure directions are not symmetric: running too little ships a defect, so every
+doubt still widens to the whole workspace; running too much only wastes time, so it is corrected, not
 tolerated. A check found running without being reachable is drift in the method, recorded with the
 rule that caused it and fixed with a control that still runs the check when the change does reach it.
 

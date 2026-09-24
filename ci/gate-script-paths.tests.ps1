@@ -10,7 +10,7 @@
 # The population is DERIVED from the file, never a hand list: a hand list is born correct and rots
 # on the next site somebody adds, which is the same defect one generation later.
 
-# 29 IS THE EXACT NUMBER THIS SUITE RUNS, and every one of the 29 can fail. There is no longer a
+# 26 IS THE EXACT NUMBER THIS SUITE RUNS, and every one of the 26 can fail. There is no longer a
 # gap between the declared count and the live coverage.
 #
 # AND A CELL NOW HOLDS THIS SENTENCE TO THAT VARIABLE, because a count in prose is a claim nothing
@@ -35,7 +35,7 @@
 # reader of `git log` finds that one; a reader of this file -- the person about to trust the number
 # -- does not. Three reviewers went looking in the file after I claimed to have declared it, and
 # none of them found it, because I had written it somewhere they were not looking.
-$ExpectedAssertionCount = 29
+$ExpectedAssertionCount = 26
 $ErrorActionPreference = 'Stop'
 $script:total = 0
 $script:failures = 0
@@ -112,18 +112,6 @@ $missing = @($sites | Where-Object {
     })
 Assert-True -Condition ($missing.Count -eq 0) `
     -Message "every -File path in ci/gate.ps1 resolves to a file (missing: $($missing -join ', '))"
-
-
-# ---------------------------------------------------------------------------------------------
-# #903: THE RUNNER MUST ACTUALLY CALL THE SELECTOR. The scope machinery landed with #928 and for a
-# day nothing invoked it: every manifest said `FULL: no scope selection was given`, which is the
-# correct default AND the whole feature not running. A producer nobody calls is indistinguishable
-# from no producer, and it is invisible because the safe default is also the silent one.
-$runnerText = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'gate-runner.ps1'))
-Assert-True -Condition ($runnerText.IndexOf('ci/select-scope.ps1', [System.StringComparison]::Ordinal) -ge 0) `
-    -Message 'the runner invokes ci/select-scope.ps1, so a derived scope reaches a real gate rather than sitting unused'
-Assert-True -Condition ($runnerText.IndexOf('-ScopeSelection', [System.StringComparison]::Ordinal) -ge 0) `
-    -Message 'and passes -ScopeSelection to the gate it launches'
 
 
 # ---------------------------------------------------------------------------------------------
@@ -205,9 +193,10 @@ Assert-True -Condition ($spawnSites.Count -ge 6) `
     -Message "the parser found at least 6 PowerShell spawn sites under ci/ (found $($spawnSites.Count))"
 
 # THE POSITIVE CONTROL. A filter that silently narrowed to one file would still satisfy the floor
-# above once a sixth site appeared in it, so the four files that actually spawn are named.
+# above once a sixth site appeared in it, so the files that actually spawn are named (the runner and
+# merge-proof-from-main were retired on 2026-09-24, #1266).
 $spawningFiles = @($spawnSites | ForEach-Object { $_.File } | Sort-Object -Unique)
-$expectedSpawners = @('gate-runner.ps1', 'gate.ps1', 'merge-proof-from-main.ps1', 'run-ps-suites.ps1')
+$expectedSpawners = @('gate.ps1', 'run-ps-suites.ps1')
 $absentSpawners = @($expectedSpawners | Where-Object { $spawningFiles -notcontains $_ })
 Assert-True -Condition ($absentSpawners.Count -eq 0) `
     -Message "every known spawning file is represented in the population (absent: $($absentSpawners -join ', '))"
@@ -443,8 +432,8 @@ foreach ($file in $productionScripts) {
 # clean. Neither says the matcher is pointed AT the two spawns #963 is about. This does.
 $startProcessSpawns = @($hostSpawns | Where-Object { $_.Kind -eq 'start-process' })
 $startProcessFiles = @($startProcessSpawns | ForEach-Object { $_.Name } | Sort-Object -Unique)
-Assert-True -Condition (($startProcessFiles -contains 'gate.ps1') -and ($startProcessFiles -contains 'gate-runner.ps1')) `
-    -Message "the gate's own stage spawn and the runner's hidden gate are IN the complement now (found: $($startProcessFiles -join ', '))"
+Assert-True -Condition ($startProcessFiles -contains 'gate.ps1') `
+    -Message "the gate's own stage spawn is IN the complement now (found: $($startProcessFiles -join ', '))"
 
 Assert-True -Condition (@($startProcessSpawns | Where-Object { $_.Name -eq 'postgres.ps1' }).Count -eq 0) `
     -Message 'and pg_ctl is not: ci/postgres.ps1 starts a non-PowerShell process in the same shape and must stay out'
@@ -739,7 +728,11 @@ function Test-JqFilterHazardous {
 }
 $jqOffenders = @($jqScan.Arguments | Where-Object { Test-JqFilterHazardous -Filter $_.Filter } |
     ForEach-Object { "$($_.File):$($_.Line)  $($_.Flag) '$($_.Filter)'" })
-Assert-True -Condition ($jqTotal -gt 0) -Message "arrangement: the sweep found $jqTotal --jq/-q argument(s) to check, so a zero below is a result and not an empty search"
+# NO ARRANGEMENT CELL SINCE #1266. Every production --jq/-q site lived in the runner, queue and
+# merge-proof scripts retired on 2026-09-24, so the real population is now EMPTY and the rule below
+# holds vacuously today; it governs the next site anyone writes. That the scanner still SEES the
+# shape is proven by the discriminating controls below (multiline, mixed-case, quoted-data), which
+# run it against planted files rather than against the tree. Measured population now: $jqTotal.
 Assert-True -Condition ($jqOffenders.Count -eq 0) `
     -Message "no single-quoted --jq or -q argument contains a double quote, which PowerShell 5.1 strips from the native command line before gh sees it; write it as `$ENV.<name> to keep the output byte-identical ($($jqOffenders.Count) offender(s): $($jqOffenders -join '; '))"
 

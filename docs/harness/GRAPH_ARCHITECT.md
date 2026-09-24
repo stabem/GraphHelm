@@ -408,6 +408,6 @@ same way are visibly the same row of the table.
 | One `class` and one `same_as` per known flake; the reading acts only in-vocabulary and at the threshold | `the_request_asks_one_class_and_one_same_as_per_known_flake`; `an_in_class_confident_answer_acts_and_names_the_flake`; `a_low_confidence_answer_is_unresolved_and_a_no_names_no_flake`; `a_class_outside_the_vocabulary_is_unresolved_however_confident` | `core/architect/src/judgment/red.rs` |
 | The three journeys exit 0 whatever the class; UTF-16 is the same excerpt; `--out` never overwrites; a missing reply names the digest on stderr | `the_known_flake_is_classified_known_flake_and_named_same_as_886`; `the_disk_full_canary_abort_is_environment_void`; `a_low_confidence_answer_is_unresolved_and_still_exits_zero`; `a_utf16_log_is_the_same_excerpt_as_its_utf8_twin`; `out_is_written_once_and_never_overwritten`; `a_recording_without_the_reply_names_the_request_digest_on_stderr` | `apps/cli/tests/gate_classify_red.rs` |
 
-Not here, on purpose: the runner hook that calls the command after a red (`ci/gate-runner.ps1`),
+Not here, on purpose: a runner hook that calls the command after a red (the queued gate runner was retired on 2026-09-24),
 flake dedup as a count per issue (edge 2), and finding triage (edge 3). Each is its own change
 under #1138.

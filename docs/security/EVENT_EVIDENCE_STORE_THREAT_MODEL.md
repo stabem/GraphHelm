@@ -4,7 +4,7 @@
 
 **Status:** Accepted for Milestone 03 implementation and security review.
 
-This focused model implements the documentation gate required by [D-035 through D-037](../DECISION_REGISTER.md), [ADR-021 through ADR-023](../reference/REFERENCE_STACK_AND_ADRS.md), and the [accepted safe persistence projection design](../superpowers/specs/2026-08-09-safe-persistence-projection-design.md). It covers Governor externalization, `PersistedGraphVersion`, the Event Journal, encrypted Evidence Store, artifact-reference catalog, PostgreSQL adapter, `KeyProvider`, retention and legal-hold service, projection rebuild, integrity checkpoints, and encrypted backup/restore boundary.
+This focused model implements the documentation gate required by [D-035 through D-037](../DECISION_REGISTER.md), [ADR-021 through ADR-023](../reference/REFERENCE_STACK_AND_ADRS.md), and the [accepted safe persistence projection design](../specs/2026-08-09-safe-persistence-projection-design.md). It covers Governor externalization, `PersistedGraphVersion`, the Event Journal, encrypted Evidence Store, artifact-reference catalog, PostgreSQL adapter, `KeyProvider`, retention and legal-hold service, projection rebuild, integrity checkpoints, and encrypted backup/restore boundary.
 
 Runtime authentication/RBAC, public APIs, artifact bytes, cloud KMS/Vault adapters, scheduler recovery, Studio, models, tools, sandboxes, and hosted services are outside this milestone. Their absence is a trust limitation, not implicit authorization.
 

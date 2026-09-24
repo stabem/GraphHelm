@@ -1,7 +1,7 @@
 # Graph Architect — typed judgments (System One) design
 
 Companion plan: `docs/superpowers/plans/2026-09-16-architect-judgments.md`. Parent: the first
-compile, `docs/superpowers/specs/2026-09-11-graph-architect-design.md`. Provider reference:
+compile, `docs/specs/2026-09-11-graph-architect-design.md`. Provider reference:
 `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` (TypeSafe), route family:
 `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6.
 

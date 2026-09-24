@@ -3,7 +3,7 @@
 Status: Milestone 05 COMPLETE — 05a through 05f: the Public Runtime API, the Gateway slice, the
 Tool Broker with Tier 0/1 isolation, the real async executor, the chat surface, and the read-only
 monitor with the acceptance close. The acceptance map (`docs/acceptance/M05_ACCEPTANCE_MAP.md`)
-binds every §8 clause to running proof and is itself gate-verified. Design: `docs/superpowers/specs/2026-08-13-runtime-design.md`;
+binds every §8 clause to running proof and is itself gate-verified. Design: `docs/specs/2026-08-13-runtime-design.md`;
 decisions D-039 (chat-first via an official MCP server) and D-040 (the monitor precedes Studio).
 
 Milestone 04 proved governance and durability with an effect-free executor. Milestone 05 makes it

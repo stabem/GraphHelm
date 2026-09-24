@@ -2,8 +2,8 @@
 
 Base for every citation: the `issue-107-graph-architect` branch as of this document; §10 cites
 the epic #1109 branches. Design:
-`docs/superpowers/specs/2026-09-11-graph-architect-design.md` (decisions D1–D10); the typed
-judgments of #1109: `docs/superpowers/specs/2026-09-16-architect-judgments-design.md`.
+`docs/specs/2026-09-11-graph-architect-design.md` (decisions D1–D10); the typed
+judgments of #1109: `docs/specs/2026-09-16-architect-judgments-design.md`.
 Acceptance run: `docs/acceptance/m11-first-compile-2026-09-11.md`; the keyed Tier B recipe:
 `docs/acceptance/architect-judgments-recipe.md`. Decisions on record: D-051, D-052 and D-054 in
 `docs/DECISION_REGISTER.md`.
@@ -204,7 +204,7 @@ them publishes or starts an execution. The judge fields are described in §10.
 
 ## 10. The judge door and its four sites (#1109)
 
-Design: `docs/superpowers/specs/2026-09-16-architect-judgments-design.md` (decisions D1–D10 of
+Design: `docs/specs/2026-09-16-architect-judgments-design.md` (decisions D1–D10 of
 that spec; cited below as "spec D*n*"). Decision on record: D-054. Landed by PRs #1114 (wire
 types), #1116 (judge port), #1118 (adapter), #1120 (site 3), #1125 (site 2), #1126 (sites 4 and
 1), #1127 (three doors).

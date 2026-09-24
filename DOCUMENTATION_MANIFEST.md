@@ -34,7 +34,7 @@
 | `docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md` | 3955 | 535 |
 | `docs/reference/REFERENCE_STACK_AND_ADRS.md` | 22012 | 2844 |
 | `docs/security/SECURITY_ISOLATION_THREAT_MODEL.md` | 14003 | 1931 |
-| `docs/superpowers/specs/2026-08-08-graphhelm-design.md` | 1989 | 260 |
+| `docs/specs/2026-08-08-graphhelm-design.md` | 1989 | 260 |
 | `docs/ux/STUDIO_SPEC.md` | 16954 | 2344 |
 | `examples/graphs/manual-override-deploy.yaml` | 2024 | 144 |
 | `examples/graphs/research-to-publish.yaml` | 4956 | 373 |

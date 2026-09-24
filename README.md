@@ -76,7 +76,7 @@ carries a watchdog that records drift and, only if a controlled comparison shows
 the paradigm choices is in the position paper
 [docs/harness/KEEL_PARADIGMS_PAPER.md](docs/harness/KEEL_PARADIGMS_PAPER.md); the normative text is
 [docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) and the Keel
-specification [docs/superpowers/specs/2026-09-22-keel-development-model.md](docs/superpowers/specs/2026-09-22-keel-development-model.md).
+specification [docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md).
 
 ### 1. Adoption: `graphhelm setup`, reviewed and reversible
 
@@ -120,9 +120,8 @@ flowchart TD
   R --> E{"Evidence supports<br/>the promise?"}
   E -->|no| RT["Record failure;<br/>retry linked to first attempt"]
   RT --> W
-  E -->|yes| G["Gate: rustfmt · clippy · tests ·<br/>schema catalog · conformance"]
-  G --> PR["Two independent passes<br/>from two lanes, sha-pinned"]
-  PR --> MG["Merge by a third lane<br/>with the receipt for that head"]
+  E -->|yes| PR["One review by another session:<br/>runs the reached tests, sha-pinned"]
+  PR --> MG["The reviewer merges<br/>(squash, head pinned, closing check)"]
   MG --> V["Post-merge verification<br/>on the merged revision"]
 ```
 

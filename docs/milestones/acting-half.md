@@ -4,7 +4,7 @@ Status: M11 acting half SHIPPED 2026-09-11 (#159) — a parked node can be claim
 finished from the CLI and the HTTP API, and every door renders the same scan history. The
 same two verbs are reachable as MCP tools and each names its route, but NO chat journey was
 hand-run for this record - the acceptance record says so, and this line must not say more.
-Design: `docs/superpowers/specs/2026-09-11-customs-acting-surface-design.md`. The
+Design: `docs/specs/2026-09-11-customs-acting-surface-design.md`. The
 acceptance record, with one hand-run journal and every cell bound to its test:
 `docs/acceptance/m11-acting-2026-09-11.md`.
 

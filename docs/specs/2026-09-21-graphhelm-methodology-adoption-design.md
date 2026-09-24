@@ -8,10 +8,10 @@ Make a proven user promise the unit of work. GraphHelm adopts an existing agent 
 
 Four independently deliverable subprojects implement this design:
 
-1. [Setup, backup, and restore](../plans/2026-09-21-setup-backup-restore.md).
-2. [Journey proof pilot](../plans/2026-09-21-journey-proof-pilot.md).
-3. [Structured agent context](../plans/2026-09-21-structured-agent-context.md).
-4. [Economic route selection](../plans/2026-09-21-economic-route-selection.md).
+1. Setup, backup, and restore (plan `docs/superpowers/plans/2026-09-21-setup-backup-restore.md`, removed; read it at commit `c080739b`).
+2. Journey proof pilot (plan `docs/superpowers/plans/2026-09-21-journey-proof-pilot.md`, removed; read it at commit `c080739b`).
+3. Structured agent context (plan `docs/superpowers/plans/2026-09-21-structured-agent-context.md`, removed; read it at commit `c080739b`).
+4. Economic route selection (plan `docs/superpowers/plans/2026-09-21-economic-route-selection.md`, removed; read it at commit `c080739b`).
 
 Start with subproject 1. Subprojects 2 and 3 can proceed independently after their public contracts are frozen. Economic accounting may start independently; promotion of an economic router depends on a trustworthy outcome observer from subproject 2. Do not run overlapping changes to CLI argument/dispatch files in parallel. Integrate each delivered slice before starting another slice owning those files.
 

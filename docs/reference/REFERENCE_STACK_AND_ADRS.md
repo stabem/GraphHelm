@@ -307,7 +307,7 @@ graphhelm/
 
 **Status:** accepted.
 
-**Context:** the Foundation model is an authoring contract and contains instructions, objectives, purposes, textual completion contracts, diagnostic details and paths. Persisting a raw `GraphVersionRecord` in the Event Journal would violate ADR-021, prevent effective erasure and let free-form content cross an append-only boundary. Since no format has been published, preserving compatibility with the unsafe internal formats would create risk with no public benefit. This ADR formalizes [D-036](../DECISION_REGISTER.md) and accepts the [safe projection design](../superpowers/specs/2026-08-09-safe-persistence-projection-design.md).
+**Context:** the Foundation model is an authoring contract and contains instructions, objectives, purposes, textual completion contracts, diagnostic details and paths. Persisting a raw `GraphVersionRecord` in the Event Journal would violate ADR-021, prevent effective erasure and let free-form content cross an append-only boundary. Since no format has been published, preserving compatibility with the unsafe internal formats would create risk with no public benefit. This ADR formalizes [D-036](../DECISION_REGISTER.md) and accepts the [safe projection design](../specs/2026-08-09-safe-persistence-projection-design.md).
 
 **Decisions:**
 

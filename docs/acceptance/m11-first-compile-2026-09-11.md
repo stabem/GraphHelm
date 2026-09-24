@@ -1,6 +1,6 @@
 # M11 — the first compile, run by hand (2026-09-11)
 
-The acceptance of spec §4 (`docs/superpowers/specs/2026-09-11-graph-architect-design.md`):
+The acceptance of spec §4 (`docs/specs/2026-09-11-graph-architect-design.md`):
 a goal → `graph synthesize` with the recorded fixture → the `--out` document → `graph lint`
 reports zero `GHG102` → `execution start --file` with node fixtures → status `completed`. The
 CLI journey test `a_goal_becomes_a_document_that_starts_and_completes`

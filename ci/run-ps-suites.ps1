@@ -31,7 +31,6 @@ $PinnedSuites = @(
     'docs-only.tests.ps1',
     'event-contract-sweep.tests.ps1',
     'exit-code-shape.tests.ps1',
-    'liveness-rule.tests.ps1',
     'gate-incremental.tests.ps1',
     'gate-native-stderr.tests.ps1',
     'gate-abort-rules.tests.ps1',

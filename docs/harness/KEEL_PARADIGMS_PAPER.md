@@ -3,7 +3,7 @@
 **Why the classic paradigms were not enough, what was kept from each, and what is new.**
 
 Status: position paper accompanying the Keel specification
-([`docs/superpowers/specs/2026-09-22-keel-development-model.md`](../superpowers/specs/2026-09-22-keel-development-model.md))
+([`docs/keel/KEEL_SPEC.md`](../keel/KEEL_SPEC.md))
 and tracker #1212. Written 2026-09-23. Every number below comes from a cited source or from a
 measurement made in this repository; a sentence with neither is a design decision and says so.
 

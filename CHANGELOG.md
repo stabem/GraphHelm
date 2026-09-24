@@ -189,7 +189,7 @@ constants of `judgment/policy.rs`. Record `docs/harness/GRAPH_ARCHITECT.md` §10
 
 The Graph Architect gains a SECOND model port: a typed judge (TypeSafe's Jev, System One) that
 answers closed questions over state the compiler hands it and can never draft. Design
-`docs/superpowers/specs/2026-09-16-architect-judgments-design.md`; record
+`docs/specs/2026-09-16-architect-judgments-design.md`; record
 `docs/harness/GRAPH_ARCHITECT.md` §10; decision D-054. An absent judge is today's bytes: the
 first-compile golden did not change.
 

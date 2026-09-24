@@ -5,8 +5,8 @@
 **Tracking issue:** [#5](https://github.com/stabem/GraphHelm/issues/5)
 **Repository base:** `8ee8f49ca36bd1b292eda841c84cf0da18c9c4ce`
 **Normative documentation baseline:** `72c376499e4fc92f7a1097432c703d73c1b2f6b0`
-**Normative decisions:** [D-035 through D-037](../../DECISION_REGISTER.md), [ADR-021 through ADR-023](../../reference/REFERENCE_STACK_AND_ADRS.md)
-**Focused threat model:** [Event/Evidence Store threat model](../../security/EVENT_EVIDENCE_STORE_THREAT_MODEL.md)
+**Normative decisions:** [D-035 through D-037](../DECISION_REGISTER.md), [ADR-021 through ADR-023](../reference/REFERENCE_STACK_AND_ADRS.md)
+**Focused threat model:** [Event/Evidence Store threat model](../security/EVENT_EVIDENCE_STORE_THREAT_MODEL.md)
 
 > **Supersession notice:** This document preserves the original Milestone 03 rationale, threat controls, PostgreSQL, retention, projection, backup, and restore design. ADR-022 supersedes every statement here that permits raw `GraphVersionRecord`/Foundation payload persistence, direct reuse of Foundation `Diagnostic` or the internal waiver shape, `LocalExecutionContext::foundation`, legacy envelopes/import/context/commands/fixtures, dual-format runtime behavior, immutable `1.1.0`, or migration compatibility with those pre-release formats. ADR-023 additionally supersedes the former eight-kind content-position list with the exact eleven-kind pre-release baseline required by D-037. Those passages are historical and non-normative; they do not authorize an implementation. The accepted [safe persistence projection design](2026-08-09-safe-persistence-projection-design.md) governs authoring externalization, `PersistedGraphVersion`, content slots, safe diagnostics, the bounded waiver, the single rebuilt `1.0.0` baseline, and immediate JSONL/PostgreSQL adoption.
 

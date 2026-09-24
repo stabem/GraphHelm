@@ -118,7 +118,7 @@ activated, or published capsule. It emits task-local advisory drafts only. A lat
 may add those states together with the registered deterministic implementation and governed
 lifecycle that can prove them.
 
-For ordinary development task routing, use the repository's direct-versus-expanded workflow guide:
-[workflow guide](../../../.factory/SKILL-METHODOLOGY.md). That guide preserves this
+For ordinary development task routing, use the repository's delivery process:
+[delivery process](../../../docs/process/DELIVERY.md). That process preserves this
 package's `OBSERVER_MISSING`, advisory, custody, and authority boundaries; it does not turn an
 informal direct proof into a JPD certification.

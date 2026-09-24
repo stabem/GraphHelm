@@ -1,0 +1,160 @@
+"""Focused contract tests for the token-bench verdict, not model behavior."""
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).with_name("run.py")
+spec = importlib.util.spec_from_file_location("token_bench_run", MODULE_PATH)
+assert spec and spec.loader
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+
+
+def usage():
+    return {"input": 10, "output": 4, "cacheRead": 2, "cacheWrite": 1, "assistantMessages": 1}
+
+
+def test_acceptance_and_regression_are_both_required_for_pass():
+    """Catches the old false green where the hidden oracle passed after a regression broke."""
+    verdict, reasons = runner.evaluate_outcome("PASS", "FAIL", usage(), 0.2, "session", {"regression": {"command": ["test"]}})
+    assert verdict == "FAIL"
+    assert "preexisting_regression_fail" in reasons
+
+
+def test_missing_session_usage_is_incomplete_even_when_code_passes():
+    """Catches token claims made from a missing or partial Claude transcript."""
+    verdict, reasons = runner.evaluate_outcome("PASS", "PASS", {}, None, "session", {"regression": {"command": ["test"]}})
+    assert verdict == "INCOMPLETE"
+    assert "session_tokens_unobserved" in reasons
+    assert "session_cost_unobserved" in reasons
+
+
+def test_expired_auth_without_model_tokens_is_not_a_coding_failure():
+    """A failed OAuth refresh had one assistant error message but no model invocation."""
+    zero = {key: 0 for key in ("input", "output", "cacheRead", "cacheWrite")}
+    zero["assistantMessages"] = 1
+    verdict, reasons = runner.evaluate_outcome("FAIL", "PASS", zero, 0, "session",
+                                                {"regression": {"command": ["test"]}}, agent_error=True)
+    assert verdict == "INCOMPLETE"
+    assert "session_tokens_unobserved" in reasons
+    assert "agent_execution_unobserved" in reasons
+
+
+def test_no_regression_observer_cannot_be_a_quality_win():
+    """Catches treating a task without a pre-existing regression as quality evidence."""
+    verdict, reasons = runner.evaluate_outcome("PASS", "UNOBSERVED", usage(), 0.2, "session", {})
+    assert verdict == "INCOMPLETE"
+    assert "regression_observer_missing" in reasons
+
+
+def test_regression_restoration_preserves_exact_source_bytes(tmp_path, monkeypatch):
+    """A newline rewrite made a PowerShell source observer fail on an unchanged parent."""
+    monkeypatch.setattr(runner, "git_show_bytes", lambda _sha, _path: b"one\ntwo\n")
+    command = [sys.executable, "-c", "from pathlib import Path; assert Path('check.ps1').read_bytes() == b'one\\ntwo\\n'"]
+    task = {"parentSha": "parent", "regression": {"files": ["check.ps1"], "command": command}}
+    verdict, code, _ = runner.run_regression(tmp_path, task)
+    assert (verdict, code) == ("PASS", 0)
+
+
+def test_transcript_usage_deduplicates_repeated_assistant_records():
+    """Catches inflated cost when a JSONL consumer repeats one assistant message."""
+    message = {"type": "assistant", "uuid": "m1", "message": {
+        "id": "m1", "usage": {"input_tokens": 10, "output_tokens": 4,
+                                  "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1}}}
+    lines = [runner.json.dumps(message), runner.json.dumps(message)]
+    result = runner.sum_transcript_usage(lines)
+    assert result["assistantMessages"] == 1
+    assert result["input"] == 10
+
+
+def test_transcript_usage_keeps_completed_count_for_repeated_message():
+    """A streaming partial record must not hide the later completed usage for the same ID."""
+    def record(output):
+        return runner.json.dumps({"type": "assistant", "message": {"id": "m1", "usage": {
+            "input_tokens": 10, "output_tokens": output, "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0}}})
+    result = runner.sum_transcript_usage([record(0), record(7)])
+    assert result["assistantMessages"] == 1
+    assert result["output"] == 7
+
+
+def test_partial_transcript_cannot_claim_session_cost():
+    """A truncated JSONL tail must not be accepted from a positive token subtotal."""
+    message = runner.json.dumps({"type": "assistant", "message": {"id": "m1", "usage": {
+        "input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0}}})
+    observed = runner.sum_transcript_usage([message, "{broken"])
+    audit = runner.usage_audit(observed, {"num_turns": 2, "usage": {
+        "input_tokens": 5, "output_tokens": 2, "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0}})
+    assert audit["status"] == "INCOMPLETE"
+    assert "transcript_parse_error" in audit["reasons"]
+    assert "transcript_output_incomplete" in audit["reasons"]
+
+
+def test_cli_identity_binds_version_and_executable_bytes(tmp_path, monkeypatch):
+    """A changed CLI can change transcript or cost semantics without changing the model name."""
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"pinned-cli")
+    monkeypatch.setenv("TOKEN_BENCH_CLAUDE_CLI", str(executable))
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_args, **_kw: subprocess.CompletedProcess(
+        [str(executable), "--version"], 0, stdout="2.1.269\n", stderr=""))
+    identity = runner.claude_cli_identity()
+    assert identity["version"] == "2.1.269"
+    assert identity["sha256"] == runner.digest_file(executable)
+
+
+def test_worktree_scratch_must_be_outside_repository(monkeypatch):
+    """Catches generated checkouts being written into the source worktree tree."""
+    monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(runner.REPO))
+    try:
+        runner.scratch_root()
+    except RuntimeError as exc:
+        assert "outside the repository" in str(exc)
+    else:
+        raise AssertionError("repository path was accepted as scratch")
+
+
+def test_methodology_observer_requires_calls_card_and_persisted_signal(tmp_path, monkeypatch):
+    """A good patch alone cannot count as GraphHelm + Keel without the treatment occurring."""
+    monkeypatch.setattr(runner.Path, "home", lambda: tmp_path)
+    transcript = tmp_path / ".claude" / "projects" / "task" / "session.jsonl"
+    transcript.parent.mkdir(parents=True)
+    lines = []
+    for stage in ("start", "briefing", "compile_context", "signal"):
+        args = {"executionId": "exec-1"} if stage != "compile_context" else {}
+        lines.append(runner.json.dumps({"type": "assistant", "message": {"content": [{
+            "type": "tool_use", "id": stage, "name": f"mcp__graphhelm__{stage}", "input": args}]}}))
+        lines.append(runner.json.dumps({"type": "user", "message": {"content": [{
+            "type": "tool_result", "tool_use_id": stage, "content": '{"ok":true}'}]}}))
+    transcript.write_text("\n".join(lines), encoding="utf-8")
+    events = tmp_path / "events"
+    events.mkdir()
+    journal = events / "journal.jsonl"
+    def event(kind):
+        return {"actor": {"id": "bench-actor"}, "kind": {"type": kind,
+                "data": {"executionId": "exec-1"}}}
+    card = tmp_path / "card.json"
+    card.write_text(runner.json.dumps({"paths": ["ci/gate.ps1"], "promise": "No wasted cluster",
+                                       "defect": "Failed build starts cluster", "proofCommand": "test"}), encoding="utf-8")
+    signal = tmp_path / "signal.json"
+    signal.write_text(runner.json.dumps({"description": "Proof finished",
+                                         "evidence": ["test exit 0"]}), encoding="utf-8")
+    signal_event = event("signal_recorded")
+    signal_event["kind"]["data"]["envelopeSha256"] = runner.digest_file(signal).split(":", 1)[1]
+    journal.write_text(runner.json.dumps({"events": [event("execution_started"),
+                                         signal_event]}) + "\n", encoding="utf-8")
+    runtime = {"events": str(events), "actor": "bench-actor"}
+    assert runner.methodology_observer("session", runtime, card, signal, "c")["status"] == "PASS"
+    journal.write_text(runner.json.dumps({"events": [event("execution_started")]}) + "\n", encoding="utf-8")
+    assert runner.methodology_observer("session", runtime, card, signal, "c")["status"] == "INCOMPLETE"
+    journal.write_text(runner.json.dumps({"events": ["not an event"]}) + "\n", encoding="utf-8")
+    assert runner.methodology_observer("session", runtime, card, signal, "c")["status"] == "INCOMPLETE"
+    journal.write_text(runner.json.dumps({"events": [event("execution_started"),
+                                         signal_event]}) + "\n", encoding="utf-8")
+    card.write_text(runner.json.dumps({"paths": ["C:\\outside\\gate.ps1"], "promise": "x",
+                                       "defect": "y", "proofCommand": "test"}), encoding="utf-8")
+    assert runner.methodology_observer("session", runtime, card, signal, "c")["status"] == "INCOMPLETE"

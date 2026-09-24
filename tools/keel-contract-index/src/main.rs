@@ -4,11 +4,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    ffi::OsString,
     fs, io,
-    io::{Read, Write},
+    io::Read,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
 };
+
+#[cfg(unix)]
+mod publish_unix;
+#[cfg(windows)]
+mod publish_windows;
 
 const MAX_FILES: usize = 10_000;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
@@ -166,9 +172,9 @@ fn main() {
 fn run() -> Result<(), AppError> {
     match Cli::parse().command {
         CommandKind::Scan { repo, out } => {
-            reject_inside_repo(&repo, &out)?;
+            let target = OutputTarget::open(&repo, &out)?;
             let index = build_index(&repo, None)?;
-            write_json(&out, &index)?;
+            write_json(&target, &index)?;
             println!(
                 "{}",
                 serde_json::to_string(
@@ -283,16 +289,109 @@ fn run() -> Result<(), AppError> {
     Ok(())
 }
 
-fn write_json(path: &Path, value: &Index) -> Result<(), AppError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+struct OutputTarget {
+    repo_root: PathBuf,
+    parent_path: PathBuf,
+    parent: fs::File,
+    parent_identity: Handle,
+    name: OsString,
+}
+
+impl OutputTarget {
+    fn open(repo: &Path, out: &Path) -> Result<Self, AppError> {
+        Self::open_with(repo, out, open_output_parent)
+    }
+
+    fn open_with(
+        repo: &Path,
+        out: &Path,
+        opener: impl FnOnce(&Path) -> io::Result<fs::File>,
+    ) -> Result<Self, AppError> {
+        let repo_root = fs::canonicalize(repo)?;
+        let parent_path = out
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let name = out
+            .file_name()
+            .ok_or_else(|| AppError::Message("KIDX5 output file name is required".into()))?
+            .to_os_string();
+        let canonical_parent = fs::canonicalize(&parent_path)
+            .map_err(|_| AppError::Message("KIDX5 output parent must exist".into()))?;
+        if canonical_parent.starts_with(&repo_root) {
+            return Err(AppError::Message(
+                "KIDX5 output must be outside repository".into(),
+            ));
+        }
+        let parent = opener(&canonical_parent)?;
+        ensure_opened_parent_outside_repo(&parent, &repo_root)?;
+        let parent_identity = Handle::from_file(parent.try_clone()?)?;
+        let target = Self {
+            repo_root,
+            parent_path,
+            parent,
+            parent_identity,
+            name,
+        };
+        target.check_alias()?;
+        Ok(target)
+    }
+
+    fn check_alias(&self) -> Result<(), AppError> {
+        ensure_opened_parent_outside_repo(&self.parent, &self.repo_root)?;
+        let current = fs::canonicalize(&self.parent_path)
+            .map_err(|_| AppError::Message("KIDX5 output parent disappeared".into()))?;
+        if current.starts_with(&self.repo_root)
+            || Handle::from_path(&self.parent_path)
+                .map_err(|_| AppError::Message("KIDX5 output parent changed".into()))?
+                != self.parent_identity
+        {
+            return Err(AppError::Message("KIDX5 output parent changed".into()));
+        }
+        Ok(())
+    }
+}
+
+fn open_output_parent(path: &Path) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+    }
+    #[cfg(windows)]
+    {
+        publish_windows::open_parent(path)
+    }
+}
+
+fn ensure_opened_parent_outside_repo(parent: &fs::File, repo_root: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    let inside = publish_unix::parent_is_within_repo(parent, repo_root)?;
+    #[cfg(windows)]
+    let inside = publish_windows::parent_is_within_repo(parent, repo_root)?;
+    if inside {
+        return Err(AppError::Message(
+            "KIDX5 opened output parent is inside repository".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn write_json(target: &OutputTarget, value: &Index) -> Result<(), AppError> {
     let encoded = serde_json::to_vec_pretty(value)?;
     if encoded.len() as u64 > MAX_INDEX_BYTES {
         return Err(AppError::Message("KIDX4 index size limit exceeded".into()));
     }
-    temp.write_all(&encoded)?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|e| AppError::Io(e.error))?;
+    target.check_alias()?;
+    #[cfg(unix)]
+    publish_unix::publish_bytes(&target.parent, &target.name, &encoded)?;
+    #[cfg(windows)]
+    publish_windows::write_atomic(&target.parent, &target.name, &encoded)?;
+    target.check_alias()?;
     Ok(())
 }
 fn read_index(path: &Path) -> Result<Index, AppError> {
@@ -312,19 +411,6 @@ fn fresh_index(repo: &Path, index_path: &Path, expected: &Index) -> Result<Index
         ));
     }
     Ok(actual)
-}
-fn reject_inside_repo(repo: &Path, out: &Path) -> Result<(), AppError> {
-    let root = fs::canonicalize(repo)?;
-    let parent = out.parent().unwrap_or_else(|| Path::new("."));
-    let candidate = fs::canonicalize(parent)
-        .map_err(|_| AppError::Message("KIDX5 output parent must exist".into()))?
-        .join(out.file_name().unwrap_or_default());
-    if candidate.starts_with(&root) {
-        return Err(AppError::Message(
-            "KIDX5 output must be outside repository".into(),
-        ));
-    }
-    Ok(())
 }
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, AppError> {
     let file = fs::File::open(path)?;
@@ -632,5 +718,126 @@ fn add_item(item: &syn::Item, out: &mut Vec<Declaration>) {
             name,
             kind: kind.into(),
         });
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn sample_index() -> Index {
+        Index {
+            schema: "keel.contract-index.v1".into(),
+            repo: "fixture".into(),
+            snapshot_digest: "fixture".into(),
+            files: Vec::new(),
+            omissions: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquisition_swap_cannot_open_a_repository_directory_as_output() {
+        use std::os::unix::fs::symlink;
+
+        // Defect: canonicalize outside, then open through a changed ancestor into the repo.
+        // This injects the swap at that exact boundary; a path-only post-check can be raced.
+        let sandbox = tempfile::tempdir().unwrap();
+        let repo = sandbox.path().join("repo");
+        let inside = repo.join("output");
+        let outside_root = sandbox.path().join("switch");
+        let outside = outside_root.join("output");
+        let moved = sandbox.path().join("moved-switch");
+        fs::create_dir_all(&inside).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let sentinel = inside.join("index.json");
+        fs::write(&sentinel, b"tracked sentinel").unwrap();
+
+        let result = OutputTarget::open_with(&repo, &outside.join("index.json"), |canonical| {
+            fs::rename(&outside_root, &moved)?;
+            symlink(&repo, &outside_root)?;
+            open_output_parent(canonical)
+        });
+        let error = result.err().unwrap().to_string();
+        assert!(
+            error.contains("KIDX5 opened output parent is inside repository"),
+            "{error}"
+        );
+        assert_eq!(fs::read(sentinel).unwrap(), b"tracked sentinel");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_parent_swap_refuses_before_touching_a_repository_file() {
+        use std::os::unix::fs::symlink;
+
+        // Contract: a path alias replaced after validation cannot turn index publication into
+        // a repository write. The old path-based tempfile::persist would overwrite sentinel.
+        let sandbox = tempfile::tempdir().unwrap();
+        let repo = sandbox.path().join("repo");
+        let output = sandbox.path().join("output");
+        let moved = sandbox.path().join("moved-output");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir(&output).unwrap();
+        let sentinel = repo.join("index.json");
+        fs::write(&sentinel, b"tracked sentinel").unwrap();
+        let target = OutputTarget::open(&repo, &output.join("index.json")).unwrap();
+
+        fs::rename(&output, &moved).unwrap();
+        symlink(&repo, &output).unwrap();
+        let error = write_json(&target, &sample_index())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("KIDX5"), "{error}");
+        assert_eq!(fs::read(sentinel).unwrap(), b"tracked sentinel");
+        assert!(!moved.join("index.json").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acquisition_of_a_repository_handle_refuses_before_alias_checks() {
+        // Inject the exact handle acquisition outcome of an ancestor swap. The diagnostic
+        // distinguishes the retained-handle guard from the older mutable-alias check.
+        let sandbox = tempfile::tempdir().unwrap();
+        let repo = sandbox.path().join("repo");
+        let inside = repo.join("output");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir_all(&inside).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let result = OutputTarget::open_with(&repo, &outside.join("index.json"), |_| {
+            publish_windows::open_parent(&inside)
+        });
+        let error = result.err().unwrap().to_string();
+        assert!(
+            error.contains("KIDX5 opened output parent is inside repository"),
+            "{error}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_parent_refuses_or_blocks_a_swap_without_touching_the_repository() {
+        // Contract: Windows denies a direct rename while the parent handle is retained.
+        // If the filesystem permits renaming an ancestor, the alias check must refuse.
+        let sandbox = tempfile::tempdir().unwrap();
+        let repo = sandbox.path().join("repo");
+        let root = sandbox.path().join("output-root");
+        let output = root.join("output");
+        let moved = sandbox.path().join("moved-output-root");
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        let sentinel = repo.join("index.json");
+        fs::write(&sentinel, b"tracked sentinel").unwrap();
+        let target = OutputTarget::open(&repo, &output.join("index.json")).unwrap();
+
+        if fs::rename(&root, &moved).is_ok() {
+            let error = write_json(&target, &sample_index())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("KIDX5"), "{error}");
+        } else {
+            assert!(write_json(&target, &sample_index()).is_ok());
+        }
+        assert_eq!(fs::read(sentinel).unwrap(), b"tracked sentinel");
     }
 }

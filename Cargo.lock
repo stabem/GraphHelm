@@ -1687,6 +1687,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "hex",
+ "libc",
  "predicates",
  "same-file",
  "serde",
@@ -1694,6 +1695,8 @@ dependencies = [
  "sha2 0.11.0",
  "syn 2.0.119",
  "tempfile",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

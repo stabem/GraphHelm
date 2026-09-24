@@ -89,7 +89,10 @@ fn apply_engine(
     hook: &mut dyn FnMut(Boundary) -> Result<(), AdoptionError>,
     package_overrides: &[std::path::PathBuf],
 ) -> Result<Value, AdoptionError> {
+    storage::diagnostic_reset();
+    storage::diagnostic_stage("apply.preflight");
     let operations = preflight(plan, accepted_digest)?;
+    storage::diagnostic_stage("apply.open_roots");
     let project = Root::open(project, false)?;
     let home = Root::open(home, false)?;
     if plan["spec"]["rootBindings"] != bindings(&project, &home)? {
@@ -102,7 +105,9 @@ fn apply_engine(
     if project.record.identity == home.record.identity {
         return Err(storage::unsafe_path());
     }
+    storage::diagnostic_stage("apply.prepare_packages");
     let packages = crate::hosts::prepare_packages(plan, package_overrides)?;
+    storage::diagnostic_stage("apply.preflight_host");
     crate::hosts::preflight_host(plan)?;
     // Global/user authority is always acquired before project authority. Both are nonblocking.
     let _user_lock = home.lock(".graphhelm-adoption.lock")?;
@@ -113,10 +118,13 @@ fn apply_engine(
         .map(|o| format!("file/{}", o.path))
         .chain(packages.iter().map(|p| format!("package/{}", p.id)))
         .collect::<Vec<_>>();
+    storage::diagnostic_stage("apply.ownership");
     let claims = crate::ownership::check(&home, &project, &state_path, &owner_keys)?;
+    storage::diagnostic_stage("apply.open_store");
     let store = journal::Store::open(Root::open(&state_path, true)?)?;
     let transaction_id = digest(accepted_digest.as_bytes());
     store.ensure_idle(&transaction_id)?;
+    storage::diagnostic_stage("apply.read_existing_journal");
     if let Some(previous) = store.read(&transaction_id)? {
         if previous.project != project.record || previous.home != home.record {
             return Err(storage::failed());
@@ -145,6 +153,7 @@ fn apply_engine(
     let mut entries = Vec::new();
     let mut sources = Vec::new();
     for (index, operation) in operations.iter().enumerate() {
+        storage::diagnostic_operation(index);
         let root = if operation.root == "project" {
             &project
         } else {
@@ -175,6 +184,7 @@ fn apply_engine(
         });
         sources.push(source);
     }
+    storage::diagnostic_stage("apply.backup");
     let checkpoint =
         backup::backup_locked(&project, &home, &store.root.record.path, 1024 * 1024 * 1024)?;
     let backup_id = checkpoint["id"]
@@ -212,6 +222,7 @@ fn apply_engine(
         receipt: None,
     };
     let result = (|| {
+        storage::diagnostic_stage("apply.payload");
         for operation in &operations {
             store.save_payload(&operation.after)?;
         }
@@ -247,6 +258,7 @@ fn apply_engine(
             record.entries[index].phase = Phase::Intent;
             sync(&store, &mut record, hook)?;
             hook(Boundary::BeforePublish)?;
+            storage::diagnostic_stage("apply.source_publish");
             prepared.publish(&mut |boundary| {
                 use storage::PublicationBoundary;
                 match boundary {
@@ -310,6 +322,7 @@ fn sync(
     record: &mut journal::Journal,
     hook: &mut dyn FnMut(Boundary) -> Result<(), AdoptionError>,
 ) -> Result<(), AdoptionError> {
+    storage::diagnostic_stage("apply.sync");
     hook(Boundary::BeforeJournal)?;
     store.sync_with_hook(record, &mut || hook(Boundary::BetweenInitialWrites))?;
     hook(Boundary::AfterJournal)

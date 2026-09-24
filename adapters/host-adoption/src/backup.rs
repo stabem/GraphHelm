@@ -27,11 +27,46 @@ fn observe_nt_child_failure(status: i32, directory: bool, create: bool, mutable:
 }
 
 #[cfg(all(test, windows))]
+thread_local! {
+    static LAST_NT_PUBLISH_FAILURE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+    static RELEASE_ON_NT_PUBLISH_FAILURE: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> = const { std::cell::RefCell::new(None) };
+    static RELEASE_ACKNOWLEDGEMENT: std::cell::RefCell<Option<std::sync::mpsc::Receiver<()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, windows))]
 fn observe_nt_publish_failure(status: i32) {
+    let status = status as u32;
     eprintln!(
         "GH_ADOPTION_NT_PUBLISH_FAILURE source=windows_publish_directory status=0x{:08x}",
-        status as u32
+        status
     );
+    LAST_NT_PUBLISH_FAILURE.with(|last| last.set(Some(status)));
+    RELEASE_ON_NT_PUBLISH_FAILURE.with(|sender| {
+        if let Some(sender) = sender.borrow().as_ref() {
+            let _ = sender.send(());
+        }
+    });
+    RELEASE_ACKNOWLEDGEMENT.with(|acknowledgement| {
+        if let Some(receiver) = acknowledgement.borrow_mut().take() {
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("release thread must acknowledge the dropped handle");
+        }
+    });
+}
+
+#[cfg(all(test, windows))]
+fn take_nt_publish_failure() -> Option<u32> {
+    LAST_NT_PUBLISH_FAILURE.with(|last| last.take())
+}
+
+#[cfg(all(test, windows))]
+fn set_release_on_nt_publish_failure(
+    sender: Option<std::sync::mpsc::Sender<()>>,
+    acknowledgement: Option<std::sync::mpsc::Receiver<()>>,
+) {
+    RELEASE_ON_NT_PUBLISH_FAILURE.with(|slot| *slot.borrow_mut() = sender);
+    RELEASE_ACKNOWLEDGEMENT.with(|slot| *slot.borrow_mut() = acknowledgement);
 }
 
 pub fn valid_backup_id(id: &str) -> bool {
@@ -1171,6 +1206,7 @@ fn windows_publish_directory(
 ) -> Result<(), AdoptionError> {
     use std::mem::{offset_of, size_of, zeroed};
     use std::os::windows::io::AsRawHandle;
+    use std::time::{Duration, Instant};
     use windows_sys::Wdk::Storage::FileSystem::{
         FILE_RENAME_INFORMATION, FileRenameInformation, NtSetInformationFile,
     };
@@ -1193,25 +1229,138 @@ fn windows_publish_directory(
         std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
     }
     let mut io_status: IO_STATUS_BLOCK = unsafe { zeroed() };
-    let status = unsafe {
-        NtSetInformationFile(
-            source.as_raw_handle(),
-            &mut io_status,
-            info.cast_const().cast(),
-            u32::try_from(bytes).map_err(|_| AdoptionError {
-                reason: AdoptionReason::CoverageIncomplete,
-            })?,
-            FileRenameInformation,
-        )
-    };
-    if status < 0 {
+    let source_identity = crate::storage::identity(source).map_err(|_| AdoptionError {
+        reason: AdoptionReason::CoverageIncomplete,
+    })?;
+    let parent_identity = crate::storage::identity(parent).map_err(|_| AdoptionError {
+        reason: AdoptionReason::CoverageIncomplete,
+    })?;
+    let mut retry_until = None;
+    for attempt in 0..4 {
+        let status = unsafe {
+            NtSetInformationFile(
+                source.as_raw_handle(),
+                &mut io_status,
+                info.cast_const().cast(),
+                u32::try_from(bytes).map_err(|_| AdoptionError {
+                    reason: AdoptionReason::CoverageIncomplete,
+                })?,
+                FileRenameInformation,
+            )
+        };
+        if status >= 0 {
+            return Ok(());
+        }
         #[cfg(test)]
         observe_nt_publish_failure(status);
-        Err(AdoptionError {
-            reason: AdoptionReason::CoverageIncomplete,
-        })
-    } else {
-        Ok(())
+        // Start one shared retry window after the first failure observer returns. The
+        // test observer may wait for its bounded release acknowledgement without
+        // spending the product's 100 ms retry budget.
+        let retry_until =
+            retry_until.get_or_insert_with(|| Instant::now() + Duration::from_millis(100));
+        let retryable = matches!(status as u32, 0xc000_0022 | 0xc000_0043);
+        if !retryable || attempt == 3 || Instant::now() >= *retry_until {
+            return Err(AdoptionError {
+                reason: AdoptionReason::CoverageIncomplete,
+            });
+        }
+        // The clock bounds whether another native call may begin. It cannot bound the
+        // duration of NtSetInformationFile itself, so this is deliberately not a wall-clock
+        // guarantee.
+        std::thread::sleep(Duration::from_millis(20));
+        if Instant::now() >= *retry_until
+            || crate::storage::identity(source).map_err(|_| AdoptionError {
+                reason: AdoptionReason::CoverageIncomplete,
+            })? != source_identity
+            || crate::storage::identity(parent).map_err(|_| AdoptionError {
+                reason: AdoptionReason::CoverageIncomplete,
+            })? != parent_identity
+            || windows_open_child(parent, destination, true)
+                .map_err(|_| AdoptionError {
+                    reason: AdoptionReason::CoverageIncomplete,
+                })?
+                .is_some()
+        {
+            return Err(AdoptionError {
+                reason: AdoptionReason::CoverageIncomplete,
+            });
+        }
+    }
+    Err(AdoptionError {
+        reason: AdoptionReason::CoverageIncomplete,
+    })
+}
+
+#[cfg(all(test, windows))]
+mod windows_publish_tests {
+    use super::{
+        set_release_on_nt_publish_failure, take_nt_publish_failure, windows_create_child,
+        windows_open_directory_chain, windows_publish_directory,
+    };
+    use graphhelm_protocols::adoption::AdoptionReason;
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+    #[test]
+    fn child_without_delete_share_reports_publish_status_then_succeeds_after_release() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = windows_open_directory_chain(root.path(), true).unwrap();
+        let source = windows_create_child(&parent, "pending", true).unwrap();
+        let manifest = root.path().join("pending").join("manifest.json");
+        let held = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(manifest)
+            .unwrap();
+
+        let error = windows_publish_directory(&source, &parent, "published").unwrap_err();
+        assert_eq!(error.reason, AdoptionReason::CoverageIncomplete);
+        let status = take_nt_publish_failure().unwrap();
+        assert!(status == 0xc000_0022 || status == 0xc000_0043);
+
+        drop(held);
+        assert!(!root.path().join("published").exists());
+        windows_publish_directory(&source, &parent, "published").unwrap();
+        assert!(root.path().join("published").is_dir());
+    }
+
+    #[test]
+    fn child_released_during_bounded_retry_is_published() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = windows_open_directory_chain(root.path(), true).unwrap();
+        let source = windows_create_child(&parent, "pending", true).unwrap();
+        let manifest = root.path().join("pending").join("manifest.json");
+        let held = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(manifest)
+            .unwrap();
+        let (release_signal, release_ready) = std::sync::mpsc::channel();
+        let (release_ack, release_acknowledged) = std::sync::mpsc::channel();
+        let release = std::thread::spawn(move || {
+            release_ready.recv().unwrap();
+            drop(held);
+            release_ack.send(()).unwrap();
+        });
+        let publish_source = source.try_clone().unwrap();
+        let publish_parent = parent.try_clone().unwrap();
+        let publish = std::thread::spawn(move || {
+            set_release_on_nt_publish_failure(Some(release_signal), Some(release_acknowledged));
+            let result = windows_publish_directory(&publish_source, &publish_parent, "published");
+            set_release_on_nt_publish_failure(None, None);
+            (result, take_nt_publish_failure())
+        });
+
+        let (result, status) = publish.join().unwrap();
+        result.unwrap();
+        release.join().unwrap();
+        let status = status.unwrap();
+        assert!(status == 0xc000_0022 || status == 0xc000_0043);
+        assert!(root.path().join("published").is_dir());
     }
 }
 

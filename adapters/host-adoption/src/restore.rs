@@ -100,6 +100,8 @@ fn sources_for_checkpoint(store: &journal::Store) -> Result<Vec<journal::Journal
 
 /// Reads only: no locks, new snapshots, provider, host process, or Runtime calls.
 pub fn plan_restore(state_root: &Path, backup_id: &str) -> Result<Value, AdoptionError> {
+    storage::diagnostic_reset();
+    storage::diagnostic_stage("restore.plan.open_store");
     let store = journal::Store::reader(Root::observe(state_root)?)?;
     if backup_id != "original" {
         let linked = match store.active()? {
@@ -450,6 +452,8 @@ fn apply_engine(
     accepted_digest: &str,
     hook: &mut dyn FnMut(Boundary) -> Result<(), AdoptionError>,
 ) -> Result<Value, AdoptionError> {
+    storage::diagnostic_reset();
+    storage::diagnostic_stage("restore.apply.validate_plan");
     let bytes = graphhelm_graph::canonical_content_bytes(plan)
         .map_err(|_| error(AdoptionReason::LimitExceeded))?;
     if bytes.len() > 4 * 1024 * 1024 {
@@ -465,6 +469,7 @@ fn apply_engine(
         return Err(error(AdoptionReason::InvalidConfiguration));
     }
     let transaction_id = apply::digest(accepted_digest.as_bytes());
+    storage::diagnostic_stage("restore.apply.open_store");
     let initial = journal::Store::reader(Root::observe(state_root)?)?;
     let manual = plan["spec"]["manual"] == true
         && backup::checkpoint_provenance(
@@ -474,6 +479,7 @@ fn apply_engine(
                 .ok_or_else(storage::failed)?,
         )?
         .is_some();
+    storage::diagnostic_stage("restore.apply.reopen_roots");
     let (project, home) = if manual {
         let provenance = backup::checkpoint_provenance(
             &initial.root.record.path,
@@ -510,6 +516,7 @@ fn apply_engine(
     let state_path = std::path::absolute(state_root).map_err(|_| storage::unsafe_path())?;
     let _user = home.lock(".graphhelm-adoption.lock")?;
     let _project = project.lock(".graphhelm-adoption.lock")?;
+    storage::diagnostic_stage("restore.apply.acquire_locks");
     let store = journal::Store::open(Root::open(state_root, false)?)?;
     if let Some(mut prior) = store.read(&transaction_id)? {
         if prior.restore.is_none() || prior.project != project.record || prior.home != home.record {
@@ -544,6 +551,7 @@ fn apply_engine(
             .as_str()
             .ok_or_else(storage::failed)?
     };
+    storage::diagnostic_stage("restore.apply.prepare_sources");
     let sources = if manual {
         sources_for_checkpoint(&store)?
     } else {
@@ -562,6 +570,7 @@ fn apply_engine(
             json!({"apiVersion":"p50.dev/adoption/v1","kind":"ApplyReceipt","id":transaction_id,"spec":{"transactionId":transaction_id,"planDigest":accepted_digest,"backupId":plan["spec"]["backupId"],"state":"recovery_required"},"conflicts":plan["spec"]["conflicts"]}),
         );
     }
+    storage::diagnostic_stage("restore.apply.backup");
     let checkpoint =
         backup::backup_locked(&project, &home, &store.root.record.path, 1024 * 1024 * 1024)?;
     for (entry, target) in prepared.entries.iter().zip(&prepared.targets) {
@@ -626,6 +635,7 @@ pub(crate) fn resume(
     record: &mut journal::Journal,
     hook: &mut dyn FnMut(Boundary) -> Result<(), AdoptionError>,
 ) -> Result<Value, AdoptionError> {
+    storage::diagnostic_stage("restore.resume");
     if record.state == TransactionState::Restored {
         for entry in &record.entries {
             let root = if entry.root == "project" {
@@ -669,6 +679,7 @@ fn resume_inner(
     record: &mut journal::Journal,
     hook: &mut dyn FnMut(Boundary) -> Result<(), AdoptionError>,
 ) -> Result<Value, AdoptionError> {
+    storage::diagnostic_stage("restore.resume.preflight");
     let restore = record.restore.clone().ok_or_else(storage::failed)?;
     backup::verify_backup(&store.root.record.path, &restore.selected_backup)?;
     backup::verify_backup(&store.root.record.path, &record.backup_id)?;

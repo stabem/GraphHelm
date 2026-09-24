@@ -366,7 +366,7 @@ fn rename_no_replace(source: &File, parent: &File, name: &str) -> Result<(), Ado
         std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
     }
     let mut status = unsafe { std::mem::zeroed() };
-    if unsafe {
+    let code = unsafe {
         NtSetInformationFile(
             source.as_raw_handle(),
             &mut status,
@@ -374,9 +374,9 @@ fn rename_no_replace(source: &File, parent: &File, name: &str) -> Result<(), Ado
             len as u32,
             FileRenameInformation,
         )
-    } < 0
-    {
-        return Err(failed());
+    };
+    if code < 0 {
+        return Err(failed_ntstatus(code, NtOperation::GuardedNoReplace));
     }
     Ok(())
 }

@@ -205,7 +205,11 @@ pub fn run_host(operation: &HostOperation) -> Result<HostReply, AdoptionError> {
 fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> {
     let started = Instant::now();
     let deadline = started + Duration::from_millis(operation.timeout_ms);
-    let terminate_at = deadline - Duration::from_millis((operation.timeout_ms / 5).clamp(1, 100));
+    // Reserve half of the operation budget, capped at 500 ms, for termination and inherited-pipe
+    // collection. The old 20%-of-budget rule capped this at 100 ms, which was shorter than a
+    // loaded Windows host sometimes needed to signal and observe every job member.
+    let termination_budget_ms = (operation.timeout_ms / 2).clamp(1, 500);
+    let terminate_at = deadline - Duration::from_millis(termination_budget_ms);
     let mut command = Command::new(&operation.program);
     command
         .args(&operation.args)
@@ -236,12 +240,12 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
     };
     let (mut out_done, mut err_done) = (false, false);
     let mut status = None;
-    let mut cleanup_confirmed = false;
+    let mut termination_confirmed = false;
     loop {
         if Instant::now() >= terminate_at && !reply.timed_out {
             reply.timed_out = true;
             tree.terminate_until(deadline)?;
-            cleanup_confirmed = true;
+            termination_confirmed = true;
         }
         if Instant::now() >= deadline {
             break;
@@ -262,10 +266,17 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
             Duration::from_millis(2).min(deadline.saturating_duration_since(Instant::now())),
         );
     }
-    if !cleanup_confirmed {
+    if !termination_confirmed {
         // A normal parent exit does not prove that a descendant has exited. The job is still
         // terminated and drained before a successful reply is allowed to escape.
         tree.terminate_until(deadline)?;
+    }
+    if !(out_done && err_done && status.is_some()) {
+        // Termination confirmation covers the process handles enumerated in the job. The pipes
+        // are the remaining observable boundary for descendants that inherited them, and an EOF
+        // on both pipes is required before the operation can return. A deadline reached with an
+        // open pipe means cleanup is incomplete, even when TerminateJobObject succeeded.
+        return Err(cleanup_unconfirmed());
     }
     reply.success = !reply.timed_out && status.is_some_and(|s| s.success());
     // Dropping the pipes cannot block on a descendant holding a write handle. The retained handles
@@ -368,7 +379,7 @@ impl ProcessTree {
     }
     fn terminate_until(&self, deadline: Instant) -> Result<(), AdoptionError> {
         use std::os::windows::io::RawHandle;
-        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError};
         use windows_sys::Win32::System::JobObjects::{
             JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList,
             QueryInformationJobObject, TerminateJobObject,
@@ -437,6 +448,12 @@ impl ProcessTree {
             for pid in pids {
                 let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
                 if handle.is_null() {
+                    // A process that exited between the membership snapshot and OpenProcess is
+                    // already gone. Other open failures leave the member unobserved and must fail
+                    // closed.
+                    if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+                        continue;
+                    }
                     for handle in handles {
                         unsafe { CloseHandle(handle) };
                     }

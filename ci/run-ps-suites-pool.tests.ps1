@@ -33,6 +33,9 @@
 #   1  2 BEATS 1 when both happen in one pool   1  and BOTH names appear
 #   1  a stub that outlives the deadline is KILLED and gives exit 2, not 1 and not 0
 #   1  and the refusal names the suite and the ceiling it was given
+#   1  a timed descendant starts before the wrapper's deadline
+#   1  the timed wrapper is actually refused by the pool
+#   1  the timed descendant's own process exited before its release signal
 #   1  the timeout also kills a descendant before it can outlive the suite wrapper
 #   1  a wrapper that exits during taskkill's race window is already safely stopped
 #   1  a failed tree snapshot stays a cleanup refusal even when the wrapper kill succeeds
@@ -46,13 +49,17 @@
 #   1  a transcript that stays locked fails closed instead of hanging or disappearing
 #   1  an unparseable throttle runs SERIALLY, never wider
 #   1  and says so
-$ExpectedAssertionCount = 23
+#   1  a missing fixture pid is a bounded harness result, not an exception
+#   1  a child invocation reports the real missing-PID startup failure
+#   1  that child invocation vouches wrapper and descendant cleanup
+$ExpectedAssertionCount = 29
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $script:total = 0
 $script:failures = 0
+$script:fixtureBroken = $false
 
 function Assert-True {
     param([Parameter(Mandatory)] [bool] $Condition, [Parameter(Mandatory)] [string] $Message)
@@ -65,6 +72,42 @@ $runnerPath = Join-Path $PSScriptRoot 'run-ps-suites.ps1'
 $runnerText = [System.IO.File]::ReadAllText($runnerPath)
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+function Wait-ForPidFile {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        # Loaded gate hosts have measured startup above ten seconds. This is still a bounded
+        # admission window; the normal path returns as soon as a complete PID is readable. The
+        # deadline bounds polling and retry admission; a synchronous ReadAllText call already in
+        # progress is not interruptible by this script.
+        [int] $TimeoutMilliseconds = 30000
+    )
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([math]::Max(0, $TimeoutMilliseconds))
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try {
+            if (Test-Path -LiteralPath $Path) {
+                $raw = [System.IO.File]::ReadAllText($Path).Trim()
+                $parsedPid = 0
+                if ([int]::TryParse($raw, [ref] $parsedPid) -and $parsedPid -gt 0) {
+                    return [pscustomobject]@{ Succeeded = $true; ProcessId = $parsedPid; Reason = $null }
+                }
+            }
+        } catch [System.IO.IOException] {
+            # A writer can publish the file while it is still being flushed. Keep polling until
+            # the bounded admission window closes instead of turning that race into an exception.
+        } catch {
+            return [pscustomobject]@{ Succeeded = $false; ProcessId = $null; Reason = 'pid file could not be read' }
+        }
+        $remainingMilliseconds = [int][math]::Max(1, [math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalMilliseconds))
+        Start-Sleep -Milliseconds ([math]::Min(50, $remainingMilliseconds))
+    }
+    return [pscustomobject]@{
+        Succeeded = $false
+        ProcessId = $null
+        Reason = "fixture did not publish a readable pid within $TimeoutMilliseconds ms"
+    }
+}
+
 # The timeout branch first observes HasExited=false and only then launches taskkill. Reproduce the
 # race between those two observations: the real wrapper exits while a controlled taskkill boundary
 # reports PID-not-found (128), but its long-lived child remains. The root killer is controlled; the
@@ -76,46 +119,183 @@ if ($stopStart -ge 0 -and $stopEnd -gt $stopStart) {
 }
 $racePidFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-child-$([guid]::NewGuid().ToString('N')).pid"
 $raceReleaseFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-release-$([guid]::NewGuid().ToString('N')).signal"
+$raceStartedFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-started-$([guid]::NewGuid().ToString('N')).signal"
+$raceSurvivedFile = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-race-survived-$([guid]::NewGuid().ToString('N')).signal"
+$startupProbe = $env:GRAPHHELM_PS_POOL_PID_STARTUP_PROBE -eq '1'
 # Hold the wrapper behind an explicit release file. The old 400 ms sleep made this cell a timing
 # lottery: on a loaded host the wrapper could exit before Stop-SuiteProcessTree reached taskkill,
 # so the intended PID-not-found branch was never exercised. The fake taskkill below releases the
 # wrapper only after the process-tree snapshot has run, preserving the race shape with no clock race.
-$raceCommand = "`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30'; Set-Content -LiteralPath '$racePidFile' -Value `$child.Id; while (-not (Test-Path -LiteralPath '$raceReleaseFile')) { Start-Sleep -Milliseconds 25 }"
+$raceCommand = if ($startupProbe) {
+    "`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30; Set-Content -LiteralPath `"$raceSurvivedFile`" -Value survived'; Set-Content -LiteralPath '$raceStartedFile' -Value started; while (-not (Test-Path -LiteralPath '$raceReleaseFile')) { Start-Sleep -Milliseconds 25 }"
+} else {
+    "`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30'; Set-Content -LiteralPath '$racePidFile' -Value `$child.Id; while (-not (Test-Path -LiteralPath '$raceReleaseFile')) { Start-Sleep -Milliseconds 25 }"
+}
 $raceProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
     -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $raceCommand
-$deadline = (Get-Date).AddSeconds(10)
-while (-not (Test-Path -LiteralPath $racePidFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
-$raceChildId = [int](Get-Content -LiteralPath $racePidFile -Raw)
-$raceChildProcess = Microsoft.PowerShell.Management\Get-Process -Id $raceChildId
-$null = $raceChildProcess.Handle
-$script:raceProcess = $raceProcess
-function Start-Process {
-    param([string] $FilePath, [switch] $PassThru, [System.Diagnostics.ProcessWindowStyle] $WindowStyle, [object[]] $ArgumentList)
-    if ([string]$ArgumentList[1] -eq [string]$script:raceProcess.Id) {
-        Set-Content -LiteralPath $raceReleaseFile -Value 'release' -Encoding ASCII
-        $null = $script:raceProcess.WaitForExit(5000)
-        $fake = [pscustomobject]@{ Handle = 1; ExitCode = 128 }
-        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) return $true }
-        $fake | Add-Member -MemberType ScriptMethod -Name Kill -Value { }
-        return $fake
+
+# A missing PID is a harness failure, not a PowerShell exception. This fixture keeps the regression
+# deterministic: the wrapper starts a child, exits before publishing the production PID file, and
+# the child would leave a marker if the real remembered-tree cleanup failed after wrapper exit.
+$missingPidPath = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-missing-$([guid]::NewGuid().ToString('N')).pid"
+$missingChildPidPath = "$missingPidPath.child"
+$missingStartedPath = "$missingPidPath.started"
+$missingSurvivedPath = "$missingPidPath.survived"
+$missingChildScriptPath = "$missingPidPath.child.ps1"
+$missingWrapperScriptPath = "$missingPidPath.wrapper.ps1"
+[System.IO.File]::WriteAllText($missingChildScriptPath, @"
+[System.IO.File]::WriteAllText('$($missingChildPidPath.Replace("'", "''"))', [string]`$PID)
+Start-Sleep -Seconds 3
+[System.IO.File]::WriteAllText('$($missingSurvivedPath.Replace("'", "''"))', 'descendant survived')
+"@, $utf8NoBom)
+[System.IO.File]::WriteAllText($missingWrapperScriptPath, @"
+`$null = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-File', '$($missingChildScriptPath.Replace("'", "''"))'
+[System.IO.File]::WriteAllText('$($missingStartedPath.Replace("'", "''"))', 'started')
+exit 0
+"@, $utf8NoBom)
+$missingTreeProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+    -ArgumentList '-NoProfile', '-NonInteractive', '-File', $missingWrapperScriptPath
+$missingTreeDeadline = [DateTime]::UtcNow.AddSeconds(10)
+while (-not (Test-Path -LiteralPath $missingStartedPath) -and [DateTime]::UtcNow -lt $missingTreeDeadline) {
+    Start-Sleep -Milliseconds 25
+}
+$missingTreeStarted = Test-Path -LiteralPath $missingStartedPath
+$missingChildReady = Wait-ForPidFile -Path $missingChildPidPath -TimeoutMilliseconds 10000
+$missingChildProcess = $null
+$missingChildExited = $false
+if ($missingChildReady.Succeeded) {
+    try {
+        $missingChildProcess = Microsoft.PowerShell.Management\Get-Process -Id $missingChildReady.ProcessId
+        $null = $missingChildProcess.Handle
+    } catch {
+        $script:fixtureBroken = $true
     }
-    return Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -PassThru -WindowStyle $WindowStyle -ArgumentList $ArgumentList
 }
+$missingWrapperExited = $missingTreeProcess.WaitForExit(5000)
+$missingTreeStopped = $false
+if ($missingTreeStarted -and $missingChildReady.Succeeded -and $missingWrapperExited -and $null -ne $missingChildProcess) {
+    $missingTreeStopped = Stop-SuiteProcessTree -Process $missingTreeProcess
+}
+if ($null -ne $missingChildProcess) {
+    try { $missingChildExited = $missingChildProcess.WaitForExit(5000) } catch { $missingChildExited = $false }
+}
+Start-Sleep -Seconds 1
+$missingTreeSurvived = Test-Path -LiteralPath $missingSurvivedPath
 try {
-    $raceStopped = Stop-SuiteProcessTree -Process $raceProcess
+    if ($null -ne $missingChildProcess) {
+        if (-not $missingChildExited -and -not $missingChildProcess.HasExited) {
+            try { taskkill.exe /PID $missingChildReady.ProcessId /T /F 2>$null | Out-Null } catch { }
+            $missingChildExited = $missingChildProcess.WaitForExit(5000)
+        }
+    }
+} catch { $script:fixtureBroken = $true }
+$missingPidPublished = Test-Path -LiteralPath $missingPidPath
+Remove-Item -LiteralPath $missingPidPath, $missingChildPidPath, $missingStartedPath, $missingSurvivedPath, `
+    $missingChildScriptPath, $missingWrapperScriptPath -Force -ErrorAction SilentlyContinue
+$missingPidProbe = [pscustomobject]@{
+    Succeeded = $missingTreeStarted -and $missingChildReady.Succeeded -and $missingWrapperExited -and $missingChildExited
+    ProcessId = $missingChildReady.ProcessId
+    Published = $missingPidPublished
+    ChildExited = $missingChildExited
+    Reason = if ($missingTreeStopped -and -not $missingTreeSurvived) { $null } else { 'missing PID child was not vouched for and reaped' }
+}
+
+$raceChildId = $null
+$raceChildProcess = $null
+$raceStopped = $false
+$raceChildExited = $false
+$raceCleanupVouched = $false
+try {
+    $racePidTimeout = if ($startupProbe) { 3000 } else { 30000 }
+    $raceReady = Wait-ForPidFile -Path $racePidFile -TimeoutMilliseconds $racePidTimeout
+    if (-not $raceReady.Succeeded) {
+        $script:fixtureBroken = $true
+        Write-Host "HARNESS-BROKE: $($raceReady.Reason)" -ForegroundColor Magenta
+    } else {
+        try {
+            $raceChildId = $raceReady.ProcessId
+            $raceChildProcess = Microsoft.PowerShell.Management\Get-Process -Id $raceChildId
+            $null = $raceChildProcess.Handle
+            $script:raceProcess = $raceProcess
+            function Start-Process {
+                param([string] $FilePath, [switch] $PassThru, [System.Diagnostics.ProcessWindowStyle] $WindowStyle, [object[]] $ArgumentList)
+                if ([string]$ArgumentList[1] -eq [string]$script:raceProcess.Id) {
+                    Set-Content -LiteralPath $raceReleaseFile -Value 'release' -Encoding ASCII
+                    $null = $script:raceProcess.WaitForExit(5000)
+                    $fake = [pscustomobject]@{ Handle = 1; ExitCode = 128 }
+                    $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) return $true }
+                    $fake | Add-Member -MemberType ScriptMethod -Name Kill -Value { }
+                    return $fake
+                }
+                return Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -PassThru -WindowStyle $WindowStyle -ArgumentList $ArgumentList
+            }
+            $raceStopped = Stop-SuiteProcessTree -Process $raceProcess
+        } finally {
+            Remove-Item function:Start-Process -Force -ErrorAction SilentlyContinue
+        }
+        $raceChildExited = try { $raceChildProcess.HasExited } catch { $false }
+        if (-not $raceChildExited) {
+            # Cleanup only. The process may exit between the liveness read and taskkill; that benign race
+            # must not abort the harness before the assertion reports the production result.
+            try { taskkill.exe /PID $raceChildId /T /F 2>$null | Out-Null } catch { }
+        }
+    }
 } finally {
-    Remove-Item function:Start-Process -Force
+    # Always run the real remembered-tree cleanup, including after the wrapper has already exited.
+    # A taskkill guarded by HasExited would skip the only operation that can vouch an unknown child.
+    try {
+        if ($null -ne $raceProcess) {
+            $raceCleanupVouched = Stop-SuiteProcessTree -Process $raceProcess
+            if (-not $raceCleanupVouched) {
+                $script:fixtureBroken = $true
+            }
+        }
+    } catch { $script:fixtureBroken = $true }
+    Remove-Item -LiteralPath $racePidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $raceReleaseFile -Force -ErrorAction SilentlyContinue
 }
-$raceChildExited = try { $raceChildProcess.HasExited } catch { $false }
-if (-not $raceChildExited) {
-    # Cleanup only. The process may exit between the liveness read and taskkill; that benign race
-    # must not abort the harness before the assertion reports the production result.
-    try { taskkill.exe /PID $raceChildId /T /F 2>$null | Out-Null } catch { }
-}
-Remove-Item -LiteralPath $racePidFile -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $raceReleaseFile -Force -ErrorAction SilentlyContinue
+Assert-True ($missingPidProbe.Succeeded -and -not $missingPidProbe.Published -and $missingTreeStopped -and $missingPidProbe.ChildExited -and -not $missingTreeSurvived) `
+    'a wrapper that exits after starting a child without publishing its pid is cleaned through the remembered tree, with no unclassified Get-Content exception'
 Assert-True ($raceStopped -and $raceChildExited) `
     "a wrapper that exits while taskkill reports PID-not-found still has every remembered descendant stopped (stopped=$raceStopped childExited=$raceChildExited)"
+
+if ($startupProbe) {
+    $probeOutcomePath = $env:GRAPHHELM_PS_POOL_PID_STARTUP_OUTCOME
+    if (-not [string]::IsNullOrWhiteSpace($probeOutcomePath)) {
+        $probeWrapperExited = try { $raceProcess.HasExited } catch { $false }
+        $probeChildStarted = Test-Path -LiteralPath $raceStartedFile
+        $probeChildSurvived = Test-Path -LiteralPath $raceSurvivedFile
+        [System.IO.File]::WriteAllText($probeOutcomePath, "cleanup=$raceCleanupVouched`nwrapperExited=$probeWrapperExited`nchildStarted=$probeChildStarted`nchildSurvived=$probeChildSurvived`nfixtureBroken=$script:fixtureBroken", $utf8NoBom)
+    }
+    Remove-Item -LiteralPath $raceStartedFile, $raceSurvivedFile -Force -ErrorAction SilentlyContinue
+    if ($script:fixtureBroken) { exit 2 }
+    exit 0
+}
+
+# Invoke this same suite through its real PID-admission branch. The child deliberately omits the
+# production PID publication, so a passing result requires the actual startup failure wiring to
+# report exit 2 and the actual finally block to vouch cleanup.
+$probeOutcomePath = Join-Path ([System.IO.Path]::GetTempPath()) "graphhelm-pool-startup-outcome-$([guid]::NewGuid().ToString('N')).txt"
+$previousProbe = $env:GRAPHHELM_PS_POOL_PID_STARTUP_PROBE
+$previousOutcome = $env:GRAPHHELM_PS_POOL_PID_STARTUP_OUTCOME
+$env:GRAPHHELM_PS_POOL_PID_STARTUP_PROBE = '1'
+$env:GRAPHHELM_PS_POOL_PID_STARTUP_OUTCOME = $probeOutcomePath
+try {
+    $probeProcess = Microsoft.PowerShell.Management\Start-Process powershell.exe -PassThru -WindowStyle Hidden `
+        -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath
+    $probeExited = $probeProcess.WaitForExit(15000)
+    if ($probeExited) { $probeProcess.Refresh() }
+    $probeExitCode = if ($probeExited) { $probeProcess.ExitCode } else { $null }
+    $probeOutcome = if (Test-Path -LiteralPath $probeOutcomePath) { [System.IO.File]::ReadAllText($probeOutcomePath) } else { '' }
+} finally {
+    $env:GRAPHHELM_PS_POOL_PID_STARTUP_PROBE = $previousProbe
+    $env:GRAPHHELM_PS_POOL_PID_STARTUP_OUTCOME = $previousOutcome
+}
+Assert-True ($probeExited -and $probeExitCode -eq 2 -and $probeOutcome -match 'fixtureBroken=True') `
+    "a child invocation with missing PID publication reports bounded startup failure as exit 2 (exited=$probeExited exit=$probeExitCode)"
+Assert-True ($probeOutcome -match 'cleanup=True' -and $probeOutcome -match 'wrapperExited=True' -and $probeOutcome -match 'childStarted=True' -and $probeOutcome -match 'childSurvived=False') `
+    "the same child invocation vouches wrapper and descendant cleanup (outcome='$probeOutcome')"
+Remove-Item -LiteralPath $probeOutcomePath, $raceStartedFile, $raceSurvivedFile -Force -ErrorAction SilentlyContinue
 
 # Stage a PID whose CIM identity and current Process identity disagree. Numeric equality alone must
 # not authorize a kill: it can describe a descendant that exited and an unrelated process that
@@ -199,7 +379,20 @@ function Invoke-Pool {
         if ($DescendantMarkers.ContainsKey($name)) {
             $marker = [string]$DescendantMarkers[$name]
             $childPath = Join-Path $fixtureRoot "$name.child.ps1"
-            $child = "Start-Sleep -Seconds 3`n[System.IO.File]::WriteAllText('$($marker.Replace("'", "''"))', 'descendant survived')"
+            $readyPath = "$marker.ready"
+            $releasePath = "$marker.release"
+            # The child confirms it has started before the timeout can test process-tree cleanup.
+            # A release signal delays the survival marker until after the pool has reported its
+            # verdict, so a longer startup allowance cannot make a healthy child mark survival.
+            $child = @"
+[System.IO.File]::WriteAllText('$($readyPath.Replace("'", "''"))', 'ready')
+`$deadline = [DateTime]::UtcNow.AddSeconds(180)
+while (-not (Test-Path -LiteralPath '$($releasePath.Replace("'", "''"))') -and [DateTime]::UtcNow -lt `$deadline) { Start-Sleep -Milliseconds 50 }
+if (Test-Path -LiteralPath '$($releasePath.Replace("'", "''"))') {
+    Start-Sleep -Seconds 3
+    [System.IO.File]::WriteAllText('$($marker.Replace("'", "''"))', 'descendant survived')
+}
+"@
             [System.IO.File]::WriteAllText($childPath, $child, $utf8NoBom)
             $lines.Add("`$child = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '$($childPath.Replace("'", "''"))'")
             $lines.Add("[System.IO.File]::WriteAllText('$($marker.Replace("'", "''")).pid', [string]`$child.Id)")
@@ -266,8 +459,39 @@ try {
         'and the refusal names the suite and the ceiling it was given'
 
     $descendantMarker = Join-Path $fixtureRoot 'timed-descendant.marker'
-    $timedTree = Invoke-Pool -SleepSeconds @{ $slow = 30 } `
-        -DescendantMarkers @{ $slow = $descendantMarker } -TimeoutSeconds '1'
+    $descendantExitedBeforeRelease = $false
+    try {
+        # A one-second deadline can expire while PowerShell is still starting the child on a
+        # loaded host. Allow its bounded startup, then require the child's own ready receipt;
+        # otherwise the absence of a survival marker would be a vacuous pass.
+        $timedTree = Invoke-Pool -SleepSeconds @{ $slow = 90 } `
+            -DescendantMarkers @{ $slow = $descendantMarker } -TimeoutSeconds '30'
+        $childPid = Wait-ForPidFile -Path "$descendantMarker.pid" -TimeoutMilliseconds 5000
+        if (-not $childPid.Succeeded) {
+            $script:fixtureBroken = $true
+            Write-Host "HARNESS-BROKE: $($childPid.Reason)" -ForegroundColor Magenta
+        } else {
+            try {
+                # The child waits for the release signal, so a live PID here means the pool
+                # returned before terminating it. PID reuse can only cause a false refusal.
+                $observedChild = [System.Diagnostics.Process]::GetProcessById($childPid.ProcessId)
+                $descendantExitedBeforeRelease = $observedChild.HasExited
+            } catch [System.ArgumentException] {
+                $descendantExitedBeforeRelease = $true
+            } catch {
+                $script:fixtureBroken = $true
+                Write-Host 'HARNESS-BROKE: timed descendant process identity could not be read' -ForegroundColor Magenta
+            }
+        }
+    } finally {
+        [System.IO.File]::WriteAllText("$descendantMarker.release", 'release')
+    }
+    Assert-True (Test-Path -LiteralPath "$descendantMarker.ready") `
+        'the timed descendant started before the pool tested process-tree cleanup'
+    Assert-True ($timedTree.exitCode -eq 2 -and $timedTree.text -match [regex]::Escape($slow)) `
+        'the pool refused the wrapper after its deadline rather than reporting a clean exit'
+    Assert-True $descendantExitedBeforeRelease `
+        'the timed descendant process exited before its release signal, independent of marker scheduling'
     Start-Sleep -Seconds 4
     Assert-True (-not (Test-Path -LiteralPath $descendantMarker)) `
         'the timeout kills the whole process tree before a descendant can outlive its suite wrapper'
@@ -347,6 +571,10 @@ Start-Sleep -Milliseconds 500
 Write-Host ''
 if ($script:total -ne $ExpectedAssertionCount) {
     Write-Host "HARNESS-BROKE: ran $($script:total) assertions, expected $ExpectedAssertionCount." -ForegroundColor Magenta
+    exit 2
+}
+if ($script:fixtureBroken) {
+    Write-Host 'HARNESS-BROKE: fixture startup or cleanup could not be vouched for.' -ForegroundColor Magenta
     exit 2
 }
 if ($script:failures -gt 0) {

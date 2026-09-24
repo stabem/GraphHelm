@@ -2,6 +2,9 @@
 use crate::backup;
 use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -17,9 +20,124 @@ pub(crate) use security_unix::UnixSecurity as Access;
 pub(crate) use security_windows::WindowsSecurity as Access;
 
 pub(crate) fn failed() -> AdoptionError {
+    diagnostic_failure(None);
     AdoptionError {
         reason: AdoptionReason::RecoveryRequired,
     }
+}
+
+pub(crate) fn failed_io(error: &std::io::Error) -> AdoptionError {
+    diagnostic_failure(Some(error));
+    AdoptionError {
+        reason: AdoptionReason::RecoveryRequired,
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub(crate) enum NtOperation {
+    AtomicReplace,
+    GuardedNoReplace,
+}
+
+#[cfg(windows)]
+pub(crate) fn failed_ntstatus(status: i32, operation: NtOperation) -> AdoptionError {
+    if diagnostic_enabled() {
+        DIAGNOSTIC_STAGE.with(|stage| {
+            let operation = match operation {
+                NtOperation::AtomicReplace => "atomic_replace",
+                NtOperation::GuardedNoReplace => "guarded_no_replace",
+            };
+            eprintln!(
+                "GH_ADOPTION_DIAGNOSTIC stage={} operation={operation} os_code=none kind=ntstatus ntstatus={status}",
+                stage.borrow().as_deref().unwrap_or("unknown"),
+            );
+        });
+    }
+    AdoptionError {
+        reason: AdoptionReason::RecoveryRequired,
+    }
+}
+
+/// Test fixtures can opt into a redacted breadcrumb when a broad storage error is returned.
+/// The normal error contract stays unchanged and no diagnostic is emitted unless the fixture
+/// explicitly enables `GRAPHHELM_ADOPTION_DIAGNOSTICS`.
+pub(crate) fn diagnostic_stage(stage: &'static str) {
+    if diagnostic_enabled() {
+        DIAGNOSTIC_STAGE.with(|current| *current.borrow_mut() = Some(stage.into()));
+    }
+}
+
+pub(crate) fn diagnostic_operation(index: usize) {
+    if diagnostic_enabled() {
+        DIAGNOSTIC_STAGE.with(|current| {
+            *current.borrow_mut() = Some(format!("apply.operation[{index}].source"));
+        });
+    }
+}
+
+pub(crate) fn diagnostic_reset() {
+    DIAGNOSTIC_STAGE.with(|current| *current.borrow_mut() = None);
+}
+
+#[cfg(test)]
+pub(crate) struct DiagnosticGuard {
+    previous: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn diagnostic_scope() -> DiagnosticGuard {
+    let previous = DIAGNOSTIC_REQUESTED.with(|requested| {
+        let previous = requested.get();
+        requested.set(true);
+        previous
+    });
+    DiagnosticGuard { previous }
+}
+
+#[cfg(test)]
+impl Drop for DiagnosticGuard {
+    fn drop(&mut self) {
+        DIAGNOSTIC_REQUESTED.with(|requested| requested.set(self.previous));
+        diagnostic_reset();
+    }
+}
+
+fn diagnostic_failure(error: Option<&std::io::Error>) {
+    if !diagnostic_enabled() {
+        return;
+    }
+    DIAGNOSTIC_STAGE.with(|stage| {
+        eprintln!(
+            "GH_ADOPTION_DIAGNOSTIC stage={} os_code={} kind={}",
+            stage.borrow().as_deref().unwrap_or("unknown"),
+            error
+                .and_then(std::io::Error::raw_os_error)
+                .map_or_else(|| "none".to_owned(), |code| code.to_string()),
+            error.map_or_else(|| "none".to_owned(), |value| format!("{:?}", value.kind())),
+        );
+    });
+}
+
+fn diagnostic_enabled() -> bool {
+    cfg!(debug_assertions)
+        && (diagnostic_requested() || std::env::var_os("GRAPHHELM_ADOPTION_DIAGNOSTICS").is_some())
+}
+
+#[cfg(test)]
+fn diagnostic_requested() -> bool {
+    DIAGNOSTIC_REQUESTED.with(Cell::get)
+}
+
+#[cfg(not(test))]
+fn diagnostic_requested() -> bool {
+    false
+}
+
+thread_local! {
+    static DIAGNOSTIC_STAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    #[cfg(test)]
+    static DIAGNOSTIC_REQUESTED: Cell<bool> = const { Cell::new(false) };
 }
 pub(crate) fn unsafe_path() -> AdoptionError {
     AdoptionError {
@@ -35,7 +153,7 @@ pub(crate) fn identity(file: &File) -> Result<Identity, AdoptionError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let m = file.metadata().map_err(|_| failed())?;
+        let m = file.metadata().map_err(|error| failed_io(&error))?;
         Ok(Identity {
             device: m.dev(),
             file: m.ino(),
@@ -49,7 +167,7 @@ pub(crate) fn identity(file: &File) -> Result<Identity, AdoptionError> {
         };
         let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
-            return Err(failed());
+            return Err(failed_io(&std::io::Error::last_os_error()));
         }
         let info = unsafe { info.assume_init() };
         Ok(Identity {
@@ -181,7 +299,7 @@ impl Root {
             identity: identity(&file)?,
         };
         #[cfg(unix)]
-        self.file.sync_all().map_err(|_| failed())?;
+        self.file.sync_all().map_err(|error| failed_io(&error))?;
         Ok(Self { file, record })
     }
     pub fn source(&self, relative: &str) -> Result<Source, AdoptionError> {
@@ -192,7 +310,7 @@ impl Root {
     pub fn source_optional(&self, relative: &str) -> Result<Option<Source>, AdoptionError> {
         relative_ok(relative)?;
         self.verify()?;
-        let mut parent = self.file.try_clone().map_err(|_| failed())?;
+        let mut parent = self.file.try_clone().map_err(|error| failed_io(&error))?;
         let mut components = relative.split('/').peekable();
         while let Some(part) = components.next() {
             if components.peek().is_none() {
@@ -218,7 +336,7 @@ impl Root {
     pub fn destination_parent(&self, relative: &str) -> Result<(File, String), AdoptionError> {
         relative_ok(relative)?;
         self.verify()?;
-        let mut parent = self.file.try_clone().map_err(|_| failed())?;
+        let mut parent = self.file.try_clone().map_err(|error| failed_io(&error))?;
         let mut components = relative.split('/').peekable();
         while let Some(part) = components.next() {
             if components.peek().is_none() {
@@ -262,7 +380,7 @@ fn open_optional_directory_child(parent: &File, name: &str) -> Result<Option<Fil
         let Some(file) = open_child(parent, name)? else {
             return Ok(None);
         };
-        if !file.metadata().map_err(|_| failed())?.is_dir() {
+        if !file.metadata().map_err(|error| failed_io(&error))?.is_dir() {
             return Err(unsafe_path());
         }
         Ok(Some(file))
@@ -344,7 +462,7 @@ pub(crate) fn create_child(parent: &File, name: &str) -> Result<File, AdoptionEr
     }
 }
 fn regular(file: &File) -> Result<(), AdoptionError> {
-    let m = file.metadata().map_err(|_| failed())?;
+    let m = file.metadata().map_err(|error| failed_io(&error))?;
     if !m.is_file() {
         return Err(unsafe_path());
     }
@@ -363,7 +481,7 @@ fn regular(file: &File) -> Result<(), AdoptionError> {
         };
         let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
-            return Err(failed());
+            return Err(failed_io(&std::io::Error::last_os_error()));
         }
         if unsafe { info.assume_init() }.nNumberOfLinks != 1 {
             return Err(unsafe_path());
@@ -373,17 +491,18 @@ fn regular(file: &File) -> Result<(), AdoptionError> {
 }
 pub(crate) fn read_file(file: &File, limit: u64) -> Result<Vec<u8>, AdoptionError> {
     regular(file)?;
-    if file.metadata().map_err(|_| failed())?.len() > limit {
+    if file.metadata().map_err(|error| failed_io(&error))?.len() > limit {
         return Err(AdoptionError {
             reason: AdoptionReason::LimitExceeded,
         });
     }
     let mut file = file;
-    file.seek(SeekFrom::Start(0)).map_err(|_| failed())?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| failed_io(&error))?;
     let mut bytes = Vec::new();
     file.take(limit + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| failed())?;
+        .map_err(|error| failed_io(&error))?;
     if bytes.len() as u64 > limit {
         return Err(AdoptionError {
             reason: AdoptionReason::LimitExceeded,
@@ -424,8 +543,10 @@ impl Source {
 }
 pub(crate) fn write_atomic(parent: &File, name: &str, bytes: &[u8]) -> Result<(), AdoptionError> {
     let mut tmp = Temporary::new(parent)?;
-    tmp.file.write_all(bytes).map_err(|_| failed())?;
-    tmp.file.sync_all().map_err(|_| failed())?;
+    tmp.file
+        .write_all(bytes)
+        .map_err(|error| failed_io(&error))?;
+    tmp.file.sync_all().map_err(|error| failed_io(&error))?;
     tmp.publish(parent, name)
 }
 struct Temporary {
@@ -442,7 +563,7 @@ impl Temporary {
         Ok(Self {
             file: create_child(parent, &name)?,
             #[cfg(unix)]
-            parent: parent.try_clone().map_err(|_| failed())?,
+            parent: parent.try_clone().map_err(|error| failed_io(&error))?,
             #[cfg(unix)]
             name,
             published: false,
@@ -467,7 +588,7 @@ impl Temporary {
                 return Err(failed());
             }
             self.published = true;
-            parent.sync_all().map_err(|_| failed())?;
+            parent.sync_all().map_err(|error| failed_io(&error))?;
         }
         #[cfg(windows)]
         {
@@ -502,10 +623,10 @@ impl Temporary {
                 )
             };
             if code < 0 {
-                return Err(failed());
+                return Err(failed_ntstatus(code, NtOperation::AtomicReplace));
             }
             self.published = true;
-            self.file.sync_all().map_err(|_| failed())?;
+            self.file.sync_all().map_err(|error| failed_io(&error))?;
         }
         Ok(())
     }

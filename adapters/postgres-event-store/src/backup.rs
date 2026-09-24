@@ -1388,6 +1388,7 @@ impl PostgresBackupOperator {
             self.acquire_target_exclusivity(
                 &restore_application,
                 cleanup_guard.ownership(),
+                &mut watchdog,
                 budget,
             ),
         )
@@ -1604,6 +1605,7 @@ impl PostgresBackupOperator {
         &self,
         application: &str,
         ownership: &RestoreOwnership,
+        watchdog: &mut ProcessWatchdog,
         budget: OperationDeadline,
     ) -> Result<(), BackupError> {
         // #81, NOT a `tokio::time::timeout` wrapper: this deadline is hand-rolled, so a
@@ -1727,34 +1729,58 @@ impl PostgresBackupOperator {
             .fetch_one(&self.admin_pool)
             .await
             .map_err(|_| BackupError::InvalidRestore)?;
-        let restore_pids: Vec<i32> = sqlx::query_scalar(
-            "SELECT pid FROM pg_stat_activity WHERE datname=$2 AND application_name=$1 \
-             AND pid<>$3 ORDER BY pid LIMIT 2",
-        )
-        .bind(application)
-        .bind(&self.profile.database)
-        .bind(admin_pid)
-        .fetch_all(&self.control_pool)
-        .await
-        .map_err(|_| BackupError::InvalidRestore)?;
-        if restore_pids.len() != 1 {
+        let restore_pids: Vec<i32> = loop {
+            let restore_pids = tokio::time::timeout_at(
+                deadline,
+                sqlx::query_scalar::<_, i32>(
+                    "SELECT pid FROM pg_stat_activity WHERE datname=$2 AND application_name=$1 \
+                     AND pid<>$3 ORDER BY pid LIMIT 2",
+                )
+                .bind(application)
+                .bind(&self.profile.database)
+                .bind(admin_pid)
+                .fetch_all(&self.control_pool),
+            )
+            .await
+            .map_err(|_| BackupError::InvalidRestore)?
+            .map_err(|_| BackupError::InvalidRestore)?;
+            if restore_pids.len() == 1 {
+                break restore_pids;
+            }
             // A completed pg_restore has no PID but may have committed its single transaction.
-            // Release only a stable, proved-empty target. Committed content continues into the
-            // full verification path; ambiguous observations remain closed for manual recovery.
+            // Release only a stable, proved-empty target after the child itself has been observed
+            // exited. The database snapshot can otherwise race pg_restore startup: there may be
+            // no session and no objects yet while the child is still about to connect.
             let other_sessions = if restore_pids.is_empty() {
-                other_database_sessions(&self.admin_pool).await.ok()
+                Some(
+                    tokio::time::timeout_at(deadline, other_database_sessions(&self.admin_pool))
+                        .await
+                        .map_err(|_| BackupError::InvalidRestore)?
+                        .map_err(|_| BackupError::InvalidRestore)?,
+                )
             } else {
                 None
             };
             let target_objects = if other_sessions == Some(0) {
-                fresh_target_object_count(&self.admin_pool).await.ok()
+                Some(
+                    tokio::time::timeout_at(deadline, fresh_target_object_count(&self.admin_pool))
+                        .await
+                        .map_err(|_| BackupError::InvalidRestore)?
+                        .map_err(|_| BackupError::InvalidRestore)?,
+                )
             } else {
                 None
+            };
+            let restore_completed = if restore_pids.is_empty() {
+                watchdog.leader_exited()
+            } else {
+                false
             };
             match classify_post_marker_acquisition(
                 restore_pids.len(),
                 other_sessions,
                 target_objects,
+                restore_completed,
             ) {
                 PostMarkerAcquisition::ReleaseEmpty => {
                     ownership.authorize_release();
@@ -1766,25 +1792,34 @@ impl PostgresBackupOperator {
                     ownership.authorize_cleanup();
                     return Ok(());
                 }
+                PostMarkerAcquisition::AwaitRestore => {
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(BackupError::InvalidRestore);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10).min(remaining)).await;
+                    continue;
+                }
                 PostMarkerAcquisition::PreserveForRecovery => {
                     return Err(BackupError::InvalidRestore);
                 }
             }
-        }
-        let others = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM pg_stat_activity \
-             WHERE datid=(SELECT oid FROM pg_database WHERE datname=$1) \
-               AND pid<>$2 AND pid<>$3",
-        )
-        .bind(&self.profile.database)
-        .bind(admin_pid)
-        .bind(restore_pids[0])
-        .fetch_one(&self.control_pool)
-        .await;
-        let others: i64 = match others {
-            Ok(others) => others,
-            Err(_) => return Err(BackupError::InvalidRestore),
         };
+        let others: i64 = tokio::time::timeout_at(
+            deadline,
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*)::bigint FROM pg_stat_activity \
+                 WHERE datid=(SELECT oid FROM pg_database WHERE datname=$1) \
+                   AND pid<>$2 AND pid<>$3",
+            )
+            .bind(&self.profile.database)
+            .bind(admin_pid)
+            .bind(restore_pids[0])
+            .fetch_one(&self.control_pool),
+        )
+        .await
+        .map_err(|_| BackupError::InvalidRestore)?
+        .map_err(|_| BackupError::InvalidRestore)?;
         if others != 0 {
             return Err(BackupError::InvalidRestore);
         }
@@ -4254,6 +4289,13 @@ impl ProcessWatchdog {
         }
     }
 
+    fn leader_exited(&mut self) -> bool {
+        self.child
+            .as_mut()
+            .and_then(|child| graphhelm_process_tree::leader_exited(child).ok())
+            .unwrap_or(false)
+    }
+
     fn finish(mut self) -> Result<std::process::ExitStatus, BackupError> {
         // On Unix this must observe the leader without reaping it. The cached pgid is the
         // leader's pid, so the anchor has to remain occupied until `finish_inner` releases the
@@ -4785,6 +4827,7 @@ fn classify_exclusivity(connected: i64, now: Instant, deadline: Instant) -> Excl
 enum PostMarkerAcquisition {
     ReleaseEmpty,
     VerifyCompleted,
+    AwaitRestore,
     PreserveForRecovery,
 }
 
@@ -4792,10 +4835,12 @@ fn classify_post_marker_acquisition(
     restore_pid_count: usize,
     other_sessions: Option<i64>,
     target_objects: Option<i64>,
+    restore_completed: bool,
 ) -> PostMarkerAcquisition {
     if restore_pid_count == 0 && other_sessions == Some(0) {
         match target_objects {
-            Some(0) => PostMarkerAcquisition::ReleaseEmpty,
+            Some(0) if restore_completed => PostMarkerAcquisition::ReleaseEmpty,
+            Some(0) => PostMarkerAcquisition::AwaitRestore,
             Some(objects) if objects > 0 => PostMarkerAcquisition::VerifyCompleted,
             _ => PostMarkerAcquisition::PreserveForRecovery,
         }
@@ -5320,20 +5365,30 @@ mod process_tests {
     #[test]
     fn disappeared_restore_with_committed_objects_requires_verification() {
         assert_eq!(
-            classify_post_marker_acquisition(0, Some(0), Some(1)),
+            classify_post_marker_acquisition(0, Some(0), Some(1), true),
             PostMarkerAcquisition::VerifyCompleted,
         );
         assert_eq!(
-            classify_post_marker_acquisition(0, Some(0), Some(0)),
+            classify_post_marker_acquisition(0, Some(0), Some(0), true),
             PostMarkerAcquisition::ReleaseEmpty,
         );
         assert_eq!(
-            classify_post_marker_acquisition(0, None, Some(0)),
+            classify_post_marker_acquisition(0, None, Some(0), true),
             PostMarkerAcquisition::PreserveForRecovery,
         );
         assert_eq!(
-            classify_post_marker_acquisition(2, Some(0), Some(0)),
+            classify_post_marker_acquisition(2, Some(0), Some(0), true),
             PostMarkerAcquisition::PreserveForRecovery,
+        );
+        assert_eq!(
+            classify_post_marker_acquisition(0, Some(0), Some(0), false),
+            PostMarkerAcquisition::AwaitRestore,
+            "an empty startup snapshot must wait while the restore child is still running",
+        );
+        assert_eq!(
+            classify_post_marker_acquisition(0, Some(0), Some(1), false),
+            PostMarkerAcquisition::VerifyCompleted,
+            "observed objects still use the existing verification path while the child is running",
         );
     }
 

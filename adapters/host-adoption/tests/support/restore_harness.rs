@@ -153,6 +153,7 @@ fn restore_process_child() {
 }
 #[test]
 fn every_restore_boundary_recovers_in_a_fresh_process() {
+    let _diagnostics = storage::diagnostic_scope();
     let counter = tempfile::tempdir().unwrap();
     let plan = fixture(counter.path());
     let mut count = 0;
@@ -179,6 +180,7 @@ fn every_restore_boundary_recovers_in_a_fresh_process() {
             ])
             .env("GH_RESTORE_TEST_ROOT", temp.path())
             .env("GH_RESTORE_TEST_POINT", point.to_string())
+            .env("GRAPHHELM_ADOPTION_DIAGNOSTICS", "1")
             .status()
             .unwrap();
         assert_eq!(status.code(), Some(71), "point {point}");
@@ -204,6 +206,7 @@ fn every_restore_boundary_recovers_in_a_fresh_process() {
 
 #[test]
 fn repeated_restore_never_reports_success_after_new_user_edits() {
+    let _diagnostics = storage::diagnostic_scope();
     let temp = tempfile::tempdir().unwrap();
     let plan = fixture(temp.path());
     let state = temp.path().join("state");
@@ -218,6 +221,7 @@ fn repeated_restore_never_reports_success_after_new_user_edits() {
 
 #[test]
 fn partial_restore_returns_recovery_receipt_and_preserves_interfering_writer() {
+    let _diagnostics = storage::diagnostic_scope();
     let temp = tempfile::tempdir().unwrap();
     let plan = fixture(temp.path());
     let state = temp.path().join("state");

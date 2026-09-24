@@ -469,6 +469,85 @@ fn build_context_ports_with_keel(
     })
 }
 
+/// The mirror of `build_sealer`: the same keyring, opened for READING sealed Evidence back.
+///
+/// `EvidenceProtector` implements both halves, so this is the same construction reached through
+/// the other trait rather than a second key path — there is exactly one way this server gets at
+/// the keyring, and adding a read surface did not add another.
+///
+/// NO `RefusingSealer` EQUIVALENT, deliberately. A server with no keyring configured can still
+/// run (it seals nothing, and `RefusingSealer` is the honest answer to "seal this"), but it holds
+/// no key, so "open this" has no answer at all — not a refusal to perform an action, an inability
+/// to know. Returning an opener that always fails would push that discovery to call time and make
+/// every caller's error look like a decryption failure instead of a server that was never wired
+/// to decrypt.
+pub(super) fn build_opener(
+    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
+) -> Result<Arc<dyn EvidenceOpener>, String> {
+    let Some(sealing) = sealing else {
+        return Err(
+            "this server has no keyring configured, so sealed evidence cannot be opened".to_owned(),
+        );
+    };
+    Ok(Arc::new(graphhelm_events::EvidenceProtector::new(
+        open_key_provider(sealing)?,
+    )))
+}
+
+fn open_key_provider(
+    sealing: &crate::commands::execution::signal::SignalKeyring,
+) -> Result<graphhelm_sealed_key_provider::SealedKeyProvider, String> {
+    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| {
+        "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned()
+    })?;
+    if encoded.len() != 64
+        || !encoded
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(
+            "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned(),
+        );
+    }
+    let mut material = Vec::with_capacity(32);
+    for pair in encoded.as_bytes().chunks_exact(2) {
+        let byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
+            .map_err(|_| "GRAPHHELM_EVENTS_KEY is not valid hex".to_owned())?;
+        material.push(byte);
+    }
+    graphhelm_sealed_key_provider::SealedKeyProvider::open(
+        &sealing.directory,
+        sealing.key_id.clone(),
+        SecretBytes::new(material),
+    )
+    .map_err(|_| "the sealed keyring could not be opened".to_owned())
+}
+
+/// Reads `GRAPHHELM_GATEWAY_KEY` fresh (the gateway CLI's own precedent —
+/// `commands::gateway::passphrase_from_env`, not reused directly because that module's `Failure`
+/// type differs from this one's `String`-based port error shape).
+fn gateway_passphrase() -> Result<SecretBytes, String> {
+    let encoded = std::env::var("GRAPHHELM_GATEWAY_KEY").map_err(|_| {
+        "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters".to_owned()
+    })?;
+    if encoded.len() != 64
+        || !encoded
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(
+            "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters".to_owned(),
+        );
+    }
+    let mut bytes = Vec::with_capacity(32);
+    for pair in encoded.as_bytes().chunks_exact(2) {
+        let byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
+            .map_err(|_| "GRAPHHELM_GATEWAY_KEY is not valid hex".to_owned())?;
+        bytes.push(byte);
+    }
+    Ok(SecretBytes::new(bytes))
+}
+
 #[cfg(test)]
 mod keel_context_port_tests {
     use super::*;
@@ -569,83 +648,4 @@ mod keel_context_port_tests {
         assert_eq!(result.paths, ["README.md"]);
         assert_eq!(result.provenance.origin, SourceSearchOrigin::Live);
     }
-}
-
-/// The mirror of `build_sealer`: the same keyring, opened for READING sealed Evidence back.
-///
-/// `EvidenceProtector` implements both halves, so this is the same construction reached through
-/// the other trait rather than a second key path — there is exactly one way this server gets at
-/// the keyring, and adding a read surface did not add another.
-///
-/// NO `RefusingSealer` EQUIVALENT, deliberately. A server with no keyring configured can still
-/// run (it seals nothing, and `RefusingSealer` is the honest answer to "seal this"), but it holds
-/// no key, so "open this" has no answer at all — not a refusal to perform an action, an inability
-/// to know. Returning an opener that always fails would push that discovery to call time and make
-/// every caller's error look like a decryption failure instead of a server that was never wired
-/// to decrypt.
-pub(super) fn build_opener(
-    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
-) -> Result<Arc<dyn EvidenceOpener>, String> {
-    let Some(sealing) = sealing else {
-        return Err(
-            "this server has no keyring configured, so sealed evidence cannot be opened".to_owned(),
-        );
-    };
-    Ok(Arc::new(graphhelm_events::EvidenceProtector::new(
-        open_key_provider(sealing)?,
-    )))
-}
-
-fn open_key_provider(
-    sealing: &crate::commands::execution::signal::SignalKeyring,
-) -> Result<graphhelm_sealed_key_provider::SealedKeyProvider, String> {
-    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| {
-        "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned()
-    })?;
-    if encoded.len() != 64
-        || !encoded
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return Err(
-            "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned(),
-        );
-    }
-    let mut material = Vec::with_capacity(32);
-    for pair in encoded.as_bytes().chunks_exact(2) {
-        let byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
-            .map_err(|_| "GRAPHHELM_EVENTS_KEY is not valid hex".to_owned())?;
-        material.push(byte);
-    }
-    graphhelm_sealed_key_provider::SealedKeyProvider::open(
-        &sealing.directory,
-        sealing.key_id.clone(),
-        SecretBytes::new(material),
-    )
-    .map_err(|_| "the sealed keyring could not be opened".to_owned())
-}
-
-/// Reads `GRAPHHELM_GATEWAY_KEY` fresh (the gateway CLI's own precedent —
-/// `commands::gateway::passphrase_from_env`, not reused directly because that module's `Failure`
-/// type differs from this one's `String`-based port error shape).
-fn gateway_passphrase() -> Result<SecretBytes, String> {
-    let encoded = std::env::var("GRAPHHELM_GATEWAY_KEY").map_err(|_| {
-        "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters".to_owned()
-    })?;
-    if encoded.len() != 64
-        || !encoded
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return Err(
-            "GRAPHHELM_GATEWAY_KEY must supply 64 lowercase hexadecimal characters".to_owned(),
-        );
-    }
-    let mut bytes = Vec::with_capacity(32);
-    for pair in encoded.as_bytes().chunks_exact(2) {
-        let byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
-            .map_err(|_| "GRAPHHELM_GATEWAY_KEY is not valid hex".to_owned())?;
-        bytes.push(byte);
-    }
-    Ok(SecretBytes::new(bytes))
 }

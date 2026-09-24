@@ -411,18 +411,22 @@ fn classify_sequence_post(
     let diagnostic = reply["diagnostics"]
         .as_array()
         .and_then(|items| items.first());
+    let code = diagnostic.and_then(|item| item["code"].as_str());
+    let path = diagnostic.and_then(|item| item["path"].as_str());
+    let current_head = reply["data"]["currentHead"].as_u64();
     if reply["ok"].as_bool() != Some(false)
-        || diagnostic.and_then(|item| item["code"].as_str()) != Some("GHE001_SEQUENCE_CONFLICT")
-        || diagnostic.and_then(|item| item["path"].as_str()) != Some("/")
+        || code != Some("GHE001_SEQUENCE_CONFLICT")
+        || !matches!(path, Some("/") | Some("/ifMatch"))
+        || current_head.is_none()
     {
-        return Err(
-            "409 response was not the append-time GHE001_SEQUENCE_CONFLICT at /".to_owned(),
-        );
+        return Err(format!(
+            "409 response was not a retryable GHE001_SEQUENCE_CONFLICT at / or /ifMatch (ok={:?}, code={code:?}, path={path:?}, currentHead={current_head:?})",
+            reply["ok"].as_bool()
+        ));
     }
-    let current_head = reply["data"]["currentHead"]
-        .as_u64()
-        .ok_or_else(|| "append-time sequence conflict omitted numeric currentHead".to_owned())?;
-    Ok(SequencePostDecision::Retry { current_head })
+    Ok(SequencePostDecision::Retry {
+        current_head: current_head.expect("checked above"),
+    })
 }
 
 /// One retry state machine drives both the live socket and the deterministic tests. The
@@ -900,6 +904,44 @@ fn sequence_conflict_retry_requires_exact_conflict_then_success_and_preserves_re
 }
 
 #[test]
+fn sequence_conflict_retry_accepts_if_match_conflict_and_captures_its_head() {
+    use std::collections::VecDeque;
+
+    let body = serde_json::json!({"signal": {"id": "signal-if-match"}});
+    let mut replies = VecDeque::from([
+        (
+            409,
+            sequence_conflict_reply(27, "GHE001_SEQUENCE_CONFLICT", "/ifMatch"),
+        ),
+        (200, accepted_signal_reply()),
+    ]);
+    let mut if_matches = Vec::new();
+    let outcome = run_sequence_retry(
+        "127.0.0.1:40000",
+        "bearer-secret",
+        "/v1/executions/exec-wake-race/signal",
+        "if-match-request-key",
+        &body,
+        |request| {
+            if_matches.push(request.if_match);
+            replies
+                .pop_front()
+                .ok_or_else(|| "script ran out of responses".to_owned())
+        },
+    )
+    .expect("an If-Match sequence conflict is retryable");
+
+    assert_eq!(outcome.retries, 1);
+    assert_eq!(if_matches, [None, Some(27)]);
+    assert_eq!(
+        outcome.trace[0].code.as_deref(),
+        Some("GHE001_SEQUENCE_CONFLICT")
+    );
+    assert_eq!(outcome.trace[0].path.as_deref(), Some("/ifMatch"));
+    assert_eq!(outcome.trace[0].current_head, Some(27));
+}
+
+#[test]
 fn sequence_conflict_retry_rejects_wrong_code_500_and_repeated_conflicts() {
     use std::collections::VecDeque;
 
@@ -933,6 +975,14 @@ fn sequence_conflict_retry_rejects_wrong_code_500_and_repeated_conflicts() {
         wrong_code.trace[0].code.as_deref(),
         Some("GHE003_IDEMPOTENCY_CONFLICT")
     );
+
+    let wrong_path = run(vec![(
+        409,
+        sequence_conflict_reply(12, "GHE001_SEQUENCE_CONFLICT", "/other"),
+    )])
+    .expect_err("a sequence conflict from an unknown path is not retryable");
+    assert!(wrong_path.message.contains("path=Some(\"/other\")"));
+    assert!(wrong_path.message.contains("currentHead=Some(12)"));
 
     let server_error =
         run(vec![(500, accepted_signal_reply())]).expect_err("500 is never an accepted mutation");

@@ -43,6 +43,22 @@ def test_expired_auth_without_model_tokens_is_not_a_coding_failure():
     assert "agent_execution_unobserved" in reasons
 
 
+def test_agent_prompt_round_trips_unicode_on_legacy_windows_code_page(tmp_path, monkeypatch):
+    """The pinned Keel skill must reach the agent even when the host code page is cp1252."""
+    real_run = subprocess.run
+
+    def echo_prompt(_cmd, **kwargs):
+        return real_run([sys.executable, "-c",
+                         "import json,sys; print(json.dumps({'result': sys.stdin.buffer.read().decode('utf-8')}))"], **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "run", echo_prompt)
+    monkeypatch.setattr(subprocess.locale, "getencoding", lambda: "cp1252")
+    prompt = "Keel → GraphHelm: ação comprovada"
+    result, _stderr, _wall = runner.run_agent(
+        tmp_path, prompt, "a", "sonnet", 1, {}, None, None, {"path": "claude"})
+    assert result["result"] == prompt
+
+
 def test_no_regression_observer_cannot_be_a_quality_win():
     """Catches treating a task without a pre-existing regression as quality evidence."""
     verdict, reasons = runner.evaluate_outcome("PASS", "UNOBSERVED", usage(), 0.2, "session", {})

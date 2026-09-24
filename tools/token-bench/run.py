@@ -259,7 +259,7 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
         cmd += ["--max-budget-usd", str(max_budget_usd)]
     t0 = time.monotonic()
     try:
-        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, capture_output=True,
+        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, encoding="utf-8", capture_output=True,
                               timeout=timeout_min * 60, env=bench_env(task))
     except subprocess.TimeoutExpired as exc:
         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,

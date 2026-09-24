@@ -24,7 +24,7 @@
       "id": "https://p50.dev/schemas/context-provenance.schema.json",
       "documentVersion": "1.0.0",
       "path": "schemas/context-provenance.schema.json",
-      "sha256": "sha256:4c0bf807c9117a6148f811849dbde730635a49e053786bf8997b91fe8f62812d"
+      "sha256": "sha256:f6d5d06b79c5310b4b645f00a96d50f337743de0bc4ee0703162543bc36b52fd"
     },
     "context-capsule": {
       "id": "https://p50.dev/schemas/context-capsule.schema.json",

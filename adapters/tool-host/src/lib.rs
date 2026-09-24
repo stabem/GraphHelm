@@ -6,6 +6,7 @@
 pub mod cache;
 pub mod documents;
 pub mod host;
+pub mod keel_source;
 pub mod process;
 pub mod session;
 pub mod snapshot;

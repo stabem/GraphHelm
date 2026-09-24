@@ -17,6 +17,7 @@ use graphhelm_gateway::taxonomy::GatewayError;
 use graphhelm_tool_broker::call::ToolCall;
 use graphhelm_tool_broker::lease::ToolLease;
 use graphhelm_tool_broker::record::ToolCallRecord;
+use serde::{Deserialize, Serialize};
 
 /// A model call through the 05b gateway. The wiring wraps the synchronous adapters
 /// (`ByokAdapter::call`, `RuntimeAdapter::call` — both sync, Task 0) in `spawn_blocking`.
@@ -217,6 +218,89 @@ pub trait BoundedSourceSearch: Send + Sync {
         terms: &[String],
         bounds: &SourceSearchBounds,
     ) -> Result<Vec<String>, SourceSearchError>;
+
+    /// The same bounded search with content-free provenance for the source set.
+    ///
+    /// Existing channels keep implementing [`Self::search`]. A future retained snapshot or
+    /// hybrid channel can override this method and report its actual source without changing the
+    /// path-search contract. The default is deliberately live: it makes the current workspace
+    /// channel truthful while preserving every existing implementer.
+    fn search_with_provenance(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+    ) -> Result<SourceSearchResult, SourceSearchError> {
+        self.search(terms, bounds).map(|paths| SourceSearchResult {
+            paths,
+            provenance: SourceSearchProvenance::default(),
+        })
+    }
+}
+
+/// Where the candidate paths came from. This says nothing about the bytes later read by the
+/// separate reader port; a hybrid source therefore remains explicit even when a live reader is
+/// used for a snapshot miss.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSearchOrigin {
+    #[default]
+    Live,
+    Snapshot,
+    Hybrid,
+    Fallback,
+}
+
+/// A bounded, content-free explanation of the search source. The closed vocabulary prevents
+/// paths, query text and other untrusted detail from entering sealed provenance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSearchReason {
+    #[default]
+    LiveWorkspace,
+    ImmutableSnapshot,
+    SnapshotLiveFallback,
+    LiveFallback,
+    NoSearch,
+    SearchUnavailable,
+    SearchBoundExceeded,
+    SnapshotUnavailable,
+    SnapshotCoverageGap,
+}
+
+impl SourceSearchReason {
+    #[must_use]
+    pub const fn for_origin(origin: SourceSearchOrigin) -> Self {
+        match origin {
+            SourceSearchOrigin::Live => Self::LiveWorkspace,
+            SourceSearchOrigin::Snapshot => Self::ImmutableSnapshot,
+            SourceSearchOrigin::Hybrid => Self::SnapshotLiveFallback,
+            SourceSearchOrigin::Fallback => Self::LiveFallback,
+        }
+    }
+}
+
+/// The search paths and their source provenance, before the reader applies its own bounds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceSearchResult {
+    pub paths: Vec<String>,
+    pub provenance: SourceSearchProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceSearchProvenance {
+    pub origin: SourceSearchOrigin,
+    pub reason: SourceSearchReason,
+}
+
+impl SourceSearchProvenance {
+    #[must_use]
+    pub const fn fallback(reason: SourceSearchReason) -> Self {
+        Self {
+            origin: SourceSearchOrigin::Fallback,
+            reason,
+        }
+    }
 }
 
 /// What [`ExecutionTreePort::with_tree`] did with the compile it was handed (#1086).

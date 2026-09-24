@@ -57,7 +57,7 @@ use crate::context_compiler::{
 };
 use crate::ports::{
     BoundedSourceReader, BoundedSourceSearch, ExecutionTreeAccess, ExecutionTreePort, ScanCancel,
-    SourceReadError, SourceSearchBounds, SourceSearchError,
+    SourceReadError, SourceSearchBounds, SourceSearchError, SourceSearchOrigin, SourceSearchReason,
 };
 
 /// The tokenizer's own version, recorded in every summary so a change to the rules below
@@ -316,6 +316,13 @@ pub struct NodeContextSummary {
     /// #1086, which read the project.
     #[serde(default)]
     pub root: ContextRoot,
+    /// Where candidate paths came from. Optional on read for records sealed before this field
+    /// existed; newly emitted records always include it.
+    #[serde(default)]
+    pub search_origin: SourceSearchOrigin,
+    /// Closed, content-free reason for the search origin. It never carries paths or query text.
+    #[serde(default)]
+    pub search_reason: SourceSearchReason,
     pub terms: Vec<String>,
     /// Repository-relative paths shipped in the capsule, in rank order.
     pub sources: Vec<String>,
@@ -601,6 +608,8 @@ pub fn retrieve_and_compile_in(
         tokenizer: TOKENIZER_ID.to_owned(),
         estimator: ESTIMATOR_ID.to_owned(),
         root,
+        search_origin: SourceSearchOrigin::default(),
+        search_reason: SourceSearchReason::default(),
         terms: terms.to_vec(),
         sources: Vec::new(),
         excerpted_sources: 0,
@@ -623,18 +632,27 @@ pub fn retrieve_and_compile_in(
     };
 
     if terms.is_empty() {
+        summary.search_origin = SourceSearchOrigin::Fallback;
+        summary.search_reason = SourceSearchReason::NoSearch;
         return fallback(summary, ContextFallback::NoTerms);
     }
     summary.retrieval_pages = 1;
-    let candidates = match search.search(terms, &SEARCH_BOUNDS) {
-        Ok(candidates) => candidates,
+    let search_result = match search.search_with_provenance(terms, &SEARCH_BOUNDS) {
+        Ok(result) => result,
         Err(SourceSearchError::Unavailable) => {
+            summary.search_origin = SourceSearchOrigin::Fallback;
+            summary.search_reason = SourceSearchReason::SearchUnavailable;
             return fallback(summary, ContextFallback::SearchUnavailable);
         }
         Err(SourceSearchError::BoundExceeded) => {
+            summary.search_origin = SourceSearchOrigin::Fallback;
+            summary.search_reason = SourceSearchReason::SearchBoundExceeded;
             return fallback(summary, ContextFallback::SearchBoundExceeded);
         }
     };
+    summary.search_origin = search_result.provenance.origin;
+    summary.search_reason = search_result.provenance.reason;
+    let candidates = search_result.paths;
     summary.candidates_returned = candidates.len() as u64;
     if candidates.is_empty() {
         summary.zero_result_queries = 1;

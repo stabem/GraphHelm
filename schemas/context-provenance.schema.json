@@ -47,6 +47,29 @@
         "execution"
       ]
     },
+    "searchOrigin": {
+      "description": "Where candidate paths came from. Optional for records sealed before search provenance was added.",
+      "enum": [
+        "live",
+        "snapshot",
+        "hybrid",
+        "fallback"
+      ]
+    },
+    "searchReason": {
+      "description": "A closed, content-free reason for the search origin. It never carries paths, query text or source bytes.",
+      "enum": [
+        "live_workspace",
+        "immutable_snapshot",
+        "snapshot_live_fallback",
+        "live_fallback",
+        "no_search",
+        "search_unavailable",
+        "search_bound_exceeded",
+        "snapshot_unavailable",
+        "snapshot_coverage_gap"
+      ]
+    },
     "terms": {
       "type": "array",
       "maxItems": 12,

@@ -20,7 +20,7 @@ use graphhelm_runtime::context_accounting::{
 use graphhelm_runtime::executor::WorkSummary;
 use graphhelm_runtime::ports::{
     BoundedSourceReader, BoundedSourceSearch, SourceExcerpt, SourceReadError, SourceSearchBounds,
-    SourceSearchError,
+    SourceSearchError, SourceSearchOrigin, SourceSearchProvenance, SourceSearchReason,
 };
 use graphhelm_runtime::prompt::{assemble, assemble_with_context};
 
@@ -87,6 +87,32 @@ fn an_objective_cannot_smuggle_a_path_component_into_a_term() {
 struct FakeSearch {
     reply: Result<Vec<String>, SourceSearchError>,
     seen: Mutex<Vec<(Vec<String>, SourceSearchBounds)>>,
+}
+
+struct ProvenanceSearch {
+    paths: Vec<String>,
+    provenance: SourceSearchProvenance,
+}
+
+impl BoundedSourceSearch for ProvenanceSearch {
+    fn search(
+        &self,
+        _terms: &[String],
+        _bounds: &SourceSearchBounds,
+    ) -> Result<Vec<String>, SourceSearchError> {
+        Ok(self.paths.clone())
+    }
+
+    fn search_with_provenance(
+        &self,
+        _terms: &[String],
+        _bounds: &SourceSearchBounds,
+    ) -> Result<graphhelm_runtime::ports::SourceSearchResult, SourceSearchError> {
+        Ok(graphhelm_runtime::ports::SourceSearchResult {
+            paths: self.paths.clone(),
+            provenance: self.provenance,
+        })
+    }
 }
 
 impl FakeSearch {
@@ -657,14 +683,16 @@ fn zero_candidates_is_a_counted_fallback_and_the_node_still_gets_a_prompt() {
 
 #[test]
 fn a_refused_search_is_a_fallback_and_not_a_zero_result() {
-    for (error, expected) in [
+    for (error, expected, reason) in [
         (
             SourceSearchError::Unavailable,
             ContextFallback::SearchUnavailable,
+            SourceSearchReason::SearchUnavailable,
         ),
         (
             SourceSearchError::BoundExceeded,
             ContextFallback::SearchBoundExceeded,
+            SourceSearchReason::SearchBoundExceeded,
         ),
     ] {
         let search = FakeSearch::failing(error);
@@ -672,6 +700,8 @@ fn a_refused_search_is_a_fallback_and_not_a_zero_result() {
         let compiled = compile(&search, &reader, &["anything"]);
         assert_eq!(compiled.text, "");
         assert_eq!(compiled.summary.fallback, Some(expected));
+        assert_eq!(compiled.summary.search_origin, SourceSearchOrigin::Fallback);
+        assert_eq!(compiled.summary.search_reason, reason);
         assert_eq!(compiled.summary.retrieval_fallbacks, 1);
         assert_eq!(
             compiled.summary.zero_result_queries, 0,
@@ -1257,6 +1287,34 @@ fn compiled_summary() -> graphhelm_runtime::context::NodeContextSummary {
     compile(&search, &reader, &["loopback"]).summary
 }
 
+#[test]
+fn search_provenance_is_recorded_at_the_compile_boundary() {
+    let search = ProvenanceSearch {
+        paths: vec!["src/alpha.rs".to_owned()],
+        provenance: SourceSearchProvenance {
+            origin: SourceSearchOrigin::Hybrid,
+            reason: SourceSearchReason::SnapshotLiveFallback,
+        },
+    };
+    let reader = FakeReader::with(&[("src/alpha.rs", b"CONTENT-MARKER loopback\n")]);
+    let compiled = retrieve_and_compile(
+        &search,
+        &reader,
+        &["loopback".to_owned()],
+        "provenance-test",
+        32 * 1024,
+    );
+    assert_eq!(compiled.summary.search_origin, SourceSearchOrigin::Hybrid);
+    assert_eq!(
+        compiled.summary.search_reason,
+        SourceSearchReason::SnapshotLiveFallback
+    );
+    let record = serde_json::to_value(compiled.summary.provenance_record()).unwrap();
+    assert_eq!(record["searchOrigin"], "hybrid");
+    assert_eq!(record["searchReason"], "snapshot_live_fallback");
+    assert!(!record.to_string().contains("CONTENT-MARKER"));
+}
+
 fn provenance_schema() -> serde_json::Value {
     serde_json::from_slice(
         &std::fs::read(
@@ -1275,6 +1333,8 @@ fn the_provenance_record_measures_the_counters_and_derives_the_estimates() {
     let json: serde_json::Value = serde_json::from_slice(&record.stable_bytes()).unwrap();
     assert_eq!(json["schemaVersion"], "1.0.0");
     assert_eq!(json["sources"], serde_json::json!(["src/alpha.rs"]));
+    assert_eq!(json["searchOrigin"], "live");
+    assert_eq!(json["searchReason"], "live_workspace");
     assert!(!json.to_string().contains("CONTENT-MARKER"), "content-free");
     let lines = json["accounting"].as_array().unwrap();
     assert_eq!(lines.len(), 6);
@@ -1338,10 +1398,12 @@ fn the_provenance_record_follows_its_registered_schema_line_for_line() {
         .keys()
         .map(String::as_str)
         .collect();
-    // #1086: `root` is emitted on every record and OPTIONAL in the schema, because records sealed
-    // before it carry none; every other key is required.
+    // #1086 and search provenance: these fields are emitted on new records and optional in the
+    // schema so records sealed before their introduction remain readable.
     let mut sorted_expected = required.clone();
     sorted_expected.push("root");
+    sorted_expected.push("searchOrigin");
+    sorted_expected.push("searchReason");
     sorted_expected.sort_unstable();
     let mut sorted_keys = keys.clone();
     sorted_keys.sort_unstable();

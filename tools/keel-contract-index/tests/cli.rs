@@ -539,6 +539,172 @@ fn query_and_candidate_disclose_untracked_coverage_gaps() {
 }
 
 #[test]
+fn javascript_and_tsx_exports_are_ast_bound_and_aliases_are_preserved() {
+    // Contract: exported declarations are indexed by syntax, including aliases and default
+    // exports. Defect caught: a text scanner reports names found only in comments or strings.
+    let d = repo();
+    fs::write(
+        d.path().join("feature.tsx"),
+        r#"// export function CommentOnly() {}
+const text = "export const StringOnly = 1";
+export function realFeature(value: string): string { return value; }
+export { realFeature as publicFeature };
+export default function entry() { return <main />; }
+export const { destructured, nested: renamedDestructured } = source;
+interface Hidden { value: string }
+"#,
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("feature.js"),
+        "export const javascriptFeature = 1;\nexport { javascriptFeature as renamedFeature };\n",
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("star.js"),
+        "export * from './other.js';\nexport * as starFeature from './other.js';\n",
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("module.cjs"),
+        "module.exports = { hidden: true };\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["-C", d.path().to_str().unwrap(), "add", "."])
+        .assert()
+        .success();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "scan",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let index: serde_json::Value = serde_json::from_str(&fs::read_to_string(out).unwrap()).unwrap();
+    let tsx = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "feature.tsx")
+        .unwrap();
+    assert_eq!(tsx["parse"], "parsed");
+    let names: Vec<&str> = tsx["declarations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"realFeature"));
+    assert!(names.contains(&"publicFeature"));
+    assert!(names.contains(&"default"));
+    assert!(names.contains(&"entry"));
+    assert!(names.contains(&"destructured"));
+    assert!(names.contains(&"renamedDestructured"));
+    assert!(!names.contains(&"CommentOnly"));
+    assert!(!names.contains(&"StringOnly"));
+    let star = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "star.js")
+        .unwrap();
+    let star_names: Vec<&str> = star["declarations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|declaration| declaration["name"].as_str().unwrap())
+        .collect();
+    assert!(star_names.contains(&"*"));
+    assert!(star_names.contains(&"starFeature"));
+    let commonjs = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "module.cjs")
+        .unwrap();
+    assert_eq!(commonjs["language"], "commonjs");
+    assert_eq!(commonjs["parse"], "unsupported");
+}
+
+#[test]
+fn vue_indexes_only_scripts_and_fails_closed_on_invalid_script() {
+    // Contract: Vue script blocks are parsed with explicit partial coverage. Defect caught:
+    // treating template text as JavaScript or retaining partial symbols after a parse error.
+    let d = repo();
+    fs::write(
+        d.path().join("Good.vue"),
+        r#"<!-- <script>export const commented = 1;</script> -->
+<template>Olá {{ "<span>" }} {{ /}}/.test("<span>") }} {{ (() => /}}/.test("<span>"))() }} <script-widget /></template>
+<div :title="'<script>'" />
+<script setup lang = "ts">
+export const setupFeature: string = "ok";
+</script>
+<style>.x { color: red }</style>
+"#,
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("Bad.vue"),
+        "<script>export const before = 1; ???</script>\n",
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("DataLang.vue"),
+        "<script data-lang=\"ts\">interface InvalidInJavaScript { value: string }</script>\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["-C", d.path().to_str().unwrap(), "add", "."])
+        .assert()
+        .success();
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("index.json");
+    Command::cargo_bin("keel-contract-index")
+        .unwrap()
+        .args([
+            "scan",
+            "--repo",
+            d.path().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let index: serde_json::Value = serde_json::from_str(&fs::read_to_string(out).unwrap()).unwrap();
+    let good = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "Good.vue")
+        .unwrap();
+    assert_eq!(good["parse"], "partial");
+    assert_eq!(good["declarations"][0]["name"], "setupFeature");
+    let bad = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "Bad.vue")
+        .unwrap();
+    assert_eq!(bad["parse"], "invalid");
+    assert_eq!(bad["declarations"].as_array().unwrap().len(), 0);
+    let data_lang = index["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "DataLang.vue")
+        .unwrap();
+    assert_eq!(data_lang["parse"], "invalid");
+    assert_eq!(data_lang["declarations"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn scan_disables_repository_fsmonitor_commands() {
     let d = repo();
     let out_dir = tempfile::tempdir().unwrap();

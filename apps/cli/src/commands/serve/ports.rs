@@ -406,7 +406,16 @@ pub(super) fn build_context_ports(
     project: &std::path::Path,
     execution_tree: Option<Arc<dyn graphhelm_runtime::ports::ExecutionTreePort>>,
 ) -> Result<graphhelm_runtime::context::ContextPorts, String> {
-    let search = graphhelm_tool_host::source_channel::WorkspaceSourceChannel::open(project)
+    let keel_enabled = std::env::var("GRAPHHELM_KEEL_CONTEXT").as_deref() == Ok("1");
+    build_context_ports_with_keel(project, execution_tree, keel_enabled)
+}
+
+fn build_context_ports_with_keel(
+    project: &std::path::Path,
+    execution_tree: Option<Arc<dyn graphhelm_runtime::ports::ExecutionTreePort>>,
+    keel_enabled: bool,
+) -> Result<graphhelm_runtime::context::ContextPorts, String> {
+    let live_search = graphhelm_tool_host::source_channel::WorkspaceSourceChannel::open(project)
         .map_err(|error| match error {
             graphhelm_runtime::ports::SourceSearchError::Unavailable => {
                 "the project root is not a readable directory, so it cannot be searched".to_owned()
@@ -415,14 +424,151 @@ pub(super) fn build_context_ports(
                 "the project root exceeds the search channel's admission bound".to_owned()
             }
         })?;
-    let reader = graphhelm_tool_host::source_reader::WorkspaceExcerptReader::open(project)
+    let live_reader = graphhelm_tool_host::source_reader::WorkspaceExcerptReader::open(project)
         .map_err(|error| format!("the project root cannot be read: {error}"))?;
+    // Tier 1 owns the search and reader for an execution tree. Building the project snapshot here
+    // would spend its cold cost even when this compile never consults the project pair.
+    if execution_tree.is_some() {
+        return Ok(graphhelm_runtime::context::ContextPorts {
+            search: Arc::new(live_search),
+            reader: Arc::new(live_reader),
+            ledger: graphhelm_runtime::context::ContextLedger::new(),
+            execution_tree,
+        });
+    }
+    if !keel_enabled {
+        return Ok(graphhelm_runtime::context::ContextPorts {
+            search: Arc::new(live_search),
+            reader: Arc::new(live_reader),
+            ledger: graphhelm_runtime::context::ContextLedger::new(),
+            execution_tree,
+        });
+    }
+    let (search, reader): (
+        Arc<dyn graphhelm_runtime::ports::BoundedSourceSearch>,
+        Arc<dyn graphhelm_runtime::ports::BoundedSourceReader>,
+    ) = match graphhelm_tool_host::keel_source::KeelSnapshotPorts::try_open(project)? {
+        graphhelm_tool_host::keel_source::KeelSnapshotSelection::Snapshot(snapshot) => {
+            (Arc::new(snapshot.search()), Arc::new(snapshot.reader()))
+        }
+        graphhelm_tool_host::keel_source::KeelSnapshotSelection::LiveFallback { reason } => (
+            Arc::new(
+                graphhelm_tool_host::keel_source::LiveFallbackSourceSearch::with_reason(
+                    live_search,
+                    reason,
+                ),
+            ),
+            Arc::new(live_reader),
+        ),
+    };
     Ok(graphhelm_runtime::context::ContextPorts {
-        search: Arc::new(search),
-        reader: Arc::new(reader),
+        search,
+        reader,
         ledger: graphhelm_runtime::context::ContextLedger::new(),
         execution_tree,
     })
+}
+
+#[cfg(test)]
+mod keel_context_port_tests {
+    use super::*;
+    use graphhelm_runtime::context::SEARCH_BOUNDS;
+    use graphhelm_runtime::ports::{
+        BoundedSourceReader, BoundedSourceSearch, ExecutionTreeAccess, ExecutionTreePort,
+        ScanCancel, SourceSearchOrigin,
+    };
+    use std::process::Command;
+    use std::sync::Arc;
+
+    struct TierOneOnly;
+
+    impl ExecutionTreePort for TierOneOnly {
+        fn with_tree(
+            &self,
+            _cancel: &ScanCancel,
+            _compile: &mut dyn FnMut(&dyn BoundedSourceSearch, &dyn BoundedSourceReader),
+        ) -> ExecutionTreeAccess {
+            ExecutionTreeAccess::Absent
+        }
+    }
+
+    #[test]
+    fn production_context_ports_search_and_read_one_snapshot_generation() {
+        // Contract: the serve wiring must pair Keel search with Keel read. A live reader here
+        // would ship changed bytes after the search had selected an older snapshot generation.
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.path().join("README.md"), "old_keel_generation\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["-C", repo.path().to_str().unwrap(), "add", "README.md"])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let ports = build_context_ports_with_keel(repo.path(), None, true).unwrap();
+        std::fs::write(repo.path().join("README.md"), "new_keel_generation\n").unwrap();
+        let result = ports
+            .search
+            .search_with_provenance(&["old_keel_generation".to_owned()], &SEARCH_BOUNDS)
+            .unwrap();
+        assert_eq!(result.paths, ["README.md"]);
+        assert_eq!(result.provenance.origin, SourceSearchOrigin::Snapshot);
+        assert_eq!(
+            ports.reader.read_prefix("README.md", 4096).unwrap().bytes,
+            b"old_keel_generation\n"
+        );
+    }
+
+    #[test]
+    fn production_context_ports_default_to_live_without_keel_opt_in() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.path().join("README.md"), "live_default_marker\n").unwrap();
+
+        let ports = build_context_ports_with_keel(repo.path(), None, false).unwrap();
+        let result = ports
+            .search
+            .search_with_provenance(&["live_default_marker".to_owned()], &SEARCH_BOUNDS)
+            .unwrap();
+        assert_eq!(result.paths, ["README.md"]);
+        assert_eq!(result.provenance.origin, SourceSearchOrigin::Live);
+    }
+
+    #[test]
+    fn production_context_ports_skip_project_snapshot_when_tier_one_exists() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .args(["-C", repo.path().to_str().unwrap(), "init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.path().join("README.md"), "live_project_marker\n").unwrap();
+
+        let ports =
+            build_context_ports_with_keel(repo.path(), Some(Arc::new(TierOneOnly)), true).unwrap();
+        let result = ports
+            .search
+            .search_with_provenance(&["live_project_marker".to_owned()], &SEARCH_BOUNDS)
+            .unwrap();
+        assert_eq!(result.paths, ["README.md"]);
+        assert_eq!(result.provenance.origin, SourceSearchOrigin::Live);
+    }
 }
 
 /// The mirror of `build_sealer`: the same keyring, opened for READING sealed Evidence back.

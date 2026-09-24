@@ -16,6 +16,7 @@ graphhelm-tool-broker = { path = "../../core/tool-broker" }
 # already owns disk readers; runtime does not depend back on this crate, so no cycle.
 graphhelm-runtime = { path = "../../core/runtime" }
 graphhelm-protocols = { path = "../../core/protocols" }
+keel-contract-index = { path = "../../tools/keel-contract-index" }
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

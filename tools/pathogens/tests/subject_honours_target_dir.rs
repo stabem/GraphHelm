@@ -19,6 +19,8 @@ use std::time::{Duration, SystemTime};
 
 use pathogens::subject::{SubjectRefusal, measurable_binary};
 
+mod common;
+
 fn binary_name() -> &'static str {
     if cfg!(windows) {
         "graphhelm.exe"
@@ -45,10 +47,15 @@ fn plant(target_dir: &Path, mtime: SystemTime) -> PathBuf {
 
 #[test]
 fn the_subject_is_the_configured_target_dir_in_both_directions() {
-    // No `tempfile` here on purpose: `pathogens` is gate machinery, and a new dependency in a gate
-    // crate is a bigger change than this fix earns. The process id keeps concurrent runs apart.
+    // No `tempfile` here on purpose: the process id keeps each stand-in directory separate. The
+    // shared file lock coordinates this test with the separate source-refusal test binary.
     let configured = std::env::temp_dir().join(format!("pathogens-349-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&configured);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root");
+    let _timeline_lock = common::SubjectTimelineLock::acquire(root);
 
     // SAFETY: this test binary contains exactly one test, so nothing else in this process can be
     // reading the environment while it changes. That isolation is why the file exists.

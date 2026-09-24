@@ -12,12 +12,15 @@
 
 use pathogens::subject::{SubjectRefusal, measurable_binary};
 
+mod common;
+
 #[test]
 fn fresh_measures_stale_refuses_and_the_refusal_is_not_unconditional() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
         .expect("workspace root");
+    let _timeline_lock = common::SubjectTimelineLock::acquire(root);
     // The precondition ASKS THE RESOLVER, and that is the whole point of the change. This used to
     // repeat `<root>/target/debug` by hand, so both sides made the identical wrong assumption
     // about where the build went and the test could not see the bug it stood next to (#349).

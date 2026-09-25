@@ -57,7 +57,8 @@ the author and reviewer run the checks reached by the change.
 | [Journey verifier](../../extensions/builtin/graphhelm-jpd/skills/journey-verifier/SKILL.md) | The JPD obligations have adequate observers | The strongest result supported by observed evidence; missing proof stays unresolved |
 
 The installable `graphhelm` plugin adds [GraphHelm guide](../../plugins/graphhelm/skills/graphhelm-guide/SKILL.md)
-for an overview of the method and [GraphHelm resume](../../plugins/graphhelm/skills/graphhelm-resume/SKILL.md)
+for an overview of the method, [GraphHelm setup](../../plugins/graphhelm/skills/graphhelm-setup/SKILL.md)
+for reviewed host adoption, and [GraphHelm resume](../../plugins/graphhelm/skills/graphhelm-resume/SKILL.md)
 for exactly two evidence-based next actions. These are separate from the twelve skills in the
 two built-in extension manifests. Its [installation guide](../../plugins/graphhelm/README.md)
 lists the Codex and Claude commands and the host-specific invocation names.

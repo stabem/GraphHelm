@@ -20,7 +20,7 @@ tab — measured, in a probe run against this README.
 **Runs now, verifiable with the clone and no accounts:**
 
 * Graph authoring: validate, lint, semantic hashing, immutable versions, drafts, waivers.
-* Nine JSON Schemas with a verifiable catalog, an immutable `1.0.0` snapshot, and conformance
+* A versioned JSON Schema catalog with an immutable `1.0.0` snapshot and conformance
   fixtures.
 * An append-only event store (local JSONL and PostgreSQL) with byte-identical replay,
   cryptographic erasure, and verified restore.
@@ -69,7 +69,7 @@ GraphHelm is a local-first platform in which the user controls, through a visual
 ## The methodology
 
 GraphHelm is not only a runtime; it installs a way of working into an existing agent environment
-and enforces it with code rather than prose. Three pieces fit together: **adoption** puts the
+and checks its objective contracts with code. Three pieces fit together: **adoption** puts the
 method into your Claude Code or Codex setup reversibly; **Journey-Proven Development (JPD)** makes
 an observable promise the unit of work; **Keel** bounds what an agent may read and write and
 carries a watchdog that records drift and, only if a controlled comparison shows it helps, narrows what a seat may write. The reasoning behind
@@ -127,7 +127,8 @@ flowchart TD
 
 ### 3. Keel: bounded writing, and a watchdog that records drift
 
-Keel is the paradigm GraphHelm installs for code written by agents. An agent starts from a
+Keel is the paradigm GraphHelm installs for code written by agents. For bounded code changes,
+an agent starts from a
 **contract card** (scope as a file list, exported symbols, criteria naming their instrument), then
 searches specific code on purpose and records any context the card was missing. Each node declares
 a **write surface** — new modules, types, public functions, dependencies, tests — and a
@@ -163,11 +164,38 @@ flowchart TD
   RP --> W
 ```
 
-**Today Keel is guidance and measurement, not punishment.** The classifier reports what a diff adds and blocks only objective contracts; the rung ladder in the diagram is implemented but disabled in the rules file (`ladder.enabled: false`) and drives nothing until a controlled comparison shows penalties add value (paper, section 7a). Slice 1 landed in #1213: the specification, the rules file
-(`extensions/builtin/graphhelm-development-contracts/policies/keel.yaml`) with its schema, fixtures
-and entry skill, and `core/policy::keel` with tests at both sides of every bound. The registered
-gate with its pathogen suite, the penalty fold over the Event Store, and the contract index served
-by the context compiler are the next slices, tracked in #1212.
+**Today Keel is guidance and measurement, not punishment.** The diagram shows its full route;
+small reversible changes use the direct route in [the delivery process](docs/process/DELIVERY.md).
+The classifier reports what a diff adds and blocks only objective contracts. The rung ladder is
+implemented but disabled (`ladder.enabled: false`) until a controlled comparison shows penalties
+add value. The rules, schema, fixtures, entry skill, and deterministic classifier landed in
+#1213. The rest of #1212 remains under development. Repository changes currently use reached
+checks and one independent review, with no mandatory gate.
+
+### Measured coding pilot: cost, time, and quality
+
+GraphHelm measures the whole delivery: the agent must pass a hidden acceptance check, preserve
+the old regression check, and survive a blind patch review. Fewer tokens alone do not count as a
+gain. In the first complete three-arm pilot, one frozen Unicode bug was given to the same
+requested Sonnet route on runner version 11. These are **one-task measurements**, not a general
+benchmark result:
+
+| Agent workflow | Agent time | Estimated model cost | Automated checks | Blind review |
+| --- | ---: | ---: | --- | --- |
+| A: ordinary coding | 585 s | USD 0.773 | Passed | Found a test that breaks on Linux |
+| B: GraphHelm | 401 s | USD 0.848 | Passed | No material code defect |
+| C: GraphHelm + Keel | 415 s | USD 0.734 | Passed | No material code defect |
+
+On this task, C cost **13.4% less than B** with the same automated result and no material
+production-code finding in either blind review. C also took 29.2% less agent time and cost 5.1%
+less than A, but A's Linux test failure means those numbers do not establish quality-matched
+savings over ordinary coding. The dollar amounts are Claude CLI estimates, not paid invoices;
+review, setup, machine time, and earlier attempts are not priced. The GraphHelm Runtime used
+fixture executors, and whether C wrote its Keel card before editing remains unobserved.
+The [full report and patches](docs/keel/benchmark-evidence/task-1279-v11/README.md) record the
+inputs, token categories, checks, and limitations. The [benchmark protocol](docs/keel/BENCHMARK_PROTOCOL.md)
+and [ongoing study](https://github.com/stabem/GraphHelm/issues/1282) require varied tasks before
+claiming a repeatable quality or total-cost gain.
 
 ## Foundation Graph Kernel
 
@@ -183,7 +211,7 @@ See [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-grap
 
 ## Protocols and schema evolution
 
-The nine JSON Schemas have a verifiable catalog, canonical hashes, an immutable `1.0.0` snapshot, conservative compatibility analysis, exact SemVer rules, declarative and scoped migrations, public conformance fixtures, and a JSON CLI. The initial release does not publish any data migration; the provisional `p50.dev` identifiers have been preserved.
+The JSON Schemas have a verifiable catalog, canonical hashes, an immutable `1.0.0` snapshot, conservative compatibility analysis, exact SemVer rules, declarative and scoped migrations, public conformance fixtures, and a JSON CLI. The initial release does not publish any data migration; the provisional `p50.dev` identifiers have been preserved.
 
 ```bash
 cargo run --locked -p graphhelm-cli -- schema catalog --catalog schemas/catalog.json
@@ -215,29 +243,49 @@ The product is made up of three open surfaces:
 
 ## How to read this repository
 
-- [MASTER_PRD.md](MASTER_PRD.md): consolidated, normative document.
-- [docs/DECISION_REGISTER.md](docs/DECISION_REGISTER.md): all choices approved during the definition phase.
+For a new checkout, start with the runnable path. The specifications describe the intended
+product; they are not a list of features already shipped. If sources disagree, follow the
+[repository's source order](AGENTS.md), beginning with the decision register and accepted ADRs.
+
+**Run and work with what exists today**
+
+- [QUICKSTART.md](QUICKSTART.md): an offline run without an account or daemon.
+- [docs/install/GETTING_STARTED.md](docs/install/GETTING_STARTED.md): setup through a first Runtime and Studio run.
+- [docs/INDEX.md](docs/INDEX.md): full documentation index.
+- [docs/ux/STUDIO_MVP.md](docs/ux/STUDIO_MVP.md): the shipped operator surface, distinct from the planned visual Studio.
+- [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md), [protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md), and [production-event-evidence-store.md](docs/milestones/production-event-evidence-store.md): implemented milestones and their acceptance evidence.
+- [docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md), [docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md), and [docs/process/DELIVERY.md](docs/process/DELIVERY.md): the development method and current repository delivery process.
+- [docs/keel/BENCHMARK_PROTOCOL.md](docs/keel/BENCHMARK_PROTOCOL.md): how the methodology's quality and total cost will be compared.
+- [docs/keel/benchmark-evidence/task-1279-v11/README.md](docs/keel/benchmark-evidence/task-1279-v11/README.md): measured coding pilot, patches, and limits.
+
+**Decisions, contracts, and product specification**
+
+- [docs/DECISION_REGISTER.md](docs/DECISION_REGISTER.md): approved decisions and amendments; first authority when specifications conflict.
+- [docs/reference/REFERENCE_STACK_AND_ADRS.md](docs/reference/REFERENCE_STACK_AND_ADRS.md): reference stack and accepted architectural decisions.
+- [schemas/](schemas/): canonical JSON Schema wire contracts.
 - [docs/product/PRODUCT_REQUIREMENTS.md](docs/product/PRODUCT_REQUIREMENTS.md): functional and non-functional requirements.
-- [docs/ux/STUDIO_SPEC.md](docs/ux/STUDIO_SPEC.md): screens, components, states, and interactions.
-- [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md): high-level architecture and topology.
-- [docs/harness/HARNESS_SPEC.md](docs/harness/HARNESS_SPEC.md): full specification of the dynamic harness.
-- [docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md](docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md): guide for building capabilities, agents, gates, and extensions.
+- [docs/ux/STUDIO_SPEC.md](docs/ux/STUDIO_SPEC.md): planned visual Studio screens, components, and interactions.
+- [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md): target architecture and topology.
+- [docs/harness/HARNESS_SPEC.md](docs/harness/HARNESS_SPEC.md): dynamic harness specification.
+- [docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md](docs/graph-engineer/GRAPH_ENGINEER_GUIDE.md): building capabilities, agents, gates, and extensions.
 - [docs/graph-engineer/GRAPH_DSL_SPEC.md](docs/graph-engineer/GRAPH_DSL_SPEC.md): typed graph DSL.
-- [docs/context/CONTEXT_KNOWLEDGE_DREAMS.md](docs/context/CONTEXT_KNOWLEDGE_DREAMS.md): low-consumption context, knowledge, and the Dreams Engine.
-- [docs/agents/AGENTS_SKILLS_PLUGINS.md](docs/agents/AGENTS_SKILLS_PLUGINS.md): lifecycle of agents, skills, tools, and plugins.
-- [docs/models/UNIVERSAL_MODEL_GATEWAY.md](docs/models/UNIVERSAL_MODEL_GATEWAY.md): BYOK, subscriptions, local routes, and capability policy.
+- [docs/context/CONTEXT_KNOWLEDGE_DREAMS.md](docs/context/CONTEXT_KNOWLEDGE_DREAMS.md): context, knowledge, and planned Dreams Engine.
+- [docs/agents/AGENTS_SKILLS_PLUGINS.md](docs/agents/AGENTS_SKILLS_PLUGINS.md): agents, skills, tools, and plugins.
+- [docs/models/UNIVERSAL_MODEL_GATEWAY.md](docs/models/UNIVERSAL_MODEL_GATEWAY.md): model routing design and capability policy.
 - [docs/security/SECURITY_ISOLATION_THREAT_MODEL.md](docs/security/SECURITY_ISOLATION_THREAT_MODEL.md): isolation, secrets, and threat model.
-- [docs/architecture/DATA_AND_PROTOCOLS.md](docs/architecture/DATA_AND_PROTOCOLS.md): entities, events, APIs, and contracts.
-- [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): metrics, checkpoints, replay, and recovery.
-- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): MIT licence, contribution terms, and governance.
-- [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): phases, acceptance criteria, and metrics.
-- [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): name, positioning, and brand architecture.
-- [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): initial prompt for planning and first implementation in Codex.
-- [docs/reference/EXAMPLE_EXECUTIONS.md](docs/reference/EXAMPLE_EXECUTIONS.md): complete graph examples.
-- [docs/reference/REFERENCE_STACK_AND_ADRS.md](docs/reference/REFERENCE_STACK_AND_ADRS.md): reference stack and architectural decisions.
-- [docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md](docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md): verified official sources.
-- [schemas/](schemas/): JSON Schema contracts.
+- [docs/architecture/DATA_AND_PROTOCOLS.md](docs/architecture/DATA_AND_PROTOCOLS.md): entities, events, and API design; schemas govern wire details.
+- [docs/operations/OBSERVABILITY_AND_RECOVERY.md](docs/operations/OBSERVABILITY_AND_RECOVERY.md): observability and recovery design.
+- [docs/open-source/GOVERNANCE_AND_LICENSING.md](docs/open-source/GOVERNANCE_AND_LICENSING.md): MIT licence, contributions, and governance.
+- [docs/product/ROADMAP_AND_ACCEPTANCE.md](docs/product/ROADMAP_AND_ACCEPTANCE.md): original phases and acceptance targets, not a live progress tracker.
+- [docs/product/NAMING_DECISION.md](docs/product/NAMING_DECISION.md): name and brand architecture.
+- [docs/reference/EXAMPLE_EXECUTIONS.md](docs/reference/EXAMPLE_EXECUTIONS.md): example graph executions.
 - [examples/](examples/): example graphs and manifests.
+
+**Original vision and background references**
+
+- [MASTER_PRD.md](MASTER_PRD.md): consolidated product vision; use newer decisions and subsystem contracts for current authority.
+- [CODEX_BOOTSTRAP_PROMPT.md](CODEX_BOOTSTRAP_PROMPT.md): historical prompt for the first implementation milestone.
+- [docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md](docs/reference/PROVIDER_AND_LICENSE_REFERENCES.md): official references verified in August 2026; revalidate before release.
 
 ## Constitutional principles
 

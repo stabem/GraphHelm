@@ -1,7 +1,8 @@
 # MASTER PRD — GraphHelm
 
 **Version:** 0.1.1
-**State:** specification approved for incremental implementation; no code in this package
+**State:** approved product vision; implementation is underway. See [README.md](README.md) and
+the [milestone documents](docs/INDEX.md) for what currently runs.
 **Category:** open-source Agentic Operating System
 **Topology:** Local Studio + Runtime on the user's VPS
 

@@ -4,7 +4,9 @@
 
 The architecture is general-purpose from the start, but future implementation must evolve through provable vertical slices. The goal is not to produce a visual editor without a real engine, nor a powerful engine without a control experience.
 
-No implementation is part of the present package; this document organizes the future sequence.
+This roadmap began as a pre-implementation plan. It remains an acceptance target, not a live
+progress tracker. See [README.md](../../README.md) and the
+[implemented milestones](../INDEX.md) for what currently runs.
 
 ## 2. Phase 0 — specification
 

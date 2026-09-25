@@ -46,6 +46,10 @@ body.
 - **A BLOCK stands for the head it names.** The author answers it by pushing a fix (a new head) or
   by replying on the PR with why it does not hold; only then may a new reviewer be asked. Asking
   another reviewer about the same head until one approves is not a review.
+- **Every review reads the PR's earlier comments first.** When a BLOCK is open on the head under
+  review, the review names that BLOCK and says whether it still holds and why; an APPROVE that does
+  not answer an open BLOCK on the same head is not a pass, and the merge (§5) waits for that answer.
+  Reading the PR's own comments is part of the review, not a finding handed over in a brief.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
 - **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
@@ -67,7 +71,8 @@ body.
 The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser. `ci/gate.ps1` still
 exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
 
-1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named.
+1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named, and no
+   BLOCK on that head is left unanswered by the review (§4).
 2. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent. Never write a
    closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not mean to

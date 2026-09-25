@@ -674,3 +674,119 @@ fn set_owner_only_directory(_path: &Path) {}
 fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::windows::fs::symlink_file(target, link)
 }
+
+#[cfg(unix)]
+fn unix_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
+}
+
+#[cfg(unix)]
+fn set_unix_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    assert_eq!(unix_mode(path), mode);
+}
+
+/// #1305: `mkdir` under the default umask makes `0755`. `create` tightens a directory the caller
+/// owns, as it already does on Windows, instead of refusing it with `KeyError::Storage`.
+#[cfg(unix)]
+#[test]
+fn create_tightens_an_owned_0755_directory_to_0700() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("keyring");
+    fs::create_dir(&root).unwrap();
+    set_unix_mode(&root, 0o755);
+
+    drop(create(&root, 87));
+
+    assert_eq!(unix_mode(&root), 0o700);
+    assert_eq!(reopen(&root, 87).epoch().unwrap(), 0);
+}
+
+/// A keyring path that is itself a symlink stays refused, and the tightening never reaches the
+/// directory the link points at.
+#[test]
+fn a_symlinked_keyring_directory_is_refused_and_its_target_is_untouched() {
+    let parent = TempDir::new().unwrap();
+    let target = parent.path().join("real-keyring");
+    fs::create_dir(&target).unwrap();
+    #[cfg(unix)]
+    set_unix_mode(&target, 0o755);
+    let link = parent.path().join("keyring-link");
+    if let Err(error) = create_directory_symlink(&target, &link) {
+        if symlink_privilege_is_unavailable(&error) {
+            eprintln!("symlink creation unavailable without elevation; no adapter action executed");
+            return;
+        }
+        panic!("failed to create directory symlink: {error}");
+    }
+
+    assert_eq!(
+        key_error(SealedKeyProvider::create(
+            &link,
+            "local-key-v1",
+            SecretBytes::new(key_material(88)),
+        )),
+        KeyError::Storage
+    );
+    assert!(!target.join(LOCK_FILE).exists());
+    assert!(!target.join(KEYRING_FILE).exists());
+    #[cfg(unix)]
+    assert_eq!(unix_mode(&target), 0o755);
+}
+
+/// The open path keeps its strict check: a keyring whose directory was loosened after it was
+/// created is refused, and neither `open` nor a repeated `create` repairs the directory.
+#[cfg(unix)]
+#[test]
+fn an_existing_keyring_in_a_loosened_directory_stays_refused() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("keyring");
+    fs::create_dir(&root).unwrap();
+    set_unix_mode(&root, 0o700);
+    drop(create(&root, 89));
+    set_unix_mode(&root, 0o755);
+
+    assert_eq!(
+        key_error(SealedKeyProvider::open(
+            &root,
+            "local-key-v1",
+            SecretBytes::new(key_material(89)),
+        )),
+        KeyError::Storage
+    );
+    assert!(
+        SealedKeyProvider::create(&root, "local-key-v1", SecretBytes::new(key_material(89)))
+            .is_err()
+    );
+    assert_eq!(unix_mode(&root), 0o755);
+}
+
+/// A directory owned by another user is refused and never changed. Uses `/`, which is owned by
+/// root: the cell is skipped when the test itself runs as the owner of `/` (as root, it would own
+/// it and `create` would be allowed to tighten it).
+#[cfg(unix)]
+#[test]
+fn a_directory_owned_by_another_user_is_refused_and_left_untouched() {
+    use std::os::unix::fs::MetadataExt;
+
+    let own = TempDir::new().unwrap();
+    let own_uid = fs::metadata(own.path()).unwrap().uid();
+    let foreign = Path::new("/");
+    if own_uid == 0 || fs::metadata(foreign).unwrap().uid() == own_uid {
+        eprintln!("running as the owner of `/`; the foreign-owner cell is not exercised");
+        return;
+    }
+    let before = unix_mode(foreign);
+
+    assert_eq!(
+        key_error(SealedKeyProvider::create(
+            foreign,
+            "local-key-v1",
+            SecretBytes::new(key_material(90)),
+        )),
+        KeyError::Storage
+    );
+    assert_eq!(unix_mode(foreign), before);
+}

@@ -470,6 +470,12 @@ impl AnchoredDirectory {
     fn open(directory: &Path, access: DirectoryAccess) -> Result<Self, KeyError> {
         let (path, handle) = open_directory_handle(directory, access)?;
         let metadata = handle.metadata().map_err(|_| KeyError::Storage)?;
+        #[cfg(unix)]
+        let metadata = if matches!(access, DirectoryAccess::Initialize) {
+            tighten_owned_directory(&handle, metadata)?
+        } else {
+            metadata
+        };
         #[cfg(windows)]
         if matches!(access, DirectoryAccess::Initialize) {
             apply_windows_protected_dacl(&handle)?;
@@ -769,6 +775,69 @@ fn open_directory_handle(
         .open(&path)
         .map_err(|_| KeyError::Storage)?;
     Ok((path, file))
+}
+
+/// The Unix half of what `create` does on Windows with `apply_windows_protected_dacl`: a directory
+/// the caller owns is narrowed to `0700` before it is validated, so `mkdir keyring` (umask `0755`)
+/// followed by `create` works instead of failing with `KeyError::Storage` (#1305).
+///
+/// - The mode is changed with `fchmod` on the descriptor `open_directory_handle` already opened
+///   component by component with `O_NOFOLLOW`, never on a path: a path swapped after the open is
+///   not the one changed, and `verify_root_path` then refuses the swap.
+/// - A directory owned by another user is left untouched; `validate_secure_directory` refuses it.
+/// - A directory that already holds a keyring is left untouched too. `create` refuses it anyway
+///   (`KeyError::Conflict`), and `open` keeps the strict check: a keyring whose directory was
+///   loosened after the fact is refused rather than silently repaired, because the loosening may
+///   already have exposed it.
+///
+/// Returns the metadata read back from the descriptor after the change, which the caller
+/// validates as before.
+#[cfg(unix)]
+fn tighten_owned_directory(handle: &File, metadata: Metadata) -> Result<Metadata, KeyError> {
+    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+
+    // SAFETY: `geteuid` has no preconditions.
+    let effective_uid = unsafe { libc::geteuid() };
+    if !metadata.is_dir() || metadata.uid() != effective_uid || metadata.mode() & 0o7777 == 0o700 {
+        return Ok(metadata);
+    }
+    if regular_child_exists(handle, keyring::KEYRING_FILE)? {
+        return Ok(metadata);
+    }
+    // SAFETY: `handle` owns a live directory descriptor for the duration of the call.
+    if unsafe { libc::fchmod(handle.as_raw_fd(), 0o700) } != 0 {
+        return Err(KeyError::Storage);
+    }
+    handle.metadata().map_err(|_| KeyError::Storage)
+}
+
+/// Whether `root` has a regular file called `name`, read without following it. Anything else under
+/// that name (a symlink, say) is not a keyring: the directory is tightened, and the keyring check
+/// that follows refuses the entry with `KeyError::Integrity`.
+#[cfg(unix)]
+fn regular_child_exists(root: &File, name: &str) -> Result<bool, KeyError> {
+    use std::{ffi::CString, mem::MaybeUninit, os::fd::AsRawFd};
+    validate_child_name(name)?;
+    let name = CString::new(name).map_err(|_| KeyError::Invalid)?;
+    let mut stat = MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `root`, `name`, and the output storage are live for the call.
+    if unsafe {
+        libc::fstatat(
+            root.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } == 0
+    {
+        // SAFETY: successful `fstatat` initialized the complete structure.
+        let stat = unsafe { stat.assume_init() };
+        return Ok(stat.st_mode & libc::S_IFMT == libc::S_IFREG);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ENOENT) => Ok(false),
+        _ => Err(KeyError::Storage),
+    }
 }
 
 fn validate_secure_directory(metadata: &Metadata) -> Result<(), KeyError> {

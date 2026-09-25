@@ -198,7 +198,22 @@ pub(super) enum ManifestReadError {
 /// (`AnchoredDirectory::open`) and never create one; `CredentialBroker::create`'s own doc comment
 /// states the same precondition (Task 3 finding). The broker directory *is* created on demand
 /// (`CredentialBroker::create` calls `create_dir_all` on it), so only the keyring is checked here.
+///
+/// The provider's own refusals all come back as `KeyError::Storage`, which the user sees as "the
+/// keyring could not be used" with no cause (#1305). So the refusals a user can fix are named here,
+/// before the provider runs: a symlink (never followed, on any platform) and, on Unix, a directory
+/// owned by another user or an existing keyring whose directory is not mode `0700`. A directory
+/// that is merely `0755` and holds no keyring yet is NOT refused: `SealedKeyProvider::create`
+/// tightens it to `0700` itself.
 pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
+    let named = std::fs::symlink_metadata(path)
+        .map_err(|_| credential_error("the keyring directory does not exist", "/keyring"))?;
+    if named.file_type().is_symlink() {
+        return Err(credential_error(
+            "the keyring path is a symbolic link, which is never followed; point --keyring at the real directory",
+            "/keyring",
+        ));
+    }
     let metadata = std::fs::metadata(path)
         .map_err(|_| credential_error("the keyring directory does not exist", "/keyring"))?;
     if !metadata.is_dir() {
@@ -206,6 +221,25 @@ pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
             "the keyring path is not a directory",
             "/keyring",
         ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: `geteuid` has no preconditions.
+        let effective_uid = unsafe { libc::geteuid() };
+        if metadata.uid() != effective_uid {
+            return Err(credential_error(
+                "the keyring directory must be owned by the user running graphhelm and be mode 0700 (owner-only)",
+                "/keyring",
+            ));
+        }
+        // `keyring.v1.json` is `KEYRING_FILE` in `adapters/sealed-key-provider/src/keyring.rs`.
+        if metadata.mode() & 0o7777 != 0o700 && path.join("keyring.v1.json").exists() {
+            return Err(credential_error(
+                "the keyring directory holds a keyring but is not mode 0700 (owner-only); an existing keyring is never repaired, so check who could read it, then run chmod 700 on the directory",
+                "/keyring",
+            ));
+        }
     }
     Ok(())
 }

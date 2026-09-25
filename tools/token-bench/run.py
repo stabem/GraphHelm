@@ -83,6 +83,14 @@ Objective / issue:
 """
 
 
+def compose_arm_c_prompt(issue_prompt: str, card_path: Path, signal_path: Path) -> str:
+    """Keep the actual task adjacent to its heading, before the supporting skill text."""
+    skill = KEEL_SKILL.read_text(encoding="utf-8")
+    return (ARM_C_PREFIX.format(card_path=card_path, signal_path=signal_path) + issue_prompt +
+            "\n\nPinned Keel skill (digest " + (digest_file(KEEL_SKILL) or "missing") + "):\n" +
+            "--- BEGIN PINNED KEEL SKILL ---\n" + skill + "\n--- END PINNED KEEL SKILL ---\n")
+
+
 def sh(args: list[str], cwd: Path | None = None, check: bool = True, **kw) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=cwd, check=check, text=True, capture_output=True, **kw)
 
@@ -618,9 +626,7 @@ def cmd_run(a: argparse.Namespace) -> None:
         card_dir = scratch_root() / "cards"
         card_dir.mkdir(parents=True, exist_ok=True)
         card_path = card_dir / f"{a.task}-c-{uuid.uuid4().hex}.json"
-        skill = KEEL_SKILL.read_text(encoding="utf-8")
-        prompt = ARM_C_PREFIX.format(card_path=card_path, signal_path=signal_path) + "Pinned Keel skill (digest " + (digest_file(KEEL_SKILL) or "missing") + "):\n"
-        prompt += "--- BEGIN PINNED KEEL SKILL ---\n" + skill + "\n--- END PINNED KEEL SKILL ---\n\n" + prompt
+        prompt = compose_arm_c_prompt(prompt, card_path, signal_path)
     verdict = "FAIL"
     acceptance = "UNOBSERVED"
     regression = "UNOBSERVED"

@@ -77,6 +77,18 @@ def test_timeout_keeps_pinned_session_id_for_partial_usage(tmp_path, monkeypatch
     assert observed["cmd"][index + 1] == result["session_id"]
 
 
+def test_keel_prompt_puts_real_task_under_objective_heading(tmp_path, monkeypatch):
+    """A misplaced skill made Claude read an empty objective and stop before fixing code."""
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("PINNED_SKILL_CONTENT", encoding="utf-8")
+    monkeypatch.setattr(runner, "KEEL_SKILL", skill)
+    prompt = runner.compose_arm_c_prompt(
+        "TASK_SENTINEL: fix the Unicode child prompt", tmp_path / "card.json", tmp_path / "signal.json")
+    assert "Objective / issue:\n\nTASK_SENTINEL" in prompt
+    assert prompt.index("TASK_SENTINEL") < prompt.index("PINNED_SKILL_CONTENT")
+    assert prompt.count("TASK_SENTINEL") == 1
+
+
 def test_no_regression_observer_cannot_be_a_quality_win():
     """Catches treating a task without a pre-existing regression as quality evidence."""
     verdict, reasons = runner.evaluate_outcome("PASS", "UNOBSERVED", usage(), 0.2, "session", {})

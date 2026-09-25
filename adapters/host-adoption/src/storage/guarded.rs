@@ -28,7 +28,7 @@ impl Root {
                 return Err(failed());
             }
             rename_no_replace(&guard, &self.file, to)?;
-            guard.sync_all().map_err(|_| failed())?;
+            guard.sync_all().map_err(|error| failed_io(&error))?;
         }
         #[cfg(target_os = "linux")]
         {
@@ -46,9 +46,9 @@ impl Root {
                 )
             } != 0
             {
-                return Err(failed());
+                return Err(failed_io(&std::io::Error::last_os_error()));
             }
-            self.file.sync_all().map_err(|_| failed())?;
+            self.file.sync_all().map_err(|error| failed_io(&error))?;
         }
         #[cfg(not(any(windows, target_os = "linux")))]
         return Err(failed());
@@ -107,18 +107,20 @@ impl Source {
             backup::windows_nt_child(&self.parent, &name, true, false, true)?.ok_or_else(failed)?
         };
         let mut candidate = create_child(&directory, "candidate")?;
-        candidate.write_all(bytes).map_err(|_| failed())?;
+        candidate
+            .write_all(bytes)
+            .map_err(|error| failed_io(&error))?;
         metadata.apply(&candidate)?;
         if access(&candidate)? != *metadata {
             return Err(failed());
         }
-        candidate.sync_all().map_err(|_| failed())?;
+        candidate.sync_all().map_err(|error| failed_io(&error))?;
         #[cfg(unix)]
         {
-            directory.sync_all().map_err(|_| failed())?;
+            directory.sync_all().map_err(|error| failed_io(&error))?;
             // The journal must never refer to a guard directory whose parent entry has not
             // reached durable storage before an exchange can move the original into it.
-            self.parent.sync_all().map_err(|_| failed())?;
+            self.parent.sync_all().map_err(|error| failed_io(&error))?;
         }
         let record = GuardRecord {
             directory: name,
@@ -188,22 +190,31 @@ impl Prepared {
                 )
             } != 0
             {
-                return Err(failed());
+                return Err(failed_io(&std::io::Error::last_os_error()));
             }
-            self.source.parent.sync_all().map_err(|_| failed())?;
-            self.directory.sync_all().map_err(|_| failed())?;
+            self.source
+                .parent
+                .sync_all()
+                .map_err(|error| failed_io(&error))?;
+            self.directory
+                .sync_all()
+                .map_err(|error| failed_io(&error))?;
         }
         #[cfg(windows)]
         {
             // The handle excludes competing write/delete opens. Capture that same handle, never
             // resolve a potentially exchanged final path. Both renames are anchored/no-replace.
             rename_no_replace(&_source_guard, &self.directory, "displaced")?;
-            _source_guard.sync_all().map_err(|_| failed())?;
+            _source_guard
+                .sync_all()
+                .map_err(|error| failed_io(&error))?;
             // The caller persists Detached before this callback returns. The pre-existing intent
             // already records both identities if the process dies before that extra sync.
             boundary(PublicationBoundary::Detached)?;
             rename_no_replace(&candidate_file, &self.source.parent, &self.source.name)?;
-            candidate_file.sync_all().map_err(|_| failed())?;
+            candidate_file
+                .sync_all()
+                .map_err(|error| failed_io(&error))?;
         }
         boundary(PublicationBoundary::Published)?;
         let displaced = displaced(&self.directory)?.ok_or_else(failed)?;
@@ -249,7 +260,7 @@ impl Prepared {
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(volume)
-            .map_err(|_| failed())?;
+            .map_err(|error| failed_io(&error))?;
         let mut pins = vec![file];
         for name in names {
             let next = backup::windows_nt_child_shared(
@@ -365,20 +376,73 @@ fn rename_no_replace(source: &File, parent: &File, name: &str) -> Result<(), Ado
         (*info).FileNameLength = (name.len() * 2) as u32;
         std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
     }
+    let source_identity = identity(source)?;
+    let parent_identity = identity(parent)?;
     let mut status = unsafe { std::mem::zeroed() };
-    let code = unsafe {
-        NtSetInformationFile(
-            source.as_raw_handle(),
-            &mut status,
-            info.cast(),
-            len as u32,
-            FileRenameInformation,
-        )
-    };
-    if code < 0 {
-        return Err(failed_ntstatus(code, NtOperation::GuardedNoReplace));
+    // A refused no-replace rename changes nothing on disk, so a retry leaves exactly the state
+    // a crash before the first attempt would: the journal/boundary ordering is untouched.
+    retry_transient_rename(
+        || unsafe {
+            NtSetInformationFile(
+                source.as_raw_handle(),
+                &mut status,
+                info.cast(),
+                len as u32,
+                FileRenameInformation,
+            )
+        },
+        // Retry only while the retained handles still name what the caller validated.
+        || Ok(identity(source)? == source_identity && identity(parent)? == parent_identity),
+        std::time::Instant::now,
+        std::thread::sleep,
+    )
+    .map_err(|failure| match failure {
+        RenameFailure::Status(code) => failed_ntstatus(code, NtOperation::GuardedNoReplace),
+        RenameFailure::Check(error) => error,
+    })
+}
+
+/// Why a bounded rename retry ended without success.
+#[cfg(any(windows, test))]
+#[derive(Debug)]
+enum RenameFailure {
+    /// The last NTSTATUS the rename returned.
+    Status(i32),
+    /// Re-proving the handles between attempts failed.
+    Check(AdoptionError),
+}
+
+/// Run `rename` (returning an NTSTATUS) until it succeeds, fails with a non-transient status,
+/// or the bound is spent: at most four attempts, and no new attempt once 100 ms have passed
+/// since the first failure (the same bound as the atomic-replace and backup renames). Between
+/// attempts `unchanged` must re-prove that the handles are the ones validated; `false` ends the
+/// loop with the last status. The clock bounds whether another call may begin, not how long a
+/// native call itself takes.
+#[cfg(any(windows, test))]
+fn retry_transient_rename(
+    mut rename: impl FnMut() -> i32,
+    mut unchanged: impl FnMut() -> Result<bool, AdoptionError>,
+    mut now: impl FnMut() -> std::time::Instant,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<(), RenameFailure> {
+    use std::time::Duration;
+    let mut retry_until = None;
+    let mut attempt = 0;
+    loop {
+        let code = rename();
+        if code >= 0 {
+            return Ok(());
+        }
+        let retry_until = *retry_until.get_or_insert_with(|| now() + Duration::from_millis(100));
+        if !transient_rename_status(code) || attempt == 3 || now() >= retry_until {
+            return Err(RenameFailure::Status(code));
+        }
+        sleep(Duration::from_millis(20));
+        if now() >= retry_until || !unchanged().map_err(RenameFailure::Check)? {
+            return Err(RenameFailure::Status(code));
+        }
+        attempt += 1;
     }
-    Ok(())
 }
 impl GuardRecord {
     /// A Windows crash can leave the destination absent between the two no-replace renames.
@@ -414,7 +478,7 @@ impl GuardRecord {
             }
             root.verify()?;
             rename_no_replace(&guard, &parent, &name)?;
-            guard.sync_all().map_err(|_| failed())?;
+            guard.sync_all().map_err(|error| failed_io(&error))?;
         }
         #[cfg(not(windows))]
         let _ = (root, path, source_metadata);
@@ -429,4 +493,124 @@ fn private_guard(parent: &File, name: &str) -> Result<File, AdoptionError> {
     #[cfg(windows)]
     backup::windows_check_private(&directory)?;
     Ok(directory)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RenameFailure, retry_transient_rename};
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    const ACCESS_DENIED: i32 = 0xc000_0022_u32 as i32;
+    const SHARING_VIOLATION: i32 = 0xc000_0043_u32 as i32;
+    const NAME_COLLISION: i32 = 0xc000_0035_u32 as i32;
+    /// Win32 maps this to ERROR_ACCESS_DENIED too, but it is not a transient hold.
+    const DELETE_PENDING: i32 = 0xc000_0056_u32 as i32;
+
+    /// Feed `statuses` in order to the retry loop with a fake clock that only moves on sleep.
+    /// Returns the result, the number of rename attempts and the number of pauses.
+    fn run(
+        statuses: &[i32],
+        unchanged: bool,
+        pause: Duration,
+    ) -> (Result<(), RenameFailure>, usize, usize) {
+        let start = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let attempts = Cell::new(0);
+        let pauses = Cell::new(0);
+        let result = retry_transient_rename(
+            || {
+                let index = attempts.get();
+                attempts.set(index + 1);
+                statuses[index]
+            },
+            || Ok(unchanged),
+            || start + elapsed.get(),
+            |_| {
+                pauses.set(pauses.get() + 1);
+                elapsed.set(elapsed.get() + pause);
+            },
+        );
+        (result, attempts.get(), pauses.get())
+    }
+
+    fn status(result: Result<(), RenameFailure>) -> Option<i32> {
+        match result {
+            Ok(()) => None,
+            Err(RenameFailure::Status(code)) => Some(code),
+            Err(RenameFailure::Check(_)) => panic!("unexpected check failure"),
+        }
+    }
+
+    #[test]
+    fn two_sharing_violations_then_success_publishes() {
+        let statuses = [SHARING_VIOLATION, SHARING_VIOLATION, 0];
+        let (result, attempts, pauses) = run(&statuses, true, Duration::from_millis(20));
+        assert_eq!(status(result), None);
+        assert_eq!((attempts, pauses), (3, 2));
+    }
+
+    #[test]
+    fn access_denied_then_success_publishes() {
+        let (result, attempts, _) = run(&[ACCESS_DENIED, 0], true, Duration::from_millis(20));
+        assert_eq!(status(result), None);
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn a_non_transient_status_fails_at_once() {
+        for code in [NAME_COLLISION, DELETE_PENDING] {
+            let (result, attempts, pauses) = run(&[code, 0], true, Duration::from_millis(20));
+            assert_eq!(status(result), Some(code));
+            assert_eq!((attempts, pauses), (1, 0));
+        }
+    }
+
+    #[test]
+    fn a_persistent_sharing_violation_fails_after_four_attempts() {
+        let (result, attempts, pauses) = run(&[SHARING_VIOLATION; 8], true, Duration::ZERO);
+        assert_eq!(status(result), Some(SHARING_VIOLATION));
+        assert_eq!((attempts, pauses), (4, 3));
+    }
+
+    #[test]
+    fn the_time_budget_stops_retries_before_the_attempt_bound() {
+        // 60 ms per pause: the second pause crosses 100 ms, so no third attempt begins.
+        let statuses = [SHARING_VIOLATION; 8];
+        let (result, attempts, pauses) = run(&statuses, true, Duration::from_millis(60));
+        assert_eq!(status(result), Some(SHARING_VIOLATION));
+        assert_eq!((attempts, pauses), (2, 2));
+    }
+
+    #[test]
+    fn a_changed_handle_ends_the_retry_with_the_last_status() {
+        let statuses = [SHARING_VIOLATION, 0];
+        let (result, attempts, _) = run(&statuses, false, Duration::from_millis(20));
+        assert_eq!(status(result), Some(SHARING_VIOLATION));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_failed_recheck_is_returned_not_retried() {
+        let attempts = Cell::new(0);
+        let result = retry_transient_rename(
+            || {
+                attempts.set(attempts.get() + 1);
+                SHARING_VIOLATION
+            },
+            || {
+                Err(AdoptionError {
+                    reason: AdoptionReason::RecoveryRequired,
+                })
+            },
+            Instant::now,
+            |_| {},
+        );
+        let Err(RenameFailure::Check(error)) = result else {
+            panic!("a failed recheck must be returned as is");
+        };
+        assert!(matches!(error.reason, AdoptionReason::RecoveryRequired));
+        assert_eq!(attempts.get(), 1);
+    }
 }

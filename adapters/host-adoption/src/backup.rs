@@ -1258,7 +1258,7 @@ fn windows_publish_directory(
         // spending the product's 100 ms retry budget.
         let retry_until =
             retry_until.get_or_insert_with(|| Instant::now() + Duration::from_millis(100));
-        let retryable = matches!(status as u32, 0xc000_0022 | 0xc000_0043);
+        let retryable = crate::storage::transient_rename_status(status);
         if !retryable || attempt == 3 || Instant::now() >= *retry_until {
             return Err(AdoptionError {
                 reason: AdoptionReason::CoverageIncomplete,

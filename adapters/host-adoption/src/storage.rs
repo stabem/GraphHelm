@@ -40,6 +40,14 @@ pub(crate) enum NtOperation {
     GuardedNoReplace,
 }
 
+/// A Windows rename refused with STATUS_ACCESS_DENIED or STATUS_SHARING_VIOLATION (Win32
+/// ERROR_ACCESS_DENIED 5 / ERROR_SHARING_VIOLATION 32) may only mean another process, such as a
+/// real-time scanner, briefly holds the new file. Every rename that retries uses this one set.
+#[cfg(any(windows, test))]
+pub(crate) fn transient_rename_status(status: i32) -> bool {
+    matches!(status as u32, 0xc000_0022 | 0xc000_0043)
+}
+
 #[cfg(windows)]
 pub(crate) fn failed_ntstatus(status: i32, operation: NtOperation) -> AdoptionError {
     if diagnostic_enabled() {
@@ -686,7 +694,7 @@ impl Temporary {
                 observe_atomic_publish_failure(code);
                 let retry_until =
                     retry_until.get_or_insert_with(|| Instant::now() + Duration::from_millis(100));
-                let retryable = matches!(code as u32, 0xc000_0022 | 0xc000_0043);
+                let retryable = transient_rename_status(code);
                 if !retryable || attempt == 3 || Instant::now() >= *retry_until {
                     break Err(failed_ntstatus(code, NtOperation::AtomicReplace));
                 }

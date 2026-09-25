@@ -1742,6 +1742,26 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .reply-hint-who { font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply-hint-when { color: var(--faint); font-size: 10px; }
 
+.reply-state { margin: 10px 12px 0; color: var(--faint); font-size: 12px; }
+.reply-drafts { display: grid; gap: 7px; }
+.reply-draft {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  background: var(--raised);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reply-draft:hover { border-color: var(--signal); }
+.reply-draft strong { color: var(--signal); font-size: 11px; }
+.reply-draft small, .reply-drafts p { color: var(--faint); font-size: 11px; }
+.reply-drafts p { margin: 0; }
+.judge-route-choice { display: flex; gap: 8px; align-items: center; margin: 8px 12px; font-size: 12px; }
+.judge-route-choice select { min-width: 0; flex: 1; background: var(--raised); color: var(--text); border: 1px solid var(--edge); }
+
 .saybox {
   display: grid;
   gap: 8px;

@@ -89,6 +89,22 @@ export interface ExecutionStatus {
   [key: string]: unknown;
 }
 
+/** Advisory drafts for one exact execution head. Reading them never sends a signal. */
+export interface ReplySuggestion {
+  to: string | null;
+  draft: string;
+  reason: string;
+  sourceSequences: number[];
+}
+
+export interface ReplySuggestions {
+  executionId: string;
+  headSequence: number;
+  state: "ready" | "not_needed" | "unavailable";
+  reason?: string;
+  suggestions: ReplySuggestion[];
+}
+
 /**
  * One event, after normalisation.
  *

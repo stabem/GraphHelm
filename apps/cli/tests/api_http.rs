@@ -2005,6 +2005,30 @@ fn the_briefing_over_http_matches_the_cli_on_the_same_store() {
     assert_eq!(refused.status, 401, "{}", refused.body);
 }
 
+/// A suggestion read on a finished run must stop before opening routes or appending an event.
+/// This catches a handler that tries to generate advice whenever it is called, regardless of
+/// the current attention verdict.
+#[test]
+fn reply_suggestions_on_a_finished_run_are_read_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-replies-finished";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let before = head_sequence(&base, &token, execution);
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/reply-suggestions?judgeRoute=missing"),
+        Some(&token),
+    );
+    assert_eq!(reply["command"], "execution.reply_suggestions", "{reply}");
+    assert_eq!(reply["data"]["state"], "not_needed", "{reply}");
+    assert_eq!(reply["data"]["headSequence"], before, "{reply}");
+    assert_eq!(reply["data"]["suggestions"], serde_json::json!([]));
+    assert_eq!(head_sequence(&base, &token, execution), before);
+}
+
 /// `limit` above the 1000 cap is refused with 400, never silently truncated to the cap.
 #[test]
 fn the_events_tail_refuses_a_limit_above_the_cap_instead_of_truncating() {

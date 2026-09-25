@@ -38,7 +38,7 @@ These documents contain approved requirements and planned surfaces as well as im
 
 ## Open source and evidence
 
-- [Contributing](../CONTRIBUTING.md), [security reporting](../SECURITY.md), [governance and licensing](open-source/GOVERNANCE_AND_LICENSING.md), and [source provenance](open-source/SOURCE_PROVENANCE.md).
+- [Contributing](../CONTRIBUTING.md), [support](../.github/SUPPORT.md), [community conduct](../.github/CODE_OF_CONDUCT.md), [security reporting](../SECURITY.md), [governance and licensing](open-source/GOVERNANCE_AND_LICENSING.md), and [source provenance](open-source/SOURCE_PROVENANCE.md).
 - [Benchmark protocol](keel/BENCHMARK_PROTOCOL.md) and [measured one-task pilot](keel/benchmark-evidence/task-1279-v11/README.md). Read each report's limits before comparing costs or quality.
 - [Official provider and license references](reference/PROVIDER_AND_LICENSE_REFERENCES.md).
 - [Current-main documentation audit dated 2026-08-31](audits/CURRENT_MAIN_DOCUMENTATION_AUDIT_2026-08-31.md), [clean-host rehearsal dated 2026-09-13](acceptance/install-rehearsal-2026-09-13.md), and [Ubuntu VPS rehearsal](../install/VPS_REHEARSAL.md) are point-in-time records. They do not validate today's head.

@@ -75,6 +75,6 @@ The root keeps standard entry points (`README`, `CONTRIBUTING`, `SECURITY`, `LIC
 
 ## Contributing and trust
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md). It explains issues, branches, local checks, review, and the absence of GitHub Actions CI. Report vulnerabilities through the **private form** in [SECURITY.md](SECURITY.md), never a public issue. GraphHelm code is [MIT licensed](LICENSE); the bundled Studio fonts retain their [OFL notices](apps/studio/src/fonts/README.md).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). It explains issues, branches, local checks, review, and the absence of GitHub Actions CI. For usage questions, see [support](.github/SUPPORT.md); participation follows the [community conduct policy](.github/CODE_OF_CONDUCT.md). Report vulnerabilities through the **private form** in [SECURITY.md](SECURITY.md), never a public issue. GraphHelm code is [MIT licensed](LICENSE); the bundled Studio fonts retain their [OFL notices](apps/studio/src/fonts/README.md).
 
 This public repository began with [one reviewed source import](docs/open-source/SOURCE_PROVENANCE.md). Older issue numbers and commit hashes in design or acceptance documents refer to a private development archive, not to this repository. Historical records are context, not fresh validation of the current commit.

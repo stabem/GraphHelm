@@ -3,6 +3,10 @@
 Thank you for helping improve GraphHelm. The project is MIT licensed. Contributions are accepted
 under the same MIT terms, and GraphHelm does not require a CLA, ICLA, or CCLA.
 
+Follow the [community conduct policy](.github/CODE_OF_CONDUCT.md). For a usage question, start
+with the [support routes](.github/SUPPORT.md); the issue forms separate questions, bugs, and
+proposals. Security reports use [the private form](SECURITY.md), never a public issue.
+
 ## Before you start
 
 Start every change with an issue, including small documentation fixes. Check the repository's decision register,

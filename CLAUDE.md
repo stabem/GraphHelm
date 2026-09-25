@@ -8,4 +8,4 @@ than punishment: a docs or one-line change needs nothing extra. Start every chan
 
 ## Documentation language
 
-All documentation in this repository must be written in English. Do not write or merge Portuguese (or any other non-English) prose in `docs/`, `README.md`, `MASTER_PRD.md`, `CHANGELOG.md`, `DOCUMENTATION_MANIFEST.md`, ADRs, RFCs, the decision register, or any other document, new or existing.
+All documentation in this repository must be written in English. Do not write or merge Portuguese (or any other non-English) prose in `docs/`, `README.md`, `MASTER_PRD.md`, `CHANGELOG.md`, ADRs, RFCs, the decision register, or any other document, new or existing.

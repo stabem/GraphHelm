@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/stabem/GraphHelm/security/advisories/new
+    about: Never post vulnerability details in a public issue.

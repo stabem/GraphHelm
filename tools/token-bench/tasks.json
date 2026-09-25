@@ -52,6 +52,34 @@
           "cargo clean -p pathogens; cargo build --bin graphhelm; if ($LASTEXITCODE -ne 0) { exit 1 }; cargo test -p pathogens --test embodied_population --test subject_refusals"
         ]
       }
+    },
+    "1279": {
+      "issue": 1279,
+      "fixPr": 1279,
+      "parentSha": "e85e41a8eb0b8af6ef6eac95bf39a42cc9277f8c",
+      "fixSha": "e4072151c8a8960e7a362b11dc1577b926f6beee",
+      "prompt": "tasks/1279/prompt.md",
+      "oracle": {
+        "file": "tools/token-bench/tasks/1279/oracle.py",
+        "source": "tasks/1279/oracle.py",
+        "note": "The oracle launches a real child process while simulating the legacy cp1252 locale. It checks that the Unicode prompt crosses the runner subprocess boundary intact.",
+        "command": [
+          "python",
+          "tools/token-bench/tasks/1279/oracle.py"
+        ]
+      },
+      "regression": {
+        "files": [
+          "tools/token-bench/test_run.py"
+        ],
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tools/token-bench/test_run.py",
+          "-q"
+        ]
+      }
     }
   }
 }

@@ -1,0 +1,50 @@
+{
+  "executionId": "exec-m08-judge",
+  "findings": [
+    {
+      "claim": "status asserts attentionRequired:false and attentionReasons:[] while the same payload reports silenceUnevaluated:[\"judge\"] — the all-clear is published before the silence check that would justify it has run. Node `judge` stayed in state `running` with zero content appends across 3+ minutes of observation (contentHead pinned at 12), i.e. a wedged execution renders as 'go back to sleep'.",
+      "evidence": [],
+      "remediation": "Never emit attentionRequired:false while any lane is in silenceUnevaluated. Make the glance verdict tri-state (clear / unknown / attention) and default unevaluated lanes to 'unknown', with the lane name and the reason it is unevaluated carried in attentionReasons.",
+      "severity": "critical"
+    },
+    {
+      "claim": "The one-glance surface hides a real failure. Node `flaky_check` recorded outcome retryable_failure (reason tool_exited_non_zero) at sequence 10 and dropped back to queued, yet status shows failed:0, attentionReasons:[], untriagedInterruptions:[] and no retry, attempt, or failure counter anywhere. The failure is discoverable only by reading the raw event ledger.",
+      "evidence": [],
+      "remediation": "Add retry/failure counters to the status payload (e.g. attemptsByNode, retryingNodes, failuresSinceStart) and surface a repeat-failure threshold as an attentionReason so a flapping node escalates without the operator reading events.",
+      "severity": "high"
+    },
+    {
+      "claim": "status carries no liveness or time signal — no lastEventAt, no node start/elapsed time, no heartbeat, no expected-duration. `running` at 10:05:53 and `running` three minutes later with no progress are byte-identical responses, so the operator cannot distinguish healthy work from a hang, which is exactly the judgment the story requires.",
+      "evidence": [],
+      "remediation": "Include lastContentAppendAt, per-node enteredStateAt/elapsed, and a staleness threshold; raise an attentionReason such as node_stalled when a running node exceeds it.",
+      "severity": "high"
+    },
+    {
+      "claim": "The wake contract is not predictable from its own replies. wake_arm(cursor:12) returned headSequence:13, implying the log had already moved past the cursor and the lease would ring; two wake_wait calls (60s, then 120s) both returned outcome timeout. wake_status revealed the ring actually keys on contentHead:12, a field wake_arm never returns.",
+      "evidence": [],
+      "remediation": "Return contentHead (and whether the lease is already satisfied) from wake_arm, so an operator can tell at arm time whether the wait will ring immediately or block.",
+      "severity": "medium"
+    },
+    {
+      "claim": "silenceUnevaluated is an opaque bare identifier list. It carries no reason, no severity, no expected-evaluation time and no suggested action, so the operator cannot tell whether it is benign bookkeeping or the reason the all-clear is unsafe.",
+      "evidence": [],
+      "remediation": "Replace the string list with objects carrying nodeId, whySkipped, sinceWhen, and operatorAction, and reflect it in the top-level attention verdict.",
+      "severity": "medium"
+    },
+    {
+      "claim": "events returns the raw hash-chained ledger — previousHash, eventHash, idempotencyKey, evidenceRefs, schemaVersion, scope on every record — with no digest, no severity filter and no since-last-glance view. Answering 'did anything go wrong' meant reading 13 verbose records to find one failure line.",
+      "evidence": [],
+      "remediation": "Add a summary/digest mode (or a severity/kind filter) returning only outcome-bearing events in compact form, defaulting to events since the caller's wake cursor.",
+      "severity": "medium"
+    },
+    {
+      "claim": "wake_wait's timeout reply is content-free to the point of uselessness for the sleep loop: {\"outcome\":\"timeout\",\"timeoutSeconds\":60} omits current head and cursor, forcing extra wake_status/status round-trips just to confirm nothing moved.",
+      "evidence": [],
+      "remediation": "Include head, contentHead and cursor in the timeout reply so a no-op wake costs zero follow-up calls.",
+      "severity": "low"
+    }
+  ],
+  "gateId": "judge-usefulness",
+  "nodeId": "judge",
+  "passed": false
+}

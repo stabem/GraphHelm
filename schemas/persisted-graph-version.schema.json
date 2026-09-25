@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/persisted-graph-version.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Persisted Graph Version",
+  "type": "object",
+  "required": [
+    "number",
+    "predecessor",
+    "topology",
+    "topologyHash",
+    "semanticHash",
+    "contentSlots",
+    "createdBy",
+    "createdAt"
+  ],
+  "properties": {
+    "number": {"$ref": "#/$defs/positiveSafeInteger"},
+    "predecessor": {
+      "oneOf": [
+        {"$ref": "#/$defs/versionRef"},
+        {"type": "null"}
+      ]
+    },
+    "topology": {"$ref": "#/$defs/topology"},
+    "topologyHash": {"$ref": "#/$defs/wireHash"},
+    "semanticHash": {"$ref": "#/$defs/wireHash"},
+    "contentSlots": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {"$ref": "#/$defs/contentSlot"}
+    },
+    "createdBy": {"$ref": "#/$defs/actor"},
+    "createdAt": {"$ref": "#/$defs/timestamp"}
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "safeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+      "not": {
+        "pattern": "(?i:i[._-]*n[._-]*s[._-]*t[._-]*r[._-]*u[._-]*c[._-]*t[._-]*i[._-]*o[._-]*n[._-]*s?|p[._-]*r[._-]*o[._-]*m[._-]*p[._-]*t[._-]*s?|o[._-]*b[._-]*j[._-]*e[._-]*c[._-]*t[._-]*i[._-]*v[._-]*e[._-]*s?|p[._-]*u[._-]*r[._-]*p[._-]*o[._-]*s[._-]*e[._-]*s?|o[._-]*u[._-]*t[._-]*p[._-]*u[._-]*t[._-]*s?|l[._-]*o[._-]*g[._-]*s?|c[._-]*r[._-]*e[._-]*d[._-]*e[._-]*n[._-]*t[._-]*i[._-]*a[._-]*l[._-]*s?|e[._-]*n[._-]*v[._-]*i[._-]*r[._-]*o[._-]*n[._-]*m[._-]*e[._-]*n[._-]*t[._-]*s?|m[._-]*e[._-]*s[._-]*s[._-]*a[._-]*g[._-]*e[._-]*s?|p[._-]*a[._-]*t[._-]*h[._-]*s?|s[._-]*o[._-]*u[._-]*r[._-]*c[._-]*e[._-]*s?|s[._-]*e[._-]*c[._-]*r[._-]*e[._-]*t[._-]*s?|t[._-]*o[._-]*k[._-]*e[._-]*n[._-]*s?|p[._-]*a[._-]*s[._-]*s[._-]*w[._-]*o[._-]*r[._-]*d[._-]*s?|a[._-]*p[._-]*i[._-]*k[._-]*e[._-]*y[._-]*s?|p[._-]*r[._-]*i[._-]*v[._-]*a[._-]*t[._-]*e[._-]*k[._-]*e[._-]*y[._-]*s?|r[._-]*a[._-]*w[._-]*t[._-]*o[._-]*o[._-]*l[._-]*r[._-]*e[._-]*s[._-]*u[._-]*l[._-]*t[._-]*s?|d[._-]*e[._-]*s[._-]*c[._-]*r[._-]*i[._-]*p[._-]*t[._-]*i[._-]*o[._-]*n|d[._-]*i[._-]*s[._-]*p[._-]*l[._-]*a[._-]*y[._-]*n[._-]*a[._-]*m[._-]*e|c[._-]*o[._-]*m[._-]*p[._-]*l[._-]*e[._-]*t[._-]*i[._-]*o[._-]*n[._-]*c[._-]*o[._-]*n[._-]*t[._-]*r[._-]*a[._-]*c[._-]*t|p[._-]*o[._-]*l[._-]*i[._-]*c[._-]*y[._-]*t[._-]*e[._-]*x[._-]*t|d[._-]*i[._-]*a[._-]*g[._-]*n[._-]*o[._-]*s[._-]*t[._-]*i[._-]*c[._-]*d[._-]*e[._-]*t[._-]*a[._-]*i[._-]*l|c[._-]*o[._-]*n[._-]*t[._-]*e[._-]*n[._-]*t|r[._-]*e[._-]*s[._-]*p[._-]*o[._-]*n[._-]*s[._-]*e|c[._-]*o[._-]*m[._-]*m[._-]*e[._-]*n[._-]*t|e[._-]*x[._-]*a[._-]*m[._-]*p[._-]*l[._-]*e|t[._-]*i[._-]*t[._-]*l[._-]*e|p[._-]*r[._-]*o[._-]*s[._-]*e|n[._-]*o[._-]*t[._-]*e)"
+      }
+    },
+    "safeValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "wireHash": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "safeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]|23:59:60)(?:\\.[0-9]{1,9})?Z$",
+      "format": "date-time"
+    },
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["owner", "human", "agent", "system"]},
+        "id": {"$ref": "#/$defs/actorId"}
+      },
+      "additionalProperties": false
+    },
+    "versionRef": {
+      "type": "object",
+      "required": ["number", "semanticHash"],
+      "properties": {
+        "number": {"$ref": "#/$defs/positiveSafeInteger"},
+        "semanticHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "stringMap": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {"$ref": "#/$defs/safeKey"},
+      "additionalProperties": {"$ref": "#/$defs/safeValue"}
+    },
+    "digestMap": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {"$ref": "#/$defs/safeKey"},
+      "additionalProperties": {"$ref": "#/$defs/rawSha256"}
+    },
+    "integerMap": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {"$ref": "#/$defs/safeKey"},
+      "additionalProperties": {"$ref": "#/$defs/safeInteger"}
+    },
+    "flagMap": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {"$ref": "#/$defs/safeKey"},
+      "additionalProperties": {"type": "boolean"}
+    },
+    "control": {
+      "type": "object",
+      "required": ["controlType", "identifiers", "digests", "integers", "flags"],
+      "properties": {
+        "controlType": {"$ref": "#/$defs/safeValue"},
+        "identifiers": {"$ref": "#/$defs/stringMap"},
+        "digests": {"$ref": "#/$defs/digestMap"},
+        "integers": {"$ref": "#/$defs/integerMap"},
+        "flags": {"$ref": "#/$defs/flagMap"}
+      },
+      "additionalProperties": false
+    },
+    "budgets": {
+      "type": "object",
+      "properties": {
+        "maxNodes": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "maxDepth": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "maxMutations": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "maxRetriesPerNode": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "maxWallClockSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "maxApiCostUsd": {"type": "number", "minimum": 0, "maximum": 1000000000},
+        "maxParallelModelCalls": {"type": "integer", "minimum": 1, "maximum": 100000}
+      },
+      "additionalProperties": false
+    },
+    "customs": {
+      "type": "object",
+      "required": ["waitWithinSeconds", "clearanceWithinSeconds"],
+      "properties": {
+        "waitWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "clearanceWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "dlqWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["nodeType", "optionality", "controls", "contentSlotIds"],
+      "properties": {
+        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "nodeType": {
+          "enum": [
+            "agent",
+            "tool",
+            "classifier",
+            "planner",
+            "gate",
+            "evaluator",
+            "fork",
+            "join",
+            "human_decision",
+            "timer",
+            "trigger",
+            "subgraph",
+            "materializer",
+            "deploy",
+            "rollback",
+            "artifact_transform",
+            "dead_letter"
+          ]
+        },
+        "optionality": {"enum": ["required", "recommended", "optional"]},
+        "controls": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/control"}
+        },
+        "contentSlotIds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/opaqueId"},
+          "uniqueItems": true
+        },
+        "customs": {"$ref": "#/$defs/customs"}
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "edgeType", "priority", "bindings", "condition"],
+      "properties": {
+        "id": {"$ref": "#/$defs/opaqueId"},
+        "from": {"$ref": "#/$defs/opaqueId"},
+        "to": {"$ref": "#/$defs/opaqueId"},
+        "edgeType": {
+          "enum": [
+            "control",
+            "data",
+            "evidence",
+            "event",
+            "failure",
+            "compensation",
+            "human_approval"
+          ]
+        },
+        "priority": {
+          "oneOf": [
+            {"$ref": "#/$defs/safeInteger"},
+            {"type": "null"}
+          ]
+        },
+        "bindings": {"$ref": "#/$defs/stringMap"},
+        "condition": {
+          "oneOf": [
+            {"$ref": "#/$defs/control"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "topology": {
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "kind",
+        "graphId",
+        "executionId",
+        "labels",
+        "entrypoints",
+        "nodes",
+        "edges",
+        "budgets",
+        "policies",
+        "completion"
+      ],
+      "properties": {
+        "apiVersion": {"const": "p50.dev/graph/v1"},
+        "kind": {"const": "ExecutionGraph"},
+        "graphId": {"$ref": "#/$defs/opaqueId"},
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "labels": {"$ref": "#/$defs/stringMap"},
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {"$ref": "#/$defs/opaqueId"},
+          "uniqueItems": true
+        },
+        "nodes": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1024,
+          "propertyNames": {"$ref": "#/$defs/opaqueId"},
+          "additionalProperties": {"$ref": "#/$defs/node"}
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/edge"}
+        },
+        "budgets": {"$ref": "#/$defs/budgets"},
+        "policies": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/control"}
+        },
+        "completion": {"$ref": "#/$defs/control"}
+      },
+      "additionalProperties": false
+    },
+    "contentSlot": {
+      "type": "object",
+      "required": [
+        "slotId",
+        "ownerKind",
+        "ownerId",
+        "fieldKind",
+        "ordinal",
+        "evidenceId",
+        "contentSha256",
+        "sensitivity",
+        "requiredForExecution"
+      ],
+      "properties": {
+        "slotId": {"$ref": "#/$defs/opaqueId"},
+        "ownerKind": {"enum": ["graph", "node", "agent", "edge", "policy", "diagnostic"]},
+        "ownerId": {"$ref": "#/$defs/opaqueId"},
+        "fieldKind": {
+          "enum": [
+            "display_name",
+            "description",
+            "objective",
+            "purpose",
+            "instructions",
+            "completion_contract",
+            "policy_text",
+            "diagnostic_detail",
+            "context_path",
+            "permission_path",
+            "isolation_path"
+          ]
+        },
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "contentSha256": {"$ref": "#/$defs/rawSha256"},
+        "sensitivity": {"$ref": "sensitivity.schema.json"},
+        "requiredForExecution": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 1,
+  "routes": [
+    {
+      "id": "judge_route",
+      "provider": "anthropic",
+      "transport": "native_runtime",
+      "runtime": "claude_code",
+      "authentication": "account_subscription",
+      "billingMode": "subscription_quota",
+      "command": {
+        "program": "C:/Users/example/.local/bin/claude.exe",
+        "args": [
+          "-p",
+          "--output-format",
+          "json",
+          "--strict-mcp-config",
+          "--mcp-config",
+          "C:/Users/example/AppData/Local/Temp/m06-dogfood/mcp.json"
+        ]
+      },
+      "profiles": [
+        "critical_reasoning"
+      ],
+      "enabled": true,
+      "timeoutSeconds": 300
+    }
+  ]
+}

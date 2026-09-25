@@ -1,0 +1,17 @@
+{
+  "type": "agent",
+  "name": "Fixture crew node",
+  "objective": "Exercise a task worked by more than one agent",
+  "optionality": "required",
+  "agent": {
+    "ref": "agent://primary"
+  },
+  "agents": [
+    {
+      "ref": "agent://second"
+    },
+    {
+      "ref": "agent://third"
+    }
+  ]
+}

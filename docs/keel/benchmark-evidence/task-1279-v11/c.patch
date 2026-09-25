@@ -1,0 +1,56 @@
+diff --git a/tools/token-bench/run.py b/tools/token-bench/run.py
+index 06d6c2e..f05e985 100644
+--- a/tools/token-bench/run.py
++++ b/tools/token-bench/run.py
+@@ -259,8 +259,12 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
+         cmd += ["--max-budget-usd", str(max_budget_usd)]
+     t0 = time.monotonic()
+     try:
+-        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, capture_output=True,
+-                              timeout=timeout_min * 60, env=bench_env(task))
++        # Explicit UTF-8: text=True alone would encode/decode stdio using
++        # locale.getpreferredencoding(False), which on a Windows host running the legacy
++        # (non-UTF-8) code page is an ANSI code page such as cp1252 - encoding a prompt with
++        # characters outside its repertoire raises UnicodeEncodeError before the agent starts.
++        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, encoding="utf-8",
++                              capture_output=True, timeout=timeout_min * 60, env=bench_env(task))
+     except subprocess.TimeoutExpired as exc:
+         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,
+                 "stderr": str(exc)}, "timeout", time.monotonic() - t0
+diff --git a/tools/token-bench/test_run.py b/tools/token-bench/test_run.py
+index 6eb28d0..c9c5704 100644
+--- a/tools/token-bench/test_run.py
++++ b/tools/token-bench/test_run.py
+@@ -107,6 +107,32 @@ def test_cli_identity_binds_version_and_executable_bytes(tmp_path, monkeypatch):
+     assert identity["sha256"] == runner.digest_file(executable)
+ 
+ 
++def test_run_agent_encodes_prompt_as_utf8_not_locale_default(monkeypatch):
++    """Catches UnicodeEncodeError from subprocess.run encoding stdin with
++    locale.getpreferredencoding() (e.g. cp1252 on a legacy Windows host) instead of an
++    explicit UTF-8, which either crashes the runner or corrupts a non-ASCII prompt."""
++    prompt = "Non-ASCII text outside cp1252: æ—¥æœ¬èªž âœ… \U0001F600"
++    try:
++        prompt.encode("cp1252")
++    except UnicodeEncodeError:
++        pass
++    else:
++        raise AssertionError("test prompt must contain text outside cp1252's repertoire")
++
++    captured = {}
++
++    def fake_run(cmd, **kwargs):
++        captured.update(kwargs)
++        return subprocess.CompletedProcess(cmd, 0, stdout=runner.json.dumps({"session_id": "s"}), stderr="")
++
++    monkeypatch.setattr(runner.subprocess, "run", fake_run)
++    result, _stderr, _wall = runner.run_agent(Path("."), prompt, "a", None, 1, {}, None, None,
++                                              {"path": "claude"})
++    assert captured.get("encoding") == "utf-8"
++    assert captured.get("input") == prompt
++    assert result == {"session_id": "s"}
++
++
+ def test_worktree_scratch_must_be_outside_repository(monkeypatch):
+     """Catches generated checkouts being written into the source worktree tree."""
+     monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(runner.REPO))

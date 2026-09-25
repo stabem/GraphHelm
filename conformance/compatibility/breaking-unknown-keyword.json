@@ -1,0 +1,4 @@
+{
+  "baseline": {"type": "object"},
+  "candidate": {"type": "object", "mysteryConstraint": "private-value-must-not-leak"}
+}

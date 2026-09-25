@@ -1,0 +1,34 @@
+{
+  "caseId": "extension-inventory",
+  "query": "A discoverable file is added under the development-contracts package without a manifest entry. What refuses it, with which diagnostic code, and which test aims that validator at the real package?",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "apps/cli/tests/development_package_inventory.rs",
+      "lines": "33-72"
+    },
+    {
+      "path": "core/extension-host/tests/activation.rs",
+      "lines": "112-132"
+    },
+    {
+      "path": "apps/cli/tests/mcp_capability.rs",
+      "lines": "234-266"
+    },
+    {
+      "path": "core/events/src/projection.rs",
+      "lines": "2450-2464"
+    },
+    {
+      "path": "core/runtime/tests/retrieval.rs",
+      "lines": "127-140"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

@@ -1,0 +1,17 @@
+[package]
+name = "graphhelm-governor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+graphhelm-events = { path = "../events" }
+graphhelm-execution = { path = "../execution" }
+graphhelm-graph = { path = "../graph" }
+graphhelm-policy = { path = "../policy" }
+graphhelm-protocols = { path = "../protocols" }
+graphhelm-schema = { path = "../schema" }
+serde_json.workspace = true
+thiserror.workspace = true

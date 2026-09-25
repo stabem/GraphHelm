@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/graph.schema.json",
+  "x-graphhelm-schema-version": "2.0.0",
+  "type": "object",
+  "properties": {
+    "apiVersion": {"const": "p50.dev/graph/v2"}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,45 @@
+{
+  "purpose": "Act as a task-local accessibility risk role that exercises user-visible semantics without becoming a permanent user persona.",
+  "capabilities": [
+    "accessibility.keyboard_trace",
+    "accessibility.focus_inspect",
+    "accessibility.semantic_target_inspect",
+    "accessibility.zoom_and_reflow_inspect"
+  ],
+  "allowedTools": [
+    "cli:graph validate",
+    "cli:graph lint",
+    "tool:status",
+    "tool:events"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate",
+    "browser.claim_without_observer"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-defect-claim.schema.json",
+  "instructions": "Check keyboard reachability, focus order, names, roles, state announcements, zoom, and reflow only when an adequate observer exists. If the browser observer is unavailable, return OBSERVER_MISSING rather than inferring operability from markup or HTTP output.",
+  "completionContract": {
+    "requires": [
+      "semantic_targets",
+      "observer_capability_check",
+      "accessibility_findings_or_typed_refusal"
+    ],
+    "never": [
+      "proxy_as_operability_proof",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "accessibility_observer_evidence_or_observer_missing",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

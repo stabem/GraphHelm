@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/graph.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Execution Graph",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "p50.dev/graph/v1"},
+    "kind": {"const": "ExecutionGraph"},
+    "metadata": {
+      "type": "object",
+      "required": ["id", "name", "executionId", "version"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "executionId": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1},
+        "basedOn": {"type": ["string", "null"]},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "spec": {
+      "type": "object",
+      "required": ["entrypoints", "nodes", "edges", "budgets", "completion"],
+      "properties": {
+        "entrypoints": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "nodes": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "node.schema.json"}},
+        "edges": {"type": "array", "items": {"$ref": "edge.schema.json"}},
+        "budgets": {
+          "type": "object",
+          "properties": {
+            "maxNodes": {"type": "integer", "minimum": 1},
+            "maxDepth": {"type": "integer", "minimum": 1},
+            "maxMutations": {"type": "integer", "minimum": 0},
+            "maxRetriesPerNode": {"type": "integer", "minimum": 0},
+            "maxWallClockSeconds": {"type": "integer", "minimum": 1},
+            "maxApiCostUsd": {"type": "number", "minimum": 0},
+            "maxParallelModelCalls": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "policies": {"type": "array", "items": {"type": ["string", "object"]}},
+        "completion": {"type": "object", "minProperties": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

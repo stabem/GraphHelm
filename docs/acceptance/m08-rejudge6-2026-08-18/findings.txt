@@ -1,0 +1,17 @@
+--- F1 (critical) ---
+The one-glance verdict never resolves: status.attention stayed "unknown" for the entire observation window (~4 min) because node "judge" has no declared budget (silenceUnevaluated: [{node: judge, reason: no_declared_budget}]). Meanwhile judge has been in "running" with no event since 2026-08-18T21:30:34.721Z and headSequence never advanced past 13 content events. The operator asking "can I go back to sleep?" gets neither yes nor no, and the answer is structurally incapable of changing while the run is stuck — exactly the case where they must NOT sleep.
+
+--- F2 (high) ---
+A real failure is invisible at a glance. Event seq 11 records flaky_check outcome "retryable_failure", reason "tool_exited_non_zero", with evidence refs, and the node dropped back to queued. status reports failed: 0, queued: 1, untriagedInterruptions: [], and no attentionReason for flaky_check. The retrying/flapping node is indistinguishable from a node that is normally waiting; only a full event-tail read (a second, non-glance step) reveals it.
+
+--- F3 (high) ---
+There is no wake path for a stall. wake_arm/wake_wait ring only on content appends past the cursor; two consecutive blocking waits (60s then 120s) both returned outcome "timeout" while the execution was frozen mid-run. Sleeping is therefore only safe when the graph is making progress — the silent-hang case, the one the operator most needs to be woken for, produces no ring by construction.
+
+--- F4 (medium) ---
+status ships absolute timestamps only (lastEventAt, nodeLastEventAt, startedAt) and no elapsed/age or expected-duration fields. To notice that judge has been silent for minutes the operator must fetch wall-clock time and subtract per node — arithmetic, not a glance. Nothing in the payload states "judge silent 4m".
+
+--- F5 (medium) ---
+attentionReasons state a cause but no operator action. "no_declared_budget" on node judge tells the operator why the monitor is mute; it does not tell them whether to wait, inspect, or intervene, and the MCP surface exposes no way to declare a budget on a live execution to resolve the unknown.
+
+--- F6 (low) ---
+The glance view omits the operator's own liveness posture. status does not indicate whether any wake lease is armed; wake_status is a separate call and returned live: false before arming. An operator can read a benign-looking status, sleep, and be unaware that nothing is watching on their behalf.

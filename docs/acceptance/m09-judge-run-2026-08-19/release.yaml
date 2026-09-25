@@ -1,0 +1,68 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_m09_release
+  name: Nightly release
+  executionId: exec-m09-release
+  version: 1
+spec:
+  entrypoints:
+    - preflight
+  nodes:
+    preflight:
+      type: tool
+      name: Preflight
+      objective: Prove the workspace before deploying.
+      optionality: required
+      input:  { schema: schema://TaskRequest@1 }
+      output: { schema: schema://TestReport@1 }
+      tool:
+        call:
+          tool: shell
+          program: git
+          arguments: [status]
+      completion:
+        requires:
+          - expression: output.executed > 0
+    deploy:
+      type: tool
+      name: Deploy
+      objective: Ship the nightly build.
+      optionality: required
+      input:  { schema: schema://TaskRequest@1 }
+      output: { schema: schema://TestReport@1 }
+      tool:
+        call:
+          tool: shell
+          program: python
+          arguments:
+            - "-c"
+            - "import os,sys; p=r'c:/Users/example/AppData/Local/Temp/claude/F--projects-GraphHelm--claude-worktrees-e-agent-138788/c8269205-096b-47e5-923d-292be774028c/scratchpad/m09-paid-run/deploy.attempt'; n=len(open(p).read()) if os.path.exists(p) else 0; open(p,'a').write('.'); sys.exit(0 if n>=4 else 1)"
+      completion:
+        requires:
+          - expression: output.executed > 0
+    verify:
+      type: tool
+      name: Verify
+      objective: Confirm the shipped build answers.
+      optionality: required
+      input:  { schema: schema://TaskRequest@1 }
+      output: { schema: schema://TestReport@1 }
+      tool:
+        call:
+          tool: shell
+          program: python
+          arguments:
+            - "-c"
+            - "import os,sys; p=r'c:/Users/example/AppData/Local/Temp/claude/F--projects-GraphHelm--claude-worktrees-e-agent-138788/c8269205-096b-47e5-923d-292be774028c/scratchpad/m09-paid-run/deploy.attempt'; n=len(open(p).read()) if os.path.exists(p) else 0; sys.exit(0 if n>=5 else 1)"
+      completion:
+        requires:
+          - expression: output.executed > 0
+  edges:
+    - { id: preflight_to_deploy, from: preflight, to: deploy, type: data }
+    - { id: deploy_to_verify,    from: deploy,    to: verify, type: data }
+  budgets:
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - verify

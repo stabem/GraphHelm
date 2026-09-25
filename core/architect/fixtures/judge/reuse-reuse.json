@@ -1,0 +1,90 @@
+{
+  "rounds": [
+    {
+      "model": "jev-latest",
+      "answers": {
+        "road": {
+          "type": "choice",
+          "choice": "reuse",
+          "probabilities": {},
+          "confidence": 0.92
+        },
+        "template": {
+          "type": "choice",
+          "choice": "build-and-summarize",
+          "probabilities": {},
+          "confidence": 0.9
+        }
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 5
+      }
+    },
+    {
+      "model": "jev-latest",
+      "answers": {
+        "audience": {
+          "type": "choice",
+          "choice": "maintainer",
+          "probabilities": {},
+          "confidence": 0.88
+        },
+        "program": {
+          "type": "choice",
+          "choice": "cargo",
+          "probabilities": {},
+          "confidence": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 7,
+        "output_tokens": 11
+      }
+    }
+  ],
+  "answers": {
+    "4faabf7da1e4c2150e9546c16402b30170419715401b34d2aa89d519eadb4745": {
+      "model": "jev-latest",
+      "answers": {
+        "audience": {
+          "type": "choice",
+          "choice": "maintainer",
+          "probabilities": {},
+          "confidence": 0.88
+        },
+        "program": {
+          "type": "choice",
+          "choice": "cargo",
+          "probabilities": {},
+          "confidence": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 7,
+        "output_tokens": 11
+      }
+    },
+    "a860cfb56981032aa0ae6d78105ecd5b8efcc654ec0086651b0ec7f0cb315147": {
+      "model": "jev-latest",
+      "answers": {
+        "road": {
+          "type": "choice",
+          "choice": "reuse",
+          "probabilities": {},
+          "confidence": 0.92
+        },
+        "template": {
+          "type": "choice",
+          "choice": "build-and-summarize",
+          "probabilities": {},
+          "confidence": 0.9
+        }
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 5
+      }
+    }
+  }
+}

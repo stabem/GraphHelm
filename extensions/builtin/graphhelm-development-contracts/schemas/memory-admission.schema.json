@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/memory-admission.schema.json",
+  "title": "Governed memory admission policy",
+  "description": "The AUTHORITATIVE side of the admission vocabulary. The Rust MemoryRefusalCode enum is checked against this set, never against a count: a rename preserves a count. The ORDER of checks is part of the policy, not an implementation detail -- an opt-in check that runs after the first boundary touch is legal, invisible, and already past the boundary it exists to hold.",
+  "type": "object",
+  "required": ["policyVersion", "orderedChecks", "refusalCodes"],
+  "additionalProperties": false,
+  "properties": {
+    "policyVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "An unknown MAJOR fails closed."
+    },
+    "orderedChecks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/check"},
+      "description": "Evaluated top to bottom. The first entry runs BEFORE any boundary is touched."
+    },
+    "refusalCodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/refusalCode"},
+      "description": "The closed set. A code needed by a consuming lane is allocated HERE, never minted downstream."
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["id", "refusesWith", "runsBeforeFirstTouch"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+        "refusesWith": {"$ref": "#/$defs/refusalCode"},
+        "runsBeforeFirstTouch": {
+          "type": "boolean",
+          "description": "True only for checks that must complete before a candidate, provider, log, event, or persistent boundary is touched."
+        }
+      }
+    },
+    "refusalCode": {
+      "type": "string",
+      "enum": [
+        "opt_in_absent",
+        "scope_mismatch",
+        "recapture_loop",
+        "secret_detected",
+        "self_validated",
+        "transition_not_allowed",
+        "reseal_failed",
+        "dependency_stale",
+        "handoff_target_not_opted_in"
+      ]
+    }
+  }
+}

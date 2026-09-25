@@ -1,0 +1,11 @@
+{
+  "id": "signal-reply-fixture",
+  "source": {"type": "user", "id": "codex"},
+  "type": "operator_note",
+  "severity": "low",
+  "description": "A reply in a multi-agent conversation, threaded by envelope rather than by prose",
+  "evidence": ["fixture-evidence"],
+  "emittedAt": "2026-08-30T00:00:00Z",
+  "to": "claude-code",
+  "replyTo": "signal-fixture"
+}

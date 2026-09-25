@@ -1,0 +1,187 @@
+apiVersion: p50.dev/jpd/v1
+kind: EvidenceStrengthLatticeContract
+metadata:
+  id: graphhelm-jpd/evidence-strength-lattice
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  principle: Evidence adequacy is fact-specific. There is no universal scalar score.
+  trustCompatibility:
+    relationId: graphhelm-jpd/trust-compatibility
+    relationVersion: 1.0.0
+    semantics: explicit_fact_scoped_partial_order
+    defaultDecision: incompatible
+    levels:
+      - first_party_deterministic
+      - first_party_instrumented
+      - third_party_receipt
+      - visual_capture
+      - operator_attestation
+    facts:
+      command_completed:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, operator_attestation]
+      request_accepted:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, third_party_receipt, operator_attestation]
+      state_persisted:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, operator_attestation]
+      message_delivered:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [third_party_receipt, operator_attestation]
+      content_rendered:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, visual_capture, operator_attestation]
+      control_operable:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, operator_attestation]
+      recovery_safe:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, operator_attestation]
+      event_history_intact:
+        satisfiesMinimum:
+          first_party_deterministic: [first_party_deterministic]
+          first_party_instrumented: [first_party_deterministic, first_party_instrumented]
+          third_party_receipt: [third_party_receipt]
+          visual_capture: [visual_capture]
+          operator_attestation: [first_party_deterministic, first_party_instrumented, operator_attestation]
+  evidenceKinds:
+    process_exit:
+      description: A local process returned a structured exit result.
+      freshnessClass: immutable_by_input
+    http_acceptance:
+      description: A service accepted a request at its HTTP boundary.
+      freshnessClass: snapshot_closed
+    queue_receipt:
+      description: A queue acknowledged that it accepted a message.
+      freshnessClass: snapshot_closed
+    durable_readback:
+      description: A durable store returned the committed state through an independent read.
+      freshnessClass: snapshot_closed
+    provider_delivery_receipt:
+      description: The destination provider reported delivery.
+      freshnessClass: drifting
+    dom_semantic_snapshot:
+      description: The rendered semantic DOM exposed the expected state.
+      freshnessClass: snapshot_closed
+    accessibility_tree:
+      description: The accessibility tree exposed the expected name, role, state, and relation.
+      freshnessClass: snapshot_closed
+    visual_capture:
+      description: A visual capture showed a perceivable state at a bound viewport and revision.
+      freshnessClass: snapshot_closed
+    interaction_trace:
+      description: A semantic user action completed and its observable state transition was captured.
+      freshnessClass: snapshot_closed
+    event_chain_verification:
+      description: The append-only event chain and requested range verified successfully.
+      freshnessClass: immutable_by_input
+    operator_attestation:
+      description: An identified operator attested to a directly observed fact.
+      freshnessClass: drifting
+  facts:
+    command_completed:
+      adequate:
+        - process_exit
+      rejectedProxies: []
+    request_accepted:
+      adequate:
+        - http_acceptance
+      rejectedProxies:
+        - process_exit
+    state_persisted:
+      adequate:
+        - durable_readback
+        - event_chain_verification
+      rejectedProxies:
+        - http_acceptance
+        - queue_receipt
+    message_delivered:
+      adequate:
+        - provider_delivery_receipt
+      rejectedProxies:
+        - process_exit
+        - http_acceptance
+        - queue_receipt
+    content_rendered:
+      adequate:
+        - dom_semantic_snapshot
+        - accessibility_tree
+        - visual_capture
+      rejectedProxies:
+        - process_exit
+        - http_acceptance
+    control_operable:
+      adequate:
+        - interaction_trace
+      supportingOnly:
+        - dom_semantic_snapshot
+        - accessibility_tree
+        - visual_capture
+    recovery_safe:
+      adequate:
+        - interaction_trace
+        - durable_readback
+        - event_chain_verification
+      combinationRequired: true
+    event_history_intact:
+      adequate:
+        - event_chain_verification
+      rejectedProxies:
+        - process_exit
+  dominates:
+    - stronger: provider_delivery_receipt
+      weaker: queue_receipt
+      onlyForFacts:
+        - message_delivered
+    - stronger: durable_readback
+      weaker: http_acceptance
+      onlyForFacts:
+        - state_persisted
+    - stronger: interaction_trace
+      weaker: dom_semantic_snapshot
+      onlyForFacts:
+        - control_operable
+  explicitlyIncomparable:
+    - left: accessibility_tree
+      right: visual_capture
+      reason: Semantic accessibility and visual perception prove different user facts.
+    - left: event_chain_verification
+      right: provider_delivery_receipt
+      reason: Local integrity and third-party delivery are different facts.
+  refusal:
+    code: OBSERVER_MISSING
+    when: No available observer can emit an adequate evidence kind for the required fact.
+    preserveRejectedProxies: true
+    allowProxyUpgrade: false

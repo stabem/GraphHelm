@@ -1,0 +1,3 @@
+# Run evidence is byte-addressed: SHA256SUMS hashes the exact bytes on disk, and the
+# grounding test re-hashes them on every machine. No eol conversion may ever touch these.
+* -text

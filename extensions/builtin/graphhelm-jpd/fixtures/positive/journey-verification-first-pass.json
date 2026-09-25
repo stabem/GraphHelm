@@ -1,0 +1,127 @@
+{
+  "verificationId": "verification/issue-210/001",
+  "journeyRunId": "journey-run/issue-210/001",
+  "contractId": "journey/issue-210-extension-bundle",
+  "contractDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101",
+  "verifiedAt": "2026-08-22T16:00:00Z",
+  "authority": {
+    "status": "candidate",
+    "validation": {
+      "status": "capability_missing",
+      "code": "JPD_VALIDATOR_MISSING",
+      "missingCapability": "jpd.registered-deterministic-validator",
+      "reason": "No registered deterministic JPD validator is available in extension version 0.1.0."
+    }
+  },
+  "bindings": {
+    "graph": {
+      "graphId": "issue_210_jpd_self_validation_v1",
+      "version": 1,
+      "semanticHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "council": {
+      "status": "not_applicable",
+      "reason": "direct_tier"
+    },
+    "code": {
+      "repository": "stabem/GraphHelm",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "revisionAlgorithm": "git-sha1",
+      "dirty": false,
+      "snapshotDigest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "configuration": {
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "environment": "offline-test"
+    },
+    "fixtures": [
+      {
+        "fixtureId": "fixture/jpd-self-validation",
+        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ],
+    "observers": [
+      {
+        "observerId": "graphhelm-cli-graph-contract",
+        "version": "1.0.0",
+        "configurationDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "environmentDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "capabilityReceipt": {
+          "evidenceId": "evidence.observer-capability.graphhelm-cli",
+          "contentSha256": "4545454545454545454545454545454545454545454545454545454545454545",
+          "ciphertextSha256": "4646464646464646464646464646464646464646464646464646464646464646"
+        },
+        "evidenceFresh": true
+      }
+    ]
+  },
+  "obligations": [
+    {
+      "obligationId": "obligation/graph-valid",
+      "promiseId": "promise/bundle-graph-valid",
+      "status": "satisfied",
+      "evidenceRefs": [
+        {
+          "evidenceId": "evidence.graph-validate",
+          "contentSha256": "4747474747474747474747474747474747474747474747474747474747474747",
+          "ciphertextSha256": "4848484848484848484848484848484848484848484848484848484848484848"
+        }
+      ]
+    }
+  ],
+  "retry": {
+    "retryChainRef": {
+      "referenceId": "retry-chain.issue-210.001",
+      "contentDigest": "sha256:4949494949494949494949494949494949494949494949494949494949494949"
+    },
+    "outcomeClassification": "first_pass_success",
+    "lineageValidation": {
+      "status": "evaluated",
+      "result": "valid",
+      "evaluator": {
+        "evaluatorId": "graphhelm-jpd/retry-lineage-validator",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:5656565656565656565656565656565656565656565656565656565656565656",
+        "receipt": {
+          "evidenceId": "evidence.retry-lineage.issue-210.verification-001",
+          "contentSha256": "5757575757575757575757575757575757575757575757575757575757575757",
+          "ciphertextSha256": "5858585858585858585858585858585858585858585858585858585858585858"
+        }
+      }
+    },
+    "classification": {
+      "status": "evaluated",
+      "evaluator": {
+        "evaluatorId": "graphhelm-jpd/retry-classifier",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:5050505050505050505050505050505050505050505050505050505050505050",
+        "receipt": {
+          "evidenceId": "evidence.retry-classification.issue-210.001",
+          "contentSha256": "5151515151515151515151515151515151515151515151515151515151515151",
+          "ciphertextSha256": "5252525252525252525252525252525252525252525252525252525252525252"
+        }
+      }
+    },
+    "firstFailurePreserved": false
+  },
+  "disagreements": [],
+  "gate": {
+    "status": "evaluated",
+    "result": "accepted",
+    "policyIds": [
+      "graphhelm-jpd/assurance-tier"
+    ],
+    "evidenceDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/assurance-gate",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:5353535353535353535353535353535353535353535353535353535353535353",
+      "receipt": {
+        "evidenceId": "evidence.gate.issue-210.001",
+        "contentSha256": "5454545454545454545454545454545454545454545454545454545454545454",
+        "ciphertextSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    }
+  },
+  "proposedResultStatus": "proven"
+}

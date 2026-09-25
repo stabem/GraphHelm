@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "formatVersion": 1,
+    "schema": "graph",
+    "fromVersion": "1.0.0",
+    "toVersion": "2.0.0",
+    "sourceSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "targetSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "operations": []
+  },
+  "sourceCatalogHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "targetCatalogHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "input": {"apiVersion": "wrong"},
+  "expect": {"ok": false, "codes": ["GHM004_DESTINATION_INVALID"]}
+}

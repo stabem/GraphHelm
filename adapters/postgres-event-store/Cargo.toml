@@ -1,0 +1,50 @@
+[package]
+name = "graphhelm-postgres-event-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+graphhelm-process-tree = { path = "../process-tree" }
+chacha20poly1305.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+graphhelm-events = { path = "../../core/events" }
+graphhelm-protocols = { path = "../../core/protocols" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[dev-dependencies]
+graphhelm-graph = { path = "../../core/graph" }
+# `test-util` is what makes the #866 cells measure a CLOCK instead of racing the machine they run
+# on: it pauses time so an hour-long hang and a 100 ms budget are exact rather than approximately
+# ordered. A real-time assertion there would be the same load-dependent flake this crate's own
+# deadline work (#81) exists to remove. `macros`/`rt`/`time` are what `#[tokio::test]` needs; the
+# same set core/runtime already carries in its dev-dependencies.
+tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }
+
+[[test]]
+name = "concurrency"
+path = "tests/concurrency.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "repository_conformance"
+path = "tests/repository_conformance.rs"
+required-features = ["test-support"]

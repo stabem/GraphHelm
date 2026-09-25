@@ -1,0 +1,6 @@
+{
+  "description": "The positive control in fixture form: complete coverage over a present subject compiles a claim carrying the index's hits unchanged.",
+  "coverage": "complete",
+  "hits": ["core/runtime/src/lib.rs:1"],
+  "expect": "claim"
+}

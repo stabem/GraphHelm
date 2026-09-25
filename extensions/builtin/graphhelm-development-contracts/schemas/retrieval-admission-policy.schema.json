@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/retrieval-admission-policy.schema.json",
+  "title": "Retrieval admission policy",
+  "description": "The declarative record of what core/runtime/src/retrieval.rs enforces for #219. It DESCRIBES the contract and is never a second implementation of it: the Runtime is the only enforcer, and a policy readable as authority would be a second place to change behaviour. Every coverage state is listed explicitly because a zero means something different under each, and a default would let a new state inherit whatever the catch-all happened to say.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "zeroResultAdmission", "boundEnforcement", "pathAdmission", "providerSummary"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "pattern": "^p50\\.dev/development/v[0-9]+[a-z0-9]*$"
+    },
+    "kind": { "const": "RetrievalAdmissionPolicy" },
+    "zeroResultAdmission": {
+      "description": "What a ZERO result means under each coverage state. Closed and exhaustive: the eight states of CoverageState, none defaulted.",
+      "type": "object",
+      "required": ["complete", "stale", "partial", "excluded", "skipped", "extractionGap", "unknown", "unresolved"],
+      "additionalProperties": false,
+      "properties": {
+        "complete": { "const": "verified-absence" },
+        "stale": { "const": "refuse:index_stale" },
+        "partial": { "$ref": "#/$defs/refusal" },
+        "excluded": { "$ref": "#/$defs/refusal" },
+        "skipped": { "$ref": "#/$defs/refusal" },
+        "extractionGap": { "$ref": "#/$defs/refusal" },
+        "unknown": { "$ref": "#/$defs/refusal" },
+        "unresolved": { "$ref": "#/$defs/refusal" }
+      }
+    },
+    "boundEnforcement": {
+      "type": "object",
+      "required": ["side", "onExceeded", "bounds", "measuredFrom"],
+      "additionalProperties": false,
+      "properties": {
+        "side": {
+          "const": "runtime",
+          "description": "Never the provider. A flooding provider is the threat the bound exists for, so asking it to respect a limit it is the one violating is not a bound."
+        },
+        "onExceeded": {
+          "const": "refuse",
+          "description": "Never truncate. A silently truncated result set is a partial search wearing a complete search's clothes."
+        },
+        "bounds": {
+          "type": "object",
+          "required": ["maxResults", "maxBytes", "maxPages", "maxTokens"],
+          "additionalProperties": false,
+          "properties": {
+            "maxResults": { "$ref": "#/$defs/refusal" },
+            "maxBytes": { "$ref": "#/$defs/refusal" },
+            "maxPages": { "$ref": "#/$defs/refusal" },
+            "maxTokens": { "$ref": "#/$defs/refusal" }
+          }
+        },
+        "measuredFrom": {
+          "const": "received-payload",
+          "description": "Never a provider self-report about the very thing being bounded."
+        }
+      }
+    },
+    "pathAdmission": {
+      "type": "object",
+      "required": ["requirement", "onEscape", "admittedForm", "refusedShapes"],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": { "const": "repository-relative" },
+        "onEscape": { "const": "refuse:scope_mismatch" },
+        "admittedForm": {
+          "type": "object",
+          "description": "The POSITIVE path-admission contract (allow-list by form); refusedShapes are illustrative examples of what it excludes.",
+          "required": ["lineSuffix", "separator", "component", "componentMustNotBe"],
+          "additionalProperties": false,
+          "properties": {
+            "lineSuffix": { "const": "optional-trailing-:<digits>" },
+            "separator": { "const": "single-forward-slash" },
+            "component": { "const": "[A-Za-z0-9._-]+" },
+            "componentMustNotBe": {
+              "type": "array",
+              "minItems": 4,
+              "uniqueItems": true,
+              "items": { "enum": [".", "..", "<ends-with-dot>", "<reserved-DOS-device-stem>"] }
+            }
+          }
+        },
+        "refusedShapes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["parent-traversal", "rooted", "drive-qualified", "alternate-stream", "reserved-device", "out-of-charset", "empty-component"] }
+        }
+      }
+    },
+    "providerSummary": {
+      "type": "object",
+      "required": ["authority"],
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "const": "none",
+          "description": "Carried as candidate evidence and never read by plan compilation. The structured fields are the input; a summary is a claim ABOUT the input."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "refusal": {
+      "type": "string",
+      "pattern": "^refuse:[a-z_]+$",
+      "description": "A stable refusal code from #217's closed set. Consumers never mint their own: that is how two vocabularies diverge while both look right."
+    }
+  }
+}

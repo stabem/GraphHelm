@@ -1,0 +1,103 @@
+{
+  "journeyRunId": "journey-run/issue-210/001",
+  "rootAttemptId": "attempt/issue-210/001",
+  "rootAttempt": {
+    "attemptId": "attempt/issue-210/001",
+    "ordinal": 1,
+    "retryOf": null,
+    "causeTag": "initial_attempt",
+    "result": "failed",
+    "startedAt": "2026-08-22T12:00:00Z",
+    "endedAt": "2026-08-22T12:00:03Z",
+    "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evidenceRefs": [
+      {
+        "evidenceId": "evidence.first-schema-failure",
+        "contentSha256": "0101010101010101010101010101010101010101010101010101010101010101",
+        "ciphertextSha256": "0202020202020202020202020202020202020202020202020202020202020202"
+      }
+    ]
+  },
+  "retries": [
+    {
+      "attemptId": "attempt/issue-210/002",
+      "ordinal": 2,
+      "retryOf": "attempt/issue-210/001",
+      "causeTag": "product_fix",
+      "result": "succeeded",
+      "startedAt": "2026-08-22T12:04:00Z",
+      "endedAt": "2026-08-22T12:04:04Z",
+      "inputDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "evidenceRefs": [
+        {
+          "evidenceId": "evidence.first-schema-failure",
+          "contentSha256": "0101010101010101010101010101010101010101010101010101010101010101",
+          "ciphertextSha256": "0202020202020202020202020202020202020202020202020202020202020202"
+        },
+        {
+          "evidenceId": "evidence.schema-pass-after-fix",
+          "contentSha256": "0303030303030303030303030303030303030303030303030303030303030303",
+          "ciphertextSha256": "0404040404040404040404040404040404040404040404040404040404040404"
+        }
+      ],
+      "evidenceDelta": {
+        "added": [
+          {
+            "evidenceId": "evidence.schema-pass-after-fix",
+            "contentSha256": "0303030303030303030303030303030303030303030303030303030303030303",
+            "ciphertextSha256": "0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        ],
+        "removed": [],
+        "materialChange": true
+      }
+    }
+  ],
+  "lineageComplete": true,
+  "firstFailure": {
+    "attemptId": "attempt/issue-210/001",
+    "evidenceRefs": [
+      {
+        "evidenceId": "evidence.first-schema-failure",
+        "contentSha256": "0101010101010101010101010101010101010101010101010101010101010101",
+        "ciphertextSha256": "0202020202020202020202020202020202020202020202020202020202020202"
+      }
+    ],
+    "summary": "The first schema compilation rejected an unbounded semantic action payload."
+  },
+  "successfulAttemptId": "attempt/issue-210/002",
+  "lineageValidation": {
+    "status": "evaluated",
+    "result": "valid",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/retry-lineage-validator",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:9090909090909090909090909090909090909090909090909090909090909090",
+      "receipt": {
+        "evidenceId": "evidence.retry-lineage.issue-210.001",
+        "contentSha256": "9191919191919191919191919191919191919191919191919191919191919191",
+        "ciphertextSha256": "9292929292929292929292929292929292929292929292929292929292929292"
+      }
+    }
+  },
+  "outcomeClass": "recovered_success",
+  "classification": {
+    "status": "evaluated",
+    "evaluator": {
+      "evaluatorId": "graphhelm-jpd/retry-classifier",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:0505050505050505050505050505050505050505050505050505050505050505",
+      "receipt": {
+        "evidenceId": "evidence.retry-classification.issue-210.001",
+        "contentSha256": "0606060606060606060606060606060606060606060606060606060606060606",
+        "ciphertextSha256": "0707070707070707070707070707070707070707070707070707070707070707"
+      }
+    }
+  },
+  "classificationBasis": [
+    "later_attempt_succeeded",
+    "material_evidence_delta",
+    "explained_cause",
+    "first_failure_preserved"
+  ]
+}

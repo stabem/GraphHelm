@@ -1,0 +1,58 @@
+diff --git a/tools/token-bench/run.py b/tools/token-bench/run.py
+index 06d6c2e..3e76fdf 100644
+--- a/tools/token-bench/run.py
++++ b/tools/token-bench/run.py
+@@ -259,8 +259,11 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
+         cmd += ["--max-budget-usd", str(max_budget_usd)]
+     t0 = time.monotonic()
+     try:
+-        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, capture_output=True,
+-                              timeout=timeout_min * 60, env=bench_env(task))
++        # explicit encoding: text=True without one falls back to the host's active code page, and on
++        # a legacy Windows host (cp1252) a non-ASCII prompt raises UnicodeEncodeError before the
++        # child ever starts
++        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, encoding="utf-8",
++                              capture_output=True, timeout=timeout_min * 60, env=bench_env(task))
+     except subprocess.TimeoutExpired as exc:
+         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,
+                 "stderr": str(exc)}, "timeout", time.monotonic() - t0
+diff --git a/tools/token-bench/test_run.py b/tools/token-bench/test_run.py
+index 6eb28d0..7487937 100644
+--- a/tools/token-bench/test_run.py
++++ b/tools/token-bench/test_run.py
+@@ -1,6 +1,7 @@
+ """Focused contract tests for the token-bench verdict, not model behavior."""
+ 
+ import importlib.util
++import locale
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -59,6 +60,27 @@ def test_regression_restoration_preserves_exact_source_bytes(tmp_path, monkeypat
+     assert (verdict, code) == ("PASS", 0)
+ 
+ 
++def test_run_agent_sends_unicode_prompt_on_legacy_windows_code_page(tmp_path, monkeypatch):
++    """A cp1252 host raised UnicodeEncodeError writing a non-ASCII prompt to the child's
++    stdin pipe before run_agent pinned an explicit utf-8 encoding."""
++    monkeypatch.setattr(locale, "getencoding", lambda: "cp1252")
++    echo_script = tmp_path / "fake_claude.py"
++    echo_script.write_text(
++        "import sys, json\n"
++        "data = sys.stdin.buffer.read().decode('utf-8')\n"
++        "print(json.dumps({'echo': data}))\n",
++        encoding="utf-8",
++    )
++    wrapper = tmp_path / "fake_claude.bat"
++    wrapper.write_text(f'@echo off\r\n"{sys.executable}" "{echo_script}"\r\n', encoding="utf-8")
++    prompt = "issue text with unicode: æ—¥æœ¬èªž and \U0001F680"
++
++    result, _stderr, _wall = runner.run_agent(tmp_path, prompt, "a", None, 1, {}, None, None,
++                                              {"path": str(wrapper)})
++
++    assert result == {"echo": prompt}
++
++
+ def test_transcript_usage_deduplicates_repeated_assistant_records():
+     """Catches inflated cost when a JSONL consumer repeats one assistant message."""
+     message = {"type": "assistant", "uuid": "m1", "message": {

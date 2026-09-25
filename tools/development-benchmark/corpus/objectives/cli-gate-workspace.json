@@ -1,0 +1,1 @@
+{"caseId":"cli-gate-workspace","objective":"Which stage of the authoritative local gate runs the entire workspace test suite, and with which cargo flags?"}

@@ -1,0 +1,24 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"total\":43,\"search_mode\":\"bm25\",\"cols\":[\"qn\",\"label\",\"file\",\"lines\",\"rank\"],\"rows\":[[\"F-github-GraphHelm.core.tool-broker.src.record.ToolCallRecord\",\"Struct\",\"core/tool-broker/src/record.rs\",\"39-53\",-17.0985014347793]],\"has_more\":true}"
+    }
+  ],
+  "structuredContent": {
+    "total": 43,
+    "search_mode": "bm25",
+    "cols": ["qn", "label", "file", "lines", "rank"],
+    "rows": [
+      [
+        "F-github-GraphHelm.core.tool-broker.src.record.ToolCallRecord",
+        "Struct",
+        "core/tool-broker/src/record.rs",
+        "39-53",
+        -17.0985014347793
+      ]
+    ],
+    "has_more": true
+  },
+  "isError": false
+}

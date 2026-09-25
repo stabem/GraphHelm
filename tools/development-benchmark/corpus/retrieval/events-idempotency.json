@@ -1,0 +1,34 @@
+{
+  "caseId": "events-idempotency",
+  "query": "Publishing a blob whose destination name already exists maps to which repository error, and from which io error kind at the link site?",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "core/schema/src/extension.rs",
+      "lines": "1681-1687"
+    },
+    {
+      "path": "core/schema/src/extension.rs",
+      "lines": "1690-1696"
+    },
+    {
+      "path": "adapters/model-gateway/tests/byok_adapters.rs",
+      "lines": "442-453"
+    },
+    {
+      "path": "adapters/model-gateway/tests/runtime_adapters.rs",
+      "lines": "317-327"
+    },
+    {
+      "path": "core/gateway/tests/manifest_contract.rs",
+      "lines": "142-165"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

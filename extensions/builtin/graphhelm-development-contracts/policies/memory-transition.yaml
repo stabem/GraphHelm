@@ -1,0 +1,48 @@
+# Governed memory lifecycle (#220, ADR-032).
+#
+# Two independent axes, never flattened into one: SEMANTIC says whether a record's content is
+# still believed; PUBLICATION says whether it is visible in the default view. Only the publication
+# axis has a transition matrix here -- semantic moves happen through `supersede`, a relationship
+# between two records rather than a transition on one, whose reasons are their own closed set.
+#
+# Only the VERDICT is written here. The matrix that exercises it is derived from the vocabularies
+# below, so a tuple nobody thought about is still visited; every tuple absent from
+# `allowedPublicationTransitions` refuses WITHOUT changing its predecessor.
+#
+# Withdrawal closes USE, never the record: `withdrawn` stays auditable and leaves the default view.
+policyVersion: "2.0.0"
+
+semanticStates:
+  - candidate
+  - validated
+  - contradicted
+  - deprecated
+  - expired
+
+publicationStates:
+  - unpublished
+  - proposed
+  - published
+  - withdrawn
+
+publicationTransitions:
+  - propose
+  - publish
+  - withdraw
+
+allowedPublicationTransitions:
+  - from: unpublished
+    transition: propose
+    to: proposed
+
+  - from: proposed
+    transition: publish
+    to: published
+
+  - from: published
+    transition: withdraw
+    to: withdrawn
+
+supersessionReasons:
+  - contradicted
+  - deprecated

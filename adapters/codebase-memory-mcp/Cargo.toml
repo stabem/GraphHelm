@@ -1,0 +1,24 @@
+[package]
+name = "graphhelm-codebase-memory-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-tool-broker = { path = "../../core/tool-broker" }
+# #219 producer: the adapter composes the contained session (tool-host) with the runtime port;
+# neither depends back on this crate, so no cycle.
+graphhelm-tool-host = { path = "../tool-host" }
+graphhelm-runtime = { path = "../../core/runtime" }
+graphhelm-protocols = { path = "../../core/protocols" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "fake_mcp_server"
+path = "src/bin/fake_mcp_server.rs"

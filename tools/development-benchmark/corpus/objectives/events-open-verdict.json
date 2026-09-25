@@ -1,0 +1,1 @@
+{"caseId":"events-open-verdict","objective":"When publication cannot OPEN a staged blob on Windows (the handle is refused, no byte read), which stable wire code does the client receive, and which single function decides the mapping from io error to verdict? Name the function and the file."}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/memory-transition.schema.json",
+  "title": "Governed memory lifecycle vocabulary",
+  "description": "The two independent axes of a memory record's lifecycle (ADR-032): semantic validity and publication state, never flattened into one. Only the publication axis has a transition matrix here; semantic moves happen through the separate supersede relationship, whose reasons are their own closed set. The allowed set is written out because it is policy; the matrix that exercises it is derived from these vocabularies, so a tuple nobody thought about is still visited. Every tuple not listed here refuses without changing its predecessor.",
+  "type": "object",
+  "required": [
+    "policyVersion",
+    "semanticStates",
+    "publicationStates",
+    "publicationTransitions",
+    "allowedPublicationTransitions",
+    "supersessionReasons"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "policyVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "semanticStates": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/semanticState"}
+    },
+    "publicationStates": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/publicationState"}
+    },
+    "publicationTransitions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/publicationTransition"}
+    },
+    "allowedPublicationTransitions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/allowedPublicationTuple"}
+    },
+    "supersessionReasons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/supersessionReason"}
+    }
+  },
+  "$defs": {
+    "semanticState": {
+      "type": "string",
+      "enum": ["candidate", "validated", "contradicted", "deprecated", "expired"]
+    },
+    "publicationState": {
+      "type": "string",
+      "enum": ["unpublished", "proposed", "published", "withdrawn"]
+    },
+    "publicationTransition": {
+      "type": "string",
+      "enum": ["propose", "publish", "withdraw"]
+    },
+    "supersessionReason": {
+      "type": "string",
+      "enum": ["contradicted", "deprecated"]
+    },
+    "allowedPublicationTuple": {
+      "type": "object",
+      "required": ["from", "transition", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": {"$ref": "#/$defs/publicationState"},
+        "transition": {"$ref": "#/$defs/publicationTransition"},
+        "to": {"$ref": "#/$defs/publicationState"}
+      }
+    }
+  }
+}

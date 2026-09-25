@@ -1,0 +1,8 @@
+{
+  "name": "graphhelm-chat",
+  "description": "Operate GraphHelm executions from chat: the graphhelm mcp stdio server plus three skills (operate-execution, observe-agents, leave-records). Thin and deletable: everything here is `graphhelm mcp` plus documented CLI calls.",
+  "version": "0.1.0",
+  "author": {
+    "name": "GraphHelm"
+  }
+}

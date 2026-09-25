@@ -1,0 +1,1 @@
+{"ok":true,"command":"execution.status","data":{"acceptedMutations":0,"executionId":"exec-m05-acceptance","headSequence":12,"mode":"autopilot","nodeStateCounts":{"succeeded":2},"signalsRecorded":0,"status":"completed","untriagedInterruptions":[]},"diagnostics":[]}

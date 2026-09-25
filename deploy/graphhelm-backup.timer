@@ -1,0 +1,11 @@
+[Unit]
+Description=Create a daily GraphHelm VPS recovery bundle
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=graphhelm-backup.service
+
+[Install]
+WantedBy=timers.target

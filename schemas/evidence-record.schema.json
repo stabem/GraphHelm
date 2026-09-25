@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/evidence-record.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Encrypted Evidence Record",
+  "type": "object",
+  "required": [
+    "evidenceId",
+    "scope",
+    "mediaType",
+    "sensitivity",
+    "cipherAlgorithm",
+    "cipherVersion",
+    "contentSha256",
+    "ciphertextSha256",
+    "nonce",
+    "wrappedKey",
+    "byteLength",
+    "createdAt",
+    "retentionClass",
+    "availability"
+  ],
+  "properties": {
+    "evidenceId": {"$ref": "#/$defs/opaqueId"},
+    "scope": {"$ref": "repository-scope.schema.json"},
+    "mediaType": {"$ref": "#/$defs/mediaType"},
+    "sensitivity": {"$ref": "sensitivity.schema.json"},
+    "cipherAlgorithm": {"const": "xchacha20poly1305"},
+    "cipherVersion": {"type": "integer", "minimum": 1, "maximum": 255},
+    "contentSha256": {"$ref": "#/$defs/rawSha256"},
+    "ciphertextSha256": {"$ref": "#/$defs/rawSha256"},
+    "nonce": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "wrappedKey": {
+      "type": "object",
+      "required": ["keyId", "algorithm", "wrappedDekSha256"],
+      "properties": {
+        "keyId": {"$ref": "#/$defs/opaqueId"},
+        "algorithm": {"enum": ["aes-kw", "xchacha20poly1305"]},
+        "wrappedDekSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "byteLength": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 16777232
+    },
+    "createdAt": {"$ref": "#/$defs/timestamp"},
+    "retentionClass": {"enum": ["ephemeral", "standard", "legal_hold"]},
+    "availability": {
+      "enum": [
+        "available",
+        "erasure_pending",
+        "erased",
+        "expired",
+        "missing_key",
+        "integrity_failed"
+      ]
+    }
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "mediaType": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 127,
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]|23:59:60)(?:\\.[0-9]{1,9})?Z$",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

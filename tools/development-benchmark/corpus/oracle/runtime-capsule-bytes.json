@@ -1,0 +1,1 @@
+{"oracleId":"oracle-runtime-capsule-bytes","requiredEvidence":["core/runtime/src/context_compiler.rs"],"answer":"compile in context_compiler.rs emits sections in the schemas declared order and push_segment length-prefixes every component, so no two distinct capsules can serialise to the same bytes."}

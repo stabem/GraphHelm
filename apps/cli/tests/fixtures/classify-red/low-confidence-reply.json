@@ -1,0 +1,54 @@
+{
+  "answers": {
+    "57d1e72706e153295f1e521d9edf4057895b40ee3e832fe471c03a5fd51814e4": {
+      "answers": {
+        "class": {
+          "choice": "real_defect",
+          "confidence": 0.5,
+          "probabilities": {
+            "environment_void": 0.05,
+            "harness_broke": 0.05,
+            "known_flake": 0.4,
+            "real_defect": 0.5
+          },
+          "type": "choice"
+        },
+        "same_as:886": {
+          "noul": 0.5,
+          "type": "noul"
+        }
+      },
+      "model": "jev-latest",
+      "usage": {
+        "input_tokens": 1800,
+        "output_tokens": 12
+      }
+    }
+  },
+  "rounds": [
+    {
+      "answers": {
+        "class": {
+          "choice": "real_defect",
+          "confidence": 0.5,
+          "probabilities": {
+            "environment_void": 0.05,
+            "harness_broke": 0.05,
+            "known_flake": 0.4,
+            "real_defect": 0.5
+          },
+          "type": "choice"
+        },
+        "same_as:886": {
+          "noul": 0.5,
+          "type": "noul"
+        }
+      },
+      "model": "jev-latest",
+      "usage": {
+        "input_tokens": 1800,
+        "output_tokens": 12
+      }
+    }
+  ]
+}

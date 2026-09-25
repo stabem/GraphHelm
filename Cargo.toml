@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = [
+  "core/protocols",
+  "core/schema",
+  "core/schema-evolution",
+  "core/graph",
+  "core/policy",
+  "core/events",
+  "core/governor",
+  "core/simulation",
+  "core/execution",
+  "core/gateway",
+  "core/runtime",
+  "core/extension-host",
+  "core/tool-broker",
+  "core/architect",
+  "adapters/sealed-key-provider",
+  "adapters/process-tree",
+  "adapters/postgres-event-store",
+  "adapters/model-gateway",
+  "adapters/tool-host",
+  "adapters/host-adoption",
+  "adapters/codebase-memory-mcp",
+  "apps/cli",
+  "tools/acceptance-map",
+  "core/quality",
+  "tools/pathogens",
+  "tools/development-benchmark",
+  "tools/keel-contract-index",
+  "tools/ci-canary",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.97.1"
+
+[workspace.dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+toml = "=1.1.4"
+serde_json = "=1.0.151"
+serde_yaml_ng = "=0.10.0"
+jsonschema = { version = "=0.49.2", default-features = false }
+# Authorized for Unix O_NOFOLLOW/openat filesystem anchoring in the sealed adapter and local event repository.
+libc = "=0.2.189"
+sha2 = { version = "=0.11.0", features = ["zeroize"] }
+hex = "=0.4.3"
+chrono = { version = "=0.4.45", features = ["serde"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+getrandom = "=0.4.3"
+uuid = { version = "=1.24.0", features = ["v4", "serde"] }
+thiserror = "=2.0.19"
+fs2 = "=0.4.3"
+clap = { version = "=4.6.4", features = ["derive"] }
+proptest = "=1.11.0"
+assert_cmd = "=2.2.2"
+predicates = "=3.1.4"
+tempfile = "=3.27.0"
+semver = { version = "=1.0.28", features = ["serde"] }
+windows-sys = "=0.61.2"
+static_assertions = "=1.1.0"
+zeroize = { version = "=1.9.0", features = ["derive"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "json", "chrono", "uuid", "migrate"] }
+tokio = "=1.53.1"
+# Authorized by ADR-024 (docs/reference/REFERENCE_STACK_AND_ADRS.md) for the Public Runtime API
+# server (Milestone 05a). Default features accepted deliberately: unlike reqwest, none pull in a
+# TLS stack or an alternate backend the workspace would need to prune.
+axum = "=0.8.9"
+# Authorized by ADR-025 (docs/reference/REFERENCE_STACK_AND_ADRS.md) for the Universal Model
+# Gateway's BYOK adapters (Milestone 05b). Default features accepted deliberately: they resolve to
+# rustls + ring only (verified with `cargo tree -p ureq -e features`) — no native-tls, no OpenSSL,
+# no JSON/cookie/multipart helpers this crate does not use.
+ureq = "=3.4.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.test]
+debug = 1

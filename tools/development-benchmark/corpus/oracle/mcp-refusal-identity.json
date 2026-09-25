@@ -1,0 +1,1 @@
+{"oracleId":"oracle-mcp-refusal-identity","requiredEvidence":["apps/cli/src/commands/mcp/rpc.rs"],"answer":"In error.data.code (the DevelopmentRefusalCode wire name), built by reply_error in apps/cli/src/commands/mcp/rpc.rs; the numeric error.code stays in the JSON-RPC reserved ranges."}

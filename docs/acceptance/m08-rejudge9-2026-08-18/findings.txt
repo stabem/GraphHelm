@@ -1,0 +1,17 @@
+--- F1 (high) ---
+The one-glance verdict defaults to attention="unknown" for any node without a pre-declared silence budget. On first open of exec-m08-judge9 the monitor answered "unknown" with reason silence_unevaluated/no_declared_budget, and it stayed "unknown" through 101s of node silence. The operator's core question (sleep or not?) has no answer until they hand-configure a per-node bound, which is exactly the work the monitor exists to avoid.
+
+--- F2 (high) ---
+amend_budget's freshness token is not what its schema says. Passing the exact computed_at_sequence the verdict published (14) was refused: "computed against sequence 14, and the execution has moved to 0". Only computedAtSequence=0 was accepted; the next call then demanded 15. The field tracks the last accepted amendment, not the verdict frontier, so the documented remedy path fails on first use.
+
+--- F3 (high) ---
+A node that failed and requeued is invisible in the glance. flaky_check recorded retryable_failure (tool_exited_non_zero) at seq 11 and has sat in `queued` for over 2 minutes; status shows failed:0, queued:1 and lists no attentionReason for it — even after a 30s silence budget was explicitly declared for that node. Silence appears to be evaluated only for `running` nodes, so a run wedged in queue reads as healthy forever.
+
+--- F4 (medium) ---
+attention="needs_you" carries no remedy or urgency. The reason object is bare {"kind":"silent_node","node":"judge"} — unlike the silence_unevaluated reason, which did carry an operation and remedy. The operator learns they cannot sleep but not what to do or how bad it is.
+
+--- F5 (medium) ---
+acceptedMutations stays 0 after mutations are accepted. Two amend_budget calls succeeded and moved headSequence 14 -> 15 -> 17, yet every subsequent status still reports acceptedMutations:0. An operator using that counter to confirm their intervention landed gets a false negative.
+
+--- F6 (low) ---
+Arming the wake lease appends to the same sequence space as real work: wake_arm returned headSequence 14 with contentHead 13, so a monitoring action inflates the head the operator uses to judge progress and to build the amend_budget token.

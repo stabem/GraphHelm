@@ -1,0 +1,11 @@
+{
+  "id": "waiver-fixture",
+  "requirement": "fixture-requirement",
+  "executionId": "execution-fixture",
+  "graphVersion": 1,
+  "actor": "fixture-owner",
+  "acknowledgedRisks": ["fixture-risk"],
+  "scope": "execution",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "expiresAt": null
+}

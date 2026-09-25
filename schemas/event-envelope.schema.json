@@ -1,0 +1,1389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/event-envelope.schema.json",
+  "x-graphhelm-schema-version": "1.1.0",
+  "title": "GraphHelm Production Event Envelope",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "scope",
+    "streamId",
+    "sequence",
+    "occurredAt",
+    "idempotencyKey",
+    "actor",
+    "sensitivity",
+    "kind",
+    "evidenceRefs",
+    "artifactRefs",
+    "previousHash",
+    "eventHash"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "eventId": {"$ref": "#/$defs/opaqueId"},
+    "scope": {"$ref": "repository-scope.schema.json"},
+    "streamId": {"$ref": "#/$defs/opaqueId"},
+    "sequence": {"$ref": "#/$defs/positiveSafeInteger"},
+    "occurredAt": {"$ref": "#/$defs/timestamp"},
+    "idempotencyKey": {"$ref": "#/$defs/opaqueId"},
+    "actor": {"$ref": "#/$defs/actor"},
+    "sensitivity": {"$ref": "sensitivity.schema.json"},
+    "kind": {"$ref": "#/$defs/eventKind"},
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {"$ref": "#/$defs/evidenceReference"},
+      "uniqueItems": true
+    },
+    "artifactRefs": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "artifact-reference.schema.json"},
+      "uniqueItems": true
+    },
+    "previousHash": {"$ref": "#/$defs/wireHash"},
+    "eventHash": {"$ref": "#/$defs/wireHash"}
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "rawSha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "wireHash": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]|23:59:60)(?:\\.[0-9]{1,9})?Z$",
+      "format": "date-time"
+    },
+    "safeCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["owner", "human", "agent", "system"]},
+        "id": {"$ref": "#/$defs/actorId"}
+      },
+      "additionalProperties": false
+    },
+    "scopeWithExecution": {
+      "allOf": [
+        {"$ref": "repository-scope.schema.json"},
+        {"required": ["executionId"]}
+      ]
+    },
+    "projectScope": {
+      "allOf": [
+        {"$ref": "repository-scope.schema.json"},
+        {"not": {"required": ["executionId"]}}
+      ]
+    },
+    "evidenceReference": {
+      "type": "object",
+      "required": ["evidenceId", "contentSha256", "ciphertextSha256"],
+      "properties": {
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "contentSha256": {"$ref": "#/$defs/rawSha256"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "path", "component"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
+        "severity": {"enum": ["error", "warning"]},
+        "path": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^(/([^/~]|~[01])*)*$"
+        },
+        "component": {
+          "enum": [
+            "schema",
+            "graph",
+            "policy",
+            "governor",
+            "simulation",
+            "events",
+            "evidence",
+            "artifact",
+            "retention",
+            "projection",
+            "integrity",
+            "repository"
+          ]
+        },
+        "sourceContentSha256": {"$ref": "#/$defs/rawSha256"},
+        "detailEvidenceId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "graphImported": {
+      "type": "object",
+      "required": ["sourceSha256", "sourceKind"],
+      "properties": {
+        "sourceSha256": {"$ref": "#/$defs/rawSha256"},
+        "sourceKind": {"enum": ["graph_document", "generated"]}
+      },
+      "additionalProperties": false
+    },
+    "validationFailed": {
+      "type": "object",
+      "required": ["diagnostics"],
+      "properties": {"diagnostics": {"$ref": "#/$defs/diagnostics"}},
+      "additionalProperties": false
+    },
+    "memoryAdmissionRefused": {
+      "type": "object",
+      "required": ["code", "local", "bytes"],
+      "properties": {
+        "code": {"enum": ["scope_mismatch", "recapture_loop", "secret_detected", "self_validated"]},
+        "local": {"enum": ["content", "scope", "validators", "origin"]},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "additionalProperties": false
+    },
+    "memoryPublicationTransitioned": {
+      "type": "object",
+      "required": ["recordId", "transition", "resultingState"],
+      "properties": {
+        "recordId": {"$ref": "#/$defs/opaqueId"},
+        "transition": {"enum": ["propose", "publish", "withdraw"]},
+        "resultingState": {"enum": ["unpublished", "proposed", "published", "withdrawn"]}
+      },
+      "additionalProperties": false
+    },
+    "memoryRecordSuperseded": {
+      "type": "object",
+      "required": ["predecessorId", "successorId", "reason", "predecessorNewSemanticState"],
+      "properties": {
+        "predecessorId": {"$ref": "#/$defs/opaqueId"},
+        "successorId": {"$ref": "#/$defs/opaqueId"},
+        "reason": {"enum": ["contradicted", "deprecated"]},
+        "predecessorNewSemanticState": {
+          "enum": ["candidate", "validated", "contradicted", "deprecated", "expired"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "versionPublished": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {"version": {"$ref": "persisted-graph-version.schema.json"}},
+      "additionalProperties": false
+    },
+    "draftProposed": {
+      "type": "object",
+      "required": ["draftId", "expectedVersion", "expectedHash", "operationCount"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "expectedVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "expectedHash": {"$ref": "#/$defs/wireHash"},
+        "operationCount": {"type": "integer", "minimum": 1, "maximum": 1024}
+      },
+      "additionalProperties": false
+    },
+    "draftRejected": {
+      "type": "object",
+      "required": ["draftId", "reasonCode", "diagnostics"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "diagnostics": {"$ref": "#/$defs/diagnostics"},
+        "detailEvidenceId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "draftApplied": {
+      "type": "object",
+      "required": ["draftId", "graphVersion", "graphHash"],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "obligationEvaluated": {
+      "type": "object",
+      "required": [
+        "draftId",
+        "requirementId",
+        "status",
+        "evidenceIds",
+        "reasonCode",
+        "overrideable"
+      ],
+      "properties": {
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "requirementId": {"$ref": "#/$defs/opaqueId"},
+        "status": {"enum": ["satisfied", "unsatisfied", "waived", "impossible"]},
+        "evidenceIds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/opaqueId"},
+          "uniqueItems": true
+        },
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "overrideable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "waiverCreated": {
+      "type": "object",
+      "required": ["waiver"],
+      "properties": {"waiver": {"$ref": "policy-waiver.schema.json"}},
+      "additionalProperties": false
+    },
+    "simulationStarted": {
+      "type": "object",
+      "required": ["simulationId", "graphVersion", "graphHash"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "nodeState": {
+      "enum": [
+        "draft",
+        "ghost",
+        "linting",
+        "ready",
+        "queued",
+        "running",
+        "waiting_input",
+        "waiting_capacity",
+        "paused",
+        "blocked",
+        "succeeded",
+        "failed",
+        "waived",
+        "skipped",
+        "cancelled",
+        "invalidated"
+      ]
+    },
+    "nodeStateChanged": {
+      "type": "object",
+      "required": ["simulationId", "nodeId", "previousState", "nextState"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "previousState": {
+          "oneOf": [
+            {"$ref": "#/$defs/nodeState"},
+            {"type": "null"}
+          ]
+        },
+        "nextState": {"$ref": "#/$defs/nodeState"}
+      },
+      "additionalProperties": false
+    },
+    "simulationStatus": {"enum": ["running", "completed", "failed", "paused", "blocked", "cancelled"]},
+    "simulationCompleted": {
+      "type": "object",
+      "required": ["simulationId", "status"],
+      "properties": {
+        "simulationId": {"$ref": "#/$defs/opaqueId"},
+        "status": {"$ref": "#/$defs/simulationStatus"}
+      },
+      "additionalProperties": false
+    },
+    "executionMode": {
+      "description": "D-022's three levels of graph-mutation autonomy, and nothing else. autopilot accepts the Governor's own proposed mutations automatically. supervised holds a proposal until the owner approves it - something is queued, waiting. manual rejects every proposal outright - nothing is queued, nothing waits; the owner changes the graph by other means. An absent mode (reachable only on a stream with no executionStarted yet folded) reads identically to manual - both reject outright. Does NOT hold dispatch - a ready node runs identically in every mode; hold dispatch with pause, not a stricter mode.",
+      "enum": ["autopilot", "supervised", "manual"]
+    },
+    "nodeOutcome": {
+      "enum": [
+        "started", "succeeded", "retryable_failure", "terminal_failure",
+        "needs_input", "needs_capacity", "approved", "waived",
+        "skipped", "cancelled", "invalidated", "paused", "interrupted"
+      ]
+    },
+    "executionFormAmended": {
+      "type": "object",
+      "required": ["executionId", "computedAtSequence", "nodeTimeoutSeconds", "observedSilenceSeconds"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "computedAtSequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "nodeTimeoutSeconds": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 315576000}},
+        "observedSilenceSeconds": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 315576000}}
+      },
+      "additionalProperties": false
+    },
+    "executionFormDeclared": {
+      "type": "object",
+      "required": ["executionId", "nodeIds", "nodeTimeoutSeconds"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeIds": {"type": "array", "items": {"$ref": "#/$defs/opaqueId"}},
+        "nodeTimeoutSeconds": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 315576000}
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "objective": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "executor": {"$ref": "#/$defs/declaredExecutor"},
+        "nodeCustomsBudgets": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/declaredCustomsBudgets"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "declaredCustomsBudgets": {
+      "type": "object",
+      "required": ["waitWithinSeconds", "clearanceWithinSeconds"],
+      "properties": {
+        "waitWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "clearanceWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000},
+        "dlqWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
+    "declaredExecutor": {"enum": ["fixture", "gateway"]},
+    "executionStarted": {
+      "type": "object",
+      "required": ["executionId", "graphVersion", "graphHash", "mode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"},
+        "mode": {"$ref": "#/$defs/executionMode"}
+      },
+      "additionalProperties": false
+    },
+    "executionModeChanged": {
+      "type": "object",
+      "required": ["executionId", "previousMode", "mode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "previousMode": {
+          "oneOf": [
+            {"$ref": "#/$defs/executionMode"},
+            {"type": "null"}
+          ]
+        },
+        "mode": {"$ref": "#/$defs/executionMode"}
+      },
+      "additionalProperties": false
+    },
+    "nodeOutcomeRecorded": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "outcome", "nextState"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "outcome": {"$ref": "#/$defs/nodeOutcome"},
+        "nextState": {"$ref": "#/$defs/nodeState"},
+        "reason": {"$ref": "#/$defs/nodeOutcomeReason"}
+      },
+      "additionalProperties": false
+    },
+    "nodeOutcomeReason": {
+      "type": "string",
+      "enum": [
+        "auth_required",
+        "auth_revoked",
+        "quota_exhausted",
+        "rate_limited",
+        "provider_unavailable",
+        "model_removed",
+        "context_too_large",
+        "malformed_output",
+        "runtime_crashed",
+        "unsupported_capability",
+        "policy_denied",
+        "cancelled",
+        "timeout",
+        "empty_reply",
+        "malformed_judgment",
+        "judge_refused",
+        "gate_refused",
+        "tool_exited_non_zero",
+        "tool_timed_out",
+        "tool_denied",
+        "tool_host_error",
+        "fixture_scripted"
+      ]
+    },
+    "executionCompleted": {
+      "type": "object",
+      "required": ["executionId", "status"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "status": {"$ref": "#/$defs/simulationStatus"}
+      },
+      "additionalProperties": false
+    },
+    "signalSeverity": {"enum": ["low", "medium", "high", "critical"]},
+    "signalSourceKind": {"enum": ["node", "runtime", "tool", "test", "user", "dream", "system"]},
+    "signalRecorded": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "signalId",
+        "sourceKind",
+        "sourceId",
+        "kind",
+        "severity",
+        "envelopeSha256"
+      ],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "signalId": {"$ref": "#/$defs/opaqueId"},
+        "sourceKind": {"$ref": "#/$defs/signalSourceKind"},
+        "sourceId": {"$ref": "#/$defs/opaqueId"},
+        "kind": {"type": "string", "minLength": 1},
+        "severity": {"$ref": "#/$defs/signalSeverity"},
+        "envelopeSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "ghostNodeProposed": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "draftId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "draftId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "mutationAccepted": {
+      "type": "object",
+      "required": ["executionId", "draftId", "mode", "graphVersion"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "draftId": {"$ref": "#/$defs/opaqueId"},
+        "mode": {"$ref": "#/$defs/executionMode"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"}
+      },
+      "additionalProperties": false
+    },
+    "executionPaused": {
+      "type": "object",
+      "required": ["executionId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "executionResumed": {
+      "type": "object",
+      "required": ["executionId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "authenticationTag": {
+      "type": "object",
+      "required": ["keyId", "algorithm", "tagSha256"],
+      "properties": {
+        "keyId": {"$ref": "#/$defs/opaqueId"},
+        "algorithm": {"enum": ["hmac-sha256", "blake3-keyed"]},
+        "tagSha256": {"$ref": "#/$defs/rawSha256"}
+      },
+      "additionalProperties": false
+    },
+    "checkpointCreated": {
+      "type": "object",
+      "required": ["streamId", "sequence", "eventHash", "repositoryFormat", "authenticationTag"],
+      "properties": {
+        "streamId": {"$ref": "#/$defs/opaqueId"},
+        "sequence": {"$ref": "#/$defs/positiveSafeInteger"},
+        "eventHash": {"$ref": "#/$defs/wireHash"},
+        "repositoryFormat": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "authenticationTag": {"$ref": "#/$defs/authenticationTag"}
+      },
+      "additionalProperties": false
+    },
+    "retentionPolicyVersion": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 32,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "erasablePriorState": {"enum": ["available", "expired", "missing_key", "integrity_failed"]},
+    "erasureRequested": {
+      "type": "object",
+      "required": [
+        "evidenceScope",
+        "operationId",
+        "evidenceId",
+        "keyHandleId",
+        "retentionPolicyId",
+        "retentionPolicyVersion",
+        "authority",
+        "reasonCode",
+        "priorState",
+        "state",
+        "requestedAt"
+      ],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "keyHandleId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyVersion": {"$ref": "#/$defs/retentionPolicyVersion"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "priorState": {"$ref": "#/$defs/erasablePriorState"},
+        "state": {"const": "erasure_pending"},
+        "requestedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "erasureCompleted": {
+      "type": "object",
+      "required": [
+        "evidenceScope",
+        "operationId",
+        "evidenceId",
+        "keyHandleId",
+        "retentionPolicyId",
+        "retentionPolicyVersion",
+        "authority",
+        "reasonCode",
+        "ciphertextSha256",
+        "providerReceiptId",
+        "providerEpoch",
+        "priorState",
+        "state",
+        "requestedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "keyHandleId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyId": {"$ref": "#/$defs/opaqueId"},
+        "retentionPolicyVersion": {"$ref": "#/$defs/retentionPolicyVersion"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"},
+        "providerReceiptId": {"$ref": "#/$defs/opaqueId"},
+        "providerEpoch": {"$ref": "#/$defs/positiveSafeInteger"},
+        "priorState": {"const": "erasure_pending"},
+        "state": {"const": "erased"},
+        "requestedAt": {"$ref": "#/$defs/timestamp"},
+        "completedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "ciphertextDeleted": {
+      "type": "object",
+      "required": ["evidenceScope", "operationId", "evidenceId", "ciphertextSha256", "deletedAt"],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "operationId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "ciphertextSha256": {"$ref": "#/$defs/rawSha256"},
+        "deletedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "legalHoldChanged": {
+      "type": "object",
+      "required": ["evidenceScope", "holdId", "evidenceId", "authority", "reasonCode", "state", "changedAt"],
+      "properties": {
+        "evidenceScope": {"$ref": "repository-scope.schema.json"},
+        "holdId": {"$ref": "#/$defs/opaqueId"},
+        "evidenceId": {"$ref": "#/$defs/opaqueId"},
+        "authority": {"$ref": "#/$defs/opaqueId"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"},
+        "state": {"enum": ["placed", "released"]},
+        "changedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "reusePlane": {"enum": ["tool_broker"]},
+    "reuseOutcome": {"enum": ["hit", "miss", "forced_fresh", "excluded"]},
+    "forcedFreshReason": {"enum": ["dirty_tree", "operator_forced"]},
+    "freshnessClass": {"enum": ["immutable_by_input", "snapshot_closed", "drifting"]},
+    "reuseKeyComponent": {"enum": ["tool_version", "canonical_input", "lease_scope", "source_snapshot"]},
+    "wakeConsumeReason": {"enum": ["rung", "stale_rendezvous"]},
+    "customsStage": {"enum": ["parked", "claimed", "dead_lettered"]},
+    "sweepCaller": {"enum": ["tick", "operator"]},
+    "dlqRouted": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "episodeSequence", "reason"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "episodeSequence": {"type": "integer", "minimum": 1},
+        "reason": {"$ref": "#/$defs/safeCode"}
+      },
+      "additionalProperties": false
+    },
+    "dlqRedrive": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "dlqEpisodeSequence"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "dlqEpisodeSequence": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "dlqReturned": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "dlqEpisodeSequence"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "dlqEpisodeSequence": {"type": "integer", "minimum": 1},
+        "waitWithinSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
+    "sweepPerformed": {
+      "type": "object",
+      "required": ["executionId", "asOf", "caller"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "asOf": {"$ref": "#/$defs/timestamp"},
+        "caller": {"$ref": "#/$defs/sweepCaller"}
+      },
+      "additionalProperties": false
+    },
+    "overdueException": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "episodeSequence", "stage", "deadline"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "episodeSequence": {"type": "integer", "minimum": 1},
+        "stage": {"$ref": "#/$defs/customsStage"},
+        "deadline": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "wakeLease": {
+      "type": "object",
+      "required": ["executionId", "sessionId", "cursor", "rendezvousId"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "sessionId": {"$ref": "#/$defs/opaqueId"},
+        "cursor": {"type": "integer", "minimum": 0},
+        "rendezvousId": {"$ref": "#/$defs/opaqueId"},
+        "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000}
+      },
+      "additionalProperties": false
+    },
+    "wakeLeaseConsumed": {
+      "type": "object",
+      "required": ["executionId", "sessionId", "reason"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "sessionId": {"$ref": "#/$defs/opaqueId"},
+        "reason": {"$ref": "#/$defs/wakeConsumeReason"},
+        "capturedArming": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "gateFinding": {
+      "type": "object",
+      "required": ["severity", "claim", "evidence", "remediation"],
+      "properties": {
+        "severity": {"$ref": "#/$defs/signalSeverity"},
+        "claim": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/opaqueId"}},
+        "remediation": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "additionalProperties": false
+    },
+    "gateVerdict": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "gateId", "passed", "findings"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "gateId": {"$ref": "#/$defs/opaqueId"},
+        "passed": {"type": "boolean"},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/gateFinding"}}
+      },
+      "if": {"properties": {"passed": {"const": false}}},
+      "then": {"properties": {"findings": {"type": "array", "minItems": 1}}},
+      "additionalProperties": false
+    },
+    "gateCertified": {
+      "type": "object",
+      "required": ["executionId", "gateId", "suiteDigest", "specimens"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "gateId": {"$ref": "#/$defs/opaqueId"},
+        "suiteDigest": {"$ref": "#/$defs/wireHash"},
+        "specimens": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "reuseDecision": {
+      "type": "object",
+      "required": ["executionId", "plane", "decision", "keyComponents", "keyDigest", "provenanceErased"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "plane": {"$ref": "#/$defs/reusePlane"},
+        "decision": {"$ref": "#/$defs/reuseOutcome"},
+        "forcedReason": {"$ref": "#/$defs/forcedFreshReason"},
+        "freshnessClass": {"$ref": "#/$defs/freshnessClass"},
+        "keyComponents": {"type": "array", "items": {"$ref": "#/$defs/reuseKeyComponent"}},
+        "keyDigest": {"$ref": "#/$defs/wireHash"},
+        "evidenceRef": {"$ref": "#/$defs/opaqueId"},
+        "provenanceErased": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "clearanceIdentityRegistered": {
+      "description": "An identity gains the power to countersign, from this sequence on. Runtime membership is journaled rather than spec-edited, so 'who could countersign at sequence N' is a question the journal answers by itself, without a spec edit. ORDERING NOTE, for anyone adding a kind to this vocabulary: the store validates every event against it on APPEND and on READ, so this list MAY LEAD the Rust EventKind enum and must NEVER LAG it. A name here with no Rust variant is inert - nothing can emit it, so no journal can contain it. A Rust variant with no name here emits values the store then refuses on append, with no diagnostic naming what is missing. The asymmetry is the whole rule: one direction is dead weight, the other is a silent refusal.",
+      "type": "object",
+      "required": ["executionId", "identity", "keyFingerprint"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"},
+        "keyFingerprint": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
+    "clearanceIdentityRevoked": {
+      "type": "object",
+      "required": ["executionId", "identity"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "identity": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "claimEvidence": {
+      "type": "object",
+      "required": ["kind", "contentHash", "size"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 128},
+        "contentHash": {"$ref": "#/$defs/wireHash"},
+        "size": {"$ref": "#/$defs/positiveSafeInteger"}
+      },
+      "additionalProperties": false
+    },
+    "claimAttestation": {
+      "type": "object",
+      "required": ["asserter", "mode"],
+      "properties": {
+        "asserter": {"$ref": "#/$defs/opaqueId"},
+        "mode": {"enum": ["operator_attested", "machine_verified"]}
+      },
+      "additionalProperties": false
+    },
+    "clearanceVerifier": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "manifestHash"],
+          "properties": {
+            "type": {"const": "machineReplay"},
+            "manifestHash": {"$ref": "#/$defs/wireHash"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "identity", "keyFingerprint"],
+          "properties": {
+            "type": {"const": "countersign"},
+            "identity": {"$ref": "#/$defs/opaqueId"},
+            "keyFingerprint": {"$ref": "#/$defs/wireHash"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "completionClaimed": {
+      "type": "object",
+      "required": ["executionId", "node", "completesWaitSeq", "evidence", "attestation"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "node": {"$ref": "#/$defs/opaqueId"},
+        "completesWaitSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/claimEvidence"}, "maxItems": 64},
+        "attestation": {"$ref": "#/$defs/claimAttestation"}
+      },
+      "additionalProperties": false
+    },
+    "completionCleared": {
+      "type": "object",
+      "required": ["executionId", "claimSeq", "verifier"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "claimSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "verifier": {"$ref": "#/$defs/clearanceVerifier"}
+      },
+      "additionalProperties": false
+    },
+    "completionRejected": {
+      "type": "object",
+      "required": ["executionId", "claimSeq", "verifier", "reasonCode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "claimSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "verifier": {"$ref": "#/$defs/clearanceVerifier"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"}
+      },
+      "additionalProperties": false
+    },
+    "completionRefused": {
+      "type": "object",
+      "required": ["executionId", "node", "claimedWaitSeq", "reasonCode"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "node": {"$ref": "#/$defs/opaqueId"},
+        "claimedWaitSeq": {"$ref": "#/$defs/positiveSafeInteger"},
+        "reasonCode": {"$ref": "#/$defs/safeCode"}
+      },
+      "additionalProperties": false
+    },
+    "agentPresenceDeclared": {
+      "type": "object",
+      "required": ["actorId", "actorType"],
+      "properties": {
+        "actorId": {"$ref": "#/$defs/actorId"},
+        "actorType": {"enum": ["owner", "human", "agent", "system"]},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"},
+        "effort": {"enum": ["low", "medium", "high"]},
+        "session": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"}
+      },
+      "additionalProperties": false
+    },
+    "eventKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_imported"},
+            "data": {"$ref": "#/$defs/graphImported"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_validation_failed"},
+            "data": {"$ref": "#/$defs/validationFailed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "memory_admission_refused"},
+            "data": {"$ref": "#/$defs/memoryAdmissionRefused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "memory_publication_transitioned"},
+            "data": {"$ref": "#/$defs/memoryPublicationTransitioned"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "memory_record_superseded"},
+            "data": {"$ref": "#/$defs/memoryRecordSuperseded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "graph_version_published"},
+            "data": {"$ref": "#/$defs/versionPublished"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_proposed"},
+            "data": {"$ref": "#/$defs/draftProposed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_rejected"},
+            "data": {"$ref": "#/$defs/draftRejected"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "draft_applied"},
+            "data": {"$ref": "#/$defs/draftApplied"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "policy_obligation_evaluated"},
+            "data": {"$ref": "#/$defs/obligationEvaluated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "policy_waiver_created"},
+            "data": {"$ref": "#/$defs/waiverCreated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "simulation_started"},
+            "data": {"$ref": "#/$defs/simulationStarted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "node_state_changed"},
+            "data": {"$ref": "#/$defs/nodeStateChanged"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "simulation_completed"},
+            "data": {"$ref": "#/$defs/simulationCompleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_form_declared"},
+            "data": {"$ref": "#/$defs/executionFormDeclared"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_form_amended"},
+            "data": {"$ref": "#/$defs/executionFormAmended"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_started"},
+            "data": {"$ref": "#/$defs/executionStarted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_mode_changed"},
+            "data": {"$ref": "#/$defs/executionModeChanged"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "node_outcome_recorded"},
+            "data": {"$ref": "#/$defs/nodeOutcomeRecorded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_completed"},
+            "data": {"$ref": "#/$defs/executionCompleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "signal_recorded"},
+            "data": {"$ref": "#/$defs/signalRecorded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "ghost_node_proposed"},
+            "data": {"$ref": "#/$defs/ghostNodeProposed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "mutation_accepted"},
+            "data": {"$ref": "#/$defs/mutationAccepted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_paused"},
+            "data": {"$ref": "#/$defs/executionPaused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "execution_resumed"},
+            "data": {"$ref": "#/$defs/executionResumed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "integrity_checkpoint_created"},
+            "data": {"$ref": "#/$defs/checkpointCreated"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_erasure_requested"},
+            "data": {"$ref": "#/$defs/erasureRequested"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_erasure_completed"},
+            "data": {"$ref": "#/$defs/erasureCompleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_ciphertext_deleted"},
+            "data": {"$ref": "#/$defs/ciphertextDeleted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "evidence_legal_hold_changed"},
+            "data": {"$ref": "#/$defs/legalHoldChanged"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "reuse_decision"},
+            "data": {"$ref": "#/$defs/reuseDecision"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "wake_lease"},
+            "data": {"$ref": "#/$defs/wakeLease"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "wake_lease_consumed"},
+            "data": {"$ref": "#/$defs/wakeLeaseConsumed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "gate_verdict"},
+            "data": {"$ref": "#/$defs/gateVerdict"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "gate_certified"},
+            "data": {"$ref": "#/$defs/gateCertified"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_claimed"},
+            "data": {"$ref": "#/$defs/completionClaimed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_cleared"},
+            "data": {"$ref": "#/$defs/completionCleared"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_rejected"},
+            "data": {"$ref": "#/$defs/completionRejected"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "completion_refused"},
+            "data": {"$ref": "#/$defs/completionRefused"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "clearance_identity_registered"},
+            "data": {"$ref": "#/$defs/clearanceIdentityRegistered"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "clearance_identity_revoked"},
+            "data": {"$ref": "#/$defs/clearanceIdentityRevoked"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_routed"},
+            "data": {"$ref": "#/$defs/dlqRouted"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_redrive"},
+            "data": {"$ref": "#/$defs/dlqRedrive"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "dlq_returned"},
+            "data": {"$ref": "#/$defs/dlqReturned"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "sweep_performed"},
+            "data": {"$ref": "#/$defs/sweepPerformed"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "overdue_exception"},
+            "data": {"$ref": "#/$defs/overdueException"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "agent_presence_declared"},
+            "data": {"$ref": "#/$defs/agentPresenceDeclared"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_imported"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_validation_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_admission_refused"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_publication_transitioned"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_record_superseded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "draft_applied"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "policy_obligation_evaluated"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "policy_waiver_created"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "simulation_started"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "node_state_changed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "simulation_completed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_started"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_form_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_form_amended"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_mode_changed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "node_outcome_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_completed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "signal_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "ghost_node_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "mutation_accepted"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_paused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "execution_resumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "integrity_checkpoint_created"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_requested"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_erasure_completed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_ciphertext_deleted"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "evidence_legal_hold_changed"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "reuse_decision"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "wake_lease_consumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "gate_verdict"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "gate_certified"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_claimed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_cleared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "completion_refused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_registered"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "clearance_identity_revoked"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_routed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_redrive"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dlq_returned"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "sweep_performed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+  ],
+  "additionalProperties": false
+}

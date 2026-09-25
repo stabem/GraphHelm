@@ -1,0 +1,8 @@
+{
+  "rounds": [
+    "{\"entrypoints\":[\"run_tests\"],\"nodes\":{\"run_tests\":{\"type\":\"tool\",\"name\":\"Run the tests\",\"objective\":\"Run the repository tests and record whether src/lib.rs defines the FIXED constant.\",\"optionality\":\"required\",\"tool\":{\"call\":{\"tool\":\"tests\",\"arguments\":[\"grep\",\"-n\",\"FIXED\",\"--\",\"src/lib.rs\"]}}}},\"edges\":[],\"budgets\":{\"maxNodes\":1},\"policies\":[],\"completion\":{\"terminalNodes\":[\"run_tests\"]}}"
+  ],
+  "replies": {
+    "e7530161fa43d4b72c1b9b16f8143710ddd1ac86acdab58528fe0fc3209f35ec": "{\"entrypoints\":[\"run_tests\"],\"nodes\":{\"run_tests\":{\"type\":\"tool\",\"name\":\"Run the tests\",\"objective\":\"Run the repository tests and record whether src/lib.rs defines the FIXED constant.\",\"optionality\":\"required\",\"tool\":{\"call\":{\"tool\":\"tests\",\"arguments\":[\"grep\",\"-n\",\"FIXED\",\"--\",\"src/lib.rs\"]}}}},\"edges\":[],\"budgets\":{\"maxNodes\":1},\"policies\":[],\"completion\":{\"terminalNodes\":[\"run_tests\"]}}"
+  }
+}

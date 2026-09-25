@@ -1,0 +1,43 @@
+1 execution_started {"executionId": "exec-m09-judge", "graphHash": "sha256:65afc2d8e379014101de9b97800e185c98ef8503fdef514368e2e3d5f2a3b38d", "graphVersion": 1, "mode": "autopilot"}
+2 execution_form_declared {"executionId": "exec-m09-judge", "nodeIds": ["judge", "prepare"], "nodeTimeoutSeconds": {}}
+3 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "ready", "nodeId": "judge", "outcome": "approved"}
+4 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "ready", "nodeId": "prepare", "outcome": "approved"}
+5 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "prepare", "outcome": "started"}
+6 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "prepare", "outcome": "started"}
+7 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "succeeded", "nodeId": "prepare", "outcome": "succeeded"}
+8 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "started"}
+9 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+10 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+11 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+12 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+13 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+14 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+15 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+16 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "blocked", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+17 execution_paused {"executionId": "exec-m09-judge"}
+18 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "ready", "nodeId": "judge", "outcome": "approved"}
+19 execution_resumed {"executionId": "exec-m09-judge"}
+20 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "started"}
+21 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+22 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+23 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+24 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+25 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+26 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+27 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+28 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "blocked", "nodeId": "judge", "outcome": "retryable_failure", "reason": "runtime_crashed"}
+29 execution_paused {"executionId": "exec-m09-judge"}
+30 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "ready", "nodeId": "judge", "outcome": "approved"}
+31 execution_resumed {"executionId": "exec-m09-judge"}
+32 execution_paused {"executionId": "exec-m09-judge"}
+33 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "paused", "nodeId": "judge", "outcome": "paused"}
+34 execution_resumed {"executionId": "exec-m09-judge"}
+35 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "started"}
+36 execution_paused {"executionId": "exec-m09-judge"}
+37 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "paused", "nodeId": "judge", "outcome": "paused"}
+38 execution_resumed {"executionId": "exec-m09-judge"}
+39 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "queued", "nodeId": "judge", "outcome": "started"}
+40 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "running", "nodeId": "judge", "outcome": "started"}
+41 node_outcome_recorded {"executionId": "exec-m09-judge", "nextState": "failed", "nodeId": "judge", "outcome": "terminal_failure", "reason": "judge_refused"}
+42 gate_verdict {"executionId": "exec-m09-judge", "findings": [{"claim": "The story's central goal \u00e2\u20ac\u201d approve the retry and get the release moving again \u00e2\u20ac\u201d cannot be reached: `resume` against the named graph file (C:/.../m09-paid-run/release.yaml) fails deterministically with `GHCLI016_DRIVER_FAILURE: workspace configuration refused: the staging area must not overlap the project`. Reproduced 3x (forward-slash and backslash path, and after a fresh pause). The `resume` tool exposes
+43 execution_completed {"executionId": "exec-m09-judge", "status": "failed"}

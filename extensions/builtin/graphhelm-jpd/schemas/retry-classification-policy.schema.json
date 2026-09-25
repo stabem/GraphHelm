@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-classification-policy.schema.json",
+  "title": "GraphHelm JPD Retry Classification Policy Contract",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "p50.dev/jpd/v1"
+    },
+    "kind": {
+      "const": "RetryClassificationPolicyContract"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "const": "graphhelm-jpd/retry-classification"
+        },
+        "version": {
+          "$ref": "#/$defs/semanticVersion"
+        }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "runtimeStatus",
+        "requiresRegisteredEvaluator",
+        "evaluationSemantics",
+        "inputSchema",
+        "outputSchema",
+        "outputField",
+        "allowedCauseTags",
+        "invariants",
+        "evaluationOrder",
+        "rules",
+        "refusal"
+      ],
+      "properties": {
+        "runtimeStatus": {
+          "const": "declarative_only"
+        },
+        "requiresRegisteredEvaluator": {
+          "const": true
+        },
+        "evaluationSemantics": {
+          "const": "deterministic_when_registered"
+        },
+        "inputSchema": {
+          "const": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain-input.schema.json"
+        },
+        "outputSchema": {
+          "const": "https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json"
+        },
+        "outputField": {
+          "const": "outcomeClass"
+        },
+        "allowedCauseTags": {
+          "$ref": "#/$defs/allCauseTags"
+        },
+        "invariants": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "evaluationOrder": {
+          "const": "first_match"
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/firstPassRule"
+            },
+            {
+              "$ref": "#/$defs/flakyLaterPassRule"
+            },
+            {
+              "$ref": "#/$defs/explainedRecoveryRule"
+            },
+            {
+              "$ref": "#/$defs/unresolvedRule"
+            }
+          ],
+          "items": false
+        },
+        "refusal": {
+          "type": "object",
+          "required": [
+            "code",
+            "when"
+          ],
+          "properties": {
+            "code": {
+              "const": "RETRY_LINEAGE_INVALID"
+            },
+            "when": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 32
+    },
+    "allCauseTags": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "product_fix",
+          "environment_recovery",
+          "test_repair",
+          "dependency_recovery",
+          "unexplained"
+        ]
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "product_fix"
+          }
+        },
+        {
+          "contains": {
+            "const": "environment_recovery"
+          }
+        },
+        {
+          "contains": {
+            "const": "test_repair"
+          }
+        },
+        {
+          "contains": {
+            "const": "dependency_recovery"
+          }
+        },
+        {
+          "contains": {
+            "const": "unexplained"
+          }
+        }
+      ]
+    },
+    "recoverableCauseTags": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "product_fix",
+          "environment_recovery",
+          "test_repair",
+          "dependency_recovery"
+        ]
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "product_fix"
+          }
+        },
+        {
+          "contains": {
+            "const": "environment_recovery"
+          }
+        },
+        {
+          "contains": {
+            "const": "test_repair"
+          }
+        },
+        {
+          "contains": {
+            "const": "dependency_recovery"
+          }
+        }
+      ]
+    },
+    "firstPassRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "when",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "const": "first-pass"
+        },
+        "when": {
+          "type": "object",
+          "required": [
+            "rootResult",
+            "retryCount"
+          ],
+          "properties": {
+            "rootResult": {
+              "const": "succeeded"
+            },
+            "retryCount": {
+              "const": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "result": {
+          "const": "first_pass_success"
+        }
+      },
+      "additionalProperties": false
+    },
+    "flakyLaterPassRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "when",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "const": "flaky-later-pass"
+        },
+        "when": {
+          "type": "object",
+          "required": [
+            "rootResult",
+            "anyLaterResult",
+            "anyOf"
+          ],
+          "properties": {
+            "rootResult": {
+              "const": "failed"
+            },
+            "anyLaterResult": {
+              "const": "succeeded"
+            },
+            "anyOf": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "object",
+                  "required": [
+                    "anyRetryCause"
+                  ],
+                  "properties": {
+                    "anyRetryCause": {
+                      "const": "unexplained"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "noSuccessfulRetryHasMaterialEvidenceDelta"
+                  ],
+                  "properties": {
+                    "noSuccessfulRetryHasMaterialEvidenceDelta": {
+                      "const": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ],
+              "items": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "result": {
+          "const": "flaky_pass"
+        }
+      },
+      "additionalProperties": false
+    },
+    "explainedRecoveryRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "when",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "const": "explained-recovery"
+        },
+        "when": {
+          "type": "object",
+          "required": [
+            "rootResult",
+            "anyLaterResult",
+            "successfulRetryCauseIn",
+            "successfulRetryHasMaterialEvidenceDelta"
+          ],
+          "properties": {
+            "rootResult": {
+              "const": "failed"
+            },
+            "anyLaterResult": {
+              "const": "succeeded"
+            },
+            "successfulRetryCauseIn": {
+              "$ref": "#/$defs/recoverableCauseTags"
+            },
+            "successfulRetryHasMaterialEvidenceDelta": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "result": {
+          "const": "recovered_success"
+        }
+      },
+      "additionalProperties": false
+    },
+    "unresolvedRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "when",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "const": "unresolved"
+        },
+        "when": {
+          "type": "object",
+          "required": [
+            "noAttemptSucceeded"
+          ],
+          "properties": {
+            "noAttemptSucceeded": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "result": {
+          "const": "unresolved_failure"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

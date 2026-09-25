@@ -1,0 +1,19 @@
+[package]
+name = "graphhelm-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-graph = { path = "../graph" }
+graphhelm-protocols = { path = "../protocols" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+serde_yaml_ng.workspace = true
+chrono.workspace = true
+graphhelm-schema = { path = "../schema" }

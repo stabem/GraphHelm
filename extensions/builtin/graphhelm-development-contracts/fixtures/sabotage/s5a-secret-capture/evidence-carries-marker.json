@@ -1,0 +1,8 @@
+{
+  "_shape": "journey evidence carrying captured material",
+  "capsuleId": "capsule-s5a",
+  "evidenceKind": "dom_semantic_snapshot",
+  "capturedAt": "2026-08-24T00:00:00Z",
+  "captured": "<div data-token=\"ghp_EXAMPLEEXAMPLEEXAMPLE\">signed in</div>",
+  "claim": "UI rendered the signed-in state"
+}

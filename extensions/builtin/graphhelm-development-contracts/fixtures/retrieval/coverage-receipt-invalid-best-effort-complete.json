@@ -1,0 +1,60 @@
+{
+  "apiVersion": "p50.dev/retrieval-coverage-receipt/v1",
+  "kind": "RetrievalCoverageReceipt",
+  "schemaVersion": "1.0.0",
+  "body": {
+    "planBinding": {
+      "artifactId": "retrieval-plan-0001",
+      "schemaId": "https://p50.dev/schemas/development-envelope.schema.json",
+      "documentVersion": "1.0.0",
+      "schemaVersion": "1.0.0",
+      "digest": "sha256:234a60e6b56bce9a5c69ba9d2e3a5a20e4e97d913017989dfb4c170301a72ca1",
+      "scope": { "workspaceId": "workspace-retrieval", "projectId": "project-retrieval" },
+      "producer": "runtime-planner",
+      "snapshots": { "repoSnapshot": "tree-content-0001", "indexGeneration": "tree-content-0001" }
+    },
+    "step": {
+      "stepId": "step-structural-search",
+      "stepDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "queryDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "scope": { "workspaceId": "workspace-retrieval", "projectId": "project-retrieval" },
+    "snapshots": { "repoSnapshot": "tree-content-0001", "indexGeneration": "tree-content-0001" },
+    "provider": {
+      "providerId": "fake-structural-index",
+      "capabilityId": "search-graph",
+      "capabilityVersion": "1.0.0",
+      "tool": "structural-code-index",
+      "action": "search_graph"
+    },
+    "brokerRecord": {
+      "tool": "structural-code-index",
+      "action": "search_graph",
+      "actor": "retrieval-runtime",
+      "recordDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "stdoutDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "stdoutBytes": 64,
+      "stderrDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "stderrBytes": 0,
+      "reused": false
+    },
+    "confidence": "best_effort",
+    "coverage": "complete",
+    "requestedPaths": ["core/runtime/src/retrieval.rs"],
+    "negativeScopes": ["core/runtime/src"],
+    "entries": [
+      { "target": "path", "value": "core/runtime/src/retrieval.rs", "coverage": "complete", "gapRanges": [] },
+      { "target": "negative_scope", "value": "core/runtime/src", "coverage": "complete", "gapRanges": [] }
+    ],
+    "pages": [{ "position": "offset:0", "results": 0, "bytes": 64, "hasMore": false }],
+    "declaredLimits": { "maxResults": 4, "maxPages": 2, "maxBytes": 512, "maxTokens": 128 },
+    "receivedLimits": { "results": 0, "pages": 1, "bytes": 64, "tokens": 16 },
+    "totalResults": 0,
+    "hits": [],
+    "fallbacks": [
+      { "kind": "source", "outcome": "not_required" },
+      { "kind": "reindex", "outcome": "not_required" }
+    ]
+  },
+  "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

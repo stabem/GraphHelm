@@ -1,0 +1,26 @@
+{
+  "case": "citation-belongs-to-another-capsule",
+  "why": "Gate 3's second shape, and the one a naive check passes. The cited ID is real: it is the ID of a real item, with the same section and the same text, in a capsule this run was not compiled from. A check asking 'is this a well-formed item ID' accepts it, and so does one asking 'does any capsule contain it'. Only resolution against the capsule UNDER TEST refuses it. Two codes, because the answer both failed to cite its own evidence and cited something outside its scope -- and the two remedies are opposite, so collapsing them would hand the operator half a cure.",
+  "capsuleUnderTest": "capsule-alpha",
+  "capsules": {
+    "capsule-alpha": {
+      "version": 1,
+      "items": [
+        {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+      ]
+    },
+    "capsule-beta": {
+      "version": 1,
+      "items": [
+        {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+      ]
+    }
+  },
+  "requiredItems": [
+    {"section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+  ],
+  "citations": [
+    {"capsule": "capsule-beta", "section": "evidence", "text": "The retry budget is consumed by the caller, not by the transport."}
+  ],
+  "expectedRefusalCodes": ["required_citation_missing", "citation_unresolved"]
+}

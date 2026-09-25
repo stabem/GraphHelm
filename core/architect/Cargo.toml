@@ -1,0 +1,23 @@
+[package]
+name = "graphhelm-architect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-gateway = { path = "../gateway" }
+graphhelm-graph = { path = "../graph" }
+graphhelm-protocols = { path = "../protocols" }
+graphhelm-runtime = { path = "../runtime" }
+graphhelm-schema = { path = "../schema" }
+graphhelm-tool-broker = { path = "../tool-broker" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

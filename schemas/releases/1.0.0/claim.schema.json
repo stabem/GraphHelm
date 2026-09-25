@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/claim.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Knowledge Claim",
+  "type": "object",
+  "required": ["id", "subject", "predicate", "object", "status", "confidence", "validFrom", "provenance"],
+  "properties": {
+    "id": {"type": "string"},
+    "subject": {"type": "string"},
+    "predicate": {"type": "string"},
+    "object": {},
+    "status": {"enum": ["candidate", "validated", "contradicted", "deprecated", "expired"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "validFrom": {"type": "string", "format": "date-time"},
+    "validUntil": {"type": ["string", "null"], "format": "date-time"},
+    "provenance": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "relationships": {
+      "type": "object",
+      "properties": {
+        "supports": {"type": "array", "items": {"type": "string"}},
+        "contradicts": {"type": "array", "items": {"type": "string"}},
+        "supersedes": {"type": "array", "items": {"type": "string"}},
+        "derivedFrom": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

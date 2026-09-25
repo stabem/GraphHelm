@@ -1,0 +1,34 @@
+{
+  "caseId": "schema-ceiling",
+  "query": "Every *WithinSeconds field in the shipped schemas enforces one house ceiling. What is the value, in which files does node.schema.json apply it, and where is the rationale recorded?",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "core/governor/tests/memory.rs",
+      "lines": "521-569"
+    },
+    {
+      "path": "core/governor/tests/memory.rs",
+      "lines": "746-790"
+    },
+    {
+      "path": "core/governor/tests/inflight_governance.rs",
+      "lines": "124-145"
+    },
+    {
+      "path": "adapters/tool-host/tests/broker_end_to_end.rs",
+      "lines": "135-167"
+    },
+    {
+      "path": "apps/cli/src/commands/mcp/url.rs",
+      "lines": "296-303"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

@@ -1,0 +1,1 @@
+{"oracleId": "oracle-protocols-canonical-order", "requiredEvidence": ["tools/development-benchmark/src/lib.rs", "core/protocols/src/development.rs"], "answer": "Yes: corpus_digest hashes canonical_json of the cases ARRAY, and canonical_json sorts object keys but leaves arrays alone -- the corpus is a sequence and order is a held axis."}

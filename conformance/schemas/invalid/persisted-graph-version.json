@@ -1,0 +1,39 @@
+{
+  "number": 2,
+  "predecessor": {
+    "number": 1,
+    "semanticHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "topology": {
+    "apiVersion": "p50.dev/graph/v1",
+    "kind": "ExecutionGraph",
+    "graphId": "graph-fixture",
+    "executionId": "execution-fixture",
+    "labels": {},
+    "entrypoints": ["start"],
+    "nodes": {
+      "start": {
+        "nodeType": "agent",
+        "optionality": "required",
+        "controls": [],
+        "contentSlotIds": ["slot-objective"],
+        "objective": "must remain in encrypted Evidence"
+      }
+    },
+    "edges": [],
+    "budgets": {},
+    "policies": [],
+    "completion": {
+      "controlType": "terminal_nodes",
+      "identifiers": {},
+      "digests": {},
+      "integers": {},
+      "flags": {}
+    }
+  },
+  "topologyHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "semanticHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "contentSlots": [],
+  "createdBy": {"type": "owner", "id": "owner-fixture"},
+  "createdAt": "2026-08-09T00:00:00Z"
+}

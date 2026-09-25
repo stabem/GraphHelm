@@ -1,0 +1,7 @@
+{
+  "_shape": "IndexResponse @ origin/main:core/runtime/src/retrieval.rs:34-49 (IndexResponse)",
+  "hits": [],
+  "coverage": "extraction_gap",
+  "summary": "parser failed on 3 of 3 candidate files; nothing was searched",
+  "pages": 1
+}

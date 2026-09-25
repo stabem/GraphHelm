@@ -1,0 +1,48 @@
+diff --git a/tools/token-bench/run.py b/tools/token-bench/run.py
+index 06d6c2e..ad54a33 100644
+--- a/tools/token-bench/run.py
++++ b/tools/token-bench/run.py
+@@ -259,8 +259,11 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
+         cmd += ["--max-budget-usd", str(max_budget_usd)]
+     t0 = time.monotonic()
+     try:
+-        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, capture_output=True,
+-                              timeout=timeout_min * 60, env=bench_env(task))
++        # text=True alone would pick locale.getpreferredencoding() for stdin/stdout, which on a
++        # legacy (non-UTF-8) Windows host is cp1252 and raises UnicodeEncodeError on a prompt
++        # with normal non-ASCII text before the child process even starts.
++        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, encoding="utf-8",
++                              capture_output=True, timeout=timeout_min * 60, env=bench_env(task))
+     except subprocess.TimeoutExpired as exc:
+         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,
+                 "stderr": str(exc)}, "timeout", time.monotonic() - t0
+diff --git a/tools/token-bench/test_run.py b/tools/token-bench/test_run.py
+index 6eb28d0..cd4bef0 100644
+--- a/tools/token-bench/test_run.py
++++ b/tools/token-bench/test_run.py
+@@ -95,6 +95,25 @@ def test_partial_transcript_cannot_claim_session_cost():
+     assert "transcript_output_incomplete" in audit["reasons"]
+ 
+ 
++def test_run_agent_sends_prompt_as_utf8_regardless_of_host_locale(tmp_path, monkeypatch):
++    """A host on the legacy Windows cp1252 code page must still deliver the prompt's Unicode
++    text unchanged to the child process, not raise UnicodeEncodeError before it starts."""
++    captured = {}
++
++    def fake_run(cmd, **kw):
++        captured["cmd"] = cmd
++        captured.update(kw)
++        return subprocess.CompletedProcess(cmd, 0, stdout='{"result": "ok", "session_id": "s"}', stderr="")
++
++    monkeypatch.setattr(runner.subprocess, "run", fake_run)
++    prompt = "issue text with unicode: cafÃ©, rÃ©sumÃ©, ä¸­æ–‡, emoji ðŸŽ‰"
++    claude_cli = {"path": str(tmp_path / "claude"), "sha256": "x", "version": "1"}
++    result, stderr, wall = runner.run_agent(tmp_path, prompt, "a", None, 1, {}, None, None, claude_cli)
++    assert captured["input"] == prompt
++    assert captured["encoding"] == "utf-8"
++    assert result == {"result": "ok", "session_id": "s"}
++
++
+ def test_cli_identity_binds_version_and_executable_bytes(tmp_path, monkeypatch):
+     """A changed CLI can change transcript or cost semantics without changing the model name."""
+     executable = tmp_path / "claude.exe"

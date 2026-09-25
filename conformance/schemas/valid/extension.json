@@ -1,0 +1,13 @@
+{
+  "apiVersion": "p50.dev/v1",
+  "kind": "Extension",
+  "metadata": {"id": "extension-fixture", "version": "1.0.0", "publisher": "example"},
+  "spec": {
+    "type": "capability-provider",
+    "capabilities": [],
+    "permissions": {},
+    "contracts": {},
+    "runtime": {"kind": "data", "isolationMinimum": "tier_0"},
+    "compatibility": {}
+  }
+}

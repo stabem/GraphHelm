@@ -1,0 +1,1 @@
+check that the repository builds and summarize the result

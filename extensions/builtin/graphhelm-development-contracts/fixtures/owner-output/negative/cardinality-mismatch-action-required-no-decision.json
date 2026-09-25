@@ -1,0 +1,17 @@
+{
+  "summary": "did the thing",
+  "status": "success",
+  "ownerActionRequired": true,
+  "decision": null,
+  "evidenceLimitation": null,
+  "riskFlags": {
+    "security": false,
+    "destructive": false,
+    "financial": false,
+    "production": false,
+    "privacy": false,
+    "irreversible": false
+  },
+  "_expectedRefusal": "schema_invalid",
+  "_note": "ownerActionRequired=true with decision=null must refuse - see core/runtime/tests/owner_output.rs cardinality_mismatch_is_schema_invalid"
+}

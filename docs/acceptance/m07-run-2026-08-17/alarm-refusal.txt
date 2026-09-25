@@ -1,0 +1,1 @@
+{"ok":false,"command":"execution.wake_lease","data":null,"diagnostics":[{"code":"GHCLI005_EXECUTION_STATE","severity":"error","message":"no execution has started on this stream","path":"/execution","source":"execution-cli"}]}

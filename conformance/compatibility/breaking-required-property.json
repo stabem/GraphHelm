@@ -1,0 +1,4 @@
+{
+  "baseline": {"type": "object", "properties": {"name": {"type": "string"}}},
+  "candidate": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+}

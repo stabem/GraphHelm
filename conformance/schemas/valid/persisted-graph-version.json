@@ -1,0 +1,94 @@
+{
+  "number": 2,
+  "predecessor": {
+    "number": 1,
+    "semanticHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "topology": {
+    "apiVersion": "p50.dev/graph/v1",
+    "kind": "ExecutionGraph",
+    "graphId": "graph-fixture",
+    "executionId": "execution-fixture",
+    "labels": {"tier": "production"},
+    "entrypoints": ["start"],
+    "nodes": {
+      "start": {
+        "nodeType": "agent",
+        "optionality": "required",
+        "controls": [
+          {
+            "controlType": "agent_configuration",
+            "identifiers": {
+              "agentRef": "refv1:cHJvamVjdC9zZWN1cml0eS1yZXZpZXdlckAz",
+              "mode": "ref"
+            },
+            "digests": {},
+            "integers": {},
+            "flags": {"present": true}
+          }
+        ],
+        "contentSlotIds": [
+          "slot-fa2802cb0a5957356d5808fd78abf3bd0331d5d548a9c032821e511eda7a3cf4",
+          "slot-b1f39cc77e20d41de2f2fa8b4f9e0cfe0ce3148306d0babb7f6d765f592f8d20"
+        ]
+      }
+    },
+    "edges": [],
+    "budgets": {
+      "maxNodes": 1,
+      "maxDepth": 1,
+      "maxMutations": 0,
+      "maxRetriesPerNode": 0,
+      "maxWallClockSeconds": 60,
+      "maxApiCostUsd": 1,
+      "maxParallelModelCalls": 1
+    },
+    "policies": [],
+    "completion": {
+      "controlType": "graph_completion",
+      "identifiers": {"terminal.000": "start"},
+      "digests": {},
+      "integers": {"terminalCount": 1},
+      "flags": {"allowWaivers": false, "present": true}
+    }
+  },
+  "topologyHash": "sha256:1b22aa53dd13d245d973d7ed1b74ddea5f5b349790ba96cf95c2b7f919a5b671",
+  "semanticHash": "sha256:fcc7a24e95bb4dd13467eb7629fa1bf1e7a95a9b2d8f7c27bf520f7a4d1cd2ca",
+  "contentSlots": [
+    {
+      "slotId": "slot-69099886b7cb6c4a2d2029e6ef7acf7208a61a6e31f4c86d3105df5d6598de85",
+      "ownerKind": "graph",
+      "ownerId": "graph-fixture",
+      "fieldKind": "display_name",
+      "ordinal": 0,
+      "evidenceId": "evidence-graph-display",
+      "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "sensitivity": "internal",
+      "requiredForExecution": false
+    },
+    {
+      "slotId": "slot-fa2802cb0a5957356d5808fd78abf3bd0331d5d548a9c032821e511eda7a3cf4",
+      "ownerKind": "node",
+      "ownerId": "start",
+      "fieldKind": "display_name",
+      "ordinal": 0,
+      "evidenceId": "evidence-node-display",
+      "contentSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "sensitivity": "internal",
+      "requiredForExecution": false
+    },
+    {
+      "slotId": "slot-b1f39cc77e20d41de2f2fa8b4f9e0cfe0ce3148306d0babb7f6d765f592f8d20",
+      "ownerKind": "node",
+      "ownerId": "start",
+      "fieldKind": "objective",
+      "ordinal": 0,
+      "evidenceId": "evidence-objective",
+      "contentSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sensitivity": "restricted",
+      "requiredForExecution": true
+    }
+  ],
+  "createdBy": {"type": "owner", "id": "owner-fixture"},
+  "createdAt": "2026-08-09T00:00:00Z"
+}

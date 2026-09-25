@@ -1,0 +1,50 @@
+{
+  "executionId": "exec-m07-rejudge",
+  "findings": [
+    {
+      "claim": "status carries no time information at all (no startedAt, lastEventAt, node age, or heartbeat), so an operator glancing at it cannot tell a healthy running node from a wedged one. exec-m07-rejudge showed node 'judge' in running and 'flaky_check' in queued across the whole probe window with contentHead frozen at 12 (only my own wake_lease writes moved head 12->14), yet status kept reporting attentionRequired=false. The single most common reason not to go back to sleep — nothing is moving — is invisible in the one-glance view.",
+      "evidence": [],
+      "remediation": "Add timestamps and staleness to status: lastContentEventAt, per-state oldest-node age (e.g. runningSince), and a derived staleness flag; raise attentionRequired (or a 'degraded' level) when no content event has landed within the expected node budget.",
+      "severity": "high"
+    },
+    {
+      "claim": "The wake path cannot actually be slept on from this surface. wake_arm arms a lease and wake_status reports live=true, cursor=13, head=14, lastConsumed=null, but no tool blocks on the ring — the surface exposes only arm and read. The only way to learn the state changed is to call status/events again on a timer, which is the exact opposite of 'go back to sleep and be woken'.",
+      "evidence": [],
+      "remediation": "Expose a blocking wake-wait tool (long-poll with timeout, returning ring-fired vs timed-out plus the new head), or document and surface the out-of-band rendezvous delivery in wake_status (e.g. ringedAt, deliveredTo) so the operator can verify a ring will ever reach them.",
+      "severity": "high"
+    },
+    {
+      "claim": "A recorded failure is erased from the one-glance view. Event seq 10 recorded node flaky_check outcome=retryable_failure, reason=tool_exited_non_zero, and status reports failed:0 with attentionReasons:[] — the node is simply counted back under queued:1. An operator glancing sees a spotless board while a node is failing and being requeued, and repeated flapping never accumulates any visible signal.",
+      "evidence": [],
+      "remediation": "Surface retry/failure history in status: per-node attemptCount and lastFailureReason, a counter like retryingNodes/recentFailures, and escalate to attentionRequired once attempts approach the retry ceiling.",
+      "severity": "medium"
+    },
+    {
+      "claim": "attentionRequired is a single boolean with no gradation and no positive liveness evidence, so 'false' conflates 'healthy and progressing', 'degraded but retrying', and 'the runtime stopped emitting'. There is no way from status alone to distinguish 'safe to sleep' from 'nothing has reported in, which is why nothing looks wrong'.",
+      "evidence": [],
+      "remediation": "Return a tri-state health (ok | degraded | attention) alongside the boolean, and always populate a reason string even for ok (e.g. 'progressing, last event 3s ago') so absence of alarm is backed by evidence rather than by absence of data.",
+      "severity": "medium"
+    },
+    {
+      "claim": "events is the only place the failure detail lives, but it is not glanceable: each entry carries eventHash, previousHash, idempotencyKey, evidenceRefs with three sha256 pairs, scope, schemaVersion and sensitivity, so the 13 events returned were dominated by chain metadata. Reading the one line that mattered (retryable_failure / tool_exited_non_zero) required parsing the full audit payload.",
+      "evidence": [],
+      "remediation": "Add a compact projection to events (e.g. verbosity=summary or a dedicated digest field) returning sequence, occurredAt, nodeId, outcome and reason only, with the hash/evidence chain available on request.",
+      "severity": "medium"
+    },
+    {
+      "claim": "The operator's own monitoring writes pollute the execution log the monitor reads: each wake_arm appended a wake_lease event (seq 13, seq 14), advancing headSequence and the status headSequence field. wake_status does correctly separate contentHead (12) from head (14), but status exposes only headSequence, so the glance-level 'has anything happened' number moves purely because the operator looked.",
+      "evidence": [],
+      "remediation": "Expose contentHead (or a contentEventCount) in status instead of, or alongside, raw headSequence so operator-generated lease events never read as execution progress.",
+      "severity": "low"
+    },
+    {
+      "claim": "probe rejects an executionId as a route with GHCLI009_GATEWAY_INVALID '--route does not name a route in the manifest' and offers no hint of what a valid route looks like or how to list them, so an operator reaching for a health check from the monitor context hits a dead end without a pointer to routes.",
+      "evidence": [],
+      "remediation": "Include the available route names (or an explicit 'call routes to list them') in the GHCLI009 diagnostic message.",
+      "severity": "low"
+    }
+  ],
+  "gateId": "judge-usefulness",
+  "nodeId": "judge",
+  "passed": false
+}

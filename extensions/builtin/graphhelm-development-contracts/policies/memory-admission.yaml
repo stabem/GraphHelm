@@ -1,0 +1,42 @@
+# Governed memory admission (#220).
+#
+# The ORDER is the policy. An opt-in check that runs after the first boundary touch is legal,
+# invisible, and already past the boundary it exists to hold: the candidate is constructed, the
+# provider is asked, the log line is written, and only then is the caller told no.
+policyVersion: "1.0.0"
+
+orderedChecks:
+  # Nothing below this line may run for a project that did not opt in.
+  - id: project-opted-in
+    refusesWith: opt_in_absent
+    runsBeforeFirstTouch: true
+
+  - id: captured-under-this-scope
+    refusesWith: scope_mismatch
+    runsBeforeFirstTouch: true
+
+  # Provider output offered back as fresh capture launders it into the record.
+  - id: not-provider-output
+    refusesWith: recapture_loop
+    runsBeforeFirstTouch: true
+
+  - id: no-credential-shaped-content
+    refusesWith: secret_detected
+    runsBeforeFirstTouch: true
+
+  # Independence is a property of WHO signed, never of how many did.
+  - id: validated-by-an-independent-party
+    refusesWith: self_validated
+    runsBeforeFirstTouch: false
+
+# The closed set. A code a consuming lane needs is allocated here, never minted downstream.
+refusalCodes:
+  - opt_in_absent
+  - scope_mismatch
+  - recapture_loop
+  - secret_detected
+  - self_validated
+  - transition_not_allowed
+  - reseal_failed
+  - dependency_stale
+  - handoff_target_not_opted_in

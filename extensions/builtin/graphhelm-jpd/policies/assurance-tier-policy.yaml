@@ -1,0 +1,58 @@
+apiVersion: p50.dev/jpd/v1
+kind: AssuranceTierPolicyContract
+metadata:
+  id: graphhelm-jpd/assurance-tier
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  inputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json
+  outputField: assuranceTier
+  evaluationOrder: first_match
+  rules:
+    - id: adversarial-irrevocable-or-sensitive
+      matchAnyRiskSignal:
+        - authentication
+        - irreversible_effect
+        - money
+        - personal_data
+        - production_impact
+        - security
+      result: adversarial
+    - id: adversarial-critical-experience
+      matchAnyRiskSignal:
+        - accessibility
+        - critical_ux
+        - external_delivery
+        - recovery
+      result: adversarial
+    - id: deliberative-coupled-or-ambiguous
+      matchAnyRiskSignal:
+        - ambiguous_behavior
+        - concurrency
+        - multiple_components
+      result: deliberative
+    - id: direct-default
+      match: always
+      result: direct
+  tierRequirements:
+    direct:
+      independentCriticRequired: false
+      counterexampleSearchRequired: false
+      recoveryProofRequired: false
+      minimumAdequateObservers: 1
+    deliberative:
+      independentCriticRequired: true
+      counterexampleSearchRequired: true
+      recoveryProofRequired: false
+      minimumAdequateObservers: 1
+    adversarial:
+      independentCriticRequired: true
+      counterexampleSearchRequired: true
+      recoveryProofRequired: true
+      minimumAdequateObservers: 2
+  invariants:
+    - A lower tier cannot waive an observation obligation.
+    - Equivalent proof methods may replace one another only when the evidence lattice says they are adequate for the same fact.
+    - Missing observer capability produces OBSERVER_MISSING at every tier.

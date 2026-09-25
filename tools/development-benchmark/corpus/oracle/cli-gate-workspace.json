@@ -1,0 +1,1 @@
+{"oracleId":"oracle-cli-gate-workspace","requiredEvidence":["ci/gate.ps1"],"answer":"ci/gate.ps1 runs cargo test --workspace --all-features --locked --no-fail-fast (line ~624)."}

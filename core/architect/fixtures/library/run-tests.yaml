@@ -1,0 +1,30 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: lib_run_tests_v1
+  name: Run tests
+  executionId: exec_lib_run_tests
+  version: 1
+  labels:
+    origin: library
+spec:
+  entrypoints:
+    - run_tests
+  nodes:
+    run_tests:
+      type: tool
+      name: Run tests
+      objective: Run the {{program}} test suite and record its exit code.
+      optionality: required
+      tool:
+        call:
+          tool: tests
+          arguments:
+            - "{{program}}"
+  edges: []
+  budgets:
+    maxNodes: 1
+  policies: []
+  completion:
+    terminalNodes:
+      - run_tests

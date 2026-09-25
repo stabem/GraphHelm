@@ -1,0 +1,1 @@
+{"caseId":"runtime-capsule-bytes","objective":"Two components assemble the same logical Context Capsule. What guarantees they obtain byte-identical output, and what makes the encoding injective?"}

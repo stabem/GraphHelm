@@ -1,0 +1,30 @@
+[package]
+name = "graphhelm-host-adoption"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphhelm-graph = { path = "../../core/graph" }
+graphhelm-schema = { path = "../../core/schema" }
+graphhelm-protocols = { path = "../../core/protocols" }
+graphhelm-policy = { path = "../../core/policy" }
+graphhelm-extension-host = { path = "../../core/extension-host" }
+serde_json.workspace = true
+serde.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+uuid.workspace = true
+fs2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+graphhelm-sealed-key-provider = { path = "../sealed-key-provider" }
+windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

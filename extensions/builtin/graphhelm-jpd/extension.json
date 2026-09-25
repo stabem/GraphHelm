@@ -1,0 +1,1282 @@
+{
+  "apiVersion": "p50.dev/v1",
+  "kind": "Extension",
+  "metadata": {
+    "id": "graphhelm-jpd",
+    "version": "0.1.0",
+    "publisher": "GraphHelm",
+    "source": {
+      "repository": "https://github.com/stabem/GraphHelm"
+    }
+  },
+  "spec": {
+    "type": "skill-package",
+    "capabilities": [
+      "skill.defect-bounty",
+      "skill.journey-contract",
+      "skill.journey-verifier",
+      "skill.observation-compiler",
+      "skill.plan-council",
+      "skill.retry-provenance",
+      "skill.skill-evaluator",
+      "skill.skill-synthesizer"
+    ],
+    "permissions": {
+      "filesystem": {
+        "package": "read",
+        "workspaceArtifacts": "proposal-write"
+      },
+      "network": {
+        "external": false,
+        "loopbackRuntimeApi": true
+      },
+      "runtime": {
+        "read": true,
+        "mutations": [
+          "amend_budget",
+          "approve",
+          "cancel",
+          "pause",
+          "quality_certify",
+          "resume",
+          "signal",
+          "start",
+          "wake_arm"
+        ],
+        "ownerConfirmationRequired": [
+          "amend_budget",
+          "approve",
+          "cancel",
+          "pause_immediate"
+        ]
+      },
+      "secrets": {
+        "artifactValues": false,
+        "tokenFile": "reference-only"
+      }
+    },
+    "contracts": {
+      "formatVersion": "1.0.0",
+      "activation": "explicit",
+      "composition": "adaptive",
+      "publication": "governor-only",
+      "entryFamilies": [
+        "defect-bounty",
+        "journey-contract",
+        "journey-verifier",
+        "observation-compiler",
+        "plan-council",
+        "retry-provenance",
+        "skill-evaluator",
+        "skill-synthesizer"
+      ],
+      "artifactFlowFormat": "p50.dev/jpd/artifact-flow/v1",
+      "artifactFlows": [
+        {
+          "family": "journey-contract",
+          "inputs": [
+            "task:scope",
+            "runtime:events",
+            "runtime:status"
+          ],
+          "outputs": [
+            "schema:journey-contract"
+          ]
+        },
+        {
+          "family": "observation-compiler",
+          "inputs": [
+            "schema:journey-contract",
+            "evaluator:evidence-strength-lattice",
+            "observer:catalog",
+            "runtime:events",
+            "runtime:status",
+            "schema:observer-capability"
+          ],
+          "outputs": [
+            "schema:observation-obligation"
+          ]
+        },
+        {
+          "family": "plan-council",
+          "inputs": [
+            "schema:journey-contract",
+            "schema:observation-obligation",
+            "policy:assurance-tier-policy",
+            "policy:council-selection-policy",
+            "runtime:events",
+            "runtime:status"
+          ],
+          "outputs": [
+            "schema:council-result"
+          ]
+        },
+        {
+          "family": "defect-bounty",
+          "inputs": [
+            "schema:journey-contract",
+            "schema:observation-obligation",
+            "runtime:events",
+            "runtime:status"
+          ],
+          "outputs": [
+            "schema:journey-defect-claim"
+          ]
+        },
+        {
+          "family": "skill-synthesizer",
+          "inputs": [
+            "artifact:installed-capability-catalog",
+            "observer:catalog",
+            "policy:skill-promotion-policy",
+            "runtime:events",
+            "runtime:status",
+            "schema:journey-contract",
+            "schema:journey-verification-result",
+            "schema:observation-obligation"
+          ],
+          "outputs": [
+            "schema:skill-capsule"
+          ]
+        },
+        {
+          "family": "skill-evaluator",
+          "inputs": [
+            "policy:skill-promotion-policy",
+            "runtime:events",
+            "runtime:status",
+            "schema:skill-capsule",
+            "schema:journey-verification-result",
+            "schema:journey-defect-claim"
+          ],
+          "outputs": [
+            "schema:skill-evaluation"
+          ]
+        },
+        {
+          "family": "retry-provenance",
+          "inputs": [
+            "evaluator:retry-classification-policy",
+            "evaluator:retry-lineage-validation-policy",
+            "runtime:events",
+            "runtime:status",
+            "schema:retry-lineage-input"
+          ],
+          "outputs": [
+            "schema:retry-chain-input",
+            "schema:retry-chain"
+          ]
+        },
+        {
+          "family": "journey-verifier",
+          "inputs": [
+            "observer:catalog",
+            "policy:assurance-tier-policy",
+            "runtime:events",
+            "runtime:status",
+            "schema:council-result",
+            "schema:journey-contract",
+            "schema:observation-obligation",
+            "schema:observer-capability",
+            "schema:retry-chain"
+          ],
+          "outputs": [
+            "schema:journey-verification-result"
+          ]
+        }
+      ],
+      "missingCapabilityResult": "unresolved",
+      "hostViews": ["derived-and-deletable"],
+      "contributions": [
+        {
+          "id": "host/claude",
+          "kind": "host-adapter",
+          "path": ".claude-plugin/plugin.json",
+          "sha256": "sha256:45e168c6a38cf86eabb82a9717004371a661fd0b0585072441cfaa540097787a",
+          "effects": [
+            "host.discover"
+          ],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          }
+        },
+        {
+          "id": "host/codex",
+          "kind": "host-adapter",
+          "path": ".codex-plugin/plugin.json",
+          "sha256": "sha256:4cbffeabce6b3f5e13cfd924848958ca518b2713492e2276cc92f2c02ebd828b",
+          "effects": [
+            "host.discover"
+          ],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          }
+        },
+        {
+          "id": "host/mcp",
+          "kind": "host-adapter",
+          "path": ".mcp.json",
+          "sha256": "sha256:8fd119dc375d073974ec8cbac78fa64ddecbd79a62dafe0f284d65b67b1f5b44",
+          "effects": [
+            "runtime.connect"
+          ],
+          "permissions": [
+            "network.loopback",
+            "token.reference.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:mcp"
+          ]
+        },
+        {
+          "id": "agent/accessibility-user",
+          "kind": "agent",
+          "path": "agents/accessibility-user.json",
+          "sha256": "sha256:327d9cd28b8c9aed17fa74fc6bb12f18560703ec7a3a4a24a7082369ea0a4237",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph lint",
+            "cli:graph validate",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "plan-council"
+        },
+        {
+          "id": "agent/adversarial-critic",
+          "kind": "agent",
+          "path": "agents/adversarial-critic.json",
+          "sha256": "sha256:4ecd805fd1e09aab69c7700879317ef4501280a21f3be91e1c76a49579ca87d4",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:events verify",
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "plan-council"
+        },
+        {
+          "id": "agent/defect-hunter",
+          "kind": "agent",
+          "path": "agents/defect-hunter.json",
+          "sha256": "sha256:27ceebe067a26e1d4455c1dcd9c89bbadf490be256b691f5b725192250c0a909",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "defect-bounty"
+        },
+        {
+          "id": "agent/disagreement-resolver",
+          "kind": "agent",
+          "path": "agents/disagreement-resolver.json",
+          "sha256": "sha256:04c0c39c14e2d359a6c4334ecdff9a5a2ffbf9449c65b5f2a9ae8d4df18d7b59",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:events verify",
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "tool:events",
+            "tool:probe",
+            "tool:status"
+          ],
+          "family": "plan-council"
+        },
+        {
+          "id": "agent/evidence-advocate",
+          "kind": "agent",
+          "path": "agents/evidence-advocate.json",
+          "sha256": "sha256:d33bbf01f2aa0cb79bd6c43c1120ce9f38d9ce0f0db5b2fabec113404354afaa",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:events verify",
+            "cli:graph hash",
+            "cli:graph replay",
+            "tool:events",
+            "tool:probe",
+            "tool:status"
+          ],
+          "family": "defect-bounty"
+        },
+        {
+          "id": "agent/idea-generator",
+          "kind": "agent",
+          "path": "agents/idea-generator.json",
+          "sha256": "sha256:c99fe241cdb680dd30fb2bac4fa23e8061ec99065bba5383021d6a07862248f4",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph hash",
+            "cli:graph lint",
+            "cli:graph validate",
+            "tool:probe",
+            "tool:routes"
+          ],
+          "family": "plan-council"
+        },
+        {
+          "id": "agent/recovery-operator",
+          "kind": "agent",
+          "path": "agents/recovery-operator.json",
+          "sha256": "sha256:5de6c9dd105431acb1d412c812f9777de0b00a44c17c8f9a19b4f60abf028be8",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.mutate",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "owner.decision.request",
+            "package.read",
+            "runtime.read",
+            "runtime.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:events verify",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "tool:cancel",
+            "tool:events",
+            "tool:pause",
+            "tool:resume",
+            "tool:status"
+          ],
+          "family": "journey-verifier"
+        },
+        {
+          "id": "evaluator/evidence-strength-lattice",
+          "kind": "evaluator",
+          "path": "evaluators/evidence-strength-lattice.yaml",
+          "sha256": "sha256:d1aa1ccfd7fa32be662230098cc1c513fd9edee79c569b2e0ca8aa383c6c5531",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "observation-compiler",
+          "schema": "schemas/evidence-strength-lattice.schema.json"
+        },
+        {
+          "id": "evaluator/retry-classification-policy",
+          "kind": "evaluator",
+          "path": "evaluators/retry-classification-policy.yaml",
+          "sha256": "sha256:b41e9bda309e0a36e0a6b38eaf788f69670cd85c52a28b010174bbb1ad6f8a52",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "retry-provenance",
+          "schema": "schemas/retry-classification-policy.schema.json"
+        },
+        {
+          "id": "evaluator/retry-lineage-validation-policy",
+          "kind": "evaluator",
+          "path": "evaluators/retry-lineage-validation-policy.yaml",
+          "sha256": "sha256:47c6ffda02b41545d77ddc9de66830eff38e34244ed24591c8e57941ebc87940",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "retry-provenance",
+          "schema": "schemas/retry-lineage-validation-policy.schema.json"
+        },
+        {
+          "id": "fixture/negative/invalid-retry-lineage",
+          "kind": "fixture",
+          "path": "fixtures/negative/invalid-retry-lineage.json",
+          "sha256": "sha256:bd4f0f3f7cdcb63e64eda9ade9a9aaea41ff50a222801ed2265a1095b919d479",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "fixture/negative/journey-verification-missing-gate-claimed-success",
+          "kind": "fixture",
+          "path": "fixtures/negative/journey-verification-missing-gate-claimed-success.json",
+          "sha256": "sha256:eaa775c79ae9a6967491e16a586ad165d0c6b01ea8578f3301a467da7e0c0990",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "fixture/positive/journey-verification-accepted-with-waiver",
+          "kind": "fixture",
+          "path": "fixtures/positive/journey-verification-accepted-with-waiver.json",
+          "sha256": "sha256:e6d36b18988275a806deccc746da3d2e2970a3b60c06cf4240c1e3c33cc8b800",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "fixture/positive/journey-verification-first-pass",
+          "kind": "fixture",
+          "path": "fixtures/positive/journey-verification-first-pass.json",
+          "sha256": "sha256:1f294fbcaf2ca752da0989b04ba634bcb3a133feed2fe52497e81a60c7e633e0",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "fixture/positive/missing-observer-refusal",
+          "kind": "fixture",
+          "path": "fixtures/positive/missing-observer-refusal.json",
+          "sha256": "sha256:c1823165dd6207880ab070d28ea39c6b1e9d831ebe430a49a3b98a8f8daa2bde",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "observation-compiler"
+        },
+        {
+          "id": "fixture/positive/non-promotable-skill-capsule",
+          "kind": "fixture",
+          "path": "fixtures/positive/non-promotable-skill-capsule.json",
+          "sha256": "sha256:ffb477e8f88729b5590ae04e707e2015b95b22cff419d0e409de461e8352aad4",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "skill-synthesizer"
+        },
+        {
+          "id": "fixture/positive/recovered-retry-chain",
+          "kind": "fixture",
+          "path": "fixtures/positive/recovered-retry-chain.json",
+          "sha256": "sha256:dffc091109c392191d146986e84c55796258f9abe8b5063d843d442bd2587243",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "fixture/positive/semantic-journey-defect-claim",
+          "kind": "fixture",
+          "path": "fixtures/positive/semantic-journey-defect-claim.json",
+          "sha256": "sha256:e18743a531300a4891b2511eae3cd432218767e942554f1bc5b3c849efed3a92",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "defect-bounty"
+        },
+        {
+          "id": "fixture/graph/jpd-self-validation",
+          "kind": "fixture",
+          "path": "graphs/jpd-self-validation.fixtures.json",
+          "sha256": "sha256:fd4101b973d32fd06626241fb48a3b138853d4b8099f5e8e4932a72dc56e1c8d",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "graph/jpd-self-validation",
+          "kind": "graph",
+          "path": "graphs/jpd-self-validation.yaml",
+          "sha256": "sha256:bdc4a2df7d09f00844577240aaa3c0e9fa8b7e54eb168e2b0f4628d2888a63ce",
+          "effects": [
+            "artifact.local.write"
+          ],
+          "permissions": [
+            "package.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph hash",
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate"
+          ],
+          "family": "journey-verifier"
+        },
+        {
+          "id": "observer/catalog",
+          "kind": "observer",
+          "path": "observers/catalog.yaml",
+          "sha256": "sha256:55d40a98f22db22e2d13fcc9dd4e19023b560501f68ad238cadf0852c86a0aae",
+          "effects": [
+            "artifact.local.write",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api",
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:events verify",
+            "cli:execution status",
+            "cli:graph hash",
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "tool:events",
+            "tool:probe",
+            "tool:routes",
+            "tool:status",
+            "tool:wake_status"
+          ],
+          "family": "observation-compiler",
+          "schema": "schemas/observer-catalog.schema.json"
+        },
+        {
+          "id": "policy/assurance-tier-policy",
+          "kind": "policy",
+          "path": "policies/assurance-tier-policy.yaml",
+          "sha256": "sha256:9e71aa4cc03fa409641b6aed353a6812658dd0aafa12ad560125e2f7a3303a02",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "journey-verifier",
+          "schema": "schemas/assurance-tier-policy.schema.json"
+        },
+        {
+          "id": "policy/council-selection-policy",
+          "kind": "policy",
+          "path": "policies/council-selection-policy.yaml",
+          "sha256": "sha256:2da2acb5de778dd4daca983c5898a4f9d26f581238de05b4d54a3ac994d63a83",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "plan-council",
+          "schema": "schemas/council-selection-policy.schema.json"
+        },
+        {
+          "id": "policy/skill-promotion-policy",
+          "kind": "policy",
+          "path": "policies/skill-promotion-policy.yaml",
+          "sha256": "sha256:322274514a37309c99ca7ba9f7c235f5f0e1c87ca36fb873b9eb90ec8ef97e58",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [
+              "jpd.registered-deterministic-evaluator"
+            ],
+            "observers": []
+          },
+          "family": "skill-evaluator",
+          "schema": "schemas/skill-promotion-policy.schema.json"
+        },
+        {
+          "id": "schema/assurance-tier-policy",
+          "kind": "schema",
+          "path": "schemas/assurance-tier-policy.schema.json",
+          "sha256": "sha256:ed669c53e7e4cdb9459b1eba55668ea49bcf8f63bdefba0f869fd7900074a541",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "schema/council-selection-policy",
+          "kind": "schema",
+          "path": "schemas/council-selection-policy.schema.json",
+          "sha256": "sha256:962a57dff3d35876f6980b44e73d61562681e712c073c38e38d67d3ab59697f6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "plan-council"
+        },
+        {
+          "id": "schema/council-result",
+          "kind": "schema",
+          "path": "schemas/council-result.schema.json",
+          "sha256": "sha256:5c00620f830c2ba9332b25cc43bc11ef16180be297cb2c850405c45e7e135ab8",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "plan-council"
+        },
+        {
+          "id": "schema/evidence-strength-lattice",
+          "kind": "schema",
+          "path": "schemas/evidence-strength-lattice.schema.json",
+          "sha256": "sha256:0c71081dddd02883b0309ed01fd3f69bf35b5640414ba831a06a343047de61c1",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "observation-compiler"
+        },
+        {
+          "id": "schema/journey-contract",
+          "kind": "schema",
+          "path": "schemas/journey-contract.schema.json",
+          "sha256": "sha256:c5ae0162ab27de328058d2392940876ad4a8f050791263ba3c0882b2148c8212",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-contract"
+        },
+        {
+          "id": "schema/journey-defect-claim",
+          "kind": "schema",
+          "path": "schemas/journey-defect-claim.schema.json",
+          "sha256": "sha256:6f3ef22292599a56415fd235b019b8fcefdee4742e0b6a37aff4356ff3b983f0",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "defect-bounty"
+        },
+        {
+          "id": "schema/journey-verification-result",
+          "kind": "schema",
+          "path": "schemas/journey-verification-result.schema.json",
+          "sha256": "sha256:fb7218b11c0f34d180cfb321f4d43cf8fe944b1adcca91a41194ab8e39180767",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
+          "id": "schema/observation-obligation",
+          "kind": "schema",
+          "path": "schemas/observation-obligation.schema.json",
+          "sha256": "sha256:43487c2814b51b474a24008fc3bf30c109575344db10d6c935bdc35e31fd5b05",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "observation-compiler"
+        },
+        {
+          "id": "schema/observer-capability",
+          "kind": "schema",
+          "path": "schemas/observer-capability.schema.json",
+          "sha256": "sha256:9e8d54cccc7849a1e622b03a95619798e7bd787dfb092b37287be0299fd9ae56",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "observation-compiler"
+        },
+        {
+          "id": "schema/observer-catalog",
+          "kind": "schema",
+          "path": "schemas/observer-catalog.schema.json",
+          "sha256": "sha256:000c1b4f4f063978b7b76549e14277baec992d0087aa17f92307155e5f37f392",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "observation-compiler"
+        },
+        {
+          "id": "schema/retry-chain",
+          "kind": "schema",
+          "path": "schemas/retry-chain.schema.json",
+          "sha256": "sha256:4fd19766bd106418d4b38294bb600d1d419ee345b0da51f1f51a21ccaa0deb96",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "schema/retry-chain-input",
+          "kind": "schema",
+          "path": "schemas/retry-chain-input.schema.json",
+          "sha256": "sha256:7b315fe622de10df11efe800d17ed7f833f96407e7b8f59a309d9fe899b826ac",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "schema/retry-classification-policy",
+          "kind": "schema",
+          "path": "schemas/retry-classification-policy.schema.json",
+          "sha256": "sha256:cbb87b62341d5fd64b62ff5dce58d940a1ed446cebf3fb285259761243c9a65d",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "schema/retry-lineage-input",
+          "kind": "schema",
+          "path": "schemas/retry-lineage-input.schema.json",
+          "sha256": "sha256:9315409559d0c7a6a38c34f53a3044d220fb395cc688903ef6b4fabe27602b40",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "schema/retry-lineage-validation-policy",
+          "kind": "schema",
+          "path": "schemas/retry-lineage-validation-policy.schema.json",
+          "sha256": "sha256:802cb6bb51cef6b0ef1b86a448b68257fdb2de21d3e5e218792991aeadfb83b9",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "retry-provenance"
+        },
+        {
+          "id": "schema/skill-capsule",
+          "kind": "schema",
+          "path": "schemas/skill-capsule.schema.json",
+          "sha256": "sha256:3b197acb45cd7467fae8789fb099db3d6328409cbe7c443c0dc03ac1804ebc87",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "skill-synthesizer"
+        },
+        {
+          "id": "schema/skill-evaluation",
+          "kind": "schema",
+          "path": "schemas/skill-evaluation.schema.json",
+          "sha256": "sha256:0789c31062ada90de9824400808eb972512d713f2cda2db9d66a4943648d7a20",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "skill-evaluator"
+        },
+        {
+          "id": "schema/skill-promotion-policy",
+          "kind": "schema",
+          "path": "schemas/skill-promotion-policy.schema.json",
+          "sha256": "sha256:e0392b0a53a0c6684188bb408f63be05483666c2aafda8b7e41c8203ecaff4b1",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "skill-evaluator"
+        },
+        {
+          "id": "skill/defect-bounty",
+          "kind": "skill",
+          "path": "skills/defect-bounty/SKILL.md",
+          "sha256": "sha256:15d805fdcac52bf6396f72d6018a64921efaecb33f53d2ff46cee817260774d4",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.mutate",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "owner.decision.request",
+            "package.read",
+            "runtime.read",
+            "runtime.write",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph replay",
+            "cli:graph simulate",
+            "tool:events",
+            "tool:signal",
+            "tool:status"
+          ],
+          "family": "defect-bounty"
+        },
+        {
+          "id": "skill/journey-contract",
+          "kind": "skill",
+          "path": "skills/journey-contract/SKILL.md",
+          "sha256": "sha256:17fbdab1d99e44037ddf4cf8abdb33bda3c730cf2b9ad0b31e6d9186456e510e",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph lint",
+            "cli:graph validate",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "journey-contract"
+        },
+        {
+          "id": "skill/journey-verifier",
+          "kind": "skill",
+          "path": "skills/journey-verifier/SKILL.md",
+          "sha256": "sha256:692d0c3be9f9f1ce08ad1ae9606feb602d3c769c3a4c3c8788fd05d8f77ec5f3",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.mutate",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "owner.decision.request",
+            "package.read",
+            "runtime.read",
+            "runtime.write",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:execution amend-budget",
+            "cli:execution approve",
+            "cli:execution cancel",
+            "cli:execution pause",
+            "cli:execution resume",
+            "cli:execution signal",
+            "cli:execution start",
+            "cli:execution status",
+            "cli:graph hash",
+            "cli:graph lint",
+            "cli:graph replay",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "cli:quality certify",
+            "tool:amend_budget",
+            "tool:approve",
+            "tool:cancel",
+            "tool:events",
+            "tool:pause",
+            "tool:probe",
+            "tool:resume",
+            "tool:routes",
+            "tool:signal",
+            "tool:start",
+            "tool:status",
+            "tool:wake_arm",
+            "tool:wake_status",
+            "tool:wake_wait"
+          ],
+          "family": "journey-verifier"
+        },
+        {
+          "id": "skill/observation-compiler",
+          "kind": "skill",
+          "path": "skills/observation-compiler/SKILL.md",
+          "sha256": "sha256:34d15359e024b206f0cd90301f571df65c17d5fd023696856e1bf9d0ead94767",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph lint",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "cli:schema conformance",
+            "cli:schema view",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "observation-compiler"
+        },
+        {
+          "id": "skill/plan-council",
+          "kind": "skill",
+          "path": "skills/plan-council/SKILL.md",
+          "sha256": "sha256:17d7a78ea8ec66ce2e36b0580eaa46106750ff8c05f3a6f0e088b204998e74fd",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.mutate",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "owner.decision.request",
+            "package.read",
+            "runtime.read",
+            "runtime.write",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph lint",
+            "cli:graph simulate",
+            "cli:graph validate",
+            "tool:events",
+            "tool:signal",
+            "tool:start",
+            "tool:status"
+          ],
+          "family": "plan-council"
+        },
+        {
+          "id": "skill/retry-provenance",
+          "kind": "skill",
+          "path": "skills/retry-provenance/SKILL.md",
+          "sha256": "sha256:294e2d2da878bb9f0e773c7b41a198a1453719db0a9955e94d3ca42e2e4d0ad6",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph replay",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "retry-provenance"
+        },
+        {
+          "id": "skill/skill-evaluator",
+          "kind": "skill",
+          "path": "skills/skill-evaluator/SKILL.md",
+          "sha256": "sha256:c10eea4ce33923bf6fb7ae12490192958ba8ab06217aa10ce20b414547554118",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:graph replay",
+            "cli:graph simulate",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "skill-evaluator"
+        },
+        {
+          "id": "skill/skill-synthesizer",
+          "kind": "skill",
+      "path": "skills/skill-synthesizer/SKILL.md",
+      "sha256": "sha256:2e1b190609aae1fdd0582dc2a7d9119d19fc6b6b586bdd1e65d12d9197fa11f5",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:extension validate",
+            "cli:schema catalog",
+            "cli:schema conformance",
+            "cli:schema digest",
+            "cli:schema view",
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "skill-synthesizer"
+        }
+      ]
+    },
+    "runtime": {
+      "kind": "data",
+      "isolationMinimum": "tier_0"
+    },
+    "compatibility": {
+      "graphhelmApi": "p50.dev/v1",
+      "wireIdentifiers": "provisional"
+    }
+  }
+}

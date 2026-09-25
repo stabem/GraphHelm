@@ -1,0 +1,17 @@
+--- F1 (critical) ---
+The one field that answers the story — `attention` in `status` — reads `"unknown"` with an empty `attentionReasons` array, both on first open and 60s later. The glance yields no go-back-to-sleep answer at all; the operator gets a null verdict rather than yes/no.
+
+--- F2 (high) ---
+`flaky_check` recorded `retryable_failure` / `tool_exited_non_zero` at 20:13:23 and sits in `queued`, but `status` shows `failed: 0`, no retry count, no last-failure field, and `attention: unknown`. A glancing operator sees `status: running` with a clean state histogram and concludes all is well while a node is actively failing.
+
+--- F3 (high) ---
+`judge` has been `running` since 20:13:24 with zero events for 60+ seconds, and `silenceUnevaluated: [{node: judge, reason: no_declared_budget}]` means stall detection is switched off for exactly the node that is stuck. A hung node can therefore never raise attention, which is the failure mode the operator most needs to be woken for.
+
+--- F4 (medium) ---
+Nothing in `status` explains itself; discovering the flaky_check failure required paging the raw hash-chained event log and reading 13 envelopes of runtime bookkeeping. The 'one glance' costs at minimum a second call plus manual event triage.
+
+--- F5 (medium) ---
+Arming the wake lease appended `wake_lease` event seq 14 to the same stream, so `headSequence` advanced 13 → 14 while `lastEventAt` stayed at 20:13:24. Monitoring mutates the very counter an operator reads as a liveness proxy, and the two progress indicators now contradict each other.
+
+--- F6 (low) ---
+`wake_wait` returned `{"outcome":"timeout"}` with no indication of whether the execution is still healthy, so the sanctioned block-and-wait path also ends with no answer and forces another full `status` + `events` round trip.

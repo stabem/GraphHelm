@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/extension.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Extension Manifest",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "p50.dev/v1"},
+    "kind": {"const": "Extension"},
+    "metadata": {
+      "type": "object",
+      "required": ["id", "version", "publisher"],
+      "properties": {
+        "id": {"type": "string"},
+        "version": {"type": "string"},
+        "publisher": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "spec": {
+      "type": "object",
+      "required": ["type", "capabilities", "permissions", "contracts", "runtime", "compatibility"],
+      "properties": {
+        "type": {"enum": ["capability-provider", "tool", "skill-package", "agent-package", "model-adapter", "evaluator", "policy-pack", "retriever", "document-materializer", "sandbox-adapter", "trigger", "visualizer", "deployment-adapter", "dream-strategy"]},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "permissions": {"type": "object", "additionalProperties": true},
+        "contracts": {"type": "object", "additionalProperties": true},
+        "runtime": {"type": "object", "required": ["kind", "isolationMinimum"], "properties": {"kind": {"enum": ["oci", "wasi", "process", "http", "grpc", "mcp", "data"]}, "isolationMinimum": {"enum": ["tier_0", "tier_1", "tier_2", "tier_3"]}}, "additionalProperties": true},
+        "compatibility": {"type": "object", "additionalProperties": true},
+        "telemetry": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

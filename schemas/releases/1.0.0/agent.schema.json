@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/agent.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Agent Definition",
+  "type": "object",
+  "required": ["purpose", "capabilities", "inputSchema", "outputSchema", "completionContract"],
+  "properties": {
+    "purpose": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+    "allowedTools": {"type": "array", "items": {"type": "string"}},
+    "prohibitedActions": {"type": "array", "items": {"type": "string"}},
+    "inputSchema": {"type": "string"},
+    "outputSchema": {"type": "string"},
+    "instructions": {"type": "string"},
+    "instructionsRef": {"type": "string"},
+    "modelRequirements": {"type": "object", "additionalProperties": true},
+    "contextStrategy": {"type": "object", "additionalProperties": true},
+    "completionContract": {"type": ["string", "object"]},
+    "evidenceRequirements": {"type": "array", "items": {"type": ["string", "object"]}},
+    "memoryPolicy": {"type": "object", "additionalProperties": true},
+    "isolationMinimum": {"enum": ["tier_0", "tier_1", "tier_2", "tier_3"]}
+  },
+  "oneOf": [
+    {"required": ["instructions"]},
+    {"required": ["instructionsRef"]}
+  ],
+  "additionalProperties": true
+}

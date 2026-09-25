@@ -1,0 +1,56 @@
+.node-deliveries { padding: 18px; border-bottom: 1px solid #33343b; color: #e7e7ec; max-height: 60vh; overflow: auto; flex-shrink: 0; }
+.delivery-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.delivery-heading h3, .delivery-heading h2 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.node-deliveries p { line-height: 1.6; color: #b3b4c2; font-size: 12px; overflow-wrap: anywhere; }
+.delivery-card { margin-top: 16px; padding: 14px; background: #222329; border: 1px solid #373840; border-radius: 12px; }
+.delivery-eyebrow, .delivery-meta { font-size: 11px; color: #b3b4c2; }
+.delivery-card h4 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
+.delivery-card ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.delivery-card li + li { border-top: 1px solid #383942; margin-top: 10px; padding-top: 10px; }
+.delivery-document { display: flex; align-items: center; width: 100%; gap: 8px; padding: 7px 0; border: 0; background: transparent; color: #8cc5ff; text-align: left; cursor: pointer; }
+.delivery-document span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.delivery-document svg { flex-shrink: 0; }
+.delivery-document small { display: block; margin-top: 4px; font-size: 11px; }
+.delivery-document:hover strong { text-decoration: underline; }
+.document-editor { position: relative; display: flex; flex-direction: column; gap: 14px; width: min(480px, 42vw); min-width: 300px; height: 100%; overflow-y: auto; padding: 20px; box-sizing: border-box; background: #1c1d22; border-left: 1px solid #41434d; color: #ebebf0; }
+.document-editor header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.document-editor button { cursor: pointer; border: 1px solid #484b56; border-radius: 8px; padding: 9px 12px; color: #edf0f8; background: #30323b; }
+.document-editor button:disabled { opacity: .5; cursor: default; }
+.document-editor :focus-visible, .node-deliveries :focus-visible { outline: 2px solid #8cc5ff; outline-offset: 3px; }
+.document-path { margin: 0; color: #b9bbca; font-size: 12px; overflow-wrap: anywhere; }
+.document-scope { padding: 12px; border: 1px solid #434958; border-radius: 10px; background: #242934; font-size: 12px; }
+.document-scope p { margin: 6px 0 0; line-height: 1.5; color: #c0c8d9; }
+.document-editor label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.document-content-label { flex: 1; min-height: 220px; }
+.document-editor textarea { box-sizing: border-box; width: 100%; padding: 12px; color: #e9ebf2; background: #14151a; border: 1px solid #484a56; border-radius: 8px; line-height: 1.6; resize: vertical; user-select: text; }
+.document-content-label textarea { flex: 1; min-height: 200px; font-family: ui-monospace, monospace; font-size: 12px; }
+.document-reason { min-height: 80px; }
+.document-editor .document-save { background: #2d65a3; border-color: #639cdb; }
+.document-draft-status, .document-notice { font-size: 12px; line-height: 1.5; color: #c0c8d9; }
+.document-error { color: #ffcbc4; font-size: 12px; line-height: 1.5; }
+.document-discard { padding: 16px; border: 1px solid #9d7550; background: #342b25; border-radius: 10px; }
+.document-discard button + button { margin-left: 8px; }
+@media (max-width: 800px) { .document-editor { position: fixed; inset: 0; width: 100%; min-width: 0; height: 100dvh; z-index: 60; padding: 16px; } }
+
+/* Editing is a focused workspace. Hide other conversations without unmounting their drafts;
+   all previous panes return to their existing state as soon as the editor closes. */
+.app[data-document-open="true"] #conversation-panel,
+.app[data-document-open="true"] .split > .chat-col { display: none !important; }
+.app[data-document-open="true"] .split > .node-col { position: relative; inset: auto; flex: 0 0 300px; width: 300px; box-shadow: none; }
+.app[data-document-open="true"] .split > .document-editor { flex: 1 0 420px; width: auto; }
+.app[data-document-open="true"] .work-layout { grid-template-columns: minmax(0, 1fr); }
+.app[data-document-open="true"] .work-sidebar { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1700px) {
+  /* The board stays mounted, but yields the work area instead of collapsing into a text sliver. */
+  .app[data-document-open="true"] .split > .scene { display: none; }
+}
+@media (max-width: 800px) {
+  .app[data-document-open="true"] .split > .node-col { display: none; }
+  .app[data-document-open="true"] .split > .document-editor { position: fixed; inset: 0; width: 100%; min-width: 0; flex: none; }
+  .document-editor textarea { font-size: 16px; }
+}
+@media (max-width: 1100px) {
+  .app[data-document-open="true"] { grid-template-columns: minmax(0, 1fr); }
+  .app[data-document-open="true"] > .rail,
+  .app[data-document-open="true"] > .grip { display: none; }
+}

@@ -1,0 +1,29 @@
+id: ctx_security_review_v3
+version: 3
+nodeId: security_review
+objective: Verificar vulnerabilidades na mudança de autenticação.
+sections:
+  projectKernel:
+    - context://project/kernel@4
+  task:
+    - context://task/request
+    - context://task/acceptance-criteria
+  node:
+    - context://node/security-review-contract
+  evidence:
+    - artifact://implementation.diff
+    - source://src/auth/session.ts
+    - artifact://auth-tests.json
+  dependencyOutputs:
+    - artifact://impact-analysis.json
+  agentExperience:
+    - memory://security-reviewer/auth-token-pitfall@2
+excluded:
+  - context://executor/subjective-summary
+  - context://marketing/documents
+tokenBudget:
+  allocated: 16000
+  expandableTo: 28000
+provenance:
+  - event://node.context_compiled/1842
+dependencyHash: sha256:example

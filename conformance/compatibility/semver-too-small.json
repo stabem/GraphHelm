@@ -1,0 +1,6 @@
+{
+  "baselineVersion": "1.2.3",
+  "candidateVersion": "1.2.3",
+  "impact": "patch",
+  "expect": {"ok": false, "codes": ["GHC004_SEMVER_MISMATCH"]}
+}

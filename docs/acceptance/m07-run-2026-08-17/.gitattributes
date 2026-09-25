@@ -1,0 +1,2 @@
+# Run evidence is byte-addressed: SHA256SUMS hashes exact bytes; no eol conversion ever.
+* -text

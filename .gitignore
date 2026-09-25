@@ -1,0 +1,19 @@
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+__pycache__/
+.worktrees/
+target/
+*.jsonl
+# The local Runtime state directory a developer or a session creates in the repository root:
+# the serve token, the sealed broker credential store, the keyring and the live event stores.
+# It was NOT ignored, and a single "git add -A" in a session worktree staged
+# .graphhelm/broker/credentials.json, .graphhelm/serve.key and both event-store tokens.
+# Caught before any push (#1184), which is luck rather than a safeguard: untracked is not a
+# guard, an ignore rule is.
+/.graphhelm/
+# The optional full check (ci/gate.ps1) writes its run manifests under .factory/gate-runs/. The
+# receipt store and the runners that committed it were retired on 2026-09-24; a local run's
+# manifest is scratch and never committed.
+/.factory/

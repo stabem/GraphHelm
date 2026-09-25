@@ -1,0 +1,23 @@
+id: dream_2026_08_08_0042
+trigger: project_idle
+durationSeconds: 384
+analyzed:
+  documents: 74
+  claims: 1328
+  agents: 19
+  executions: 46
+  skills: 31
+changes:
+  documentsConsolidated: 3
+  claimsSuperseded: 12
+  memoriesExpired: 7
+  agentsMerged: 2
+  skillsUpdated: 1
+  contextIndexesRebuilt: 4
+validation:
+  consistencyTests: passed
+  criticResult: approved
+  rollbackAvailable: true
+expectedEffect:
+  contextReductionPercent: 18
+  estimatedTokenSavingsPercent: 14

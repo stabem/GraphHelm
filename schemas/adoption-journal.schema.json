@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/adoption-journal.schema.json",
+  "type": "object",
+  "properties": {
+    "record": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "transactionId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "planDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "backupId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "project": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "identity": {
+              "type": "object",
+              "properties": {
+                "device": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "file": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "device",
+                "file"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "path",
+            "identity"
+          ],
+          "additionalProperties": false
+        },
+        "home": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "identity": {
+              "type": "object",
+              "properties": {
+                "device": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "file": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "device",
+                "file"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "path",
+            "identity"
+          ],
+          "additionalProperties": false
+        },
+        "packages": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "enum": [
+                  "graphhelm-jpd",
+                  "graphhelm-development-contracts"
+                ]
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "phase": {
+                "enum": [
+                  "planned",
+                  "intent",
+                  "published",
+                  "reverted"
+                ]
+              },
+              "root": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/properties/record/properties/project"
+                  }
+                ]
+              },
+              "activationDigest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "digest",
+              "phase",
+              "root"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "operationIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "root": {
+                "enum": [
+                  "project",
+                  "home"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "beforeDigest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "afterDigest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "access": {
+                "type": "object"
+              },
+              "beforeAccess": {
+                "type": "object"
+              },
+              "phase": {
+                "enum": [
+                  "planned",
+                  "intent",
+                  "published",
+                  "reverted",
+                  "restore_intent",
+                  "detached",
+                  "restore_detached"
+                ]
+              },
+              "guards": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "directory": {
+                      "type": "string",
+                      "pattern": "^\\.graphhelm-adoption-[0-9a-f-]{36}$"
+                    },
+                    "sourceIdentity": {
+                      "type": "object",
+                      "properties": {
+                        "device": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "file": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "device",
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "candidateIdentity": {
+                      "type": "object",
+                      "properties": {
+                        "device": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "file": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "device",
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "expectedDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "replacementDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "restoring": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "directory",
+                    "sourceIdentity",
+                    "candidateIdentity",
+                    "expectedDigest",
+                    "replacementDigest",
+                    "restoring"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "operationIndex",
+              "root",
+              "path",
+              "beforeDigest",
+              "afterDigest",
+              "access",
+              "phase"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "state": {
+          "enum": [
+            "planned",
+            "backed_up",
+            "applying",
+            "installed_unverified",
+            "verified",
+            "restoring",
+            "restored",
+            "recovery_required"
+          ]
+        },
+        "receipt": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "apiVersion": {
+                  "const": "p50.dev/adoption/v1"
+                },
+                "kind": {
+                  "const": "ApplyReceipt"
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "spec": {
+                  "type": "object",
+                  "properties": {
+                    "transactionId": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "planDigest": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "backupId": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "enum": [
+                        "installed_unverified",
+                        "verified",
+                        "restored",
+                        "recovery_required"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "transactionId",
+                    "planDigest",
+                    "backupId",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "apiVersion",
+                "kind",
+                "id",
+                "spec"
+              ],
+              "additionalProperties": true
+            }
+          ]
+        },
+        "predecessor": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "restore": {
+          "type": "object",
+          "properties": {
+            "selectedBackup": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "minItems": 0,
+              "maxItems": 256
+            }
+          },
+          "required": [
+            "selectedBackup",
+            "sources"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "version",
+        "transactionId",
+        "sequence",
+        "planDigest",
+        "backupId",
+        "project",
+        "home",
+        "entries",
+        "state",
+        "receipt"
+      ],
+      "additionalProperties": false
+    },
+    "checksum": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "record",
+    "checksum"
+  ],
+  "additionalProperties": false,
+  "x-graphhelm-schema-version": "1.0.0"
+}

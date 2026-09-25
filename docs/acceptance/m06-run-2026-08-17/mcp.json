@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "graphhelm": {
+      "command": "F:/projects/GraphHelm/.worktrees/issue-54-quality-gates/target/debug/graphhelm.exe",
+      "args": [
+        "mcp",
+        "--url",
+        "http://127.0.0.1:42117",
+        "--token-file",
+        "C:/Users/example/AppData/Local/Temp/m06-dogfood/events.token",
+        "--actor",
+        "agent-judge"
+      ]
+    }
+  }
+}

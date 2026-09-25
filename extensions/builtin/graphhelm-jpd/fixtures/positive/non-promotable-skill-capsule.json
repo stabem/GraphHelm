@@ -1,0 +1,135 @@
+{
+  "capsuleId": "capsule/issue-210/browser-install-check",
+  "name": "Browser extension installation check",
+  "version": "0.1.0",
+  "scope": "task",
+  "status": "draft",
+  "source": {
+    "taskId": "issue-210",
+    "generatedAt": "2026-08-22T15:00:00Z",
+    "author": {
+      "actorId": "agent/skill-synthesizer",
+      "actorType": "agent"
+    },
+    "sourceJourney": {
+      "artifactType": "journey_contract",
+      "schemaId": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+      "contractId": "journey/issue-210-extension-install",
+      "contractVersion": 1,
+      "contractDigest": "sha256:6161616161616161616161616161616161616161616161616161616161616161"
+    },
+    "bindings": {
+      "graph": {
+        "graphId": "issue_210_jpd_self_validation_v1",
+        "version": 1,
+        "semanticHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "code": {
+        "repository": "stabem/GraphHelm",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "revisionAlgorithm": "git-sha1",
+        "dirty": false,
+        "snapshotDigest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      }
+    },
+    "generatorSkillId": "skill-synthesizer",
+    "generatorSkillVersion": "1.0.0"
+  },
+  "lifecycle": {
+    "reviewAt": "2026-08-29T15:00:00Z",
+    "expiresAt": "2026-09-05T15:00:00Z",
+    "onExpiry": "suspend"
+  },
+  "authority": {
+    "status": "candidate",
+    "validation": {
+      "status": "capability_missing",
+      "code": "SKILL_CAPSULE_VALIDATOR_MISSING",
+      "missingCapability": "jpd.registered-deterministic-skill-capsule-validator",
+      "reason": "No registered deterministic Skill Capsule validator is available."
+    }
+  },
+  "entrySkillIds": [
+    "journey-verifier"
+  ],
+  "requiredCapabilities": [
+    {
+      "capabilityId": "graph.validate",
+      "capabilityVersion": "1.0.0",
+      "providerExtensionId": "builtin/graphhelm-core",
+      "providerExtensionVersion": "0.1.0",
+      "contractDigest": "sha256:7171717171717171717171717171717171717171717171717171717171717171",
+      "publicSurface": "cli",
+      "effects": [
+        "read_only"
+      ],
+      "permissions": [
+        "package.read"
+      ]
+    },
+    {
+      "capabilityId": "execution.status",
+      "capabilityVersion": "1.0.0",
+      "providerExtensionId": "builtin/graphhelm-core",
+      "providerExtensionVersion": "0.1.0",
+      "contractDigest": "sha256:7272727272727272727272727272727272727272727272727272727272727272",
+      "publicSurface": "mcp",
+      "effects": [
+        "runtime_read"
+      ],
+      "permissions": [
+        "network.loopback",
+        "runtime.read",
+        "token.reference.read"
+      ]
+    }
+  ],
+  "contractRefs": [
+    {
+      "contractId": "journey/issue-210-extension-install",
+      "schemaId": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+      "digest": "sha256:6161616161616161616161616161616161616161616161616161616161616161"
+    }
+  ],
+  "obligationBindings": [
+    {
+      "artifactType": "observation_obligation",
+      "schemaId": "https://p50.dev/extensions/graphhelm-jpd/schemas/observation-obligation.schema.json",
+      "obligationId": "obligation/rendered-loading-state",
+      "obligationDigest": "sha256:6262626262626262626262626262626262626262626262626262626262626262",
+      "contractId": "journey/issue-210-extension-install",
+      "contractDigest": "sha256:6161616161616161616161616161616161616161616161616161616161616161",
+      "promiseId": "promise/loading-is-visible",
+      "requiredObserverCapability": "browser.semantic-journey"
+    }
+  ],
+  "requiredObservers": [
+    {
+      "observerId": "graphhelm-browser-user-journey",
+      "observerVersion": "1.0.0",
+      "contractDigest": "sha256:7373737373737373737373737373737373737373737373737373737373737373"
+    }
+  ],
+  "immutableResourceDigests": [
+    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ],
+  "promotion": {
+    "eligible": false,
+    "distinctSuccessfulRuns": 1,
+    "minimumDistinctRuns": 3,
+    "evidenceFresh": false,
+    "tokenBudgetWithinLimit": true,
+    "unresolvedSevereClaims": 1,
+    "reasons": [
+      "Only one distinct run exists.",
+      "The required browser observer is unavailable.",
+      "One high-severity defect claim remains unresolved."
+    ]
+  },
+  "governance": {
+    "publicationAuthority": "graph_governor",
+    "selfActivationAllowed": false,
+    "operationalGraphMutationAllowed": false,
+    "publication": null
+  }
+}

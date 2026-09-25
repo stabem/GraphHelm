@@ -1,0 +1,7 @@
+{
+  "schema": "graph",
+  "fromVersion": "1.0.0",
+  "toVersion": "2.0.0",
+  "missing": "changelog",
+  "expect": {"ok": false, "codes": ["GHC004_SEMVER_MISMATCH"]}
+}

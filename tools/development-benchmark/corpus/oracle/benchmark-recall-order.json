@@ -1,0 +1,1 @@
+{"oracleId":"oracle-benchmark-recall-order","requiredEvidence":["tools/development-benchmark/src/lib.rs"],"answer":"evaluate_run refuses on any missed case before computing a mean: a fluent answer with missing evidence scores HIGH, so averaging produces an arithmetically correct number about the wrong population."}

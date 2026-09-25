@@ -1,0 +1,22 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: invalid-entrypoint
+  name: Invalid entrypoint
+  executionId: exec-invalid-entrypoint
+  version: 1
+spec:
+  entrypoints: [missing]
+  nodes:
+    finish:
+      type: tool
+      name: Finish
+      objective: Finish deterministically.
+      optionality: required
+      timeoutSeconds: 30
+  edges: []
+  budgets:
+    maxNodes: 2
+    maxDepth: 2
+  completion:
+    terminalNodes: [finish]

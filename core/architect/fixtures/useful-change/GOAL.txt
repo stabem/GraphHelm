@@ -1,0 +1,1 @@
+prove that src/lib.rs defines the FIXED constant by running the repository tests

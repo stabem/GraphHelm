@@ -1,0 +1,34 @@
+{
+  "caseId": "benchmark-recall-order",
+  "query": "Why does the benchmark evaluator settle required-evidence recall BEFORE any mean exists, instead of letting a miss lower the score? Name the function and the failure shape this order forecloses.",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "core/schema/src/extension_capability_tests.rs",
+      "lines": "180-210"
+    },
+    {
+      "path": "apps/cli/tests/execution_cli.rs",
+      "lines": "1790-1815"
+    },
+    {
+      "path": "apps/cli/tests/api_http.rs",
+      "lines": "814-831"
+    },
+    {
+      "path": "core/events/src/local.rs",
+      "lines": "6955-6999"
+    },
+    {
+      "path": "core/quality/tests/freeze_enforced.rs",
+      "lines": "85-114"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

@@ -1,0 +1,2 @@
+# The store's journal is fixture bytes, not a log: the top-level `*.jsonl` rule does not apply.
+!events/*.jsonl

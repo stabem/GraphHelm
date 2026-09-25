@@ -1,0 +1,118 @@
+{
+  "verificationId": "verification/issue-210/invalid-gate",
+  "journeyRunId": "journey-run/issue-210/invalid-gate",
+  "contractId": "journey/issue-210-extension-bundle",
+  "contractDigest": "sha256:7171717171717171717171717171717171717171717171717171717171717171",
+  "verifiedAt": "2026-08-22T16:10:00Z",
+  "authority": {
+    "status": "candidate",
+    "validation": {
+      "status": "capability_missing",
+      "code": "JPD_VALIDATOR_MISSING",
+      "missingCapability": "jpd.registered-deterministic-validator",
+      "reason": "No registered deterministic JPD validator is available in extension version 0.1.0."
+    }
+  },
+  "bindings": {
+    "graph": {
+      "graphId": "issue_210_jpd_self_validation_v1",
+      "version": 1,
+      "semanticHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "council": {
+      "status": "not_applicable",
+      "reason": "direct_tier"
+    },
+    "code": {
+      "repository": "stabem/GraphHelm",
+      "revision": "cccccccccccccccccccccccccccccccccccccccc",
+      "revisionAlgorithm": "git-sha1",
+      "dirty": false,
+      "snapshotDigest": "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+    },
+    "configuration": {
+      "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "environment": "offline-test"
+    },
+    "fixtures": [
+      {
+        "fixtureId": "fixture/jpd-self-validation",
+        "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      }
+    ],
+    "observers": [
+      {
+        "observerId": "graphhelm-cli-graph-contract",
+        "version": "1.0.0",
+        "configurationDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "environmentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "capabilityReceipt": {
+          "evidenceId": "evidence.observer-capability.graphhelm-cli-invalid",
+          "contentSha256": "abababababababababababababababababababababababababababababababab",
+          "ciphertextSha256": "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc"
+        },
+        "evidenceFresh": true
+      }
+    ]
+  },
+  "obligations": [
+    {
+      "obligationId": "obligation/graph-valid",
+      "promiseId": "promise/bundle-graph-valid",
+      "status": "satisfied",
+      "evidenceRefs": [
+        {
+          "evidenceId": "evidence.graph-validate",
+          "contentSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "ciphertextSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    }
+  ],
+  "retry": {
+    "retryChainRef": {
+      "referenceId": "retry-chain.issue-210.invalid-gate",
+      "contentDigest": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    },
+    "outcomeClassification": "first_pass_success",
+    "lineageValidation": {
+      "status": "evaluated",
+      "result": "valid",
+      "evaluator": {
+        "evaluatorId": "graphhelm-jpd/retry-lineage-validator",
+        "evaluatorVersion": "1.0.0",
+        "inputDigest": "sha256:8282828282828282828282828282828282828282828282828282828282828282",
+        "receipt": {
+          "evidenceId": "evidence.retry-lineage.issue-210.invalid-gate",
+          "contentSha256": "8383838383838383838383838383838383838383838383838383838383838383",
+          "ciphertextSha256": "8484848484848484848484848484848484848484848484848484848484848484"
+        }
+      }
+    },
+    "classification": {
+      "status": "evaluated",
+      "evaluator": {
+      "evaluatorId": "graphhelm-jpd/retry-classifier",
+      "evaluatorVersion": "1.0.0",
+      "inputDigest": "sha256:7979797979797979797979797979797979797979797979797979797979797979",
+      "receipt": {
+        "evidenceId": "evidence.retry-classification.issue-210.invalid-gate",
+        "contentSha256": "8080808080808080808080808080808080808080808080808080808080808080",
+        "ciphertextSha256": "8181818181818181818181818181818181818181818181818181818181818181"
+      }
+    }
+    },
+    "firstFailurePreserved": false
+  },
+  "disagreements": [],
+  "gate": {
+    "status": "capability_missing",
+    "failureKind": "logical_quality",
+    "refusal": {
+      "code": "GATE_CAPABILITY_MISSING",
+      "missingCapability": "gate/jpd-policy-evaluator",
+      "reason": "The deterministic JPD gate evaluator is not installed."
+    }
+  },
+  "proposedResultStatus": "proven"
+}

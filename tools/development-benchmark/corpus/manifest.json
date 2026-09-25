@@ -1,0 +1,57 @@
+{
+  "cases": [
+    {
+      "id": "events-open-verdict",
+      "oracleId": "oracle-events-open-verdict"
+    },
+    {
+      "id": "events-held-file",
+      "oracleId": "oracle-events-held-file"
+    },
+    {
+      "id": "schema-ceiling",
+      "oracleId": "oracle-schema-ceiling"
+    },
+    {
+      "id": "protocols-canonical-order",
+      "oracleId": "oracle-protocols-canonical-order"
+    },
+    {
+      "id": "cli-gate-workspace",
+      "oracleId": "oracle-cli-gate-workspace"
+    },
+    {
+      "id": "governor-validator-identity",
+      "oracleId": "oracle-governor-validator-identity"
+    },
+    {
+      "id": "runtime-capsule-bytes",
+      "oracleId": "oracle-runtime-capsule-bytes"
+    },
+    {
+      "id": "events-idempotency",
+      "oracleId": "oracle-events-idempotency"
+    },
+    {
+      "id": "mcp-refusal-identity",
+      "oracleId": "oracle-mcp-refusal-identity"
+    },
+    {
+      "id": "benchmark-recall-order",
+      "oracleId": "oracle-benchmark-recall-order"
+    },
+    {
+      "id": "accounting-unavailable",
+      "oracleId": "oracle-accounting-unavailable"
+    },
+    {
+      "id": "extension-inventory",
+      "oracleId": "oracle-extension-inventory"
+    }
+  ],
+  "corpusDigest": "sha256:33cb957755630fb7bebefe74350d864b6b6fb8c5f8a94aa6f318c43b3d5aa8b2",
+  "manifestVersion": 2,
+  "objectivesDigest": "sha256:2608b9c15bf12b542c6649e062aa0a38a393268ace74eddf339897c6e5b34b92",
+  "oracleDigest": "sha256:8b5692ee9f778d5dc7ed9312a9cafac7e4da0a04f8c1fa6877d5ae0f06100bf6",
+  "retrievalDigest": "sha256:0a372815c9149951608e01e530a411c1fdfc9625dffd719ee3318f3d4194cef7"
+}

@@ -1,0 +1,75 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: provider_less_demo_graph_v1
+  name: Provider-less demonstration deploy
+  executionId: provider_less_demo
+  version: 1
+  labels:
+    origin: user_graph_draft
+    mode: manual
+spec:
+  entrypoints:
+    - implementation
+  nodes:
+    implementation:
+      type: agent
+      name: Implementation finished
+      objective: Produce a deployable build.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Implement the change.
+          capabilities:
+            - repository.write_patch
+          inputSchema: schema://ImplementationPlan@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Produce the patch and the build artifact.
+          completionContract:
+            requires:
+              - build_artifact
+          isolationMinimum: tier_1
+      completion:
+        requires:
+          - artifactExists: build.tar
+    deploy:
+      type: deploy
+      name: Deploy
+      objective: Deploy to the configured environment.
+      targetRef: environment://staging
+      optionality: required
+      input:
+        schema: schema://ImplementationResult@1
+      output:
+        schema: schema://DeploymentReceipt@1
+      completion:
+        requires:
+          - outputSchemaValid: true
+      userOverrideAllowed: true
+  edges:
+    - id: implementation_direct_to_deploy
+      from: implementation
+      to: deploy
+      type: data
+  budgets:
+    maxNodes: 5
+    maxDepth: 3
+    maxMutations: 2
+    maxRetriesPerNode: 1
+    maxWallClockSeconds: 3600
+    maxApiCostUsd: 5
+    maxParallelModelCalls: 1
+  policies:
+    - inlineConstraint:
+        manualOverride:
+          bypassedRequirements:
+            - integration_tests
+            - independent_security_review
+          acknowledgedRisks:
+            - untested_regression
+            - unreviewed_security_change
+          resultLabel: deployed_without_full_validation
+  completion:
+    terminalNodes:
+      - deploy
+    allowWaivers: true

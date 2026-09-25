@@ -1,0 +1,14 @@
+{
+  "id": "build-and-summarize",
+  "summary": "Build the repository with one program and summarize the result for one audience.",
+  "parameters": {
+    "program": {
+      "question": "Which build program does the goal name or imply?",
+      "options": { "cargo": "a Rust workspace", "npm": "a Node package", "make": "a Makefile project" }
+    },
+    "audience": {
+      "question": "Who reads the summary?",
+      "options": { "maintainer": "the person who fixes the build", "operator": "the person who runs the pipeline" }
+    }
+  }
+}

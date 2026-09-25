@@ -1,0 +1,1 @@
+{"caseId":"events-held-file","objective":"During reconciliation a child file cannot be opened because another process holds it against sharing. Does the repository treat this as corruption? Cite the decision site and the windows error involved."}

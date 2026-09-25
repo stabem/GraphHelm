@@ -1,0 +1,2705 @@
+/* The two faces the reference direction drew in, vendored INTO the bundle - the header's
+   no-webfont rule said this was the one honest way to have them, and now they are here no
+   request leaves this machine for a glyph. Variable files, latin subset, 54KB together. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/space-grotesk-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+
+/*
+ * GraphHelm Local Studio — the instrument.
+ *
+ * A MACHINE'S CONSOLE, READ BY A PERSON — and softly. Rounded blocks, warm accents, and depth
+ * carried by shadow rather than by outline. The instrument is still an instrument; it just does
+ * not have to be sharp to be precise.
+ *
+ * TWO FACES, EACH WITH A JOB. The interface speaks in a sans; MONOSPACE IS RESERVED for the
+ * things that are literally identifiers — execution and node ids, event payloads, a command you
+ * are asked to type. An earlier pass set monospace everywhere, which made ordinary prose read as
+ * output and left the ids with nothing to distinguish them. Where everything is code, nothing is.
+ *
+ * RADIUS IS A SCALE, NOT A HABIT. Five steps, and each one means something: `--r-pill` for things
+ * that are read as tokens (state chips, tool toggles), `--r-lg` for the surfaces you look AT
+ * (panels, node blocks) with `--r-xl` for the largest of them, `--r` for the things you click, and
+ * `--r-sm` for the small marks inside them.
+ * Picking a radius per element is how a rounded interface turns to mush; picking the step that
+ * matches what the element IS keeps it deliberate.
+ *
+ * NO WEBFONT, and that is a product constraint rather than a preference: this application makes
+ * no request to any host but the local Runtime, and a font CDN would be the first exception. The
+ * reference direction draws in Space Grotesk and JetBrains Mono; the system stacks hold those two
+ * roles until the files are vendored INTO the bundle, which is the only way to have them without
+ * making that request. Weight, tracking and scale carry the rest.
+ *
+ * SEPARATION BY TONE AND DEPTH, NEVER BY OUTLINE. Four greys stack — void, surface, raised,
+ * high — and a block is told apart from its neighbour by which one it sits on and by the shadow
+ * it casts. NO BOX IS RINGED: a 1px outline around a rounded block is the thing that makes a soft
+ * interface look drawn rather than lit, and the node cards carried exactly that. Rings survive on
+ * BLOCKS THAT ARE THE SUBJECT — the one that needs a person, and the one you selected — coloured
+ * and 2px, where a ring is not decoration but the loudest thing on the board. Everything else in
+ * this file that looks like a line is INSET, sits on a control you type into, and is its focus.
+ *
+ * ONE SIGNAL COLOUR. Tangerine means "a person is needed", everywhere, without exception — the
+ * run that needs you, the node that blocks, the button that acts, the operator's own voice. Mint
+ * is the Runtime moving under its own power and iris is an agent. Nothing else is coloured, so
+ * the tangerine never has to compete.
+ *
+ * FLOOR: text holds 4.5:1 against its own layer, focus is always visible, motion respects the
+ * reduced setting, and every meaning colour carries is also carried by shape or by words.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --void: #0a0a0b;
+  --surface: #151517;
+  --raised: #1e1e22;
+  --high: #2a2a30;
+  /* One step above --high, in the same neutral ramp. It was #2f3434 - a GREEN-grey, tuned to the
+     old palette - which reads as a tint of its own against these greys. */
+  --edge: #34343c;
+
+  --text: #f5f5f6;
+  --dim: #a2a2ad;
+  /* Was #6e6e7a, which measured 3.6:1 on --raised and 4.0:1 on --surface - under the 4.5:1
+     floor this file's own header claims. Lifted until it clears the floor on every layer it
+     is actually painted on. */
+  --faint: #8a8a96;
+
+  /* Tangerine, mint, iris, sky - warmer and lower-contrast than the amber set they replace, which
+     is what lets them sit on a rounded block without shouting. The token names are unchanged on
+     purpose: they name the MEANING, and the meanings did not move. */
+  --signal: #ff8a3d;
+  /* DERIVED, not typed. These were hand-picked against the amber set and stayed behind when the
+     accents moved - a wash tuned to a hue that no longer exists is exactly the drift that makes a
+     palette look almost right. Mixing them from their own accent means the tint can never again
+     disagree with the colour it belongs to. `--signal-ink` is TEXT on the signal, so it stays a
+     literal: contrast is a floor to be met, not an outcome of a mix. */
+  --signal-ink: #241004;
+  --signal-wash: color-mix(in oklab, var(--signal) 16%, var(--void));
+  --live: #3ddc97;
+  --live-wash: color-mix(in oklab, var(--live) 16%, var(--void));
+  --agent: #8b7cff;
+  --agent-wash: color-mix(in oklab, var(--agent) 18%, var(--void));
+  --danger: #ff6b6b;
+
+  /* The soft scale. Nothing in this file sets a raw radius; everything reaches for one of these,
+     so the whole interface moves together when the scale does. */
+  --r-sm: 6px;
+  --r: 12px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* Depth, also a scale. `--lift` is a block resting on the board; `--float` is the window over
+     it. Two steps, so "which of these is on top" is answerable by looking. */
+  --lift: 0 10px 26px rgb(0 0 0 / 30%);
+  --float: 0 24px 70px rgb(0 0 0 / 55%);
+
+  /* The canvas annotations only - notes a person pinned, the empty-board line. Windows ships
+     two real handwriting faces, so the Excalidraw register costs no webfont. Never used for
+     anything the Runtime said. */
+  --hand: "Segoe Print", "Ink Free", "Comic Sans MS", cursive;
+  --reading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  /* The hand-drawn outline. The no-outline doctrine stands for panels and chrome; the BOARD
+     is now a whiteboard, and on a whiteboard a block is a thing somebody drew. */
+  --sketch: #45454e;
+  --ink-pen: #8a8a96;
+  /* Motion: two durations and one deceleration. Hover and press take the quick one; anything
+     mounting takes the soft one. Nothing else is animated, and nothing loops except the
+     spinner and the waiting ring. */
+  --t-quick: 120ms;
+  --t-soft: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --pencil: color-mix(in oklab, var(--signal) 38%, var(--faint));
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 700;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+}
+
+/* Tight and heavy, so the wordmark reads as a mark rather than as a heading - it is the same face
+   as the rest of the interface now, and only the tracking and weight set it apart. */
+.wordmark {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+/* The mark is a TILE, not a glyph in a line of text: it is the one place the interface has a
+   solid block of colour, which is what makes the rail's top read as a header without a rule
+   under it. */
+.mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--r);
+  background: var(--agent);
+  color: var(--void);
+  display: grid;
+  place-items: center;
+}
+
+.mark svg { width: 17px; height: 17px; }
+
+.lbl {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The scrollbar is chrome, not content: thin, rounded, and silent until touched. */
+* { scrollbar-width: thin; scrollbar-color: var(--high) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--high);
+  border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--edge); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+
+svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.spin { animation: spin 0.9s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-quick: 0ms; --t-soft: 0ms; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+  .spin { animation: spin 1.8s linear infinite !important; }
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  border-radius: var(--r);
+  background: var(--raised);
+  padding: 8px 14px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+.project-head,
+.run,
+.add-project,
+.show-more,
+.crew-member,
+.reply-hint,
+.talk-open,
+.grip {
+  transition:
+    background-color var(--t-quick) var(--ease),
+    color var(--t-quick) var(--ease),
+    scale var(--t-quick) var(--ease);
+}
+
+button:hover:not(:disabled) { background: var(--high); }
+button:active:not(:disabled) { scale: 0.97; }
+.act:active:not(:disabled),
+.send:active:not(:disabled) { scale: 0.96; }
+button:disabled { color: var(--faint); cursor: not-allowed; }
+
+.act {
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-weight: 700;
+}
+
+/* Lifted from the signal itself: a literal here is a second colour that has to be remembered. */
+.act:hover:not(:disabled) { background: color-mix(in oklab, var(--signal) 82%, white); }
+.act:disabled { background: var(--raised); color: var(--faint); font-weight: 400; }
+
+.ghost {
+  background: transparent;
+  color: var(--dim);
+  padding: 6px 10px;
+}
+
+.ghost:hover:not(:disabled) { background: var(--raised); color: var(--text); }
+
+/* ---------------------------------------------------------------- connect */
+
+/* Only reached when the dev server did not hand the page a session — a built bundle served
+   somewhere else. In the ordinary local loop nobody ever sees this. */
+.gate {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--void);
+}
+
+.gate-card {
+  border-radius: var(--r-lg);
+  width: min(470px, 100%);
+  background: var(--surface);
+  padding: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.gate-card h1 {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.gate-card form { display: grid; gap: 9px; }
+.gate-card label { color: var(--dim); font-size: 12px; }
+
+.field {
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--void);
+  padding: 0 11px;
+  color: var(--faint);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+.field:focus-within { box-shadow: inset 0 0 0 1px var(--signal); }
+
+.field input {
+  border-radius: var(--r);
+  flex: 1;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 11px 0;
+}
+
+.field input:focus { outline: none; }
+
+.form-error { color: var(--danger); }
+
+.gate-note {
+  border-left: 3px solid var(--signal);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--raised);
+  padding: 11px 12px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: clamp(200px, var(--rail, 268px), 460px) 5px minmax(0, 1fr);
+  background: var(--void);
+}
+
+/* -------------------------------------------------------------- projects */
+
+.rail {
+  padding: 20px 14px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+}
+
+.rail-live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--live);
+}
+
+.rail-live.off { color: var(--faint); }
+
+.rail-live i {
+  border-radius: var(--r-pill);
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+}
+
+.projects {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+}
+
+.project-head:hover { background: var(--raised); }
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icon-only, fixed width, and it never joins the fight for the name's space. */
+.icon-action {
+  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+  display: inline-flex;
+  padding: 2px;
+  color: var(--faint);
+  line-height: 0;
+}
+
+.icon-action:hover:not(:disabled) { color: var(--signal); }
+.icon-action:disabled { opacity: 0.35; cursor: not-allowed; }
+.icon-action svg { width: 14px; height: 14px; }
+
+.project-runs {
+  display: grid;
+  gap: 3px;
+  margin: 3px 0 10px 20px;
+}
+
+.run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.run:hover { background: var(--raised); }
+.run.on { background: var(--high); }
+
+/* SIX PIXELS, and the word in the accessible name and the tooltip. The word used to be on the
+   line, where an id long enough to fill the rail cut "can sleep" to "can sl". A mark has no
+   length to lose. */
+.run-mark {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: var(--r-pill);
+  background: var(--faint);
+}
+
+.run.needs .run-mark { background: var(--signal); }
+.run.calm .run-mark { background: var(--live); }
+
+/* Two stacked lines beside the room's avatar, like a conversation list entry: the name, and
+   when it last moved. */
+.run-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.run-id {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-when { font-size: 10px; color: var(--faint); }
+/* #1083 F7: the id under a run named by its objective - the address, quieter than the name. */
+.run-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+.show-more {
+  color: var(--dim);
+  border-radius: var(--r-sm);
+  display: block;
+  width: 100%;
+  padding: 4px 8px 4px 14px;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: left;
+}
+
+.show-more:hover:not(:disabled) { color: var(--dim); }
+.show-more:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.add-project {
+  color: var(--dim);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: left;
+  min-width: 0;
+}
+
+.add-project:hover { background: var(--raised); color: var(--dim); }
+.add-project svg { width: 13px; height: 13px; flex: 0 0 auto; }
+
+/* The grip between the rail and the board. Five pixels of hit area, the edge tone until hovered. */
+.grip {
+  background: var(--edge);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.grip:hover, .grip.dragging { background: var(--signal); }
+
+.rail-empty {
+  color: var(--dim);
+  font-size: 11px;
+  padding: 6px 8px 6px 14px;
+  background: none;
+  text-align: left;
+  width: 100%;
+}
+.rail-empty:hover:not(:disabled) { background: var(--raised); }
+
+/* ----------------------------------------------------------------- stage */
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 16px 16px 16px 0;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, var(--high) 1.4px, transparent 0) 0 0 / 26px 26px,
+    var(--surface);
+}
+
+/* IN FLOW, NOT FLOATED. The strip used to be absolutely positioned over the stage, and the panel
+   was absolutely positioned under a hard-coded `top: 84px` - so the day the attention line
+   wrapped to a second row, the two overlapped (screenshot, 2026-08-30). In flow, a taller strip
+   pushes everything below it, and that whole class of collision cannot exist. */
+.topstrip {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+
+/* The strip is a rail for cards, not a bar. `pointer-events` comes back on the cards themselves
+   so the board behind the gap between them stays draggable. */
+.strip-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--raised) 86%, transparent);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  min-width: 0;
+}
+
+.strip-card.right { margin-left: auto; padding: 7px 8px; gap: 4px; }
+
+/* The verdict's own explanation, wrapping to its own line inside the left strip card. Each
+   reason sentence carries the one action that is legal for it; the button sits in the sentence
+   because the sentence is what justifies it. */
+.strip-card { flex-wrap: wrap; }
+.why {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  padding-top: 2px;
+}
+.why > span { display: inline-flex; align-items: center; gap: 7px; }
+.why button {
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 11px;
+}
+.why button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+/* Deployment context, not a reason: quieter than the sentences it qualifies. */
+.why-context { color: var(--faint); font-size: 11px; }
+
+.topstrip .run-name {
+  font-family: var(--mono);
+  border-radius: var(--r-sm);
+  background: none;
+  padding: 4px 8px;
+  font-weight: 700;
+}
+
+.tag {
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--high);
+  color: var(--dim);
+}
+
+.tag.needs { background: var(--signal); color: var(--signal-ink); }
+.tag.calm { background: var(--live-wash); color: var(--live); }
+.tag.unknown { background: var(--agent-wash); color: var(--agent); }
+
+.topstrip .meta { color: var(--faint); font-size: 11px; }
+.topstrip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+.toolchips { display: flex; gap: 2px; }
+.toolchips span {
+  border-radius: var(--r-pill); background: var(--surface); padding: 3px 9px; color: var(--faint); font-size: 10px; }
+.toolchips span.on { color: var(--live); }
+
+.banner {
+  border-radius: var(--r);
+  margin: 0 16px;
+  background: color-mix(in oklab, var(--danger) 16%, var(--void));
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ board */
+
+.sheet {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.sheet.panning { cursor: grabbing; }
+
+.sheet.tool-pen { cursor: crosshair; }
+/* In pen and note mode the cards get out of the ink's way: no cursor fights, no stray
+   clicks, and a stroke can start anywhere. */
+.sheet.tool-pen .node,
+.sheet.tool-pen .agent-blob,
+.sheet.tool-pen .talk-bubble,
+.sheet.tool-note .node,
+.sheet.tool-note .agent-blob,
+.sheet.tool-note .talk-bubble { pointer-events: none; }
+/* Holding a card IS a grab; the whole hand says so while one is held. */
+.sheet.tool-select .node-open,
+.sheet.tool-select .agent-open,
+.sheet.tool-select .talk-open { cursor: grab; }
+.sheet.dragging,
+.sheet.dragging * { cursor: grabbing !important; }
+.sheet.tool-note { cursor: cell; }
+.sheet.tool-hand { cursor: grab; }
+.sheet.tool-hand .node,
+.sheet.tool-hand .agent-blob,
+.sheet.tool-hand .talk-bubble,
+.sheet.tool-hand .sheet-note { pointer-events: none; }
+
+/* The camera: everything on the board rides this one transform. */
+.world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* The marquee: the operator's lasso, alive only while the button is down. */
+.marquee {
+  position: absolute;
+  z-index: 8;
+  border: 1px solid color-mix(in oklab, var(--text) 55%, transparent);
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+  border-radius: var(--r-sm);
+  pointer-events: none;
+}
+
+/* A multi-picked piece wears the same neutral ring as a single selection. */
+.node.multi,
+.talk-bubble.multi .talk-open { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.agent-blob.multi .avatar { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+
+.zoomer { display: inline-flex; gap: 2px; margin-left: 8px; }
+.zoomer button { border-radius: var(--r); padding: 8px 10px; font-size: 12px; }
+.zoom-label { font-family: var(--mono); min-width: 52px; }
+
+.sheet-ink {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* width and height come from board.tsx as an inline style (the global `svg` 14px rule outranks
+     presentation attributes): the farthest card plus a margin, never below 2600x1700 (#1072). */
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edge { fill: none; stroke: var(--pencil); stroke-width: 2; stroke-linecap: round; filter: url(#roughen); }
+.edge.control,
+.edge.condition { stroke-dasharray: 4 6; }
+.edge-tip { fill: none; stroke: var(--pencil); stroke-width: 2; stroke-linecap: round; }
+
+.stroke { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; filter: url(#roughen); }
+.stroke.ink { stroke: var(--ink-pen); }
+.stroke.flag { stroke: var(--signal); stroke-width: 3; }
+.stroke.calm { stroke: var(--live); }
+.stroke.live { opacity: 0.7; }
+
+.node {
+  animation: card-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  width: 258px;
+  padding: 12px 14px 10px;
+  /* Asymmetric on purpose: four equal corners is a printed card, and this board is a
+     whiteboard now. The wonk is subtle enough that the text inside never notices. */
+  border: 1.5px solid var(--sketch);
+  border-radius: 17px 8px 15px 9px / 9px 15px 8px 17px;
+  background: var(--raised);
+  box-shadow: var(--lift);
+  cursor: grab;
+  z-index: 3;
+}
+
+.node,
+.agent-blob .avatar { transition: scale var(--t-quick) var(--ease); }
+.node:active { scale: 1.015; }
+.agent-blob:active .avatar { scale: 1.1; }
+.talk-open:active { scale: 0.985; }
+
+.node:nth-of-type(odd) { transform: rotate(-0.35deg); }
+.node:nth-of-type(even) { transform: rotate(0.3deg); }
+
+/* SELECTION IS NEUTRAL. Tangerine means a person is needed; a click is not that. The same
+   ring on all three kinds of canvas citizen. */
+.node.selected { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+
+
+/* THE EXCEPTION, and it is deliberate: a person is needed here. The ring is a pseudo so its
+   breath is opacity-only - compositor-clean - and FAILED wears the same ring, still. */
+.node.waiting,
+.node.dead { box-shadow: var(--lift); }
+.node.waiting::after,
+.node.dead::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--signal);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.node.waiting::after { animation: ring-breathe 2.4s var(--ease) infinite; }
+.node.moving { border-color: color-mix(in oklab, var(--live) 55%, var(--sketch)); }
+.node.dead .blob { background: var(--danger); }
+.node.dead .node-state { color: var(--danger); }
+@keyframes ring-breathe { 50% { opacity: 0.4; } }
+
+.node-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: none;
+  text-align: left;
+}
+
+/* A round blob of the node's own mood colour. The card carried a 3px strip along its top edge
+   instead - a hairline by another name, which vanished the moment the corners rounded. */
+.blob {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--r);
+  background: var(--faint);
+}
+
+.node.waiting .blob { background: var(--signal); }
+.node.moving .blob { background: var(--live); }
+.node.done .blob { background: var(--agent); }
+
+.node-open:hover { background: none; }
+
+.node-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.node-id {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+/* Two lines, so the id is a NAME and not a caption: the block has a subject. */
+.node-name {
+  flex: 1;
+  min-width: 0;
+  display: block;
+}
+
+.node-kind {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.node-state {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.node.waiting .node-state { color: var(--signal); }
+.node.moving .node-state { color: var(--live); }
+
+.node-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* Eyebrow: the block's address on the left; while something moves or waits, the state word
+   breathes on the right - the card says "alive" before you read a number. */
+.node-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.node-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.node-live-word {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.node-live-word.moving { color: var(--live); }
+.node-live-word.waiting { color: var(--signal); }
+.node-live-word i { font-style: normal; display: inline-block; animation: word-pulse 1.8s var(--ease) infinite; }
+@keyframes word-pulse { 50% { opacity: 0.35; } }
+
+.node-title {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line, two truths: the tally on the left, the freshest movement on the right. */
+.node-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  min-width: 0;
+}
+.node-status > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-fresh { color: var(--dim); white-space: nowrap; flex: 0 0 auto; }
+
+/* The drawer: the node's own log, opened in place. Chips speak the surface's colours. */
+.node-history-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 0 2px;
+  background: none;
+  border-top: 1px solid var(--edge);
+  border-radius: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: left;
+}
+.node-history-toggle:hover:not(:disabled) { background: none; color: var(--dim); }
+.node-history {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  max-height: 170px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.node-history li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.hist-chip {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  background: var(--high);
+  color: var(--faint);
+}
+.hist-chip.live { color: var(--live); background: var(--live-wash); }
+.hist-chip.alarm { color: var(--signal); background: var(--signal-wash); }
+.hist-chip.pulse { animation: word-pulse 1.8s var(--ease) infinite; }
+.hist-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+}
+.hist-when { flex: 0 0 auto; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+/* The canvas's own cheat line, centre-bottom, out of every path. */
+.canvas-hints {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 4;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The hands on this block. Every actor that recently touched the node, newest first, wearing
+   the same derived colour it wears in the thread and the crew card - the board answers the
+   'who is on this' question without opening anything. */
+.node-crew {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+  min-width: 0;
+}
+.node-crew .avatar { margin-right: -5px; box-shadow: 0 0 0 2px var(--raised); }
+.node-crew .who {
+  margin-left: 11px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-note { position: absolute; width: 176px; padding: 6px; cursor: grab; }
+
+.sheet-note textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  padding: 9px;
+  border: 0;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--hand);
+  font-size: 12px;
+  border-radius: 6px 14px 8px 12px / 12px 8px 14px 6px;
+  box-shadow: inset 0 0 0 1px var(--sketch);
+}
+
+.sheet-note textarea:focus { outline: none; box-shadow: 0 0 0 2px var(--signal); }
+
+.sheet-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-family: var(--hand);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------- dock */
+
+.dock {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 2px;
+  z-index: 5;
+}
+
+.dock button {
+  border-radius: var(--r); padding: 8px 14px; font-size: 12px; }
+
+.tools {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 2px;
+  z-index: 5;
+}
+
+.tools button {
+  border-radius: var(--r); padding: 8px 14px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.tools button.on { background: var(--signal); color: var(--signal-ink); font-weight: 700; }
+
+.tones { display: flex; gap: 2px; }
+.tones button {
+  border-radius: var(--r); width: 30px; padding: 8px 0; }
+.tones button i {
+  border-radius: var(--r-pill); display: block; width: 12px; height: 3px; margin: 0 auto; }
+.tones .ink i { background: var(--ink-pen); }
+.tones .flag i { background: var(--signal); }
+.tones .calm i { background: var(--live); }
+.tones button.on { box-shadow: inset 0 0 0 2px var(--text); }
+
+.graph-file {
+  position: absolute;
+  left: 16px;
+  bottom: 58px;
+  display: flex;
+  /* #1083 (Codex on PR #1091): a demonstration run adds a second 300px input. Wrapping by the
+     row's own width - not by a viewport media query - keeps the fixture field reachable when the
+     free canvas is 600-700px wide with the conversation column open (1280x720). */
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--edge);
+  border-radius: var(--r);
+  overflow: hidden;
+  z-index: 5;
+}
+
+.graph-file .wrap {
+  border-radius: var(--r);
+  display: flex;
+  flex: 1 1 280px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  background: var(--raised);
+  padding: 0 11px;
+  color: var(--faint);
+}
+
+.graph-file input {
+  border-radius: var(--r);
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 9px 0;
+}
+
+.graph-file:focus-within { box-shadow: inset 0 0 0 1px var(--signal); }
+.graph-file input:focus { outline: none; }
+.graph-file button { padding: 9px 13px; font-size: 11px; }
+
+.edge-note {
+  border-radius: var(--r);
+  position: absolute;
+  left: 16px;
+  bottom: 100px;
+  max-width: 560px;
+  background: var(--raised);
+  border-left: 3px solid var(--edge);
+  padding: 8px 11px;
+  color: var(--dim);
+  font-size: 11px;
+  z-index: 5;
+}
+
+.edge-note .connect-toggle {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--high);
+  color: var(--dim);
+  font-size: 11px;
+}
+.edge-note.proven { border-left-color: var(--live); }
+.edge-note.refused { border-left-color: var(--signal); }
+
+/* What the last button press did, standing over the buttons that did it. */
+.act-note {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  border-radius: var(--r);
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 5;
+  max-width: 420px;
+  background: var(--raised);
+  border-left: 3px solid var(--live);
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+  box-shadow: var(--lift);
+}
+.act-note.proven { border-left-color: var(--live); }
+.act-note.refused { border-left-color: var(--signal); color: var(--text); }
+
+/* ------------------------------------------------------------------ panel */
+
+/* The one thing on this screen that scrolls inside something else, and it earns it: a thread is
+   unbounded. Everything else fits or pans. */
+/* The two sides of a selected run: the task's conversation (`.talk`) beside the canvas
+   (`.scene`). Peers by structure - neither can bury the other, whatever grows inside them. */
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The conversation column. The signal-orange hairline is its identity: this is where people and
+   agents talk, and orange is already the "someone should look here" colour everywhere else. */
+.talk {
+  width: clamp(320px, 34%, 440px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--edge);
+  border-top: 2px solid var(--edge);
+  background: var(--surface);
+}
+
+/* The canvas side. Nodes running live here; a node's own window is the ONE thing that layers,
+   and it layers over the canvas it describes, never over the conversation. */
+.scene {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--raised) 95%, transparent);
+}
+.panel .thread { flex: 1; }
+.panel .panel-empty { flex: 1; }
+
+/* Docked: the conversation fills its column, no float, no radius against the column edges. */
+.talk .panel {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/* Why this run needs you, standing directly above the conversation it is about. It came off
+   the top strip, where it was a second header narrating someone else's panel. */
+.attention {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--dim);
+  background: var(--signal-wash);
+}
+.attention > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.attention button {
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 11px;
+}
+.attention button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+
+/* The chat and node columns: the same column the run's panel lives in, so a conversation or
+   a node's window NEVER covers the board - the board yields width instead. */
+.chat-col { width: clamp(280px, 24%, 380px); border-top-color: var(--agent); }
+.chat-col > .panel { animation: slide-l var(--t-soft) var(--ease) both; }
+.node-col > .panel { animation: slide-r var(--t-soft) var(--ease) both; }
+@keyframes slide-l { from { opacity: 0; translate: -10px 0; } }
+@keyframes slide-r { from { opacity: 0; translate: 10px 0; } }
+@keyframes rise-in { from { opacity: 0; translate: 0 4px; } }
+@keyframes card-in { from { opacity: 0; scale: 0.97; } }
+.node-col { width: clamp(280px, 24%, 380px); border-right: 0; border-left: 1px solid var(--edge); border-top-color: var(--live); }
+
+/* Layered: a node's window over the canvas, on the side away from the conversation. */
+.scene .panel {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: 396px;
+  z-index: 7;
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--float);
+}
+
+.panel-head {
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--raised);
+}
+
+.panel-head i {
+  border-radius: var(--r-pill); width: 8px; align-self: stretch; background: var(--faint); }
+.panel-head.waiting i { background: var(--signal); }
+.panel-head.dead i { background: var(--danger); }
+.panel-head.moving i { background: var(--live); }
+.panel-head h2 { font-size: 16px; overflow-wrap: anywhere; }
+/* The demonstration label (#1064): prose, not a badge - it has to be READ, so it keeps
+   sentence case and the dim ink of a fact rather than the ink of an alarm. */
+.run-demo { color: var(--dim); }
+.panel-head .demonstration { font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 4px; }
+/* A persona's charter is prose: sentence case, reading rhythm, clamped before it swallows
+   the head. The .lbl treatment turned it into tracking caps. */
+.charter {
+  font-size: 11px;
+  color: var(--dim);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.panel-head .close { margin-left: auto; }
+/* Docked flush in a square column, the rounded top read as a floating scrap. */
+.talk .panel-head { border-radius: 0; }
+
+.facts { display: flex; gap: 2px; }
+.facts > div {
+  border-radius: var(--r-sm); flex: 1; background: var(--surface); padding: 9px 12px; min-width: 0; }
+.facts strong {
+  font-family: var(--mono); display: block; margin-top: 3px; font-size: 13px; font-weight: 700; }
+
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  background: var(--high);
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.state-chip strong { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); }
+.state-chip.alarm { background: var(--signal-wash); color: var(--signal); }
+.state-chip.alarm strong { color: var(--signal); }
+/* The zeros, asserted collectively: silence must still be a statement. */
+.states-rest { font-size: 11px; color: var(--faint); }
+
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+/* Messenger turns: an avatar column and a body, the owner's own messages mirrored to the right.
+   The avatar IS the identity - one derived colour per actor, the same everywhere - so the old
+   coloured left border went with the layout that needed it. System narration keeps no avatar:
+   lifecycle is not a contact. */
+.turn { display: flex; gap: 8px; align-items: flex-start;
+  animation: rise-in var(--t-soft) var(--ease) both;
+  /* Long threads: off-screen turns skip layout and paint. Scroll anchoring is unaffected. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+.turn-name { font-weight: 700; }
+/* Continuations hang under their group's header: half the gap, an empty column where the
+   avatar would repeat. */
+.turn.cont { margin-top: -6px; }
+.avatar-hold { flex: none; width: 24px; }
+.turn.system { justify-content: center; }
+.turn.system .turn-body { flex: none; max-width: 88%; text-align: center; }
+.turn.system .turn-text { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.turn.owner { flex-direction: row-reverse; text-align: right; }
+.turn.owner .turn-said { text-align: left; }
+
+.avatar {
+  flex: none;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 40%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+
+/* The face: two rounded bars, the same mark on every actor. It is what makes a coloured dot
+   read as SOMEBODY - the crew card, the thread and the node cards all wear the same one. */
+.avatar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 9px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 6px 0 0 #fff;
+  transform: translate(-4.5px, -50%);
+}
+
+.avatar.mini { width: 18px; height: 18px; }
+.avatar.mini::after { width: 2px; height: 7px; box-shadow: 5px 0 0 #fff; transform: translate(-3.5px, -50%); }
+
+.turn-body { min-width: 0; flex: 1; }
+
+.turn-who {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--faint); }
+.turn-text { margin-top: 3px; font-size: 12px; line-height: 1.6; }
+.turn.agent .turn-text { color: var(--agent); }
+.turn.owner .turn-text { color: var(--signal); }
+
+.turn code {
+  font-family: var(--mono);
+  border-radius: var(--r-sm);
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--void);
+  color: var(--dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The words themselves, opened out of sealed evidence. They get a surface of their own because
+   they are the only thing in the thread that was AUTHORED — every other line is composed from an
+   event's fields. Reading size, not label size. */
+.turn-said {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--reading);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+/* The formatter splits the sealed words into paragraphs, lists and code marks; the bubble
+   reads as a message, not as one unbroken transmission. */
+.turn-said p { margin: 0; white-space: pre-wrap; }
+.turn-said p + p,
+.turn-said ul + p,
+.turn-said ol + p,
+.turn-said p + ul,
+.turn-said p + ol { margin-top: 8px; }
+.turn-said ul,
+.turn-said ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.turn-said li { white-space: pre-wrap; }
+.turn-said li::marker { color: var(--faint); }
+/* Inline, whatever `.turn code` (the payload dump) says: a backticked identifier lives
+   INSIDE its sentence. */
+.turn-said code {
+  font-family: var(--mono);
+  font-size: 12px;
+  display: inline;
+  margin: 0;
+  background: color-mix(in oklab, currentColor 9%, transparent);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+  white-space: pre-wrap;
+}
+/* The owner's bubble carries their colour wash, mirrored right - the messenger convention the
+   reference design uses, and the fastest way to see which side of the exchange is yours. */
+.turn.owner .turn-said {
+  background: var(--high);
+  border-bottom-right-radius: var(--r-sm);
+}
+.turn:not(.owner) .turn-said { border-bottom-left-radius: var(--r-sm); }
+
+.cast { display: contents; }
+
+/* Agents on the canvas: a blob you can pick up. The anchor point is the blob's centre, so a
+   drag feels like holding the thing rather than its corner. */
+.agent-blob {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  width: 104px;
+  margin: -26px 0 0 -52px;
+  cursor: grab;
+  user-select: none;
+}
+.agent-open {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  background: none;
+  padding: 4px;
+  border-radius: var(--r);
+}
+.agent-open:hover:not(:disabled) { background: none; }
+.agent-blob .avatar { width: 40px; height: 40px; box-shadow: var(--lift); }
+.agent-blob .avatar::after { width: 4px; height: 12px; box-shadow: 8px 0 0 #fff; transform: translate(-6px, -50%); }
+.agent-blob.picked .avatar { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.agent-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The funnel's stage captions: the hand's own writing, faint, naming the three columns. */
+.stage-label {
+  position: absolute;
+  font-family: var(--hand);
+  font-size: 13px;
+  color: var(--faint);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* The room outranks the pairs: wider, firmer border - it is the trunk of the funnel. */
+.talk-bubble.room .talk-open {
+  width: 252px;
+  border-color: var(--faint);
+}
+.talk-bubble.room .talk-title { font-size: 13px; }
+
+/* A conversation, standing on the board as a speech bubble: the faces in it, its name, how
+   much has been said and when last. The squared-off corner is the tail. Click opens the
+   history; drag moves it like anything else on the board. */
+.talk-bubble {
+  animation: card-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  z-index: 4;
+  cursor: grab;
+  user-select: none;
+}
+/* The same anatomy as the node card - identity row, then a mono meta row - so the two kinds
+   of card on this board read as siblings. Only the tail corner says which one talks. */
+.talk-open {
+  display: block;
+  width: 224px;
+  background: var(--raised);
+  border: 1.5px solid var(--sketch);
+  border-radius: 15px 9px 15px 4px / 9px 15px 8px 15px;
+  padding: 12px;
+  box-shadow: var(--lift);
+  text-align: left;
+}
+.talk-open:hover:not(:disabled) { background: var(--high); }
+.talk-bubble.picked .talk-open { box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 75%, transparent), var(--lift); }
+.talk-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.talk-faces { display: inline-flex; flex: 0 0 auto; }
+.talk-faces .avatar { margin-right: -5px; box-shadow: 0 0 0 2px var(--raised); }
+.talk-name { flex: 1; min-width: 0; display: block; }
+.talk-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.talk-kind {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.talk-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* The thread from a conversation to each of its speakers: the bubble visibly BELONGS to its
+   agents instead of floating in space. */
+.talk-tie {
+  stroke: var(--edge);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 6;
+  stroke-linecap: round;
+  opacity: 0.35;
+}
+.talk-tie.on { opacity: 1; stroke: var(--faint); }
+
+.talk-more {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  align-self: center;
+  margin-left: 8px;
+}
+.agent-when { display: block; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+/* THE DECLARED CAPABILITY - only present when the session actually declared one; see board.tsx. */
+/* CONTAINED LIKE THE NAME ABOVE IT (#1057, Codex P2). The wire contract accepts a model name up to
+   128 characters, `.agent-blob` is 104px wide, and an unbroken 128-character mono string with no
+   `max-width` spilled across neighbouring agents and the canvas behind them. Same four
+   declarations `.agent-name` carries, and the same 100px: the badge is the name's second line and
+   has no reason to be wider than it. The full text stays reachable -- `board.tsx` puts it in the
+   element's `title`. */
+.agent-badge {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The empty board invites the first task instead of describing its own emptiness. */
+.board-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  color: var(--dim);
+  font-family: var(--hand);
+  font-size: 15px;
+}
+
+/* The huddle: agents dragged into each other's reach get one hand-drawn ring. Presentation
+   only - membership is recomputed from positions on every render and stored nowhere. */
+/* The ring is the OPERATOR'S arrangement, so it wears the pen's own grey - it must never
+   read as measured collaboration. */
+.huddle {
+  fill: none;
+  stroke: var(--ink-pen);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 7;
+  filter: url(#roughen);
+}
+
+/* THE CREW CARD is dead - the crew stands on the canvas now. The role tag survives it. */
+.crew-role {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  background: var(--high);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+}
+
+/* The chosen recipient, above the box it applies to. */
+.to-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  justify-self: start;
+  border-radius: var(--r-pill);
+  padding: 3px 6px 3px 10px;
+  background: color-mix(in oklab, var(--signal) 16%, var(--void));
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.to-chip button { color: inherit; font-size: 13px; line-height: 1; padding: 0 3px; }
+.turn-said.loading { color: var(--faint); font-style: italic; }
+/* The envelope's address, above the words it addresses. Mono because both halves are
+   identifiers, and quiet because it orients rather than speaks. */
+.turn-addr {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--signal);
+}
+/* Sealed and unopenable. Muted rather than alarming: it is a fact about this Runtime's keys, not
+   a failure of the run, and the thread is still worth reading around it. */
+.turn-said.shut {
+  background: transparent;
+  border: 1px dashed var(--edge);
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* A sent message that nobody has answered yet. The pulse is the "something is on the other end"
+   cue the person asked for; the words stay honest about what is actually known - delivered, and
+   waiting - because the page cannot see anyone thinking. */
+.turn-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.turn-wait i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--signal);
+}
+
+/* The way back in, at the foot of the run panel. Deliberately quieter than the new-task composer:
+   that one starts work, this one only says something. */
+/* The two answer cards over the say box: who is waiting, newest first. Picking one addresses
+   the box to them - it never writes words on anyone's behalf. */
+.reply-hints { display: flex; gap: 6px; flex-wrap: wrap; animation: rise-in var(--t-soft) var(--ease) both; }
+.reply-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--r);
+  background: var(--high);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.reply-hint:hover:not(:disabled) { background: var(--high); box-shadow: inset 0 0 0 1px var(--signal); }
+.reply-hint-who { font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-hint-when { color: var(--faint); font-size: 10px; }
+
+.saybox {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--edge);
+}
+.say-capsule { position: relative; }
+.saybox textarea {
+  width: 100%;
+  resize: none;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--edge);
+  background: var(--void);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 68px;
+  padding: 10px 52px 10px 12px;
+  display: block;
+}
+.saybox textarea:disabled { color: var(--faint); }
+/* The send lives in the field's own corner: a 34px signal circle, icon only. */
+.saybox .send {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: var(--r-pill);
+}
+
+.panel-foot {
+  margin-top: auto;
+  padding: 12px;
+  background: var(--raised);
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.panel-empty { padding: 24px 12px; color: var(--faint); text-align: center; }
+
+/* ---------------------------------------------------------------- loading */
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--faint);
+}
+
+/* ---- composing a task ------------------------------------------------------------------- */
+
+.panel-head.calm i { background: var(--live); }
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px;
+  min-height: 0;
+}
+
+.composer textarea { font-family: var(--sans); }
+.composer select,
+.composer textarea {
+  border-radius: var(--r);
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 0;
+  outline-offset: 2px;
+}
+
+.composer textarea { resize: vertical; line-height: 1.5; }
+.composer select:disabled, .composer textarea:disabled { color: var(--faint); }
+
+/* The send button's look is unconditional, because two surfaces now send: the new-task composer
+   and the run panel's message box. Scoping it to `.composer` once meant the second one rendered as
+   bare text — no background, no padding — and looked broken rather than different. */
+.send {
+  border-radius: var(--r);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 11px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.send:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
+.send svg { width: 14px; height: 14px; }
+/* Only the composer's send needs the extra breath: it closes a tall stacked form. */
+.composer .send { margin-top: 4px; }
+
+/* Said before the send, not after: this is the one warning whose whole value is being read while
+   the operator can still act on it. */
+/* The one place a literal command appears. Selectable, wrapping, and set on the void so it reads
+   as a terminal line rather than as prose. */
+.command {
+  font-family: var(--mono);
+  display: block;
+  border-radius: var(--r);
+  background: var(--void);
+  padding: 10px 11px;
+  color: var(--live);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.notice {
+  border-radius: var(--r);
+  display: flex;
+  gap: 8px;
+  margin: 0 13px;
+  padding: 10px;
+  background: var(--signal-wash);
+  color: var(--signal);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.notice.bad { background: color-mix(in oklab, var(--danger) 16%, var(--void)); color: var(--danger); margin: 0; }
+.notice svg { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.notice code {
+  border-radius: var(--r-sm); color: inherit; background: color-mix(in oklab, currentColor 10%, transparent); padding: 0 3px; }
+/* The section label above the folder list. It earns its place because the rail holds two
+   kinds of thing now - the list, and the action that adds to it - and without a name the first
+   reads as the whole rail. */
+.rail-section { margin: 0 0 -4px 6px; }
+/* A quiet line under the field it is about. The loud version - a full-width amber block above the
+   whole composer - was a configuration lecture standing where the work goes. A fact that changes
+   what you should EXPECT belongs beside the control it concerns; only a fact that STOPS you earns
+   the banner. */
+.hint {
+  margin: -2px 0 2px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.hint code {
+  color: var(--dim);
+  background: var(--void);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+}
+
+/* The placeholder is an example, not content: it must not read as text already typed. */
+.composer textarea::placeholder { color: var(--faint); opacity: 1; }
+
+
+
+/* The quoted debt inside the attention block: the actual unanswered question, wearing quote
+   marks so nobody reads the agent's words as the interface's own voice. */
+.why-quote {
+  display: block;
+  margin: 4px 0 6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--signal);
+  color: var(--text);
+  font-style: italic;
+  quotes: "\201C" "\201D";
+}
+
+/* The folded stage directions: machine narration collapsed to one strip. The lines inside are
+   the exact turns they would have been - same voice, one click away. */
+.turn.stage details summary {
+  cursor: pointer;
+  color: var(--faint);
+  font-size: 11px;
+  list-style: none;
+}
+.turn.stage details summary::before { content: "▸ "; }
+.turn.stage details[open] summary::before { content: "▾ "; }
+
+.stage-lines {
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+/* A spoken error wears the danger surface - chat and lifecycle share one vocabulary. */
+.turn.grave .turn-said,
+.turn.grave .turn-text {
+  color: var(--danger);
+}
+
+/* The armed disconnect: one click from erasing the session, and it says so with its colour. */
+.ghost.arming {
+  color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 16%, var(--void));
+}
+
+
+/* A lone stage direction between speech: present - the log is the thread - but murmured.
+   Folding needs a neighbour; a single "Armed a wake doorbell" line gets reduced weight instead
+   of standing at parity with the sentence a person wrote above it. */
+.turn.murmur .turn-text,
+.turn.murmur .turn-who {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+
+/* The search over the thread: filters what the page already holds, opens nothing new.
+   (Added by the logic lane; visual pass welcome to restyle.) */
+.thread-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface);
+}
+.thread-search input {
+  flex: 1;
+  min-width: 0;
+  background: var(--void);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-pill);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  font: inherit;
+}
+.thread-search input::placeholder { color: var(--faint); }
+.thread-search input:focus { outline: none; border-color: var(--signal); }
+.thread-search .hint { padding: 0; white-space: nowrap; }
+
+/* A turn's citable coordinate: the sequence is the log's own address for the line. */
+.turn-seq {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--ease);
+  cursor: copy;
+}
+.turn-seq:hover { color: var(--dim); background: var(--high); }
+.turn:hover .turn-seq,
+.turn-seq:focus-visible { opacity: 1; }
+
+/* The run capsule: a HUD over the canvas, not a citizen of it - it neither pans nor scales.
+   (Added by the logic lane; visual pass welcome to restyle/reposition.) */
+.run-capsule {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  z-index: 4;
+  min-width: 216px;
+  max-width: 300px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--raised) 90%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--lift);
+}
+.run-capsule .capsule-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+.run-capsule-title {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-capsule-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  margin: 4px 0 8px;
+}
+.run-progress {
+  display: block;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--high);
+  overflow: hidden;
+}
+.run-progress i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--live);
+}
+
+
+/* ---- the lint strip & the reopened chip (appendix; visual pass welcome) ------------------- */
+/* The board-face lint: each line an accusation the model attests, in the refused vocabulary
+   the edge-note already speaks. Kept quiet - it is a strip, not a banner. */
+.lint-strip {
+  animation: rise-in var(--t-soft) var(--ease) both;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-radius: var(--r);
+  border-left: 3px solid var(--danger);
+  background: color-mix(in oklab, var(--danger) 10%, var(--void));
+  box-shadow: var(--lift);
+  max-width: 460px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--signal);
+}
+.lint-strip li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dim);
+}
+.lint-strip li .turn-seq { opacity: 1; color: var(--faint); }
+.lint-strip li .turn-seq:hover { color: var(--text); }
+/* "Reopened after done" on the node card: the alarm wash the history chips wear, with the two
+   log coordinates in mono. */
+.node-reopened {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+/* ---- Phase 2: the action dock's new citizens (#105) ---------------------------------------- */
+/* Cancel and its in-place confirmation: the question stands where the button stood, in the
+   danger wash, and "keep running" is the quiet way out. */
+.dock .danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+.confirm-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--r);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 12px;
+}
+/* The verdict's own remedies: one line per silent node - sentence, the operator's number,
+   the declaring button. */
+.dock.remedies {
+  flex-wrap: wrap;
+}
+.remedy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.remedy input {
+  width: 90px;
+}
+
+/* Studio workbench: readable at normal zoom, with independent navigation and action rows. */
+.app { grid-template-columns: clamp(220px, var(--rail, 268px), 460px) 5px minmax(0, 1fr); }
+[hidden] { display: none !important; }
+.gate { min-width: 0; grid-template-columns: minmax(0, 1fr); overflow: auto; }
+.gate-card, .gate-card form, .field { min-width: 0; }
+.field input { min-width: 0; width: 100%; }
+.app:not(.projects-open) { grid-template-columns: 0 0 minmax(0, 1fr); }
+.app:not(.projects-open) > .rail,
+.app:not(.projects-open) > .grip { visibility: hidden; overflow: hidden; }
+.stage { margin: 12px; border-radius: 16px; }
+.topstrip { align-items: center; padding: 12px; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--edge); }
+.topstrip .strip-card { padding: 8px 10px; border-radius: 10px; }
+.topstrip .run-name { font-size: 14px; overflow-wrap: anywhere; }
+.topstrip .right { flex-shrink: 0; }
+.mobile-toggle { flex-shrink: 0; min-width: 36px; min-height: 36px; }
+.projects-toggle { color: var(--dim); }
+.conversation-toggle { color: var(--dim); }
+.mobile-toggle[aria-expanded="true"] { background: var(--high); color: var(--text); }
+.rail { padding: 20px 12px 12px; }
+.project-head { gap: 6px; }
+.project-name { font-size: 14px; }
+.icon-action { min-width: 30px; min-height: 32px; border-radius: 8px; flex-shrink: 0; }
+.project-name-input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
+.run-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; border-radius: 10px; margin: 3px 0; }
+.run-row.on { background: var(--high); }
+.run-row .run { min-width: 0; border-radius: 10px; padding: 10px 7px; }
+.run-row .run-id { font-size: 12px; }
+.run-row .run-when { font-size: 11px; margin-top: 5px; }
+.run-row .avatar { width: 28px; height: 28px; }
+.run-remove { background: transparent; color: var(--faint); }
+.run-remove:hover { color: var(--danger); background: var(--raised); }
+.run-remove-confirm { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: var(--raised); font-size: 13px; line-height: 1.5; border-radius: 8px; }
+.run-remove-confirm > span { flex-basis: 100%; }
+.run-remove-confirm button { padding: 8px 12px; }
+.removed-runs { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--edge); }
+.removed-runs .show-more { display: flex; gap: 8px; align-items: center; max-width: 100%; overflow-wrap: anywhere; text-align: left; font-size: 12px; padding: 10px 6px; }
+.removed-runs svg { flex-shrink: 0; }
+.add-project { font-size: 13px; min-height: 38px; }
+.split { position: relative; min-width: 0; }
+.talk { width: clamp(300px, 26%, 350px); flex-shrink: 0; }
+.chat-col, .node-col { width: 300px; }
+.panel-head h2 { font-size: 16px; line-height: 1.4; }
+.turn-said, .turn-text { font-size: 14px; line-height: 1.65; }
+.thread-search input { font-size: 13px; min-height: 36px; }
+.panel-foot, .hint, .say-note { font-size: 12px; }
+.reply-hint { font-family: var(--sans); font-size: 12px; }
+.sheet { bottom: 138px; }
+.node { width: 280px; min-height: 160px; padding: 14px 16px 12px; border-radius: 12px; border: 1px solid var(--edge); }
+.node:nth-of-type(odd), .node:nth-of-type(even) { transform: none; }
+.node-title { font-size: 16px; margin-top: 8px; }
+.node-tag, .node-live-word { font-size: 12px; letter-spacing: 0; }
+.node-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-family: var(--sans); font-size: 12px; line-height: 1.5; margin-top: 8px; }
+.node-status > span:first-child, .node-fresh { white-space: normal; overflow-wrap: anywhere; }
+.node-crew .who { font-family: var(--sans); font-size: 12px; }
+.node-history-toggle { font-family: var(--sans); font-size: 12px; letter-spacing: 0; text-transform: none; min-height: 28px; }
+.agent-name { font-family: var(--sans); font-size: 14px; }
+.agent-when { font-size: 12px; }
+.agent-blob .avatar { width: 44px; height: 44px; }
+.talk-open { border-radius: 10px; padding: 12px; }
+.talk-bubble { width: 252px; }
+.talk-title, .talk-bubble.room .talk-title { font-size: 13px; }
+.talk-meta, .talk-kind { font-size: 12px; }
+.talk-tie { opacity: 0.65; stroke: var(--agent); stroke-width: 1.5; stroke-dasharray: 5 5; }
+.talk-tie.on { stroke: var(--agent); }
+.edge { stroke: var(--dim); stroke-width: 2; filter: none; }
+.edge-tip { stroke: var(--dim); }
+.run-capsule { top: 12px; left: 16px; min-width: 190px; max-width: 260px; padding: 12px; border-radius: 10px; }
+.run-capsule-title { font-size: 14px; }
+.run-capsule .capsule-count, .run-capsule .capsule-last { font-size: 12px; }
+.tools, .dock { max-width: calc(100% - 24px); gap: 4px; overflow-x: auto; scrollbar-width: thin; padding: 5px; background: var(--surface); border-radius: 10px; }
+.tools { left: 12px; right: 12px; bottom: 66px; }
+.tools button, .dock button { flex-shrink: 0; white-space: nowrap; font-family: var(--sans); font-size: 13px; min-height: 36px; padding: 8px 10px; }
+.dock { left: 12px; right: 12px; bottom: 12px; }
+.dock > span { flex-shrink: 0; }
+.dock.remedies { bottom: 174px; max-height: 160px; overflow: auto; }
+.graph-file { bottom: 174px; max-width: calc(100% - 32px); }
+.graph-note { max-width: calc(100% - 32px); font-family: var(--sans); font-size: 12px; }
+.edge-note { bottom: 126px; max-width: calc(100% - 32px); font-size: 12px; }
+.canvas-hints { display: none; }
+.stage-label { font-family: var(--sans); font-size: 13px; color: var(--dim); }
+.connection-legend { position: absolute; right: 16px; top: 12px; z-index: 4; display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 10px; border-radius: 8px; background: var(--surface); font-size: 12px; color: var(--dim); pointer-events: none; }
+.connection-legend span { display: inline-flex; align-items: center; gap: 8px; }
+.conversation-line { width: 20px; border-top: 2px dashed var(--agent); }
+.dependency-line { width: 20px; border-top: 2px solid var(--dim); }
+.board-navigator { position: absolute; top: 50px; right: 16px; z-index: 5; max-width: calc(100% - 32px); }
+.board-navigator select { width: 230px; max-width: 100%; padding: 10px; border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); color: var(--text); font-family: var(--sans); font-size: 13px; }
+.scene { container-type: inline-size; }
+
+@container (max-width: 800px) {
+  .tools { flex-wrap: wrap; bottom: 112px; }
+  .tools .zoomer { order: -1; margin-left: 0; }
+  .dock { flex-wrap: wrap; max-height: 92px; overflow-y: auto; }
+  .sheet { bottom: 248px; }
+  .edge-note { bottom: 214px; }
+  .graph-file { bottom: 268px; }
+  .connection-legend { display: none; }
+  .board-navigator { top: 12px; right: 12px; }
+  .run-capsule { top: 58px; min-width: 0; max-width: 240px; }
+}
+
+@media (max-width: 1200px) {
+  .talk { width: 300px; }
+  .chat-col, .node-col { position: absolute; inset: 0 0 0 auto; z-index: 10; width: min(360px, 100%); box-shadow: var(--float); }
+  .topstrip .strip-card { gap: 6px; }
+  .topstrip .run-name { max-width: 250px; }
+}
+
+@media (max-width: 900px) {
+  .app, .app:not(.projects-open) { grid-template-columns: minmax(0, 1fr); }
+  .app > .grip { display: none; }
+  .app > .rail { position: absolute; top: 78px; left: 8px; bottom: 8px; width: min(320px, calc(100% - 16px)); z-index: 20; background: var(--void); border: 1px solid var(--edge); border-radius: 12px; box-shadow: var(--float); }
+  .app:not(.projects-open) > .rail { display: none; }
+  .stage { margin: 8px; }
+  .talk { position: absolute; inset: 0 auto 0 0; z-index: 8; width: min(360px, 100%); box-shadow: var(--float); }
+  .chat-col, .node-col { inset: 0 0 0 auto; z-index: 10; }
+  .scene { width: 100%; }
+  .topstrip .run-name { max-width: none; }
+  .topstrip .strip-card:first-of-type { flex: 1; }
+  .tools button, .dock button, .icon-action, .mobile-toggle, .ghost { min-height: 40px; }
+  .icon-action, .mobile-toggle, .ghost { min-width: 36px; }
+}
+
+@media (max-width: 600px) {
+  .topstrip { flex-wrap: wrap; padding: 8px; gap: 6px; }
+  .topstrip .strip-card { padding: 6px 8px; }
+  .topstrip .strip-card:first-of-type { flex-basis: calc(100% - 110px); }
+  .topstrip .right { margin-left: auto; }
+  .topstrip .run-name { font-size: 12px; }
+  .topstrip .tag { font-size: 10px; }
+  .app > .rail { top: 126px; }
+  .stage { border-radius: 12px; }
+  .talk, .chat-col, .node-col { width: 100%; }
+  .panel-head { padding: 10px 12px; }
+  .saybox textarea, .composer textarea, .composer select, .field input, .project-name-input, .thread-search input { font-size: 16px; }
+  .tools button, .dock button { min-height: 44px; }
+  .tones { display: none; }
+  .graph-file { flex-wrap: wrap; }
+  .graph-file .wrap { width: 100%; }
+  .run-capsule { max-width: calc(100% - 32px); }
+  .connection-legend { top: 126px; right: 12px; font-size: 11px; }
+  .board-navigator { left: 12px; }
+  .board-navigator select { width: 100%; font-size: 16px; }
+  .run-capsule { display: none; }
+  .dock { max-height: none; }
+  .tools { bottom: 162px; }
+  .sheet { bottom: 294px; }
+  .edge-note { bottom: 264px; }
+  .graph-file { bottom: 318px; }
+}
+
+/* The working view uses document flow: readable type never depends on canvas zoom. */
+.free-canvas-content { display: contents; }
+.work-view-switch { position: absolute; top: 16px; right: 20px; z-index: 6; display: flex; padding: 4px; gap: 2px; background: #222225; border: 1px solid #38383d; border-radius: 10px; }
+.work-view-switch button { border: 0; background: transparent; border-radius: 7px; padding: 7px 12px; color: #aaaab4; font: 500 12px/1.4 system-ui, sans-serif; }
+.work-view-switch button[aria-pressed=true] { color: #f5f5f7; background: #424247; box-shadow: 0 1px 3px #0005; }
+.free-canvas-content .sheet { top: 62px; }
+.free-canvas-content .board-navigator { top: 68px; }
+.free-canvas-content .connection-legend { top: 112px; }
+/* #1083 F9: the scroll box runs to the scene's bottom and PADS its content by the dock's measured
+   height (App.tsx writes --dock-reserve), so the last card scrolls above the dock instead of
+   sitting behind it; the fallback is the old fixed reserve. */
+.work-overview-scroll { position: absolute; inset: 0; overflow: auto; padding: 26px 24px calc(var(--dock-reserve, 70px) + 24px); background: #141416; scrollbar-width: thin; }
+.work-overview { font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #eeeef2; }
+.work-header { padding-bottom: 24px; border-bottom: 1px solid #303035; margin-bottom: 24px; }
+.work-heading { padding-right: 200px; }
+.work-kicker { display: flex; align-items: center; gap: 7px; color: #a2a2ad; font-size: 12px; }
+.work-heading h1 { font-size: 26px; line-height: 1.3; font-weight: 600; letter-spacing: -.8px; margin: 8px 0 5px; }
+.work-run { display: block; color: #9999a5; font-size: 12px; overflow-wrap: anywhere; }
+.work-counts { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; color: #c5c5ce; font-size: 12px; }
+.work-counts > span { display: inline-flex; align-items: center; gap: 6px; }
+.work-count-attention { color: #ffb36b; }
+.work-layout { display: grid; grid-template-columns: 240px minmax(0,1fr); gap: 24px; align-items: start; }
+.work-sidebar { min-width: 0; display: grid; gap: 28px; }
+.work-section { min-width: 0; }
+.work-muted { color: #a2a2ae; font-weight: 400; }
+.work-caution { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #705335; background: #30261e; color: #ecc99d; border-radius: 10px; font-size: 12px; }
+.work-caution ul { margin: 8px 0 0; padding-left: 18px; }
+/* #1083 F9: a demonstration run's log findings - the same list, in a neutral voice. */
+.work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
+.work-note p { margin: 8px 0 0; }
+.work-note ul { margin: 8px 0 0; padding-left: 18px; }
+.work-node-heading { min-height: 22px; }
+.work-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.work-section-heading > div { display: flex; align-items: center; gap: 8px; }
+.work-section-heading h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.2px; }
+.work-section-heading svg { color: #92929f; }
+.work-section-heading > span { color: #a2a2ae; font-size: 11px; text-align: right; }
+.work-agent-list, .work-talk-list { display: grid; gap: 7px; }
+.work-agent-row, .work-talk-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid #303035; border-radius: 12px; text-align: left; background: #1d1d20; color: inherit; font: inherit; transition: background .15s; }
+.work-agent-row:hover, .work-talk-row:hover, .work-node-open:hover { background: #29292e; }
+.work-avatar { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; font-size: 12px; flex: 0 0 auto; }
+.work-agent-copy, .work-talk-copy { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.work-agent-id, .work-talk-copy strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.work-observed { display: flex; flex-wrap: wrap; gap: 3px 5px; color: #9696a2; font-size: 11px; }
+.work-observed strong { font-weight: 400; color: #c3c3cd; overflow-wrap: anywhere; }
+.work-observed small { font-size: inherit; }
+.work-talk-icon { color: #b9a1f2; }
+.work-talk-faces { display: flex; flex-direction: column; padding: 3px 0; }
+.work-talk-faces span { width: 23px; height: 23px; margin-top: -3px; border: 2px solid #1d1d20; border-radius: 8px; display: grid; place-items: center; color: white; font-size: 10px; }
+.work-related { border-color: #8c70bb; background: #282230; }
+.work-talk-copy > span { color: #a2a2af; font-size: 11px; overflow-wrap: anywhere; }
+.work-talk-count { background: #35313f; color: #d4c3ff; border-radius: 6px; padding: 2px 6px; font-size: 11px; }
+.work-main { min-width: 0; }
+.work-node-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; align-items: start; }
+.work-node-card { min-width: 0; border: 1px solid #37373e; border-radius: 14px; background: #212124; overflow: hidden; box-shadow: 0 3px 10px #0002; }
+.work-node-open { display: grid; gap: 12px; width: 100%; border: 0; background: transparent; color: inherit; padding: 16px; text-align: left; font: inherit; }
+.work-node-topline { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: #a2a2af; }
+.work-status { padding: 3px 7px; border-radius: 6px; background: #35353b; color: #cccbd5; }
+.work-status-moving { background: #193c2c; color: #74e5a8; }
+.work-status-dead, .work-status-waiting { background: #493122; color: #ffbd85; }
+.work-status-done { background: #263c32; color: #9de0ba; }
+.work-node-id { font-size: 17px; font-weight: 600; letter-spacing: -.35px; overflow-wrap: anywhere; }
+.work-node-latest { display: grid; gap: 3px; font-size: 12px; }
+.work-node-latest > span { color: #9393a0; font-size: 11px; }
+.work-node-latest > strong { font-weight: 400; color: #d8d8df; overflow-wrap: anywhere; }
+.work-node-latest small { color: #a5a5b1; font-size: 11px; overflow-wrap: anywhere; }
+.work-node-footer { display: flex; padding: 0 16px 12px; color: #9d9da9; font-size: 11px; }
+.work-node-footer > span { display: inline-flex; align-items: center; gap: 5px; }
+.work-dependencies { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 16px; border-top: 1px solid #343439; }
+.work-dependency { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border: 1px solid #45404f; border-radius: 7px; padding: 5px 8px; background: #302b39; color: #dcccf8; }
+.work-dependency span { overflow-wrap: anywhere; }
+.work-no-dependencies { color: #a2a2af; font-size: 11px; }
+.work-awaiting { padding: 10px 16px; margin: 0; border-top: 1px solid #343439; color: #9494a1; font-size: 11px; }
+.work-selected { border-color: #b299ec; box-shadow: 0 0 0 1px #b299ec; }
+.work-empty { color: #a5a5b2; font-size: 12px; margin: 0; padding: 12px 0; }
+.work-empty-panel { padding: 24px; border: 1px dashed #414148; border-radius: 12px; }
+.work-verification { display: flex; align-items: center; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #303035; color: #9d9daa; font: 12px/1.5 system-ui,sans-serif; }
+.work-verification button { flex-shrink: 0; color: #cbb7ff; border: 0; background: transparent; padding: 8px 0; }
+.work-overview button:focus-visible, .work-view-switch button:focus-visible { outline: 2px solid #c6afff; outline-offset: 3px; }
+@container (max-width: 800px) {
+  .work-overview-scroll { padding: 24px 18px calc(var(--dock-reserve, 112px) + 24px); }
+  .work-layout { grid-template-columns: minmax(0,1fr); gap: 24px; }
+  .work-sidebar { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+  .work-heading { padding-top: 40px; padding-right: 0; }
+}
+@media (max-width: 600px) {
+  .work-overview-scroll { padding: 20px 16px calc(var(--dock-reserve, 164px) + 20px); }
+  .work-sidebar { grid-template-columns: minmax(0,1fr); }
+  .work-main { order: -1; }
+  .work-node-grid { grid-template-columns: minmax(0,1fr); }
+  .work-verification { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .work-counts { gap: 10px 14px; }
+  .work-view-switch { right: 16px; top: 12px; }
+  .work-view-switch button { min-height: 36px; }
+}
+
+/* Canvas controls stay outside the world so map content never sits below a floating HUD. */
+.canvas-arrange { position: absolute; top: 14px; left: 20px; display: flex; align-items: center; gap: 8px; z-index: 5; }
+.canvas-arrange button { min-height: 34px; padding: 7px 12px; border: 1px solid var(--edge); border-radius: 8px; font: 13px var(--sans); }
+.canvas-arrange span { color: var(--dim); font: 12px var(--sans); }
+.free-canvas-content .run-capsule { display: none; }
+.free-canvas-content .node-title { font-family: var(--sans); font-size: 17px; }
+.free-canvas-content .talk-open { width: 100%; min-height: 92px; border: 1px solid var(--edge); }
+.free-canvas-content .talk-title { font-family: var(--sans); white-space: normal; overflow-wrap: anywhere; }
+.free-canvas-content .stage-label { font-weight: 600; color: var(--text); }
+.free-canvas-content .talk-tie { fill: none; }
+@container (max-width: 800px) { .canvas-arrange span { display: none; } .canvas-arrange { left: 12px; } }
+
+.free-canvas-content .sheet { top: 118px; }
+.free-canvas-content .connection-legend { top: 68px; left: 16px; right: auto; }
+@container (max-width: 600px) {
+  .canvas-arrange { top: 58px; }
+  .free-canvas-content .board-navigator { top: 100px; }
+  .free-canvas-content .sheet { top: 148px; }
+}
+
+.canvas-lint { position: absolute; top: 104px; left: 16px; z-index: 6; max-width: calc(100% - 32px); border-radius: 8px; background: var(--surface); color: var(--signal); font: 12px var(--sans); }
+.canvas-lint summary { padding: 7px 10px; cursor: pointer; }
+.canvas-lint .lint-strip { max-height: 220px; overflow: auto; }
+/* #1083: a demonstration run's log findings in the overview's neutral voice, not the signal. */
+.canvas-lint.canvas-note { color: var(--dim); }
+@container (max-width: 600px) { .canvas-lint { top: 146px; } }
+
+/* The map reads as people, conversations and reported work, while all objects stay draggable. */
+.canvas-story { position: absolute; top: 16px; left: 24px; right: 210px; }
+.canvas-story > span { display: flex; align-items: center; gap: 7px; color: var(--dim); font: 12px var(--sans); }
+.canvas-story svg { width: 14px; height: 14px; }
+.canvas-story h2 { margin: 8px 0 6px; font: 600 24px/1.2 var(--sans); letter-spacing: -.6px; }
+.canvas-story p { margin: 0; color: var(--dim); font: 13px/1.5 var(--sans); }
+.canvas-arrange { top: 118px; left: 24px; }
+.free-canvas-content .sheet { top: 164px; }
+.free-canvas-content .board-navigator { top: 114px; }
+.free-canvas-content .connection-legend { top: 76px; right: 16px; left: auto; }
+.canvas-lint { top: 154px; }
+.canvas-region { position: absolute; border-radius: 18px; background: #19191c; border: 1px solid #27272c; pointer-events: none; }
+.canvas-region header { display: flex; align-items: center; gap: 9px; padding: 20px 20px 0; font: 14px var(--sans); color: #efeff2; }
+.canvas-region header svg { width: 16px; height: 16px; color: #a7a7b2; }
+.canvas-region header > span { margin-left: auto; color: #a7a7b2; font-size: 12px; }
+.canvas-region p { margin: 8px 20px; color: #9999a5; font: 12px/1.5 var(--sans); }
+.work-region { background: #1b1b1f; }
+.free-canvas-content .node { width: 320px; min-height: 248px; padding: 18px; border-radius: 16px; background: #25252a; border: 1px solid #3a3a42; box-shadow: 0 8px 24px #0002; }
+.free-canvas-content .node-open { width: 100%; }
+.free-canvas-content .node-tag { display: flex; align-items: center; gap: 6px; font: 11px var(--sans); color: #aaaab6; }
+.node-tag svg { width: 13px; height: 13px; }
+.free-canvas-content .node-title { margin-top: 14px; font: 600 20px/1.2 var(--sans); letter-spacing: -.3px; }
+.node-story-status { display: block; margin: 6px 0 18px; color: #b8b8c4; font: 13px/1.4 var(--sans); }
+.node-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.node-facts > span { display: grid; gap: 6px; min-width: 0; }
+.node-facts small { font: 11px var(--sans); color: #aaaab6; }
+.node-facts strong { font: 500 12px/1.4 var(--sans); color: #eeeef4; overflow-wrap: anywhere; }
+.node-receipt { margin-top: 18px; padding-top: 12px; border-top: 1px solid #414149; display: flex; justify-content: space-between; gap: 8px; font: 11px/1.4 var(--sans); color: #aaaab6; }
+.node-inspect { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; color: #cecef3; font: 500 12px var(--sans); }
+.node-inspect svg { width: 14px; height: 14px; }
+.free-canvas-content .node-history-toggle { margin-top: 10px; }
+.free-canvas-content .agent-blob { width: 176px; margin-left: -88px; }
+.free-canvas-content .agent-open { width: 176px; min-height: 96px; padding: 12px; grid-template-columns: 36px 1fr; column-gap: 10px; justify-items: start; background: #242429; border: 1px solid #38383f; border-radius: 12px; }
+.free-canvas-content .agent-open .avatar { width: 32px; height: 32px; grid-row: span 2; align-self: center; }
+.free-canvas-content .agent-name { font: 500 13px var(--sans); color: #e3e3eb; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; align-self: end; }
+.free-canvas-content .agent-when { font: 11px var(--sans); color: #aaaab6; }
+.free-canvas-content .talk-bubble { width: 280px; }
+.free-canvas-content .talk-open { background: #242429; border-color: #3a3a42; border-radius: 12px; padding: 16px; }
+.free-canvas-content .talk-title { font-size: 14px; }
+.free-canvas-content .sheet { background-image: radial-gradient(#ffffff0c 1px, transparent 1px); }
+@container (max-width: 700px) {
+ .canvas-story { top: 60px; left: 16px; right: 16px; }
+ .canvas-story h2 { font-size: 20px; }
+ .canvas-story p { font-size: 12px; }
+ .canvas-arrange { top: 172px; left: 16px; }
+ .free-canvas-content .board-navigator { top: 216px; left: 16px; }
+ .free-canvas-content .sheet { top: 264px; }
+ .canvas-lint { top: 260px; }
+}
+
+.free-canvas-content .node { height: 288px; min-height: 288px; }
+.free-canvas-content .node.node-empty { height: 164px; min-height: 164px; }
+/* The card carrying the run's objective (#1077): two clamped lines + margins = the 52px
+   OBJECTIVE_ALLOWANCE in graph/board.ts; the measured box and the drawn box must agree. */
+.free-canvas-content .node.node-with-objective { height: 340px; min-height: 340px; }
+.free-canvas-content .node.node-empty.node-with-objective { height: 216px; min-height: 216px; }
+.node-empty .node-story-status { margin-bottom: 10px; }
+.free-canvas-content .node .hist-chip { font: 11px var(--sans); color: #c6c6d0; }
+.free-canvas-content .node-history { position: absolute; top: 100%; left: 0; width: 100%; max-height: 220px; overflow: auto; padding: 16px; background: #25252a; border: 1px solid #4a4a52; border-radius: 12px; z-index: 8; }
+.free-canvas-content .talk-open { min-height: 148px; }
+.talk-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin: 12px 0; color: #dedee7; font: 13px/1.5 var(--sans); }
+.free-canvas-content .agent-when, .free-canvas-content .talk-meta, .free-canvas-content .talk-kind { color: #b4b4c0; font-size: 12px; }
+.canvas-region p { color: #b4b4c0; }
+.canvas-execution-state { display: none; }
+.scene:has(.free-canvas-content:not([hidden])) .canvas-execution-state { display: block; color: var(--dim); font: 12px var(--sans); padding: 8px; }
+.scene:has(.free-canvas-content:not([hidden])) .dock { left: auto; right: 16px; bottom: 18px; }
+.free-canvas-content .tools { right: auto; bottom: 18px; }
+.free-canvas-content .edge-note { bottom: 78px; }
+.free-canvas-content .sheet { bottom: 106px; }
+@container (max-width: 1250px) {
+ .free-canvas-content .tools { bottom: 70px; }
+ .scene:has(.free-canvas-content:not([hidden])) .dock { left: 12px; right: auto; bottom: 12px; }
+ .free-canvas-content .edge-note { bottom: 124px; }
+ .free-canvas-content .sheet { bottom: 154px; }
+}
+@container (max-width: 700px) {
+ .free-canvas-content .tools { bottom: 74px; }
+ .free-canvas-content .edge-note { bottom: 180px; }
+ .free-canvas-content .sheet { bottom: 226px; }
+ .scene:has(.free-canvas-content:not([hidden])) .dock { max-height: 62px; flex-wrap: nowrap; }
+}
+
+.free-canvas-content .avatar::after { display: none; }
+.free-canvas-content .avatar { color: #fff; font: 600 13px var(--sans); }
+.free-canvas-content .talk-bubble.room .talk-open { width: 100%; border-color: #3a3a42; }
+.canvas-region.work-region { pointer-events: none; }
+.work-region > button { pointer-events: auto; margin: 0 20px; padding: 5px 0; background: transparent; color: #d0d0fa; font: 500 12px var(--sans); }
+.free-canvas-content .connect-toggle { max-width: none; font-size: 12px; }
+.free-canvas-content .node { overflow: visible; }
+.free-canvas-content .node-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+
+@media (max-width: 700px) {
+ .stage:has(.free-canvas-content:not([hidden])) .topstrip { flex-wrap: nowrap; min-height: 64px; gap: 4px; padding: 8px; }
+ .stage:has(.free-canvas-content:not([hidden])) .strip-card { min-width: 0; padding: 8px; }
+ .stage:has(.free-canvas-content:not([hidden])) .strip-card.right { margin-left: auto; padding: 0; flex: 0 0 auto; }
+ .stage:has(.free-canvas-content:not([hidden])) .strip-card:first-child { flex-wrap: wrap; }
+ .stage:has(.free-canvas-content:not([hidden])) .topstrip .tag { white-space: normal; }
+ .stage:has(.free-canvas-content:not([hidden])) .run-name { max-width: 110px; }
+ .stage:has(.free-canvas-content:not([hidden])) button[aria-label="Tidy the board"] { display: none; }
+}
+@container (max-width: 700px) {
+ .canvas-story > span { display: none; }
+ .canvas-story h2 { margin-top: 0; }
+ .canvas-arrange { top: 140px; }
+ .free-canvas-content .board-navigator { top: 184px; }
+ .free-canvas-content .sheet { top: 236px; bottom: 164px; }
+ .free-canvas-content .tools { flex-wrap: nowrap; max-height: 52px; bottom: 64px; }
+ .free-canvas-content .edge-note { bottom: 120px; max-height: 44px; overflow: auto; }
+}
+
+.execution-actions, .execution-menu { display: contents; }
+.execution-actions > summary { display: none; }
+.scene:has(.free-canvas-content:not([hidden])) .execution-actions { display: block; position: relative; }
+.scene:has(.free-canvas-content:not([hidden])) .execution-actions > summary { display: block; cursor: pointer; padding: 10px 16px; border: 1px solid var(--edge); border-radius: 9px; font: 500 13px var(--sans); background: var(--raised); }
+.scene:has(.free-canvas-content:not([hidden])) .execution-menu { display: grid; position: absolute; right: 0; bottom: 52px; width: 280px; max-height: 380px; overflow: auto; padding: 10px; gap: 6px; background: #242429; border: 1px solid #46464f; border-radius: 12px; box-shadow: 0 12px 40px #0008; }
+.scene:has(.free-canvas-content:not([hidden])) .execution-actions:not([open]) .execution-menu { display: none; }
+.scene:has(.free-canvas-content:not([hidden])) .execution-menu button { width: 100%; min-height: 40px; text-align: left; }
+.scene:has(.free-canvas-content:not([hidden])) .dock { overflow: visible; z-index: 12; }
+@container (max-width: 1250px) { .scene:has(.free-canvas-content:not([hidden])) .execution-menu { left: 0; right: auto; } }
+
+.free-canvas-content .node .hist-chip.pulse { animation: none; }
+.free-canvas-content .node .hist-chip.live { color: #a2f0c5; background: #284439; }
+.free-canvas-content .node .hist-chip.alarm { color: #ffca99; background: #493329; }
+.free-canvas-content .node .hist-chip.quiet { color: #e0e0eb; background: #3a3a44; }
+.canvas-sections { display: none; }
+@container (max-width: 700px) {
+ .canvas-sections { position: absolute; top: 234px; left: 16px; right: 16px; display: flex; gap: 6px; z-index: 5; }
+ .canvas-sections button { flex: 1; min-height: 34px; border: 1px solid var(--edge); border-radius: 7px; background: var(--raised); font: 12px var(--sans); }
+ .free-canvas-content .sheet { top: 278px; bottom: 124px; }
+ .free-canvas-content .canvas-region { display: none; }
+ .free-canvas-content .edge-note:not(.refused) { display: none; }
+}
+
+@container (max-width: 700px) {
+ .scene:has(.free-canvas-content:not([hidden])) .execution-actions { position: static; }
+ .scene:has(.free-canvas-content:not([hidden])) .execution-menu { left: 0; right: auto; width: min(320px, calc(100vw - 48px)); }
+}
+
+/* Canvas gestures belong to the board; editable notes keep native text editing. */
+.sheet { user-select: none; -webkit-user-select: none; touch-action: none; }
+.sheet input, .sheet textarea, .sheet [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+.sheet.tool-hand .world, .sheet.tool-hand .world * { pointer-events: none; user-select: none; -webkit-user-select: none; }
+.sheet.tool-hand:active { cursor: grabbing; }
+.icon-action, .run-remove { align-items: center; justify-content: center; padding: 0; }
+.run-remove { display: inline-flex; min-height: 32px; width: 30px; }
+.run-remove svg, .icon-action svg { display: block; flex: 0 0 auto; width: 14px; height: 14px; }
+
+/* #1077: what a run is about, where its id used to stand alone. */
+.run-objective { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--edge); }
+.run-objective q { quotes: none; font: 14px/1.45 var(--sans); color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.work-node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; quotes: none; margin: 6px 0 0; font: 13px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
+.node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; quotes: none; margin: 4px 0 10px; font: 12px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
+.composer-hint { margin: -4px 0 8px; }
+
+/* #1083 F8, second pass (orchestrator verification at 1280x720): on a scene between 480px and
+   700px wide - a desktop with the conversation column open - the free canvas stacked its header
+   into four rows (headline and sentence, Organize, the finder, the section tabs) and gave the
+   sheet 222px of 624, about 40% lost to chrome, so no card fit whole at a readable zoom. The
+   headline keeps one short line, Organize and the finder share a row, and the tabs follow. Phones
+   (under 480px) keep the stacked layout, where one row cannot hold both controls. Framing still
+   measures whatever chrome covers the sheet (board.tsx `chromeInsets`), so this only gives it
+   room. Placed last so it follows every earlier canvas block at the same width. */
+@container (min-width: 480px) and (max-width: 700px) {
+ .canvas-story { top: 12px; left: 16px; right: 16px; }
+ .canvas-story > span, .canvas-story p { display: none; }
+ .canvas-story h2 { margin: 0; font-size: 16px; }
+ .canvas-arrange { top: 44px; left: 16px; }
+ .free-canvas-content .board-navigator { top: 44px; left: auto; right: 16px; }
+ .free-canvas-content .board-navigator select { width: 200px; }
+ .canvas-sections { top: 90px; }
+ .canvas-lint { top: 132px; }
+ .free-canvas-content .sheet { top: 130px; }
+}
+
+/* Settings -> Models (#1171). The cards read like the rest of the page: a panel, a list, and one
+   form at a time. `.model.off` dims a disabled route rather than hiding it, for the same reason
+   the composer shows disabled routes in its picker -- "missing" and "turned off" send an operator
+   to two different places. */
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 13px 0;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.model {
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  padding: 9px 10px;
+}
+
+.model.off { opacity: 0.62; }
+
+.model-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.model-head strong { font-family: var(--mono); font-size: 12px; }
+
+.model-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* The dot IS the sentence: a probe reports one of four things and each one reads differently at a
+   glance, so a colour never carries the meaning alone. */
+.probe {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--faint);
+}
+
+.probe.available { color: var(--live); border-color: var(--live); }
+.probe.refused { color: var(--danger); border-color: var(--danger); }
+.probe.checking { color: var(--text); }
+
+.add-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 13px;
+  align-self: flex-start;
+}
+
+/* Answering a parked node (#1186). It sits inside the node panel, above the thread, because the
+   thing a person came to this window to do when a node is waiting is answer it -- not read back
+   what it already said. The block is bordered rather than plain so it reads as an action area
+   and not as one more fact about the node. */
+.answer {
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  margin: 10px 13px 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.answer h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.answer-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.answer-add label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.answer-bundle {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.answer-bundle li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.answer-bundle strong { font-family: var(--mono); font-size: 12px; }
+
+/* The digest is shown in the mono face at a size a person can actually compare against their own
+   `sha256sum` output. Shrinking it to a decoration would leave a value nobody can check. */
+.answer-bundle code {
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.8;
+}

@@ -1,0 +1,1 @@
+{"oracleId":"oracle-schema-ceiling","requiredEvidence":["schemas/node.schema.json","schemas/CHANGELOG.md"],"answer":"315576000 seconds (10 years); node.schema.json applies minimum 1 / maximum 315576000 to waitWithinSeconds, clearanceWithinSeconds and dlqWithinSeconds; rationale in schemas/CHANGELOG.md."}

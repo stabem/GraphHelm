@@ -1,0 +1,68 @@
+[package]
+name = "graphhelm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "graphhelm"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+getrandom.workspace = true
+fs2.workspace = true
+graphhelm-architect = { path = "../../core/architect" }
+graphhelm-events = { path = "../../core/events" }
+graphhelm-execution = { path = "../../core/execution" }
+graphhelm-extension-host = { path = "../../core/extension-host" }
+graphhelm-gateway = { path = "../../core/gateway" }
+graphhelm-governor = { path = "../../core/governor" }
+graphhelm-graph = { path = "../../core/graph" }
+graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
+graphhelm-policy = { path = "../../core/policy" }
+graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
+graphhelm-protocols = { path = "../../core/protocols" }
+graphhelm-runtime = { path = "../../core/runtime" }
+graphhelm-schema = { path = "../../core/schema" }
+graphhelm-schema-evolution = { path = "../../core/schema-evolution" }
+graphhelm-sealed-key-provider = { path = "../../adapters/sealed-key-provider" }
+graphhelm-tool-broker = { path = "../../core/tool-broker" }
+graphhelm-quality = { path = "../../core/quality" }
+pathogens = { path = "../../tools/pathogens" }
+graphhelm-tool-host = { path = "../../adapters/tool-host" }
+graphhelm-host-adoption = { path = "../../adapters/host-adoption" }
+graphhelm-simulation = { path = "../../core/simulation" }
+keel-contract-index = { path = "../../tools/keel-contract-index" }
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sqlx.workspace = true
+# net/io-util are the serve wake sweep's own (serve/wake.rs rings over tokio::net):
+# declared here rather than inherited through axum's feature set (Task 2 review note).
+tokio = { workspace = true, features = ["net", "io-util"] }
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+# `Win32_System_Console`: `gateway setup`'s hidden key prompt (#1139) turns console echo off
+# through `GetConsoleMode`/`SetConsoleMode`; the Unix half uses `libc`'s termios.
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
+
+[dev-dependencies]
+toml.workspace = true
+graphhelm-development-benchmark = { path = "../../tools/development-benchmark" }
+graphhelm-process-tree = { path = "../../adapters/process-tree" }
+tokio = { workspace = true, features = ["net", "rt", "time", "io-util"] }
+hex.workspace = true
+sha2.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true

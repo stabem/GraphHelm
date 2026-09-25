@@ -1,0 +1,264 @@
+{
+  "rounds": [
+    {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    },
+    {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:summarize": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:summarize": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    },
+    {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:read_outcome": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:report_summary": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:read_outcome": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:report_summary": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    },
+    {
+      "model": "jev-latest",
+      "answers": {
+        "coverage:0": {
+          "type": "score",
+          "score": 1.0,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.85
+        },
+        "coverage:1": {
+          "type": "score",
+          "score": 1.5,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.85
+        },
+        "coverage:2": {
+          "type": "score",
+          "score": 2.0,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.5
+        },
+        "waste:0": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "waste:1": {
+          "type": "noul",
+          "noul": 0.1
+        },
+        "waste:2": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1
+      }
+    }
+  ],
+  "answers": {
+    "007364f78a42ab576a0230da4422f6c56d5084cfc868efdd2d5bb92326d291a6": {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:summarize": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:summarize": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    },
+    "108bfcb10743692361f85be868abd582dd3b7b89c473391153b0045b3efd038c": {
+      "model": "jev-latest",
+      "answers": {
+        "coverage:0": {
+          "type": "score",
+          "score": 1.0,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.85
+        },
+        "coverage:1": {
+          "type": "score",
+          "score": 1.5,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.85
+        },
+        "coverage:2": {
+          "type": "score",
+          "score": 2.0,
+          "legend": {},
+          "probabilities": {},
+          "confidence": 0.5
+        },
+        "waste:0": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "waste:1": {
+          "type": "noul",
+          "noul": 0.1
+        },
+        "waste:2": {
+          "type": "noul",
+          "noul": 0.1
+        }
+      },
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1
+      }
+    },
+    "8c47fc3f1649c8b62dddaeabfad7b14b8c4340b0bea96a1cc506ac2459da3f42": {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    },
+    "b0c9189433a809228608b0f512fe8039a6e0a9c32cefaf08494a4975a7ae9e93": {
+      "model": "jev-latest",
+      "answers": {
+        "kind:build_check": {
+          "type": "choice",
+          "choice": "tool",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:read_outcome": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "kind:report_summary": {
+          "type": "choice",
+          "choice": "agent",
+          "probabilities": {},
+          "confidence": 0.9
+        },
+        "on_goal:build_check": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:read_outcome": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "on_goal:report_summary": {
+          "type": "noul",
+          "noul": 0.95
+        }
+      },
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1
+      }
+    }
+  }
+}

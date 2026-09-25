@@ -1,0 +1,31 @@
+{
+  "obligationId": "obligation/rendered-loading-state",
+  "contractId": "journey/issue-210-extension-install",
+  "contractDigest": "sha256:6161616161616161616161616161616161616161616161616161616161616161",
+  "promiseId": "promise/loading-is-visible",
+  "fact": "content_rendered",
+  "requiredEvidenceKinds": [
+    "dom_semantic_snapshot",
+    "accessibility_tree"
+  ],
+  "observerRequirements": {
+    "capability": "browser.semantic-journey",
+    "minimumTrust": "first_party_instrumented",
+    "maxAgeSeconds": 30,
+    "absenceWindowSeconds": null
+  },
+  "resolution": {
+    "status": "capability_missing",
+    "authority": "advisory",
+    "resultStatus": "unresolved",
+    "refusal": {
+      "code": "OBSERVER_MISSING",
+      "missingCapability": "browser.semantic-journey",
+      "reason": "No activated observer can inspect the rendered loading state and semantic accessibility tree.",
+      "weakerProxiesRejected": [
+        "process_exit",
+        "http_acceptance"
+      ]
+    }
+  }
+}

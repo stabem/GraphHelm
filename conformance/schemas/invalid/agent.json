@@ -1,0 +1,8 @@
+{
+  "purpose": 7,
+  "capabilities": ["classify"],
+  "inputSchema": "fixture-input",
+  "outputSchema": "fixture-output",
+  "instructions": "Return deterministic evidence.",
+  "completionContract": "evidence-recorded"
+}

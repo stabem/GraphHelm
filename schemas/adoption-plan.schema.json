@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/adoption-plan.schema.json",
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "const": "p50.dev/adoption/v1"
+    },
+    "kind": {
+      "const": "AdoptionPlan"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "coverage": {},
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "project",
+              "user"
+            ]
+          }
+        },
+        "packages": {
+          "type": "array",
+          "maxItems": 256
+        },
+        "hostBoundary": {
+          "enum": [
+            "quiescent",
+            "reload_supported"
+          ]
+        },
+        "decisions": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "operationIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "decision": {
+                "enum": [
+                  "keep",
+                  "replace",
+                  "disable",
+                  "unresolved"
+                ]
+              },
+              "protected": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "operationIndex",
+              "decision",
+              "protected"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "enum": [
+                  "project",
+                  "home"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "beforeDigest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "afterDigest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "after": {
+                "type": "string",
+                "maxLength": 1048576
+              }
+            },
+            "required": [
+              "root",
+              "path",
+              "beforeDigest",
+              "afterDigest",
+              "after"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "rootBindings": {
+          "type": "object",
+          "required": [
+            "project",
+            "home"
+          ],
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "home": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "coverage",
+        "scopes",
+        "packages",
+        "hostBoundary",
+        "decisions",
+        "operations",
+        "rootBindings"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "id",
+    "digest",
+    "spec"
+  ],
+  "additionalProperties": true,
+  "x-graphhelm-schema-version": "1.0.0"
+}

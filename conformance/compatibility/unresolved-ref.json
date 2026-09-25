@@ -1,0 +1,4 @@
+{
+  "baseline": {"type": "object"},
+  "candidate": {"$ref": "missing.schema.json"}
+}

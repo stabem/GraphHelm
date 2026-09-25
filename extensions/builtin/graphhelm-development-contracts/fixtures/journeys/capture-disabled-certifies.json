@@ -1,0 +1,33 @@
+{
+  "_comment": "The honest capture-DISABLED run. Present so the refusal cases cannot be satisfied by an implementation that refuses everything: a corpus of only-refusals cannot tell a working gate from a closed door.",
+  "journeyId": "journey/capture-disabled",
+  "branch": "capture_off",
+  "capture": {
+    "enabled": false
+  },
+  "scope": {
+    "workspaceId": "ws-selfval",
+    "projectId": "proj-graphhelm"
+  },
+  "snapshots": {
+    "repoSnapshot": "snapshot-a",
+    "indexGeneration": "snapshot-a"
+  },
+  "retrieval": {
+    "hits": [
+      "core/auth/middleware.rs:42"
+    ],
+    "coverage": "complete",
+    "pages": 1
+  },
+  "evidence": {
+    "coverageCarried": "complete",
+    "actor": "agent/checkout-driver",
+    "observer": "observer/durable-store-reader",
+    "capturedMaterial": null
+  },
+  "expect": {
+    "outcome": "certified"
+  },
+  "why": "coverage is conclusive AND truly conclusive; the observer is not the actor; nothing was captured, and the branch prohibits capture outright"
+}

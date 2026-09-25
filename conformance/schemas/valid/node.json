@@ -1,0 +1,6 @@
+{
+  "type": "tool",
+  "name": "Fixture node",
+  "objective": "Exercise the minimum node contract",
+  "optionality": "required"
+}

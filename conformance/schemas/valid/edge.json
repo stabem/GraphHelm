@@ -1,0 +1,6 @@
+{
+  "id": "edge-fixture",
+  "from": "source-node",
+  "to": "target-node",
+  "type": "control"
+}

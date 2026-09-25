@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/execution-accounting-receipt.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "Execution Accounting Receipt",
+  "type": "object",
+  "required": ["schemaVersion", "executionBinding", "fields"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "executionBinding": {"$ref": "#/$defs/executionBinding"},
+    "fields": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "prefixItems": [
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "orientation_tokens"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "zero_result_queries"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "retrieval_pages"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "retrieval_retries"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "retrieval_fallbacks"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "summary_tokens"}}},
+        {"$ref": "#/$defs/providerReportedInputField", "properties": {"name": {"const": "provider_reported_input_tokens"}}},
+        {"$ref": "#/$defs/providerTotalInputField", "properties": {"name": {"const": "provider_total_input_tokens"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "compiled_input_tokens"}},
+         "description": "Input tokens attributable to the compiled capsule content, as counted by the serving provider for the request that carried it. NOT the whole prompt's count -- that is provider_reported_input_tokens, a different field, itself measured only when the provider reports one and otherwise unavailable (D-043) -- and NOT a locally tokenized estimate, which would be an estimate wearing a counter's name. No provider reports a per-part count today, so this field is honestly unavailable rather than approximated (#506)."},
+        {"$ref": "#/$defs/outputField", "properties": {"name": {"const": "output_tokens"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "formatting_tokens"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "index_cost_cold"}}},
+        {"$ref": "#/$defs/unavailableField", "properties": {"name": {"const": "index_cost_amortized"}}}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"
+    },
+    "wireHash": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "scope": {
+      "type": "object",
+      "required": ["workspaceId", "projectId", "executionId"],
+      "additionalProperties": false,
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/opaqueId"},
+        "projectId": {"$ref": "#/$defs/opaqueId"},
+        "executionId": {"$ref": "#/$defs/opaqueId"}
+      }
+    },
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["owner", "human", "agent", "system"]},
+        "id": {"$ref": "#/$defs/actorId"}
+      }
+    },
+    "executionBinding": {
+      "type": "object",
+      "required": ["bindingKind", "schemaId", "schemaVersion", "eventId", "eventHash", "scope", "producerActor"],
+      "additionalProperties": false,
+      "properties": {
+        "bindingKind": {"const": "execution_started_event"},
+        "schemaId": {"const": "https://p50.dev/schemas/event-envelope.schema.json"},
+        "schemaVersion": {"const": "1.0.0"},
+        "eventId": {"$ref": "#/$defs/opaqueId"},
+        "eventHash": {"$ref": "#/$defs/wireHash"},
+        "scope": {"$ref": "#/$defs/scope"},
+        "producerActor": {"$ref": "#/$defs/actor"}
+      }
+    },
+    "costField": {
+      "type": "object",
+      "required": ["name", "value", "provenance", "producer", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "orientation_tokens",
+            "zero_result_queries",
+            "retrieval_pages",
+            "retrieval_retries",
+            "retrieval_fallbacks",
+            "summary_tokens",
+            "provider_reported_input_tokens",
+            "provider_total_input_tokens",
+            "compiled_input_tokens",
+            "output_tokens",
+            "formatting_tokens",
+            "index_cost_cold",
+            "index_cost_amortized"
+          ]
+        },
+        "value": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991},
+        "provenance": {"enum": ["measured", "derived", "unavailable"]},
+        "producer": {
+          "oneOf": [
+            {"$ref": "#/$defs/opaqueId"},
+            {"type": "null"}
+          ]
+        },
+        "note": {"type": "string", "maxLength": 2048}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "value": {"type": "integer"},
+            "provenance": {"const": "measured"},
+            "producer": {"$ref": "#/$defs/opaqueId"}
+          }
+        },
+        {
+          "properties": {
+            "value": {"type": "integer"},
+            "provenance": {"const": "derived"},
+            "producer": {"type": "null"}
+          }
+        },
+        {
+          "properties": {
+            "value": {"type": "null"},
+            "provenance": {"const": "unavailable"},
+            "producer": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "unavailableField": {
+      "allOf": [
+        {"$ref": "#/$defs/costField"},
+        {
+          "properties": {
+            "value": {"type": "null"},
+            "provenance": {"const": "unavailable"},
+            "producer": {"type": "null"},
+            "note": {"const": "not measured by this runtime slice"}
+          }
+        }
+      ]
+    },
+    "providerReportedInputField": {
+      "description": "Raw input token count the serving provider reported for the request, covering the ENTIRE prompt (the assembled system block plus the task). May exclude cache-read and cache-creation tokens, which is why it is reported separately from provider_total_input_tokens. It is a PROVIDER-side total: it is not attributable to any one part of the input.",
+      "allOf": [
+        {"$ref": "#/$defs/costField"},
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "value": {"type": "integer"},
+                "provenance": {"const": "measured"},
+                "producer": {"const": "model_gateway"},
+                "note": {"const": "raw WorkSummary.input_tokens reported by the provider boundary; may exclude cache read and cache creation tokens"}
+              }
+            },
+            {
+              "properties": {
+                "value": {"type": "null"},
+                "provenance": {"const": "unavailable"},
+                "producer": {"type": "null"},
+                "note": {"const": "provider-reported input tokens were not reported by the model boundary"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "providerTotalInputField": {
+      "description": "Total input tokens for the request INCLUDING cache-read and cache-creation. Unavailable while the provider boundary reports only the figure carried by provider_reported_input_tokens; a total that silently omitted the cache components would be a smaller number wearing the name of a complete one.",
+      "allOf": [
+        {"$ref": "#/$defs/costField"},
+        {
+          "properties": {
+            "value": {"type": "null"},
+            "provenance": {"const": "unavailable"},
+            "producer": {"type": "null"},
+            "note": {"const": "provider total input is unavailable because WorkSummary may exclude cache read and cache creation tokens"}
+          }
+        }
+      ]
+    },
+    "outputField": {
+      "allOf": [
+        {"$ref": "#/$defs/costField"},
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "value": {"type": "integer"},
+                "provenance": {"const": "measured"},
+                "producer": {"const": "model_gateway"},
+                "note": {"const": ""}
+              }
+            },
+            {
+              "properties": {
+                "value": {"type": "null"},
+                "provenance": {"const": "unavailable"},
+                "producer": {"type": "null"},
+                "note": {"const": "output_tokens was not reported by the model boundary"}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

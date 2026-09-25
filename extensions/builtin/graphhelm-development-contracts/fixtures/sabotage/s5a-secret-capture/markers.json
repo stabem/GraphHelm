@@ -1,0 +1,42 @@
+{
+  "_safety": "Synthetic markers only. Each carries the SHAPE the detectors match; none is a credential and none authenticates anything.",
+  "_measured_at": "origin/main",
+  "_detectors": {
+    "memory": "core/governor/src/memory.rs:299  content_is_secret_shaped -> content.contains(\"ghp_\")",
+    "durable": "core/graph/src/persistence.rs:736 is_secret_shaped_counted -> 25 prefixes with tail minima + JWT + PEM + auth + env-URI + reference-name"
+  },
+  "markers": [
+    {
+      "id": "agreed-ghp-with-tail",
+      "value": "ghp_EXAMPLEEXAMPLEEXAMPLE",
+      "class": "AGREED",
+      "memory_refuses": true,
+      "durable_refuses": true,
+      "why": "prefix ghp_ plus a 16+ tail satisfies both implementations"
+    },
+    {
+      "id": "divergent-ghp-bare",
+      "value": "ghp_",
+      "class": "DIVERGENT",
+      "memory_refuses": true,
+      "durable_refuses": false,
+      "why": "memory.rs is a bare contains(); persistence.rs requires len >= prefix + 16. MEASURED divergence on an axis the memory doc does not mention."
+    },
+    {
+      "id": "declared-gap-jwt",
+      "value": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJFWEFNUExFIn0.EXAMPLEXX",
+      "class": "DECLARED_GAP",
+      "memory_refuses": false,
+      "durable_refuses": true,
+      "why": "memory.rs narrow ON PURPOSE and says so; asserting refusal here would be a false accusation against a declared boundary. The third segment carries EIGHT base64url characters because contains_jwt_linear requires >= 8 in each of the last two segments: this marker once ended in a seven-character segment and the durable scanner ACCEPTED it, so the corpus claimed a refusal no detector performed. Found when the claim was first executed (#226)."
+    },
+    {
+      "id": "declared-gap-pem",
+      "value": "-----BEGIN PRIVATE KEY-----EXAMPLE",
+      "class": "DECLARED_GAP",
+      "memory_refuses": false,
+      "durable_refuses": true,
+      "why": "same declared boundary"
+    }
+  ]
+}

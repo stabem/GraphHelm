@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "releaseVersion": "1.0.0",
+  "schemas": {
+    "agent": {"id":"https://p50.dev/schemas/agent.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/agent.schema.json","sha256":"sha256:1f60a9317e9a912d0783f24d33e7a3ecd039493672957a7ebe84b5cd2d937da5"},
+    "artifact-reference": {"id":"https://p50.dev/schemas/artifact-reference.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/artifact-reference.schema.json","sha256":"sha256:f7a50b0d09dd5d249496ebb2808547dead84dd4cd0b712e610796c0616ba8cc1"},
+    "claim": {"id":"https://p50.dev/schemas/claim.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/claim.schema.json","sha256":"sha256:a4c9b9c077d23542129d6cf34b984c7b24de066713f02833016b3588bfcdb33b"},
+    "context-capsule": {"id":"https://p50.dev/schemas/context-capsule.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/context-capsule.schema.json","sha256":"sha256:216958fea65cbd16a345df00003d1924fb980d41a036bc5f41ddab959418513b"},
+    "edge": {"id":"https://p50.dev/schemas/edge.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/edge.schema.json","sha256":"sha256:5b6ff343d02b18b054bc00edb9e40b566767f9cc8894b8851b7063e8aab101d1"},
+    "event-envelope": {"id":"https://p50.dev/schemas/event-envelope.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/event-envelope.schema.json","sha256":"sha256:8c7bda48e8b23189e5a4638f6269691854935c2e8759dd90677b9bd93ba73614"},
+    "evidence-record": {"id":"https://p50.dev/schemas/evidence-record.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/evidence-record.schema.json","sha256":"sha256:132d8e6311e0088f7f8415e6280b6e0ae490b9f3331f673835676f2e3c4eb2ee"},
+    "extension": {"id":"https://p50.dev/schemas/extension.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/extension.schema.json","sha256":"sha256:89ca1cf329af7236941c03acbf1f276d6905b39b4297d7a55ecd58412fe39df1"},
+    "graph": {"id":"https://p50.dev/schemas/graph.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/graph.schema.json","sha256":"sha256:4e0240f5910e2695fbd63aac52ccd6ea4d98d32e51dd63b08df33212d4805a39"},
+    "graph-signal": {"id":"https://p50.dev/schemas/graph-signal.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/graph-signal.schema.json","sha256":"sha256:44b92e9c8d464383adac3c227cd119f4e9e5d8f87d1dca261ed316b4c3d93e12"},
+    "node": {"id":"https://p50.dev/schemas/node.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/node.schema.json","sha256":"sha256:5b40c693ddbf36aafe24980bf1ae4d508052bc0708b3720713cf6caac9651917"},
+    "persisted-graph-version": {"id":"https://p50.dev/schemas/persisted-graph-version.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/persisted-graph-version.schema.json","sha256":"sha256:1a6980bd47eeecf8eb2bb624db0a640b0d0abb5391d1a5cb4bbd39a8215dadfb"},
+    "policy-waiver": {"id":"https://p50.dev/schemas/policy-waiver.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/policy-waiver.schema.json","sha256":"sha256:387ce7a8aa1c82be4fa57734ce0311913426b6fda4de3051885d9edd3e95dac2"},
+    "repository-scope": {"id":"https://p50.dev/schemas/repository-scope.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/repository-scope.schema.json","sha256":"sha256:1ee9f223457782ec6b0e27ff6707d43141589c235c018a9cc5ab715d5a164534"},
+    "sensitivity": {"id":"https://p50.dev/schemas/sensitivity.schema.json","documentVersion":"1.0.0","path":"schemas/releases/1.0.0/sensitivity.schema.json","sha256":"sha256:e8a8871b45a15a47c81227551a0904f807b87ea5d7159086c512e9840469ddfd"}
+  }
+}

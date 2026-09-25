@@ -1,0 +1,1 @@
+{"oracleId":"oracle-governor-validator-identity","requiredEvidence":["core/governor/src/memory.rs"],"answer":"By IDENTITY, never count: core/governor/src/memory.rs excludes the producer from the validator roster -- at least one validator signed off is true when the only signature is the producers own, so validators are identified."}

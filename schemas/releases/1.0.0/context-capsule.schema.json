@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/context-capsule.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Context Capsule",
+  "type": "object",
+  "required": ["id", "version", "nodeId", "objective", "sections", "tokenBudget", "provenance", "dependencyHash"],
+  "properties": {
+    "id": {"type": "string"},
+    "version": {"type": "integer", "minimum": 1},
+    "nodeId": {"type": "string"},
+    "objective": {"type": "string"},
+    "sections": {
+      "type": "object",
+      "required": ["projectKernel", "task", "node", "evidence", "dependencyOutputs", "agentExperience"],
+      "properties": {
+        "projectKernel": {"type": "array", "items": {"type": "string"}},
+        "task": {"type": "array", "items": {"type": "string"}},
+        "node": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "dependencyOutputs": {"type": "array", "items": {"type": "string"}},
+        "agentExperience": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "excluded": {"type": "array", "items": {"type": "string"}},
+    "tokenBudget": {
+      "type": "object",
+      "required": ["allocated", "expandableTo"],
+      "properties": {
+        "allocated": {"type": "integer", "minimum": 1},
+        "expandableTo": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {"type": "array", "items": {"type": "string"}},
+    "dependencyHash": {"type": "string"}
+  },
+  "additionalProperties": false
+}

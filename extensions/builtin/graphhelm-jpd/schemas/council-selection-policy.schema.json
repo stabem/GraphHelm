@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/council-selection-policy.schema.json",
+  "title": "GraphHelm JPD Council Selection Policy Contract",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "p50.dev/jpd/v1" },
+    "kind": { "const": "CouncilSelectionPolicyContract" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": { "$ref": "#/$defs/spec" }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "graphhelm-jpd/council-selection" },
+        "version": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "runtimeStatus",
+        "requiresRegisteredEvaluator",
+        "evaluationSemantics",
+        "inputSchema",
+        "outputSchema",
+        "evaluationOrder",
+        "availableRoles",
+        "baselineByTier",
+        "additionsByRiskSignal",
+        "dynamicRules",
+        "limits",
+        "nonNormativeDescriptions"
+      ],
+      "properties": {
+        "runtimeStatus": { "const": "declarative_only" },
+        "requiresRegisteredEvaluator": { "const": true },
+        "evaluationSemantics": { "const": "deterministic_when_registered" },
+        "inputSchema": {
+          "const": "https://p50.dev/extensions/graphhelm-jpd/schemas/council-selection-policy.schema.json#evaluation-input"
+        },
+        "outputSchema": {
+          "const": "https://p50.dev/extensions/graphhelm-jpd/schemas/council-selection-policy.schema.json#evaluation-output"
+        },
+        "evaluationOrder": {
+          "const": "baseline_then_risk_then_dynamic_then_deduplicate"
+        },
+        "availableRoles": { "$ref": "#/$defs/allRoles" },
+        "baselineByTier": { "$ref": "#/$defs/baselineByTier" },
+        "additionsByRiskSignal": { "$ref": "#/$defs/additionsByRiskSignal" },
+        "dynamicRules": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            { "$ref": "#/$defs/materialClaimConflictRule" },
+            { "$ref": "#/$defs/noAlternativeRule" },
+            { "$ref": "#/$defs/unfalsifiedDefectRule" }
+          ],
+          "items": false
+        },
+        "limits": { "$ref": "#/$defs/limits" },
+        "nonNormativeDescriptions": { "$ref": "#/$defs/nonNormativeDescriptions" }
+      },
+      "additionalProperties": false
+    },
+    "role": {
+      "enum": [
+        "defect-hunter",
+        "idea-generator",
+        "adversarial-critic",
+        "evidence-advocate",
+        "accessibility-user",
+        "recovery-operator",
+        "disagreement-resolver"
+      ]
+    },
+    "allRoles": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/role" },
+      "allOf": [
+        { "contains": { "const": "defect-hunter" } },
+        { "contains": { "const": "idea-generator" } },
+        { "contains": { "const": "adversarial-critic" } },
+        { "contains": { "const": "evidence-advocate" } },
+        { "contains": { "const": "accessibility-user" } },
+        { "contains": { "const": "recovery-operator" } },
+        { "contains": { "const": "disagreement-resolver" } }
+      ]
+    },
+    "roleList": {
+      "type": "array",
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/role" }
+    },
+    "nonEmptyRoleList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/role" }
+    },
+    "baselineByTier": {
+      "type": "object",
+      "required": ["direct", "deliberative", "adversarial"],
+      "properties": {
+        "direct": { "$ref": "#/$defs/roleList" },
+        "deliberative": { "$ref": "#/$defs/roleList" },
+        "adversarial": { "$ref": "#/$defs/roleList" }
+      },
+      "additionalProperties": false
+    },
+    "additionsByRiskSignal": {
+      "type": "object",
+      "required": [
+        "accessibility",
+        "ambiguous_behavior",
+        "concurrency",
+        "critical_ux",
+        "external_delivery",
+        "recovery",
+        "security"
+      ],
+      "properties": {
+        "accessibility": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "ambiguous_behavior": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "concurrency": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "critical_ux": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "external_delivery": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "recovery": { "$ref": "#/$defs/nonEmptyRoleList" },
+        "security": { "$ref": "#/$defs/nonEmptyRoleList" }
+      },
+      "additionalProperties": false
+    },
+    "materialClaimConflictRule": {
+      "type": "object",
+      "required": ["id", "predicate", "addRoles"],
+      "properties": {
+        "id": { "const": "material-claim-conflict" },
+        "predicate": {
+          "type": "object",
+          "required": ["field", "operator", "value"],
+          "properties": {
+            "field": { "const": "materialClaimConflictCount" },
+            "operator": { "const": "greater_than" },
+            "value": { "const": 0 }
+          },
+          "additionalProperties": false
+        },
+        "addRoles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{ "const": "disagreement-resolver" }],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "noAlternativeRule": {
+      "type": "object",
+      "required": ["id", "predicate", "addRoles"],
+      "properties": {
+        "id": { "const": "no-materially-different-alternative" },
+        "predicate": {
+          "type": "object",
+          "required": ["field", "operator", "value"],
+          "properties": {
+            "field": { "const": "materiallyDifferentAlternativeExists" },
+            "operator": { "const": "equals" },
+            "value": { "const": false }
+          },
+          "additionalProperties": false
+        },
+        "addRoles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{ "const": "idea-generator" }],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "unfalsifiedDefectRule": {
+      "type": "object",
+      "required": ["id", "predicate", "addRoles"],
+      "properties": {
+        "id": { "const": "unfalsified-defect-claim" },
+        "predicate": {
+          "type": "object",
+          "required": ["field", "operator", "value"],
+          "properties": {
+            "field": { "const": "unfalsifiedDefectClaimCount" },
+            "operator": { "const": "greater_than" },
+            "value": { "const": 0 }
+          },
+          "additionalProperties": false
+        },
+        "addRoles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{ "const": "evidence-advocate" }],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "maximumConcurrentRoles",
+        "deduplicateRoles",
+        "deduplicateCorrelatedEvidenceSources"
+      ],
+      "properties": {
+        "maximumConcurrentRoles": { "const": 7 },
+        "deduplicateRoles": { "const": true },
+        "deduplicateCorrelatedEvidenceSources": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "riskSignal": {
+      "enum": [
+        "accessibility",
+        "ambiguous_behavior",
+        "authentication",
+        "concurrency",
+        "critical_ux",
+        "external_delivery",
+        "irreversible_effect",
+        "money",
+        "multiple_components",
+        "personal_data",
+        "production_impact",
+        "recovery",
+        "security"
+      ]
+    },
+    "tier": {
+      "enum": ["direct", "deliberative", "adversarial"]
+    },
+    "ruleId": {
+      "enum": [
+        "material-claim-conflict",
+        "no-materially-different-alternative",
+        "unfalsified-defect-claim"
+      ]
+    },
+    "evaluationInput": {
+      "$anchor": "evaluation-input",
+      "type": "object",
+      "required": [
+        "assuranceTier",
+        "riskSignals",
+        "materialClaimConflictCount",
+        "materiallyDifferentAlternativeExists",
+        "unfalsifiedDefectClaimCount"
+      ],
+      "properties": {
+        "assuranceTier": { "$ref": "#/$defs/tier" },
+        "riskSignals": {
+          "type": "array",
+          "maxItems": 13,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/riskSignal" }
+        },
+        "materialClaimConflictCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "materiallyDifferentAlternativeExists": { "type": "boolean" },
+        "unfalsifiedDefectClaimCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "additionalProperties": false
+    },
+    "evaluationOutput": {
+      "$anchor": "evaluation-output",
+      "type": "object",
+      "required": ["assuranceTier", "selectedRoles", "triggeredDynamicRuleIds"],
+      "properties": {
+        "assuranceTier": { "$ref": "#/$defs/tier" },
+        "selectedRoles": { "$ref": "#/$defs/roleList" },
+        "triggeredDynamicRuleIds": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ruleId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "nonNormativeDescriptions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,173 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_research_publish_v1
+  name: Pesquisa, proposta de valor e publicação
+  executionId: exec_research_publish
+  version: 1
+  labels:
+    origin: user
+    mode: supervised
+spec:
+  entrypoints:
+    - competitor_research
+    - audience_research
+  nodes:
+    competitor_research:
+      type: agent
+      name: Pesquisar concorrentes
+      objective: Identificar alternativas, posicionamento e evidências.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Pesquisar concorrentes com fontes verificáveis.
+          capabilities:
+            - web.research
+            - sources.collect
+          allowedTools:
+            - web.search
+            - browser.read
+          prohibitedActions:
+            - publish
+          inputSchema: schema://ResearchBrief@1
+          outputSchema: schema://ResearchFindings@1
+          instructions: Diferencie fato, inferência e opinião.
+          completionContract:
+            requires:
+              - source_refs
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+    audience_research:
+      type: agent
+      name: Pesquisar audiência
+      objective: Sintetizar dores e critérios sem inventar evidência.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Analisar audience evidence.
+          capabilities:
+            - research.synthesis
+          inputSchema: schema://ResearchBrief@1
+          outputSchema: schema://AudienceFindings@1
+          instructions: Marque gaps de informação.
+          completionContract:
+            requires:
+              - evidence_or_gap
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+    source_verification:
+      type: gate
+      name: Verificar fontes
+      objective: Validar claims centrais antes da síntese.
+      optionality: required
+      completion:
+        requires:
+          - verified_claims
+    product_synthesis:
+      type: agent
+      name: Sintetizar proposta
+      objective: Definir proposta de valor sustentada por evidência.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Transformar findings em posicionamento.
+          capabilities:
+            - product.positioning
+          inputSchema: schema://VerifiedResearchBundle@1
+          outputSchema: schema://ProductPositioning@1
+          instructions: Preserve incertezas e fontes.
+          completionContract:
+            requires:
+              - positioning
+              - evidence_map
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+    landing:
+      type: agent
+      name: Criar landing
+      objective: Produzir copy e interface a partir do posicionamento.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Criar landing publicável.
+          capabilities:
+            - copy.write
+            - frontend.implement
+          allowedTools:
+            - repository.write
+            - browser.preview
+          prohibitedActions:
+            - production.publish
+          inputSchema: schema://ProductPositioning@1
+          outputSchema: schema://LandingArtifact@1
+          instructions: Entregue artifacts e critérios de revisão.
+          completionContract:
+            requires:
+              - landing_artifact
+          isolationMinimum: tier_1
+      completion:
+        requires:
+          - outputSchemaValid: true
+    quality:
+      type: gate
+      name: Revisar qualidade
+      objective: Verificar conteúdo, visual e acessibilidade.
+      optionality: required
+      completion:
+        requires:
+          - copy_review
+          - accessibility_review
+    publish:
+      type: deploy
+      name: Publicar
+      objective: Publicar no destino configurado.
+      targetRef: environment://staging
+      optionality: required
+      completion:
+        requires:
+          - deployment_receipt
+  edges:
+    - id: competitors_to_verify
+      from: competitor_research
+      to: source_verification
+      type: evidence
+    - id: audience_to_verify
+      from: audience_research
+      to: source_verification
+      type: evidence
+    - id: verify_to_synthesis
+      from: source_verification
+      to: product_synthesis
+      type: control
+    - id: synthesis_to_landing
+      from: product_synthesis
+      to: landing
+      type: data
+    - id: landing_to_quality
+      from: landing
+      to: quality
+      type: data
+    - id: quality_to_publish
+      from: quality
+      to: publish
+      type: control
+  budgets:
+    maxNodes: 20
+    maxDepth: 8
+    maxMutations: 8
+    maxRetriesPerNode: 2
+    maxWallClockSeconds: 14400
+    maxApiCostUsd: 30
+    maxParallelModelCalls: 4
+  policies:
+    - policy://workspace/source-grounding@1
+  completion:
+    terminalNodes:
+      - publish
+    allowWaivers: true

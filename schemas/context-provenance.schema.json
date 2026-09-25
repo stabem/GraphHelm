@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/context-provenance.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "Context Provenance",
+  "description": "The content-free record sealed beside a model reply (#1065): what the node's context capsule was compiled from \u2014 repository-relative paths, counts, the tokenizer and estimator ids, the capsule digest \u2014 and six accounting lines in the execution-accounting-receipt's own CostField vocabulary: three counters measured by context_retrieval, three token numbers derived under bytes-div-4/v1. Never a byte of what was read. The receipt's own context lines stay unavailable until the next frozen baseline lets that document move; this document is where the numbers live meanwhile.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tokenizer",
+    "estimator",
+    "terms",
+    "sources",
+    "excerptedSources",
+    "candidatesReturned",
+    "candidatesDropped",
+    "candidatesUnreadable", "candidatesSecretShaped",
+    "droppedOptional",
+    "budgetBytes",
+    "capsuleBytes",
+    "eligibleCandidateBytes",
+    "eligibleCandidateTokens",
+    "compiledInputTokens",
+    "tokensSaved",
+    "retrievalPages",
+    "zeroResultQueries",
+    "retrievalFallbacks",
+    "fallback",
+    "digest",
+    "accounting"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "tokenizer": {
+      "const": "objective-terms/v1"
+    },
+    "estimator": {
+      "const": "bytes-div-4/v1"
+    },
+    "root": {
+      "description": "Which tree the search and the reads ran over (#1086): the project checkout the drive resolved, or the execution's own Tier 1 tree (its tool workspace, provisioned from refs/graphhelm/executions/<id> when a prior drive landed it). A name, never a path. Optional because records sealed before #1086 carry none, and those read the project.",
+      "enum": [
+        "project",
+        "execution"
+      ]
+    },
+    "searchOrigin": {
+      "description": "Where candidate paths came from. Optional for records sealed before search provenance was added.",
+      "enum": [
+        "live",
+        "snapshot",
+        "hybrid",
+        "fallback"
+      ]
+    },
+    "searchReason": {
+      "description": "A closed, content-free reason for the search origin. It never carries paths, query text or source bytes.",
+      "enum": [
+        "live_workspace",
+        "immutable_snapshot",
+        "snapshot_live_fallback",
+        "live_fallback",
+        "no_search",
+        "search_unavailable",
+        "search_bound_exceeded",
+        "snapshot_unavailable",
+        "snapshot_coverage_gap"
+      ]
+    },
+    "terms": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 64
+      }
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/repositoryRelativePath"
+      }
+    },
+    "excerptedSources": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "candidatesReturned": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "candidatesDropped": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "candidatesSecretShaped": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "candidatesUnreadable": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "droppedOptional": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "budgetBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "capsuleBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "eligibleCandidateBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "eligibleCandidateTokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "compiledInputTokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "tokensSaved": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "retrievalPages": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "zeroResultQueries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "retrievalFallbacks": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "fallback": {
+      "enum": [
+        "no_terms",
+        "no_candidates",
+        "search_unavailable",
+        "search_bound_exceeded",
+        "no_readable_candidate",
+        "nothing_fits_budget",
+        "secret_shaped_candidate",
+        null
+      ]
+    },
+    "digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "minLength": 71,
+      "maxLength": 71
+    },
+    "accounting": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/measuredLine",
+          "properties": {
+            "name": {
+              "const": "zero_result_queries"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/measuredLine",
+          "properties": {
+            "name": {
+              "const": "retrieval_pages"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/measuredLine",
+          "properties": {
+            "name": {
+              "const": "retrieval_fallbacks"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/derivedLine",
+          "properties": {
+            "name": {
+              "const": "compiled_input_tokens"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/derivedLine",
+          "properties": {
+            "name": {
+              "const": "eligible_candidate_tokens"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/derivedLine",
+          "properties": {
+            "name": {
+              "const": "tokens_saved"
+            }
+          }
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "repositoryRelativePath": {
+      "description": "Forward-slashed, relative to the project root; no leading or trailing slash, no empty segment, no backslash, no `.` or `..` segment (the reader refuses those before anything is opened). Segment-aware: `.env` and `..x` are names, `..` is not.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^([^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*(/([^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*)*$"
+    },
+    "lineName": {
+      "enum": [
+        "zero_result_queries",
+        "retrieval_pages",
+        "retrieval_fallbacks",
+        "compiled_input_tokens",
+        "eligible_candidate_tokens",
+        "tokens_saved"
+      ]
+    },
+    "measuredLine": {
+      "description": "A counter the context chain observed: measured by context_retrieval, empty note.",
+      "type": "object",
+      "required": [
+        "name",
+        "value",
+        "provenance",
+        "producer",
+        "note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/lineName"
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "provenance": {
+          "const": "measured"
+        },
+        "producer": {
+          "const": "context_retrieval"
+        },
+        "note": {
+          "const": ""
+        }
+      }
+    },
+    "derivedLine": {
+      "description": "A token number produced by the named estimator: derived, no producer, a note that opens with `bytes-div-4/v1: ` and states the arithmetic. Never measured \u2014 nobody counted tokens.",
+      "type": "object",
+      "required": [
+        "name",
+        "value",
+        "provenance",
+        "producer",
+        "note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/lineName"
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "provenance": {
+          "const": "derived"
+        },
+        "producer": {
+          "type": "null"
+        },
+        "note": {
+          "type": "string",
+          "pattern": "^bytes-div-4/v1: ",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

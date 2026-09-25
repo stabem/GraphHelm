@@ -1,0 +1,1 @@
+{"oracleId":"oracle-extension-inventory","requiredEvidence":["core/schema/src/extension.rs","apps/cli/tests/development_package_inventory.rs"],"answer":"validate_extension_package refuses with GHEX012_INVENTORY; development_package_inventory.rs points it at the real package so a stale or missing declaration is red there."}

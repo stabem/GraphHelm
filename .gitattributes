@@ -1,0 +1,102 @@
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+# Extension package digests bind raw contribution bytes. Keep text resources stable on Windows.
+extensions/builtin/graphhelm-jpd/*.json text eol=lf
+extensions/builtin/graphhelm-jpd/**/*.json text eol=lf
+extensions/builtin/graphhelm-jpd/**/*.md text eol=lf
+# Same reason, same mechanism: this package's digests bind raw contribution bytes, and without
+# this rule a Windows checkout rewrites them and GHEX005_DIGEST fails for every contribution.
+extensions/builtin/graphhelm-development-contracts/*.json text eol=lf
+extensions/builtin/graphhelm-development-contracts/**/*.json text eol=lf
+extensions/builtin/graphhelm-development-contracts/**/*.md text eol=lf
+# The benchmark corpus binds RAW bytes the same way (frozen_files_digest over oracle/
+# objective/retrieval files), and the rule travels WITH the corpus: #594 moved it out of the
+# package to tools/development-benchmark/corpus/ and the eol rule stayed behind on the old
+# path, so the next Windows checkout rewrote every corpus file to CRLF and the oracle freeze
+# broke on main. A digest over raw bytes needs its eol rule pinned to WHERE THE BYTES LIVE.
+tools/development-benchmark/corpus/**/*.json text eol=lf
+core/architect/fixtures/** text eol=lf
+tools/development-benchmark/corpus/**/*.md text eol=lf
+# schemas/*.json is DELIBERATELY ABSENT from this file, and the absence is load-bearing.
+#
+# Those documents are pinned by a CANONICAL digest, not a raw one: schema_digest() in
+# core/schema-evolution/src/canonical.rs parses the JSON, canonicalises it, and hashes THAT. So the
+# line endings cannot affect the pin. Measured on schemas/event-envelope.schema.json:
+#
+#     raw sha256    LF fe7ee629...   CRLF ef8d3521...   <- raw hashing sees the difference
+#     canonical     LF b45ddada...   CRLF b45ddada...   <- the catalog pin does not
+#
+# The extension packages above are the opposite case: GHEX005 binds the RAW contribution bytes, so
+# without their eol=lf rules a Windows checkout rewrites them and every contribution digest fails.
+#
+# Do not add schemas/*.json here by analogy with them. It would be harmless, and it would be a
+# wrong model made durable - and a wrong model that does not hurt is the kind that survives.
+# M06 demonstrations: recorded artifacts commit byte-exact (checksummed).
+docs/acceptance/demos/** -text
+
+# `.gitattributes` covers ITSELF, and that line is here because its absence already cost a review.
+# The first version of this commit was written on a checkout where this file had been smudged to
+# CRLF; the editor preserved those bytes and appended LF lines, producing MIXED endings -- in the
+# one file whose entire subject is line-ending consistency. `git show --check` exited 2 on it. A
+# rule that governs every script but not the file stating the rule leaves the next editor to
+# repeat this exactly.
+.gitattributes text eol=lf
+
+# Executable scripts are LF because CRLF is a FUNCTIONAL defect in them, not a cosmetic one: a
+# carriage return in a shebang stops it resolving, and a stray CR surviving into a variable
+# compares unequal to the value it looks identical to. This is not hypothetical here.
+# The retired `slot-claim.sh` runner script carried hand-written CR and BOM stripping because the
+# problem was met and worked around IN THE SCRIPT instead of being fixed at the path -- and a workaround in one
+# script does nothing for the next one written.
+#
+# Measured before this rule: 23 of the repository's 29 committed scripts had NO eol attribute and
+# stood at `i/lf w/crlf` -- LF in the index, CRLF in the working copy, varying by machine.
+#
+# The six `docs/acceptance/**/recipe.sh` are NOT covered: their own directory-local .gitattributes
+# sets `-text`, because those runs are recorded artifacts that commit byte-exact. A deeper
+# .gitattributes wins over this one, so that exemption survives these lines -- verified with
+# `git check-attr`, not assumed.
+#
+# EXISTING checkouts do not heal themselves. Git rewrites a working-tree file when its BLOB
+# changes; an attributes-only commit changes no blob, so a worktree that already holds CRLF
+# scripts keeps them after pulling this, and `git status` reads clean. Every NEW checkout is
+# correct from here on; only the ones that already exist need a one-time refresh.
+#
+# The safe refresh is a FRESH CLONE. That is deliberately the only recipe written here.
+#
+# A copy-paste in-place migration was drafted and withdrawn: five review rounds found five distinct
+# ways for it to fail, ending in one that DELETES an operator's scripts and restores none of them
+# when any path is marked skip-worktree. The failures are recorded in #676, which owns shipping a
+# tested migration script. A procedure with that failure surface is a program, not a comment: it
+# needs an index-state filter and its own tests, and a comment block can carry neither.
+#
+# The short version, so nobody re-derives the withdrawn recipe: `git add --renormalize .` changes
+# nothing here (the blobs are already LF in the index), `git checkout --force` is documented only
+# as "throw away local modifications" and will silently destroy uncommitted edits inside scripts,
+# and any delete-then-restore form must exclude index-hidden paths before it deletes anything.
+#
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.py text eol=lf
+
+# The process documents every session reads are pinned to LF so a fresh clone materialises them
+# the same way on every platform instead of asking the cloner's `core.autocrlf` (#1010). An
+# attributes-only change does not heal an existing CRLF working copy; it only fixes fresh checkouts.
+AGENTS.md text eol=lf
+docs/process/*.md text eol=lf
+
+# The demo exemption is RESTATED here, after the rules above, because in .gitattributes the LAST
+# matching line wins per attribute. `docs/acceptance/demos/** -text` sits earlier in this file, so
+# without this restatement a `.sh`, `.ps1` or `.py` recorded inside a demo would resolve to
+# `text: set` and be normalised -- and those directories are byte-exact by design, hashed raw by
+# `tools/acceptance-map/src/bin/record_demonstration.rs`. Verified with `git check-attr`, which
+# reported `text: set` for such a path before this line existed.
+docs/acceptance/demos/** -text
+# #1065: the frozen context-quality corpus. The fixture manifest pins each file by sha256 and
+# the test re-derives the digests from the bytes on disk, so a checkout that rewrote line
+# endings would read as a moved corpus on Windows alone.
+adapters/tool-host/tests/fixtures/context-quality/** text eol=lf
+# #1138: a UTF-16 gate transcript fixture; its BOM and NULs are the point of the file.
+apps/cli/tests/fixtures/classify-red/flake-utf16.log.txt binary

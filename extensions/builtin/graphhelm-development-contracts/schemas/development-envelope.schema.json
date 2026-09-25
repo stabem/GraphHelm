@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/development-envelope.schema.json",
+  "title": "Development artifact envelope",
+  "description": "The closed common envelope every development artifact carries. This schema is the AUTHORITATIVE side of the closed vocabularies below: the Rust wire types are checked against it by set equality, never by count, because a rename preserves a count.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "producer", "producerVersion", "spec", "digest"],
+  "additionalProperties": true,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "pattern": "^p50\\.dev/development/v[0-9]+[a-z0-9]*$",
+      "description": "An unknown MAJOR fails closed. The pattern admits the shape; the major is compared explicitly."
+    },
+    "kind": {"$ref": "#/$defs/developmentKind"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "producer": {"$ref": "#/$defs/opaqueId"},
+    "producerVersion": {"$ref": "#/$defs/semanticVersion"},
+    "bindings": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/artifactBinding"}
+    },
+    "spec": {"description": "Per-kind payload. THE ORDER IS THE CONSUMER'S OBLIGATION AND IS NOT GUARDED HERE: this task publishes contracts and has no consumer path that both validates and deserializes, so there is no sequence to guard and no cell claims one. A consumer must validate against the kind's schema BEFORE typed deserialization; this records the obligation rather than asserting the behaviour exists. Untyped here so unknown fields inside a compatible minor round-trip without a capture map at every level. THE ASYMMETRY IS DELIBERATE: envelope unknowns are metadata of unknown meaning and are excluded from the digest; spec unknowns are PAYLOAD and are included, because identity should follow the payload rather than metadata nobody can read. It is also safe because spec travels whole and opaque, so an older reader round-trips it byte-identically and computes the same digest as a newer one - there is no cross-version divergence. TWO CONDITIONS REOPEN THIS DECISION: giving spec a typed shape with its own capture map moves the question one level down, and a per-kind schema declaring additionalProperties false would REFUSE a compatible minor's unknown field - killing preservation at validation rather than at serialisation, by the same door this envelope just closed. The nine per-kind schemas need this decision taken consciously; they do not inherit it."},
+    "digest": {"$ref": "#/$defs/wireHash"}
+  },
+  "$defs": {
+    "developmentKind": {
+      "description": "The nine kinds. Closed: an unknown kind is refused, never ignored.",
+      "enum": [
+        "CodeRule",
+        "ResolvedCodeContract",
+        "RetrievalPlan",
+        "MemoryCandidate",
+        "MemoryRecord",
+        "AdvisoryDecisionResult",
+        "OwnerTaskResult",
+        "OwnerPresentationPlan",
+        "OwnerPresentation"
+      ]
+    },
+    "refusalCode": {
+      "description": "The closed refusal vocabulary, owned here. The Rust enum is derived from an exhaustive match and compared against this set for equality. Codes needed by consuming tasks are allocated HERE rather than invented downstream, because a consumer minting its own code is how two vocabularies drift while both look correct.",
+      "enum": [
+        "unknown_major_version",
+        "schema_invalid",
+        "scope_mismatch",
+        "binding_schema_mismatch",
+        "binding_producer_mismatch",
+        "binding_digest_mismatch",
+        "binding_snapshot_missing",
+        "artifact_too_large",
+        "cardinality_violation",
+        "digest_mismatch",
+        "negative_claim_unverified",
+        "index_stale",
+        "context_budget_insufficient",
+        "code_rule_conflict",
+        "code_rule_precedence_unresolved",
+        "code_rule_source_unavailable",
+        "code_rule_waiver_invalid",
+        "unsafe_compression",
+        "required_citation_missing",
+        "citation_unresolved"
+      ]
+    },
+    "sourceSearchFailure": {
+      "description": "Why a bounded source search produced no evidence, carried BESIDE an outcome that still stands: the channel is evidence, not authority. Distinct from retrieval-coverage-receipt.schema.json $defs/fallbackOutcome, which is the receipt's record of a fallback and is owned by the receipt boundary (#655); that set has no success state and no bound-exceeded member. The two overlap on \"unavailable\" only, and that intersection is asserted by a guard rather than left to coincidence.",
+      "enum": [
+        "unavailable",
+        "bound_exceeded"
+      ]
+    },
+    "coverageState": {
+      "description": "What a search actually covered. CLOSED and never a boolean: each state has a different correct response to a zero result, and any shape that folds them together destroys the distinction the fallback decision is taken on.",
+      "enum": [
+        "complete",
+        "partial",
+        "excluded",
+        "skipped",
+        "extraction_gap",
+        "stale",
+        "unknown",
+        "unresolved"
+      ]
+    },
+    "snapshotBinding": {
+      "description": "TWO identities, not one. repoSnapshot is the identity of the bytes; indexGeneration is the identity of what the index was built from. Their relation IS the freshness verdict: equal means coordinates resolve safely, different means stale. A single opaque snapshot cannot express that, and a flat list of ids is worse - two entries with no roles cannot say which is which. Stated by mechanism so it survives another provider: a byte range produced under generation G may only be resolved against snapshot G.",
+      "type": "object",
+      "required": ["repoSnapshot", "indexGeneration"],
+      "additionalProperties": false,
+      "properties": {
+        "repoSnapshot": {"$ref": "#/$defs/opaqueId", "description": "A CONTENT or TREE digest, never a ref. A commit sha identifies a commit, not a working tree: an uncommitted edit changes the bytes without changing the identity, so a freshness comparison answers fresh while a stored coordinate slices live bytes. This note ARMS the field and does not replace the guard - equal identities over different bytes is the case a comment cannot catch, and the consuming lane carries that cell."},
+        "indexGeneration": {"$ref": "#/$defs/opaqueId"}
+      }
+    },
+    "declaredLimits": {
+      "description": "Explicit bounds, so bounded is a number a reader can check rather than a promise in prose.",
+      "type": "object",
+      "required": ["maxResults", "maxPages", "maxBytes", "maxTokens"],
+      "additionalProperties": false,
+      "properties": {
+        "maxResults": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "maxPages": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "maxBytes": {"type": "integer", "minimum": 0},
+        "maxTokens": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+      }
+    },
+    "opaqueId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "semanticVersion": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "wireHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "scope": {
+      "type": "object",
+      "required": ["workspaceId", "projectId"],
+      "additionalProperties": false,
+      "properties": {
+        "workspaceId": {"$ref": "#/$defs/opaqueId"},
+        "projectId": {"$ref": "#/$defs/opaqueId"},
+        "subprojectId": {"$ref": "#/$defs/opaqueId"},
+        "executionId": {"$ref": "#/$defs/opaqueId"}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["id", "artifactVersion", "scope"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {"$ref": "#/$defs/opaqueId"},
+        "artifactVersion": {"$ref": "#/$defs/semanticVersion"},
+        "scope": {"$ref": "#/$defs/scope"}
+      }
+    },
+    "artifactBinding": {
+      "description": "A reference to an existing closed artifact, never a copy of it. All verified properties are required so a binding cannot be partially satisfied.",
+      "type": "object",
+      "required": ["artifactId", "schemaId", "documentVersion", "schemaVersion", "digest", "scope", "producer", "snapshots"],
+      "additionalProperties": false,
+      "properties": {
+        "artifactId": {"$ref": "#/$defs/opaqueId"},
+        "schemaId": {"type": "string", "minLength": 1, "maxLength": 512},
+        "documentVersion": {"$ref": "#/$defs/semanticVersion"},
+        "schemaVersion": {"$ref": "#/$defs/semanticVersion"},
+        "digest": {"$ref": "#/$defs/wireHash"},
+        "scope": {"$ref": "#/$defs/scope"},
+        "producer": {"$ref": "#/$defs/opaqueId"},
+        "snapshots": {"$ref": "#/$defs/snapshotBinding"}
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "The honest capture-ENABLED run. The distinct boundary: captured material exists and must pass the admission screens, which is a different reason to refuse than the disabled branch has.",
+  "journeyId": "journey/capture-enabled",
+  "branch": "capture_on",
+  "capture": {
+    "enabled": true
+  },
+  "scope": {
+    "workspaceId": "ws-selfval",
+    "projectId": "proj-graphhelm"
+  },
+  "snapshots": {
+    "repoSnapshot": "snapshot-a",
+    "indexGeneration": "snapshot-a"
+  },
+  "retrieval": {
+    "hits": [
+      "core/auth/middleware.rs:42"
+    ],
+    "coverage": "complete",
+    "pages": 1
+  },
+  "evidence": {
+    "coverageCarried": "complete",
+    "actor": "agent/checkout-driver",
+    "observer": "observer/dom-snapshotter",
+    "capturedMaterial": "<main role=\"main\">signed in</main>",
+    "captureOrigin": "captured",
+    "capturedBy": "observer/dom-snapshotter"
+  },
+  "expect": {
+    "outcome": "certified"
+  },
+  "why": "captured material carries no cross-scope content, is not provider output offered as fresh capture, and holds nothing credential-shaped"
+}

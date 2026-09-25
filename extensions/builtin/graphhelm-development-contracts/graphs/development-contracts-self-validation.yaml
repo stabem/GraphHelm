@@ -1,0 +1,227 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_development_contracts_self_validation_v1
+  name: Development contracts validate themselves
+  executionId: exec_dev_contracts_selfval
+  version: 1
+  labels:
+    origin: task-010
+    mode: self_validation
+spec:
+  entrypoints:
+  - declare_scope
+  nodes:
+    declare_scope:
+      type: agent
+      name: Declare the scope
+      objective: Establish the DevelopmentScope this run admits into, as a whole struct rather than a
+        field of it.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Establish the DevelopmentScope this run admits into, as a whole struct rather than
+            a field of it.
+          capabilities:
+          - scope.declare
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://DevelopmentScope@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - workspace_id
+            - project_id
+          isolationMinimum: tier_0
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    bind_snapshots:
+      type: agent
+      name: Bind both snapshot identities
+      objective: Produce a SnapshotBinding carrying repoSnapshot AND indexGeneration, never one opaque
+        id.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Produce a SnapshotBinding carrying repoSnapshot AND indexGeneration, never one opaque
+            id.
+          capabilities:
+          - snapshot.bind
+          inputSchema: schema://DevelopmentScope@1
+          outputSchema: schema://SnapshotBinding@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - repo_snapshot
+            - index_generation
+          isolationMinimum: tier_0
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    retrieve:
+      type: agent
+      name: Retrieve under a declared coverage state
+      objective: Return hits together with the CoverageState that says what a zero among them would mean.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Return hits together with the CoverageState that says what a zero among them would
+            mean.
+          capabilities:
+          - repository.search
+          inputSchema: schema://SnapshotBinding@1
+          outputSchema: schema://IndexResponse@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - hits
+            - coverage
+          isolationMinimum: tier_0
+          prohibitedActions:
+          - repository.write
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    capture_gate:
+      type: gate
+      name: Is capture enabled for this scope?
+      objective: Split the run into the capture-disabled and capture-enabled boundaries, which refuse
+        for DIFFERENT reasons.
+      optionality: required
+      completion:
+        requires:
+        - branchTaken
+    evidence_without_capture:
+      type: agent
+      name: Assemble evidence, capture disabled
+      objective: Assemble journey evidence from retrieval alone. No captured material may appear on this
+        branch.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Assemble journey evidence from retrieval alone. No captured material may appear on
+            this branch.
+          capabilities:
+          - evidence.assemble
+          inputSchema: schema://IndexResponse@1
+          outputSchema: schema://JourneyEvidence@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - coverage_carried
+            - observer_distinct_from_actor
+          isolationMinimum: tier_0
+          prohibitedActions:
+          - memory.capture
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    evidence_with_capture:
+      type: agent
+      name: Assemble evidence, capture enabled
+      objective: Assemble journey evidence including captured material, which must pass the admission
+        screens.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Assemble journey evidence including captured material, which must pass the admission
+            screens.
+          capabilities:
+          - evidence.assemble
+          - memory.capture
+          inputSchema: schema://IndexResponse@1
+          outputSchema: schema://JourneyEvidence@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - coverage_carried
+            - observer_distinct_from_actor
+            - capture_screened
+          isolationMinimum: tier_0
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    admit_memory:
+      type: agent
+      name: Screen captured material
+      objective: Refuse cross-scope content, provider output offered as fresh capture, and credential-shaped
+        content.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Refuse cross-scope content, provider output offered as fresh capture, and credential-shaped
+            content.
+          capabilities:
+          - memory.admit
+          inputSchema: schema://JourneyEvidence@1
+          outputSchema: schema://MemoryAdmission@1
+          instructions: Emit only the structured output. Prose is a claim about evidence, never evidence.
+          completionContract:
+            requires:
+            - refusal_code_or_admitted
+          isolationMinimum: tier_0
+          prohibitedActions:
+          - memory.quote_refused_value
+      completion:
+        requires:
+        - outputSchemaValid
+      timeoutSeconds: 600
+    certify:
+      type: evaluator
+      name: Certify the journey
+      objective: Refuse certification when the evidence outruns what the record supports, naming what
+        was missing.
+      optionality: required
+      completion:
+        requires:
+        - outputSchemaValid
+        - refusalIsNamed
+      timeoutSeconds: 300
+  edges:
+  - id: e_scope_to_snapshots
+    from: declare_scope
+    to: bind_snapshots
+    type: control
+  - id: e_snapshots_to_retrieve
+    from: bind_snapshots
+    to: retrieve
+    type: control
+  - id: e_retrieve_to_gate
+    from: retrieve
+    to: capture_gate
+    type: control
+  - id: e_gate_to_capture_on
+    from: capture_gate
+    to: evidence_with_capture
+    type: control
+  - id: e_gate_to_capture_off
+    from: capture_gate
+    to: evidence_without_capture
+    type: control
+  - id: e_capture_to_admit
+    from: evidence_with_capture
+    to: admit_memory
+    type: control
+  - id: e_admit_to_certify
+    from: admit_memory
+    to: certify
+    type: evidence
+  - id: e_nocapture_to_certify
+    from: evidence_without_capture
+    to: certify
+    type: evidence
+  budgets:
+    maxNodes: 16
+    maxDepth: 8
+    maxMutations: 0
+    maxRetriesPerNode: 1
+    maxWallClockSeconds: 3600
+  completion:
+    terminalNodes:
+    - certify
+    allowWaivers: false

@@ -1,0 +1,47 @@
+{
+  "purpose": "Act as a task-local risk role that presents the strongest supported case and attempts to falsify defect claims without becoming a permanent project persona.",
+  "capabilities": [
+    "claim.falsify",
+    "evidence.chain_verify",
+    "evidence.freshness_check",
+    "alternative_explanation_test"
+  ],
+  "allowedTools": [
+    "cli:graph hash",
+    "cli:graph replay",
+    "cli:events verify",
+    "tool:status",
+    "tool:events",
+    "tool:probe"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-defect-claim.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-defect-claim.schema.json",
+  "instructions": "Use only evidence that is adequate for the claimed fact. Attempt the cheapest credible falsification. Mark the claim confirmed, falsified, or unresolved and preserve contrary evidence; advocacy is not permission to minimize a severe finding.",
+  "completionContract": {
+    "requires": [
+      "falsification_attempt",
+      "evidence_strength_check",
+      "freshness_check",
+      "typed_disposition"
+    ],
+    "never": [
+      "unsupported_success_claim",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "custody_bound_evidence",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

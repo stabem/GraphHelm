@@ -1,0 +1,85 @@
+{
+  "tasks": {
+    "1145": {
+      "issue": 1145,
+      "fixPr": 1156,
+      "parentSha": "1553d9d9dba088883053eedf1416f8d56e1eb9a1",
+      "fixSha": "c4cbae8e5fb795e0b0347c45e3a0007798b72157",
+      "prompt": "tasks/1145/prompt.md",
+      "regression": {
+        "command": ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "ci/gate-postgres-early.tests.ps1"],
+        "note": "The pre-existing PostgreSQL early-start behavior must remain green before and after the patch."
+      },
+      "oracle": {
+        "file": "ci/gate-postgres-early.tests.ps1",
+        "source": "tasks/1145/oracle.tests.ps1",
+        "note": "the fix's own suite restricted to what the issue asked; see header of the file",
+        "command": [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "ci/gate-postgres-early.tests.ps1"
+        ]
+      }
+    },
+    "1044": {
+      "issue": 1044,
+      "fixPr": 1048,
+      "parentSha": "06f8ecd304d6b04084122ac993c8ac79b06d0ebe",
+      "fixSha": "46d7a4becdc50d2a384b1662310103a378d8a9e9",
+      "prompt": "tasks/1044/prompt.md",
+      "sharedTargetDir": "tb-target-1044",
+      "oracle": {
+        "files": [
+          {
+            "file": "tools/pathogens/tests/embodied_population.rs",
+            "source": "tasks/1044/embodied_population.rs"
+          },
+          {
+            "file": "tools/pathogens/tests/subject_refusals.rs",
+            "source": "tasks/1044/subject_refusals.rs"
+          }
+        ],
+        "note": "the fix's two test files verbatim (46d7a4be); the behavioural phase needs target/debug/graphhelm, so the oracle builds it first; `cargo clean -p pathogens` first because git-archive mtimes let the shared target dir hand back a stale test binary (measured: the parent tree passed the fix's test)",
+        "command": [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "cargo clean -p pathogens; cargo build --bin graphhelm; if ($LASTEXITCODE -ne 0) { exit 1 }; cargo test -p pathogens --test embodied_population --test subject_refusals"
+        ]
+      }
+    },
+    "1279": {
+      "issue": 1279,
+      "fixPr": 1279,
+      "parentSha": "e85e41a8eb0b8af6ef6eac95bf39a42cc9277f8c",
+      "fixSha": "e4072151c8a8960e7a362b11dc1577b926f6beee",
+      "prompt": "tasks/1279/prompt.md",
+      "oracle": {
+        "file": "tools/token-bench/tasks/1279/oracle.py",
+        "source": "tasks/1279/oracle.py",
+        "note": "The oracle launches a real child process while simulating the legacy cp1252 locale. It checks that the Unicode prompt crosses the runner subprocess boundary intact.",
+        "command": [
+          "python",
+          "tools/token-bench/tasks/1279/oracle.py"
+        ]
+      },
+      "regression": {
+        "files": [
+          "tools/token-bench/test_run.py"
+        ],
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tools/token-bench/test_run.py",
+          "-q"
+        ]
+      }
+    }
+  }
+}

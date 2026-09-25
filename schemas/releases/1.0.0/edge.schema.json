@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/edge.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Graph Edge",
+  "type": "object",
+  "required": ["id", "from", "to", "type"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "from": {"type": "string", "minLength": 1},
+    "to": {"type": "string", "minLength": 1},
+    "type": {"enum": ["control", "data", "evidence", "event", "failure", "compensation", "human_approval"]},
+    "payloadSchema": {"type": "string"},
+    "condition": {"type": ["string", "object"]},
+    "onFalse": {"type": "object", "additionalProperties": true},
+    "onUnknown": {"enum": ["pause", "fail", "skip", "route"]},
+    "map": {"type": "object", "additionalProperties": {"type": "string"}},
+    "priority": {"type": "integer"}
+  },
+  "additionalProperties": false
+}

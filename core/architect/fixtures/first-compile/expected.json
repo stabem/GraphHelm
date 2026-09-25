@@ -1,0 +1,94 @@
+{
+  "apiVersion": "p50.dev/graph/v1",
+  "kind": "ExecutionGraph",
+  "metadata": {
+    "executionId": "exec_27fe0b8b",
+    "id": "arch_27fe0b8b_v1",
+    "labels": {
+      "origin": "architect",
+      "template": "32236956956cd087fb4a7fb5b043a9a6e10716f7601191b08c79ba87fc84f123"
+    },
+    "name": "check that the repository builds and summarize the result",
+    "version": 1
+  },
+  "spec": {
+    "budgets": {
+      "maxNodes": 2
+    },
+    "completion": {
+      "terminalNodes": [
+        "summarize"
+      ]
+    },
+    "edges": [
+      {
+        "from": "build_check",
+        "id": "build_to_summary",
+        "to": "summarize",
+        "type": "control"
+      }
+    ],
+    "entrypoints": [
+      "build_check"
+    ],
+    "nodes": {
+      "build_check": {
+        "completion": {
+          "customs": {
+            "budgets": {
+              "clearanceWithinSeconds": 3600,
+              "waitWithinSeconds": 86400
+            },
+            "proofKinds": []
+          }
+        },
+        "name": "Build check",
+        "objective": "Run the repository build and record its exit code.",
+        "optionality": "required",
+        "tool": {
+          "call": {
+            "arguments": [
+              "build",
+              "--locked"
+            ],
+            "program": "cargo",
+            "tool": "shell"
+          }
+        },
+        "type": "tool"
+      },
+      "summarize": {
+        "agent": {
+          "ephemeral": {
+            "capabilities": [
+              "summarize.build"
+            ],
+            "completionContract": {
+              "requires": [
+                "summary"
+              ]
+            },
+            "inputSchema": "schema://BuildReport@1",
+            "instructions": "State whether the build passed and cite the exit code.",
+            "outputSchema": "schema://BuildSummary@1",
+            "purpose": "Summarize the build result."
+          }
+        },
+        "completion": {
+          "customs": {
+            "budgets": {
+              "clearanceWithinSeconds": 3600,
+              "waitWithinSeconds": 86400
+            },
+            "proofKinds": []
+          }
+        },
+        "name": "Summarize the build",
+        "objective": "Summarize the build outcome for the operator.",
+        "optionality": "required",
+        "type": "agent"
+      }
+    },
+    "policies": []
+  }
+}

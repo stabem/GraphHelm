@@ -1,0 +1,34 @@
+{
+  "caseId": "runtime-capsule-bytes",
+  "query": "Two components assemble the same logical Context Capsule. What guarantees they obtain byte-identical output, and what makes the encoding injective?",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "apps/cli/tests/development_contract_schemas.rs",
+      "lines": "914-923"
+    },
+    {
+      "path": "apps/cli/tests/api_http.rs",
+      "lines": "2505-2540"
+    },
+    {
+      "path": "apps/cli/tests/mcp_stdio.rs",
+      "lines": "1004-1020"
+    },
+    {
+      "path": "core/runtime/tests/context_compiler.rs",
+      "lines": "56-74"
+    },
+    {
+      "path": "apps/cli/tests/execution_cli.rs",
+      "lines": "1269-1577"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

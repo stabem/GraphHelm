@@ -1,0 +1,34 @@
+{
+  "caseId": "governor-validator-identity",
+  "query": "How does the governor prevent a producer from counting as its own validator? Is the comparison by count or by identity, and where?",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "core/governor/tests/memory.rs",
+      "lines": "308-330"
+    },
+    {
+      "path": "apps/cli/tests/development_contract_schemas.rs",
+      "lines": "533-541"
+    },
+    {
+      "path": "core/governor/tests/draft_application.rs",
+      "lines": "444-476"
+    },
+    {
+      "path": "core/events/tests/execution_projection.rs",
+      "lines": "1934-1957"
+    },
+    {
+      "path": "core/events/src/local.rs",
+      "lines": "7038-7056"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

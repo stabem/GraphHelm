@@ -1,0 +1,58 @@
+apiVersion: p50.dev/jpd/v1
+kind: RetryClassificationPolicyContract
+metadata:
+  id: graphhelm-jpd/retry-classification
+  version: 1.0.0
+spec:
+  runtimeStatus: declarative_only
+  requiresRegisteredEvaluator: true
+  evaluationSemantics: deterministic_when_registered
+  inputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain-input.schema.json
+  outputSchema: https://p50.dev/extensions/graphhelm-jpd/schemas/retry-chain.schema.json
+  outputField: outcomeClass
+  allowedCauseTags:
+    - product_fix
+    - environment_recovery
+    - test_repair
+    - dependency_recovery
+    - unexplained
+  invariants:
+    - rootAttemptId and rootAttempt.attemptId identify the preserved first attempt.
+    - Every retry has retryOf, a cause tag, and an evidence delta.
+    - A later success never deletes or rewrites the first failure.
+    - Any success classification requires the final retry in the preserved chain to have succeeded.
+    - Any unexplained retry takes flaky precedence; recovered_success requires at least one explained successful retry with a material evidence delta.
+    - Classification basis contains only the closed minimal token set for the selected first-match rule.
+  evaluationOrder: first_match
+  rules:
+    - id: first-pass
+      when:
+        rootResult: succeeded
+        retryCount: 0
+      result: first_pass_success
+    - id: flaky-later-pass
+      when:
+        rootResult: failed
+        anyLaterResult: succeeded
+        anyOf:
+          - anyRetryCause: unexplained
+          - noSuccessfulRetryHasMaterialEvidenceDelta: true
+      result: flaky_pass
+    - id: explained-recovery
+      when:
+        rootResult: failed
+        anyLaterResult: succeeded
+        successfulRetryCauseIn:
+          - product_fix
+          - environment_recovery
+          - test_repair
+          - dependency_recovery
+        successfulRetryHasMaterialEvidenceDelta: true
+      result: recovered_success
+    - id: unresolved
+      when:
+        noAttemptSucceeded: true
+      result: unresolved_failure
+  refusal:
+    code: RETRY_LINEAGE_INVALID
+    when: No rule matches under first_match evaluation or the chain violates an invariant.

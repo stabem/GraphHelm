@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/artifact-reference.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Artifact Reference",
+  "$comment": "The Task 5 artifact registration boundary must reject a locator whose digest suffix differs from contentSha256; JSON Schema enforces the canonical syntax but cannot compare sibling values.",
+  "type": "object",
+  "required": ["artifactId", "locator", "contentSha256", "mediaType", "byteLength", "sensitivity", "metadataVersion"],
+  "properties": {
+    "artifactId": {"$ref": "#/$defs/opaqueId"},
+    "locator": {"$ref": "#/$defs/opaqueLocator"},
+    "contentSha256": {"$ref": "#/$defs/sha256"},
+    "mediaType": {"$ref": "#/$defs/mediaType"},
+    "byteLength": {"type": "integer", "minimum": 1, "maximum": 17179869184},
+    "sensitivity": {"$ref": "sensitivity.schema.json"},
+    "metadataVersion": {"$ref": "#/$defs/semver"}
+  },
+  "$defs": {
+    "opaqueId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[\\x21-\\x2E\\x30-\\x39\\x3B-\\x5B\\x5D-\\x7E]{1,128}$"},
+    "opaqueLocator": {"type": "string", "pattern": "^artifact://sha256/[a-f0-9]{64}$"},
+    "sha256": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]{64}$"},
+    "mediaType": {"type": "string", "minLength": 3, "maxLength": 127, "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$"},
+    "semver": {"type": "string", "minLength": 5, "maxLength": 32, "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}
+  },
+  "additionalProperties": false
+}

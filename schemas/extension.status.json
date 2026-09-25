@@ -1,0 +1,16 @@
+{
+  "$comment": "Test-only metadata for /spec/contracts fields in schemas/extension.schema.json -- deliberately NOT part of that schema. schemas/*.schema.json are frozen byte-for-byte per release (core/schema-evolution/tests/catalog_integrity.rs::checked_in_1_0_0_release_is_complete_and_raw_byte_identical, verified against schemas/releases/1.0.0/). #339 tried adding this as inline x-graphhelm-status tags on the live schema and broke that invariant -- schemas/extension.schema.json had not been touched since the 1.0.0 milestone shipped (8ee8f49), and editing it was the first violation. This file is the population-derivation source apps/cli/tests/extension_cli.rs reads instead: same closed-vocabulary-guard-pattern discipline (read here as the source, never re-typed), pointed at a file that is actually allowed to change. This file's own name does not end in .schema.json, so it is invisible to catalog_integrity.rs's schema inventory scan by construction, not by convention.",
+  "wakeCondition": "If core/schema/src/extension.rs's validator ever actually CONSUMES a field's status (not just documents it), the annotation belongs in the schema itself -- added via a new versioned release (e.g. 1.1.0) with its own frozen snapshot, never edited into the live 1.0.0 file.",
+  "fields": {
+    "formatVersion": "advisory",
+    "activation": "advisory",
+    "composition": "advisory",
+    "missingCapabilityResult": "advisory",
+    "publication": "enforced",
+    "hostViews": "enforced",
+    "contributions": "structural",
+    "entryFamilies": "structural",
+    "artifactFlowFormat": "structural",
+    "artifactFlows": "structural"
+  }
+}

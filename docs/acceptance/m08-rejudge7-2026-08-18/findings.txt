@@ -1,0 +1,23 @@
+--- F1 (critical) ---
+The glance never answers the story's question. status for exec-m08-judge7 returns attention="unknown" at sequence 13 and still "unknown" 103s later at sequence 14. There is no yes/no sleep verdict anywhere in the payload, so the operator's one-glance decision is undecidable by construction.
+
+--- F2 (high) ---
+A real failure is invisible in the summary. Event sequence 11 records flaky_check outcome=retryable_failure reason=tool_exited_non_zero, yet status shows failed:0, untriagedInterruptions:[], and no attentionReason mentioning flaky_check. Only a full event-tail read (50 events, ~15k tokens) surfaces it. An operator who glances goes back to sleep on a run that already broke.
+
+--- F3 (high) ---
+Silence detection is disabled for exactly the node that is stuck. judge has been state=running with no event for 103 observed silence seconds, and the sole reason attention is unknown is that judge has no_declared_budget. The one signal that would say "hung, wake up" is switched off precisely where it is needed.
+
+--- F4 (high) ---
+The prescribed remedy is not reachable from the operator's surface. Every attentionReason points to remedy="declareNodeBudget", but the exposed MCP tools (status, events, probe, routes, start, signal, approve, pause, resume, cancel, wake_arm, wake_status, wake_wait) contain no budget-declaring operation. The monitor tells the operator to do something the monitor cannot do.
+
+--- F5 (medium) ---
+Retry state carries no schedule. flaky_check sits in queued after a retryable_failure with no attempt count, no backoff, and no next-attempt timestamp in status or in the event payload. The operator cannot distinguish "will retry in 5s" from "wedged forever", which is the exact discrimination the sleep decision needs.
+
+--- F6 (medium) ---
+The wake path gave no usable signal for the sleep loop. wake_arm at cursor 13 followed by wake_wait returned outcome=timeout after 60s while the run was silently stalled, so the block expired with the operator no better informed and no distinction between "quiet because healthy" and "quiet because stuck".
+
+--- F7 (low) ---
+Arming a lease perturbs the progress counter the operator reasons with: wake_arm returned headSequence 14 while contentHead stayed 13, so a read-only monitoring action advances the sequence an operator uses as a proxy for "did anything happen".
+
+--- F8 (low) ---
+The status payload is not glanceable: ~20 top-level fields, no one-line verdict, and attentionReasons duplicates silenceUnevaluated verbatim, forcing the operator to parse redundant nested structures at 3am.

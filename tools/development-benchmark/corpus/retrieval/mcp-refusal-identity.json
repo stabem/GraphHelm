@@ -1,0 +1,34 @@
+{
+  "caseId": "mcp-refusal-identity",
+  "query": "On the MCP surface, where does a development.* refusal carry its injective identity, given that the numeric JSON-RPC code stays coarse? Name the envelope field and the file that builds it.",
+  "repoSnapshot": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "indexGeneration": "15456c4def4c41f6a83b11d712267b14d24cea00",
+  "hits": [
+    {
+      "path": "apps/cli/tests/api_http.rs",
+      "lines": "3075-3142"
+    },
+    {
+      "path": "core/events/tests/memory.rs",
+      "lines": "16-53"
+    },
+    {
+      "path": "apps/cli/tests/execution_cli.rs",
+      "lines": "1583-1629"
+    },
+    {
+      "path": "apps/cli/tests/development_context_budget.rs",
+      "lines": "157-178"
+    },
+    {
+      "path": "core/runtime/tests/context_accounting.rs",
+      "lines": "201-212"
+    }
+  ],
+  "coverage": "partial",
+  "pages": 1,
+  "maxResults": 5,
+  "maxPages": 8,
+  "maxBytes": 1000000,
+  "maxTokens": 250000
+}

@@ -1,0 +1,33 @@
+{
+  "version": "1.1.0",
+  "card": {
+    "maxScopePaths": 12,
+    "maxExportedSymbols": 8,
+    "maxCardBytes": 4096
+  },
+  "surface": {
+    "newModule": 1,
+    "newType": 2,
+    "newPublicFn": 4,
+    "newDependency": 0,
+    "newTest": 2,
+    "newMacro": 1
+  },
+  "maxAllowance": {
+    "newModule": 3,
+    "newType": 6,
+    "newPublicFn": 12,
+    "newDependency": 1,
+    "newTest": 6
+  },
+  "body": {
+    "maxFileLinesDelta": 400
+  },
+  "surfaceEnforcement": "signal",
+  "ladder": {
+    "enabled": false,
+    "strikesPerRung": 2,
+    "creditPerProvenPromise": 1,
+    "windowNodes": 20
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "claim-fixture",
+  "subject": "fixture",
+  "predicate": "has-status",
+  "object": "ready",
+  "status": "validated",
+  "confidence": 2,
+  "validFrom": "2026-01-01T00:00:00Z",
+  "provenance": ["conformance-suite"]
+}

@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "formatVersion": 1,
+    "schema": "graph",
+    "fromVersion": "1.0.0",
+    "toVersion": "2.0.0",
+    "sourceSchemaHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "targetSchemaHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "operations": []
+  },
+  "sourceCatalogHash": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+  "targetCatalogHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "input": {"apiVersion": "p50.dev/graph/v1"},
+  "expect": {"ok": false, "codes": ["GHM002_SCHEMA_HASH_MISMATCH"]}
+}

@@ -1,0 +1,6 @@
+{
+  "description": "A zero under partial coverage is an unfinished search, not an absence. Publishing it as absence is the defect this task exists to prevent.",
+  "coverage": "partial",
+  "hits": [],
+  "expect": "refuse:negative_claim_unverified"
+}

@@ -1,0 +1,176 @@
+apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_feature_graph_v1
+  name: Implementar feature com validação adaptativa
+  executionId: exec_feature
+  version: 1
+  labels:
+    origin: user
+    mode: autopilot
+spec:
+  entrypoints:
+    - map_repository
+  nodes:
+    map_repository:
+      type: agent
+      name: Mapear repositório
+      objective: Localizar componentes, dependências e testes relacionados.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Mapear o escopo técnico da mudança.
+          capabilities:
+            - repository.search
+            - repository.trace_dependencies
+          allowedTools:
+            - repository.read
+          prohibitedActions:
+            - repository.write
+          inputSchema: schema://TaskRequest@1
+          outputSchema: schema://RepositoryMap@1
+          instructions: Produza um mapa com locations e evidências.
+          completionContract:
+            requires:
+              - source_locations
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+      timeoutSeconds: 900
+    plan:
+      type: agent
+      name: Planejar implementação
+      objective: Criar plano mínimo e critérios verificáveis.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Planejar a alteração com base no mapa.
+          capabilities:
+            - change.plan
+          inputSchema: schema://RepositoryMap@1
+          outputSchema: schema://ImplementationPlan@1
+          instructions: Não inclua etapas sem benefício esperado.
+          completionContract:
+            requires:
+              - acceptance_criteria
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+    implement:
+      type: agent
+      name: Implementar
+      objective: Aplicar a mudança no worktree isolado.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: Executar o plano.
+          capabilities:
+            - repository.write_patch
+            - tests.execute_targeted
+          allowedTools:
+            - repository.read
+            - repository.write
+            - shell.execute_restricted
+          prohibitedActions:
+            - production.deploy
+          inputSchema: schema://ImplementationPlan@1
+          outputSchema: schema://ImplementationResult@1
+          instructions: Preserve escopo e produza patch e relatório.
+          completionContract:
+            requires:
+              - patch_artifact
+          isolationMinimum: tier_1
+      isolation:
+        minimum: tier_1
+      completion:
+        requires:
+          - outputSchemaValid: true
+    tests:
+      type: tool
+      name: Executar testes direcionados
+      objective: Verificar critérios e regressões locais.
+      optionality: required
+      input:
+        schema: schema://ImplementationResult@1
+      output:
+        schema: schema://TestReport@1
+      completion:
+        requires:
+          - expression: output.executed > 0
+      timeoutSeconds: 1800
+    review:
+      type: agent
+      name: Revisão independente
+      objective: Procurar defeitos e claims sem evidência.
+      optionality: recommended
+      agent:
+        ephemeral:
+          purpose: Criticar o patch sem usar o resumo subjetivo do executor.
+          capabilities:
+            - diff.inspect
+            - repository.read
+            - tests.inspect
+          allowedTools:
+            - repository.read
+            - tests.read
+          prohibitedActions:
+            - repository.write
+          inputSchema: schema://ReviewBundle@1
+          outputSchema: schema://ReviewReport@1
+          instructions: Cite source locations e tente falsificar a solução.
+          completionContract:
+            requires:
+              - evidence_linked_findings
+          isolationMinimum: tier_0
+      completion:
+        requires:
+          - outputSchemaValid: true
+    docs:
+      type: materializer
+      name: Atualizar documentação
+      objective: Materializar decisões e mudança com provenance.
+      optionality: required
+      completion:
+        requires:
+          - artifactExists: task-summary.md
+  edges:
+    - id: map_to_plan
+      from: map_repository
+      to: plan
+      type: data
+    - id: plan_to_implement
+      from: plan
+      to: implement
+      type: data
+    - id: implement_to_tests
+      from: implement
+      to: tests
+      type: data
+    - id: implement_to_review
+      from: implement
+      to: review
+      type: data
+    - id: tests_to_docs
+      from: tests
+      to: docs
+      type: evidence
+    - id: review_to_docs
+      from: review
+      to: docs
+      type: evidence
+  budgets:
+    maxNodes: 20
+    maxDepth: 8
+    maxMutations: 6
+    maxRetriesPerNode: 2
+    maxWallClockSeconds: 7200
+    maxApiCostUsd: 15
+    maxParallelModelCalls: 3
+  policies:
+    - policy://workspace/security-baseline@1
+  completion:
+    terminalNodes:
+      - docs
+    allowWaivers: true

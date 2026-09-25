@@ -1,0 +1,296 @@
+{
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "const": "p50.dev/adoption/v1"
+    },
+    "kind": {
+      "const": "RestorePlan"
+    },
+    "id": {
+      "const": "restore"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "enum": [
+            "original",
+            "checkpoint"
+          ]
+        },
+        "manual": {
+          "type": "boolean"
+        },
+        "backupId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "rootBindings": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "home": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "project",
+            "home"
+          ],
+          "additionalProperties": false
+        },
+        "stateBinding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "journalBinding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "transactionId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "transactionId",
+              "digest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "current": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "enum": [
+                  "project",
+                  "home"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "accessDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "root",
+              "path",
+              "digest",
+              "accessDigest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "enum": [
+                  "project",
+                  "home"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "action": {
+                "enum": [
+                  "retain_unowned",
+                  "unchanged",
+                  "conflict",
+                  "restore"
+                ]
+              },
+              "beforeDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "afterDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "root",
+              "path",
+              "action",
+              "beforeDigest",
+              "afterDigest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "transactionId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "id": {
+                "enum": [
+                  "graphhelm-jpd",
+                  "graphhelm-development-contracts"
+                ]
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "action": {
+                "enum": [
+                  "deactivate_owned",
+                  "retain_modified"
+                ]
+              },
+              "currentDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "transactionId",
+              "id",
+              "digest",
+              "action",
+              "currentDigest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 512
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "enum": [
+                  "project",
+                  "home"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "reason": {
+                "const": "restore_conflict"
+              }
+            },
+            "required": [
+              "root",
+              "path",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "selection",
+        "backupId",
+        "rootBindings",
+        "stateBinding",
+        "sources",
+        "current",
+        "effects",
+        "packages",
+        "conflicts"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "id",
+    "digest",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/restore-plan.schema.json",
+  "x-graphhelm-schema-version": "1.0.0"
+}

@@ -1,0 +1,47 @@
+{
+  "purpose": "Act as a task-local risk role that finds the shortest reproducible user-journey counterexample without becoming a permanent project persona.",
+  "capabilities": [
+    "journey.trace_semantic_actions",
+    "journey.find_counterexample",
+    "evidence.inspect",
+    "repository.read"
+  ],
+  "allowedTools": [
+    "cli:graph validate",
+    "cli:graph lint",
+    "cli:graph simulate",
+    "cli:graph replay",
+    "tool:status",
+    "tool:events"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-defect-claim.schema.json",
+  "instructions": "Work only on the current task and risk scope. Produce one minimal semantic action trace per claim, cite observer evidence, preserve uncertainty, and do not reward novelty over severity or reproducibility. Return no claim when adequate evidence contradicts it.",
+  "completionContract": {
+    "requires": [
+      "minimal_semantic_trace",
+      "expected_and_observed_states",
+      "observer_evidence",
+      "reproduction_count"
+    ],
+    "never": [
+      "majority_vote_as_proof",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "journey_observation",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

@@ -1,0 +1,46 @@
+{
+  "purpose": "Act as a task-local risk role that proposes materially different ways to satisfy the journey contract without becoming a permanent project persona.",
+  "capabilities": [
+    "journey.generate_alternatives",
+    "capability.compose",
+    "tradeoff.identify",
+    "evidence.gap_identify"
+  ],
+  "allowedTools": [
+    "cli:graph validate",
+    "cli:graph lint",
+    "cli:graph hash",
+    "tool:routes",
+    "tool:probe"
+  ],
+  "prohibitedActions": [
+    "graph.publish",
+    "graph.mutate",
+    "governor.apply_draft",
+    "extension.activate",
+    "skill.promote",
+    "production.mutate"
+  ],
+  "inputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json",
+  "outputSchema": "https://p50.dev/extensions/graphhelm-jpd/schemas/skill-capsule.schema.json",
+  "instructions": "Generate a small set of genuinely different task-scoped capability compositions. Bind each option to promises, observers, cost, and risk. Do not create a universal workflow pack and do not activate a capsule.",
+  "completionContract": {
+    "requires": [
+      "task_scope",
+      "public_surface_bindings",
+      "required_observers",
+      "tradeoffs"
+    ],
+    "never": [
+      "self_activation",
+      "direct_graph_mutation"
+    ]
+  },
+  "evidenceRequirements": [
+    {
+      "kind": "capability_catalog_reference",
+      "minimum": 1
+    }
+  ],
+  "isolationMinimum": "tier_0"
+}

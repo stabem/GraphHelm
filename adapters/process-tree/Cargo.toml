@@ -1,0 +1,19 @@
+[package]
+name = "graphhelm-process-tree"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+# The feature set is a SUBSET of what `adapters/postgres-event-store` already declares, checked
+# deliberately: Cargo unifies features additively, so a subset can never switch on a path that crate
+# did not already compile. The event store keeps its own declaration for the file, security and
+# ToolHelp APIs it uses elsewhere in `backup.rs`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

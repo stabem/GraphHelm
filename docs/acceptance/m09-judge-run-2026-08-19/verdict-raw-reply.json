@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "command": "execution.resume",
+  "data": {
+    "acceptedMutations": 0,
+    "attention": "needs_you",
+    "attentionReasons": [
+      {
+        "kind": "failed_node",
+        "node": "judge"
+      }
+    ],
+    "executionId": "exec-m09-judge",
+    "headSequence": 43,
+    "lastEventAt": null,
+    "mode": "autopilot",
+    "nodeLastEventAt": {},
+    "nodeStateCounts": {
+      "blocked": 0,
+      "cancelled": 0,
+      "draft": 0,
+      "failed": 1,
+      "ghost": 0,
+      "invalidated": 0,
+      "linting": 0,
+      "paused": 0,
+      "queued": 0,
+      "ready": 0,
+      "running": 0,
+      "skipped": 0,
+      "succeeded": 1,
+      "waiting_capacity": 0,
+      "waiting_input": 0,
+      "waived": 0
+    },
+    "signalsRecorded": 0,
+    "silenceUnevaluated": [],
+    "startedAt": null,
+    "status": "failed",
+    "untriagedInterruptions": []
+  },
+  "diagnostics": []
+}

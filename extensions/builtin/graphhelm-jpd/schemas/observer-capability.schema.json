@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/observer-capability.schema.json",
+  "title": "GraphHelm JPD Observer Capability",
+  "type": "object",
+  "required": [
+    "observerId",
+    "capabilityId",
+    "version",
+    "surface",
+    "availability",
+    "facts",
+    "evidenceKinds",
+    "trust",
+    "effects",
+    "commands",
+    "freshness",
+    "custody",
+    "configurationDigestRequired",
+    "environmentBindingRequired",
+    "limitations"
+  ],
+  "properties": {
+    "observerId": {
+      "$ref": "#/$defs/id"
+    },
+    "capabilityId": {
+      "$ref": "#/$defs/id"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 32
+    },
+    "surface": {
+      "enum": [
+        "cli",
+        "mcp",
+        "http",
+        "browser"
+      ]
+    },
+    "availability": {
+      "enum": [
+        "declared",
+        "requires_probe",
+        "unsupported_by_bundle"
+      ]
+    },
+    "unavailableReason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "command_completed",
+          "request_accepted",
+          "state_persisted",
+          "message_delivered",
+          "recovery_safe",
+          "schema_valid",
+          "semantic_lint_clean",
+          "canonical_hash_computed",
+          "deterministic_simulation_completed",
+          "projection_replayed",
+          "event_history_intact",
+          "execution_status_observed",
+          "execution_events_observed",
+          "gateway_routes_observed",
+          "gateway_route_locally_ready",
+          "content_rendered",
+          "control_operable",
+          "focus_order_valid",
+          "visual_state_perceivable"
+        ]
+      }
+    },
+    "evidenceKinds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "process_exit",
+          "http_acceptance",
+          "queue_receipt",
+          "durable_readback",
+          "provider_delivery_receipt",
+          "structured_cli_result",
+          "event_chain_verification",
+          "runtime_projection",
+          "runtime_event_tail",
+          "gateway_probe",
+          "dom_semantic_snapshot",
+          "accessibility_tree",
+          "visual_capture",
+          "interaction_trace",
+          "operator_attestation"
+        ]
+      }
+    },
+    "trust": {
+      "enum": [
+        "first_party_deterministic",
+        "first_party_instrumented",
+        "third_party_receipt",
+        "visual_capture",
+        "operator_attestation"
+      ]
+    },
+    "effects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "read_only",
+          "local_artifact_write",
+          "runtime_read",
+          "external_read"
+        ]
+      }
+    },
+    "commands": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "required": [
+        "class",
+        "maxAgeSeconds",
+        "absenceWindowSeconds"
+      ],
+      "properties": {
+        "class": {
+          "enum": [
+            "immutable_by_input",
+            "snapshot_closed",
+            "drifting"
+          ]
+        },
+        "maxAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "absenceWindowSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "additionalProperties": false
+    },
+    "custody": {
+      "type": "object",
+      "required": [
+        "producer",
+        "digestAlgorithm",
+        "ordered"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "digestAlgorithm": {
+          "const": "sha256"
+        },
+        "ordered": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "configurationDigestRequired": {
+      "type": "boolean"
+    },
+    "environmentBindingRequired": {
+      "type": "boolean"
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "availability": {
+            "const": "unsupported_by_bundle"
+          }
+        },
+        "required": [
+          "availability"
+        ]
+      },
+      "then": {
+        "required": [
+          "unavailableReason"
+        ],
+        "properties": {
+          "commands": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "unavailableReason"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "commands": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "availability": {
+                  "const": "requires_probe"
+                }
+              },
+              "required": [
+                "availability"
+              ]
+            },
+            "then": {
+              "properties": {
+                "environmentBindingRequired": {
+                  "const": true
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    }
+  },
+  "additionalProperties": false
+}

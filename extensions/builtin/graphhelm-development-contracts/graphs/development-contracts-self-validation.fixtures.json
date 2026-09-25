@@ -1,0 +1,83 @@
+{
+  "$comment": "Fixtures for extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.yaml. Every `case` names the branch it drives and the outcome the journey must reach. Refusal cases point at the sabotage corpus rather than restating it, so the corpus stays the single source of the attack.",
+  "graph": "extensions/builtin/graphhelm-development-contracts/graphs/development-contracts-self-validation.yaml",
+  "cases": [
+    {
+      "id": "capture-disabled-certifies",
+      "branch": "capture_off",
+      "terminalNode": "certify",
+      "expect": {
+        "outcome": "certified"
+      },
+      "why": "the honest capture-disabled path: coverage is conclusive and truly conclusive, and the observer is not the actor",
+      "journey": "extensions/builtin/graphhelm-development-contracts/fixtures/journeys/capture-disabled-certifies.json"
+    },
+    {
+      "id": "capture-enabled-certifies",
+      "branch": "capture_on",
+      "terminalNode": "certify",
+      "expect": {
+        "outcome": "certified"
+      },
+      "why": "the honest capture-enabled path: captured material passes the admission screens",
+      "journey": "extensions/builtin/graphhelm-development-contracts/fixtures/journeys/capture-enabled-certifies.json"
+    },
+    {
+      "id": "s2-false-structural-absence",
+      "branch": "capture_off",
+      "terminalNode": "certify",
+      "corpus": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s2-false-structural-absence/",
+      "evidence": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s2-false-structural-absence/evidence-claims-complete.json",
+      "ground": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s2-false-structural-absence/producer-record.json",
+      "expect": {
+        "outcome": "refused",
+        "namedReason": "coverage_claim_contradicts_recorded_state",
+        "mustNotEcho": []
+      },
+      "why": "a conclusive zero asserted over a recorded extraction_gap"
+    },
+    {
+      "id": "s4-unsafe-compression",
+      "branch": "capture_on",
+      "terminalNode": "certify",
+      "corpus": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s4-unsafe-compression/",
+      "evidence": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s4-unsafe-compression/evidence-cites-dropped-content.json",
+      "ground": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s4-unsafe-compression/capsule-drops-silently.json",
+      "control": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s4-unsafe-compression/capsule-declares-exclusion.json",
+      "expect": {
+        "outcome": "refused",
+        "namedReason": "cited_content_not_reproducible_from_capsule"
+      },
+      "why": "evidence cites a line the capsule dropped without declaring the exclusion"
+    },
+    {
+      "id": "s5a-secret-capture",
+      "branch": "capture_on",
+      "terminalNode": "admit_memory",
+      "corpus": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s5a-secret-capture/",
+      "evidence": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s5a-secret-capture/evidence-carries-marker.json",
+      "ground": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s5a-secret-capture/markers.json",
+      "expect": {
+        "outcome": "refused",
+        "namedReason": "secret_detected",
+        "mustNotEcho": [
+          "marker.value"
+        ]
+      },
+      "why": "a synthetic marker survives into captured material; the refusal must not echo it"
+    },
+    {
+      "id": "s1b-observer-is-the-actor",
+      "branch": "capture_off",
+      "terminalNode": "certify",
+      "corpus": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s1b-observer-is-the-actor/",
+      "evidence": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s1b-observer-is-the-actor/contract-observer-is-the-actor.json",
+      "control": "extensions/builtin/graphhelm-development-contracts/fixtures/sabotage/s1b-observer-is-the-actor/contract-observer-independent.json",
+      "expect": {
+        "outcome": "refused",
+        "namedReason": "observer_not_distinct_from_actor"
+      },
+      "why": "the promise names an observer capability whose identity is the step actor"
+    }
+  ]
+}

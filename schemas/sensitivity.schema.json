@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/sensitivity.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Sensitivity",
+  "type": "string",
+  "enum": ["public", "internal", "confidential", "restricted"],
+  "additionalProperties": false
+}

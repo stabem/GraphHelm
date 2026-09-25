@@ -1,0 +1,7 @@
+{
+  "_shape": "journey evidence citing capsule content",
+  "capsuleId": "capsule-s4",
+  "dependencyHash": "sha256:aaaa",
+  "citation": "line 42: `if now < exp` - off-by-one on expiry boundary",
+  "claim": "reviewed against the evidence section of the capsule as shipped"
+}

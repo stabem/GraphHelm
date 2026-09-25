@@ -1,0 +1,4 @@
+{
+  "baseline": {"type": "object", "properties": {}},
+  "candidate": {"type": "object", "properties": {"nickname": {"type": "string"}}}
+}

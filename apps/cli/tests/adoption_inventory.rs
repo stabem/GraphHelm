@@ -64,9 +64,12 @@ fn setup_rejects_a_missing_explicit_root() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("GHCLI029_ADOPTION_REFUSED"));
 }
 
+/// Since #1210 a link on a host surface no longer aborts the whole inventory: it is recorded as a
+/// coverage gap and never followed. A followed broken link would read as `absent`; the surface
+/// must instead be `inaccessible`, with no digest, and the gap named by its surface id.
 #[cfg(unix)]
 #[test]
-fn setup_rejects_a_broken_symlink_surface() {
+fn setup_records_a_broken_symlink_surface_as_a_coverage_gap() {
     use std::os::unix::fs::symlink;
 
     let project = tempfile::tempdir().unwrap();
@@ -77,10 +80,28 @@ fn setup_rejects_a_broken_symlink_surface() {
     )
     .unwrap();
 
-    let output = setup_default(project.path(), home.path());
+    let value = output_json(setup_default(project.path(), home.path()));
 
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("GHCLI029_ADOPTION_REFUSED"));
+    let claude = claude_host(&value);
+    let surface = claude_items(&value)
+        .into_iter()
+        .find(|item| item["id"] == "home/.claude.json")
+        .expect("the linked surface is still reported");
+    assert_eq!(surface["status"], "inaccessible", "{surface}");
+    assert_eq!(surface["digest"], Value::Null, "{surface}");
+    assert_eq!(claude["coverage"], "inaccessible");
+    assert!(
+        claude["coverageDetails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |detail| detail["scope"] == "home/.claude.json" && detail["reason"] == "PathUnsafe"
+            ),
+        "{}",
+        claude["coverageDetails"]
+    );
+    assert_eq!(value["data"]["inventory"]["spec"]["coverage"], "incomplete");
 }
 
 #[cfg(unix)]

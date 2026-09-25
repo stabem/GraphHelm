@@ -132,18 +132,25 @@ fn resolve_contains_paths_and_refuses_a_junction_escape() {
 
     // A directory junction does not need Windows privileges (symlinks do): create
     // workspace/escape -> outside, then ask for escape/x.txt. The junction is the test's own
-    // fixture; creating it via cmd is harness territory, not broker territory.
+    // fixture; creating it via cmd is harness territory, not broker territory. Unix has no
+    // junction; a directory symlink is the same escape there.
     let junction = workspace.root().join("escape");
-    let status = Command::new("cmd")
-        .args(["/c", "mklink", "/J"])
-        .arg(&junction)
-        .arg(outside.path())
-        .status()
-        .unwrap();
-    assert!(
-        status.success(),
-        "junction creation is the test's own precondition"
-    );
+    #[cfg(windows)]
+    {
+        let status = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(outside.path())
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "junction creation is the test's own precondition"
+        );
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &junction)
+        .expect("symlink creation is the test's own precondition");
     assert!(
         workspace.resolve(&rel("escape/x.txt")).is_err(),
         "junction escape must be refused"

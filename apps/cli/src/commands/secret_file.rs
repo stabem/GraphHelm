@@ -242,6 +242,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.token");
         std::fs::write(&path, "not-hex").unwrap();
+        // Private, so the refusal comes from the size check this test is about and not from
+        // the unix mode check that runs before it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let error = ensure(&path, "bearer token").unwrap_err();
         assert_eq!(
             error.message(),

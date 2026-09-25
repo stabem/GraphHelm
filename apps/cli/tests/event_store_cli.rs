@@ -81,6 +81,13 @@ fn config_value(directory: &TempDir) -> Value {
 fn write_config(directory: &TempDir, value: &Value) -> PathBuf {
     let path = directory.path().join("operator.json");
     fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+    // The operator refuses a group- or world-accessible configuration on unix; a fixture
+    // written under the default umask would stop at that check instead of the one under test.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     path
 }
 

@@ -88,6 +88,11 @@ fn cli_restores_a_direct_manual_checkpoint_without_an_adoption_journal() {
     let project = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let path = project.path().join("AGENTS.md");
     std::fs::write(&path, b"manual baseline\n").unwrap();
 

@@ -8,6 +8,11 @@ fn cli_applies_only_the_accepted_plan_and_reports_unverified() {
     let p = tempfile::tempdir().unwrap();
     let h = tempfile::tempdir().unwrap();
     let s = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(s.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let planfile = s.path().join("plan.json");
     std::fs::write(p.path().join("AGENTS.md"), b"old method\n").unwrap();
     let mut plan = json!({"apiVersion":"p50.dev/adoption/v1","kind":"AdoptionPlan","id":"cli-plan","spec":{"coverage":"complete","rootBindings":graphhelm_host_adoption::root_bindings(p.path(),h.path()).unwrap(),"scopes":["project"],"packages":[],"hostBoundary":"quiescent","decisions":[{"operationIndex":0,"decision":"replace","protected":false}],"operations":[{"root":"project","path":"AGENTS.md","beforeDigest":digest(b"old method\n"),"afterDigest":digest(b"new method\n"),"after":"new method\n"}]}});

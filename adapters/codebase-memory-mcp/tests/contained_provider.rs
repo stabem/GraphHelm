@@ -213,7 +213,11 @@ fn the_contained_producer_yields_a_validated_receipt_naming_program_and_session(
         .verified_executable
         .as_ref()
         .expect("a named program");
-    assert!(executable.path.ends_with("fake_mcp_server.exe"));
+    assert!(
+        executable
+            .path
+            .ends_with(&format!("fake_mcp_server{}", std::env::consts::EXE_SUFFIX))
+    );
     // #153 item 3 asks for "which binary (path AND hash)", and the path alone is half of it.
     //
     // The digest is taken OF THE FILE THE RECORD NAMES -- not of a path this test knows by another

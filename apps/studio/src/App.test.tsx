@@ -491,6 +491,22 @@ describe("the projects rail", () => {
     await open(client);
     await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("demo-deploy"));
   });
+
+  it("opens the most recently active run when several runs need the operator", async () => {
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({
+        executions: [
+          { executionId: "quiet-demo", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: "2026-09-25T13:00:00Z", headSequence: 7 },
+          { executionId: "active-run", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: "2026-09-25T17:00:00Z", headSequence: 39 },
+        ],
+        hasMore: false,
+        nextCursor: null,
+      })),
+    });
+    await open(client);
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("active-run"));
+    expect(client.getStatus).not.toHaveBeenCalledWith("quiet-demo");
+  });
 });
 
 describe("the board", () => {
@@ -3205,6 +3221,15 @@ describe("the exchange", () => {
       })),
     });
   }
+
+  it("shows recorded agent messages in the overview while the graph has no moving nodes", async () => {
+    await open(roomClient());
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    const activity = await screen.findByRole("region", { name: "Recent recorded activity" });
+    expect(await within(activity).findByText("uma mensagem")).toBeInTheDocument();
+    expect(activity).toHaveTextContent("event #17");
+    expect(screen.getByText("0 active nodes")).toBeInTheDocument();
+  });
 
   /** THE CREW LIVES ON THE CANVAS - the owner drew it: agents in their own card, avatar and
    * name, distinct from nodes. Personas wear the "persona" role tag; plain agents do not. */

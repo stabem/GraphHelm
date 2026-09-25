@@ -40,6 +40,7 @@ function chromeRectsAround(sheet: HTMLElement | null): DOMRect[] {
 }
 import { ago, hueOf, initialOf, readable } from "./format";
 import { WorkOverview, isEntryNode, isFirstEntryNode } from "./work-overview";
+import type { WorkOverviewProps } from "./work-overview";
 
 
 type Tool = "select" | "pen" | "note" | "hand";
@@ -132,6 +133,7 @@ export function Board({
   selectedAgent = null,
   onSelectAgent,
   talks = [],
+  activity = [],
   selectedTalk = null,
   onSelectTalk,
   focusGraphFile = 0,
@@ -170,6 +172,7 @@ export function Board({
   /** The room's conversations, each one a bubble standing on the board. Derived by App from
    * the envelopes; this component only places and moves them. */
   talks?: Array<{ key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null }>;
+  activity?: WorkOverviewProps["activity"];
   selectedTalk?: string | null;
   onSelectTalk?: (talkKey: string | null) => void;
   /** Bumped when another control (the dock's resume) needs the person AT the graph-file box:
@@ -777,7 +780,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} crew={crew} talks={talks} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} crew={crew} talks={talks} activity={activity} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

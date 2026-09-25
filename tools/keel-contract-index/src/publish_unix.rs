@@ -54,7 +54,7 @@ fn publish_bytes_with_temp_name(
     let parent_fd = parent.as_raw_fd();
     let stage = create_stage(parent_fd)?;
     let stage_fd = stage.as_raw_fd();
-    let result = (|| {
+    (|| {
         let raw = unsafe {
             libc::openat(
                 stage_fd,
@@ -68,7 +68,7 @@ fn publish_bytes_with_temp_name(
         }
         let mut output = unsafe { File::from_raw_fd(raw) };
         if let Err(error) = output.write_all(bytes).and_then(|_| output.sync_all()) {
-            let _ = unlink_file(stage_fd, &temp_name);
+            let _ = unlink_file(stage_fd, temp_name);
             return Err(error);
         }
         drop(output);
@@ -83,15 +83,13 @@ fn publish_bytes_with_temp_name(
         };
         if renamed != 0 {
             let error = io::Error::last_os_error();
-            let _ = unlink_file(stage_fd, &temp_name);
+            let _ = unlink_file(stage_fd, temp_name);
             return Err(error);
         }
 
         // Persist the directory entry update as well as the file contents.
         sync_fd(parent_fd)
-    })();
-
-    result
+    })()
 }
 
 fn create_stage(parent_fd: libc::c_int) -> io::Result<File> {

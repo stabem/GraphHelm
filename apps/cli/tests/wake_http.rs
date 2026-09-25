@@ -1131,6 +1131,7 @@ fn last_event_instant(events: &Path) -> chrono::DateTime<chrono::Utc> {
         .as_datetime()
 }
 
+#[cfg(windows)]
 fn kinds_after(events: &Path, sequence: u64) -> Vec<String> {
     let store = open_store(events);
     let (_stream, history) = store.read_unique_replay_stream().unwrap();
@@ -1524,6 +1525,7 @@ fn an_old_fixture_pipe_cannot_satisfy_a_new_wake_wait_observer() {
     );
 }
 
+#[cfg(windows)]
 fn kinds_snapshot(events: &Path) -> Vec<String> {
     let store = open_store(events);
     let (_stream, history) = store.read_unique_replay_stream().unwrap();
@@ -2176,11 +2178,13 @@ fn wake_wait_exits_three_on_timeout_and_two_on_a_bad_id() {
 /// A counting TCP proxy in front of the serve: EVERY byte session A sends to the API goes
 /// through here, and the connection counter is the measurement the zero-polling assertion
 /// reads. The waker (B) talks to the serve directly — only the sleeper is under watch.
+#[cfg(windows)]
 struct CountingProxy {
     address: String,
     connections: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[cfg(windows)]
 fn counting_proxy(upstream: String) -> CountingProxy {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -2215,6 +2219,7 @@ fn counting_proxy(upstream: String) -> CountingProxy {
 
 /// One MCP session for the sleeper, pointed AT THE PROXY — every API byte it ever sends is
 /// counted. Returns the protocol replies.
+#[cfg(windows)]
 fn mcp_via(
     proxy_address: &str,
     token: &str,
@@ -2252,6 +2257,7 @@ fn mcp_via(
         .collect()
 }
 
+#[cfg(windows)]
 fn initialize_lines(calls: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
     let mut lines = vec![
         serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",

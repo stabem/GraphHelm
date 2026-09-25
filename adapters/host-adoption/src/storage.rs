@@ -376,6 +376,9 @@ impl Root {
         }
         Err(unsafe_path())
     }
+    // Only `guarded::reconcile` calls this, and only on Windows; the unix branch below is kept so
+    // the walk stays one function on both platforms (#869).
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn destination_parent(&self, relative: &str) -> Result<(File, String), AdoptionError> {
         relative_ok(relative)?;
         self.verify()?;

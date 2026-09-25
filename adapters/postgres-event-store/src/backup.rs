@@ -304,6 +304,8 @@ impl std::error::Error for BackupError {}
 enum UnavailableStage {
     ArchiveWrite,
     Cancellation,
+    // Raised only by the Windows directory opener (#869).
+    #[cfg_attr(not(windows), allow(dead_code))]
     DirectoryOpen,
     FileIdentity,
     FileIo,
@@ -6532,6 +6534,9 @@ struct OwnedTemporary {
 }
 
 impl OwnedTemporary {
+    // On Linux the O_TMPFILE block is the tail of this function, so its early `return` reads as
+    // needless there while it is load-bearing on Windows, where more code follows (#869).
+    #[cfg_attr(target_os = "linux", allow(clippy::needless_return))]
     fn for_destination(destination: &Path) -> Result<Self, BackupError> {
         #[cfg(all(unix, not(target_os = "linux")))]
         return Err(unavailable(UnavailableStage::TemporaryCreate));
@@ -6602,6 +6607,7 @@ impl OwnedTemporary {
         Err(unavailable(UnavailableStage::TemporaryCreate))
     }
 
+    #[cfg(windows)]
     fn new(
         path: PathBuf,
         file: File,
@@ -6754,8 +6760,11 @@ fn remove_published_link(owned: &OwnedTemporary, published: File) -> Result<(), 
 }
 
 #[cfg(all(test, target_os = "linux"))]
+type LinuxRollbackHook = Box<dyn FnOnce(&Path)>;
+
+#[cfg(all(test, target_os = "linux"))]
 std::thread_local! {
-    static BEFORE_LINUX_ROLLBACK_RENAME: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+    static BEFORE_LINUX_ROLLBACK_RENAME: std::cell::RefCell<Option<LinuxRollbackHook>> =
         std::cell::RefCell::new(None);
 }
 
@@ -6846,17 +6855,6 @@ fn open_directory(path: &Path) -> Result<File, BackupError> {
     let file = unsafe { File::from_raw_handle(handle) };
     validate_windows_handle(&file, true)?;
     Ok(file)
-}
-
-#[cfg(unix)]
-fn create_owned_pending(path: &Path) -> std::io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)
 }
 
 #[cfg(windows)]

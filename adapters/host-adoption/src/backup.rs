@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 #[cfg(windows)]
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 
 use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
 use serde_json::{Value, json};

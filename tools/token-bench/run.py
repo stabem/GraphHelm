@@ -246,8 +246,9 @@ def bench_env(task: dict) -> dict:
 def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: int, task: dict,
               max_budget_usd: float | None, mcp_config: Path | None,
               claude_cli: dict) -> tuple[dict, str, float]:
+    session_id = str(uuid.uuid4())
     cmd = [claude_cli["path"], "-p", "--output-format", "json", "--dangerously-skip-permissions",
-           "--setting-sources", "", "--strict-mcp-config",
+           "--session-id", session_id, "--setting-sources", "", "--strict-mcp-config",
            "--disallowedTools", "Bash(gh *)", "WebFetch", "WebSearch"]
     if model:
         cmd += ["--model", model]
@@ -263,7 +264,7 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
                               timeout=timeout_min * 60, env=bench_env(task))
     except subprocess.TimeoutExpired as exc:
         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,
-                "stderr": str(exc)}, "timeout", time.monotonic() - t0
+                "session_id": session_id, "stderr": str(exc)}, "timeout", time.monotonic() - t0
     wall = time.monotonic() - t0
     raw = proc.stdout.strip()
     try:
@@ -272,6 +273,8 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
             raise json.JSONDecodeError("result is not an object", raw, 0)
     except json.JSONDecodeError:
         result = {"unparseable_stdout": raw[-4000:], "stderr": proc.stderr[-4000:], "exit": proc.returncode}
+    if result.get("session_id") and result["session_id"] != session_id:
+        result["agentError"] = "session_id_mismatch"
     return result, proc.stderr, wall
 
 

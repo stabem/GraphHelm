@@ -3,6 +3,7 @@
 import importlib.util
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
@@ -57,6 +58,23 @@ def test_agent_prompt_round_trips_unicode_on_legacy_windows_code_page(tmp_path, 
     result, _stderr, _wall = runner.run_agent(
         tmp_path, prompt, "a", "sonnet", 1, {}, None, None, {"path": "claude"})
     assert result["result"] == prompt
+
+
+def test_timeout_keeps_pinned_session_id_for_partial_usage(tmp_path, monkeypatch):
+    """A timed-out CLI has no terminal receipt, but its transcript must remain identifiable."""
+    observed = {}
+
+    def timeout(cmd, **_kwargs):
+        observed["cmd"] = cmd
+        raise subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(runner.subprocess, "run", timeout)
+    result, _stderr, _wall = runner.run_agent(
+        tmp_path, "prompt", "a", "sonnet", 1, {}, None, None, {"path": "claude"})
+    assert result["agentError"] == "timeout"
+    assert str(uuid.UUID(result["session_id"])) == result["session_id"]
+    index = observed["cmd"].index("--session-id")
+    assert observed["cmd"][index + 1] == result["session_id"]
 
 
 def test_no_regression_observer_cannot_be_a_quality_win():

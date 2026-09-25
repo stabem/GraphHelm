@@ -154,7 +154,7 @@ guidance alone (paper, section 7).
    randomness. Mutation testing is used only when it adds evidence the existing proof lacks; it is
    not an admission ritual (the meaningful-test rule above governs).
 
-**What is enforced (objective contracts only):** one review by another session that runs the
+**What is enforced (objective contracts only):** one review by another session or a blind subagent that runs the
 reached tests, as [docs/process/DELIVERY.md](docs/process/DELIVERY.md) says; a new dependency is
 named in the PR body; a card lists paths rather than globs. **What is never inferred from size:** a
 small diff is not a safe diff. A one-line change can remove a permission check, so risk is read
@@ -191,8 +191,8 @@ and nothing else. It replaces the old `.factory/` protocol and the `superpowers`
 - **Delivery requires merge.** An open pull request is not delivery. A change is delivered only
   after it is merged into `main`; if the merge cannot happen, report the task as blocked.
 - Issue-first. Branch `issue-<N>-<short-description>`. One label per new issue.
-- One review by a session that did not write the change. It runs the tests the change reaches,
-  names them, and merges (squash, head pinned, closing check). No gate, no separate presser.
+- One review by a session or a blind subagent that did not write the change. It runs the tests
+  the change reaches, names them, and merges (squash, head pinned, closing check). No gate, no separate presser.
 - Every comment, review and commit body starts with `Session: <ListAgents name [ref]> · Head: <sha8>`,
   because every session pushes under one GitHub account.
 - Preserve user work. Never discard unrelated changes or use destructive Git commands without

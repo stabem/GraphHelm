@@ -31,10 +31,15 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
-## 4. One review, by another session
+## 4. One review, by another session or a blind subagent
 
-- One review from a session that did not write the change. The reviewer's session name and the
-  head sha it read go in the first line: `Session: <ListAgents name [ref]> · Head: <sha8>`.
+- One review from a reviewer that did not write the change: another session, or a **blind
+  subagent** (owner order, 2026-09-24). A blind subagent is spawned for the review only and is
+  given the PR number and this document, nothing else: no author reasoning, no summary of what to
+  look for, no expected verdict. A subagent that helped write the change, or one given the author's
+  conclusions, is not blind and cannot review it. The review's first line names the reviewer and
+  the head sha it read: `Session: <ListAgents name [ref]> · Head: <sha8>`, with
+  `(blind subagent)` after the session name when a subagent reviews.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
 - **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
@@ -53,7 +58,7 @@ body.
 
 ## 5. Merge, by the reviewer
 
-The reviewer who approved merges. There is no gate and no separate presser. `ci/gate.ps1` still
+The reviewer who approved merges (a blind subagent included). There is no gate and no separate presser. `ci/gate.ps1` still
 exists as an optional full local check (it takes about 20 minutes); a merge never waits on it.
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the review named.

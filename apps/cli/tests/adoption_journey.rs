@@ -41,7 +41,11 @@ fn plan_preview_shows_the_mcp_registration_it_would_write_and_nothing_else_of_th
     const SENTINEL: &str = "PRIVATE-MCP-SENTINEL-1208";
     let binary = p
         .path()
-        .join("graphhelm.exe")
+        .join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        })
         .to_string_lossy()
         .into_owned();
     let args = json!([

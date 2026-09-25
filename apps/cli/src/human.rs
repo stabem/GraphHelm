@@ -151,6 +151,9 @@ fn adoption(data: &Value, palette: Palette) -> String {
                     }
                     let _ = writeln!(out, "{line}");
                 }
+                Some(Value::String(marker)) if marker == "refused" => {
+                    out.push_str("Registers MCP: refused\n");
+                }
                 Some(_) => out.push_str("Registers MCP: unreadable\n"),
                 None => {}
             }

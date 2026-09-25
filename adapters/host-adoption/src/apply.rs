@@ -710,9 +710,11 @@ fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionE
 /// after-bytes, so only the shape `graphhelm init` writes is accepted: exactly `command` and
 /// `args`; `command` an absolute path to a `graphhelm` binary (`graphhelm.exe` on Windows);
 /// `args` = `mcp` followed only by the `--url`, `--token-file` and `--actor` pairs, each at most
-/// once and each value non-empty. Anything else (an interpreter, `env`, another subcommand, an
-/// unknown flag) needs a review the redacted preview cannot give.
-fn is_graphhelm_registration(entry: &Value) -> bool {
+/// once and each value non-empty, `--url` a loopback Runtime URL ([`is_loopback_runtime_url`]).
+/// Anything else (an interpreter, `env`, another subcommand, an
+/// unknown flag) needs a review the redacted preview cannot give. Public so the `--plan` preview
+/// shows a registration only when this same check accepts it (#1208).
+pub fn is_graphhelm_registration(entry: &Value) -> bool {
     let Some(entry) = entry.as_object() else {
         return false;
     };
@@ -749,7 +751,46 @@ fn is_graphhelm_registration(entry: &Value) -> bool {
             matches!(pair[0], "--url" | "--token-file" | "--actor")
                 && seen.insert(pair[0])
                 && !pair[1].is_empty()
+                && (pair[0] != "--url" || is_loopback_runtime_url(pair[1]))
         })
+}
+/// The `--url` the bridge dials with the token. `init` writes `http://{bind}` with `bind` a
+/// loopback socket address (`parse_bind`: any loopback IP, a fixed port), so accepted is: scheme
+/// `http` or `https`; host a loopback IP (`127.0.0.0/8`, `[::1]`) or `localhost`, with an optional
+/// numeric port; nothing after the authority but an optional `/`; no userinfo, whitespace or
+/// control character anywhere.
+fn is_loopback_runtime_url(url: &str) -> bool {
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.contains(['@', '/', '?', '#', '\\']) {
+        return false;
+    }
+    if let Ok(address) = authority.parse::<std::net::SocketAddr>() {
+        return address.ip().is_loopback();
+    }
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(authority);
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    match authority.split_once(':') {
+        None => authority == "localhost",
+        Some((host, port)) => {
+            host == "localhost"
+                && port.bytes().all(|b| b.is_ascii_digit())
+                && port.parse::<u16>().is_ok()
+        }
+    }
 }
 fn protect_instructions(before: &[u8], after: &[u8]) -> Result<(), AdoptionError> {
     let before = std::str::from_utf8(before).map_err(|_| AdoptionError {

@@ -289,9 +289,12 @@ fn preview(plan: &serde_json::Value) -> serde_json::Value {
 
 /// #1208: the one part of a project `.mcp.json` `after` the preview may show — the `command` and
 /// `args` of `mcpServers.graphhelm`, the program the host will start when it opens the project.
-/// Nothing else in that file is read out (another server's `env` can hold a credential). When the
-/// entry cannot be read in that shape the preview says `unreadable` instead of saying nothing, so
-/// an approver never mistakes a missing line for a harmless one.
+/// Nothing else in that file is read out (another server's `env` can hold a credential). The entry
+/// is shown only when the shape check `--apply` enforces accepts it
+/// ([`graphhelm_host_adoption::is_graphhelm_registration`]); an entry that check refuses shows as
+/// `refused` and none of its values (an unknown flag can carry a credential). When the entry
+/// cannot be read at all the preview says `unreadable` instead of saying nothing, so an approver
+/// never mistakes a missing line for a harmless one.
 fn registration(after: &serde_json::Value) -> serde_json::Value {
     use serde_json::{Value, json};
     let read = || -> Option<Value> {
@@ -306,6 +309,9 @@ fn registration(after: &serde_json::Value) -> serde_json::Value {
             .iter()
             .map(|arg| arg.as_str().map(str::to_owned))
             .collect::<Option<Vec<_>>>()?;
+        if !graphhelm_host_adoption::is_graphhelm_registration(entry) {
+            return Some(json!("refused"));
+        }
         Some(json!({"command": command, "args": args}))
     };
     read().unwrap_or_else(|| json!("unreadable"))
@@ -541,7 +547,7 @@ mod tests {
     #[test]
     fn the_plan_preview_shows_the_mcp_registration_and_nothing_else_of_the_file() {
         let sentinel = "PRIVATE-MCP-SENTINEL-1208";
-        let command = "/home/owner/bin/graphhelm";
+        let command = INIT_COMMAND;
         let args = [
             "mcp",
             "--url",
@@ -578,6 +584,55 @@ mod tests {
             envelope["data"]["plan"]["spec"]["operations"][0]["registration"],
             json!({"command": command, "args": args})
         );
+    }
+
+    /// An absolute path to a `graphhelm` binary on the platform the test runs on: the shape
+    /// `graphhelm init` writes, which the `--apply` check accepts.
+    const INIT_COMMAND: &str = if cfg!(windows) {
+        "C:/Users/owner/bin/graphhelm.exe"
+    } else {
+        "/home/owner/bin/graphhelm"
+    };
+
+    /// #1208 follow-up to #1288: the preview shows a registration only when the shape check
+    /// `--apply` enforces accepts it. An entry that check refuses (here an unknown flag carrying a
+    /// credential, or a relative command) shows `refused` in both faces, and none of its values.
+    #[test]
+    fn a_registration_the_apply_check_refuses_shows_refused_and_none_of_its_values() {
+        let sentinel = "PRIVATE-MCP-SENTINEL-1208";
+        for entry in [
+            json!({"command": INIT_COMMAND, "args": ["mcp", "--api-key", sentinel]}),
+            json!({"command": INIT_COMMAND, "args": ["mcp", "--actor", "owner", sentinel]}),
+            json!({"command": format!("bin/graphhelm-{sentinel}"), "args": ["mcp"]}),
+            json!({"command": INIT_COMMAND, "args": ["mcp"], "env": {"TOKEN": sentinel}}),
+            // `--url` must be a loopback Runtime URL: no userinfo, no other host, no other scheme.
+            json!({"command": INIT_COMMAND,
+                "args": ["mcp", "--url", format!("http://user:{sentinel}@127.0.0.1:7433")]}),
+            json!({"command": INIT_COMMAND,
+                "args": ["mcp", "--url", format!("http://{sentinel}.evil.example:7433")]}),
+            json!({"command": INIT_COMMAND, "args": ["mcp", "--url", format!("file:///{sentinel}")]}),
+        ] {
+            assert!(
+                !graphhelm_host_adoption::is_graphhelm_registration(&entry),
+                "control: the apply check refuses {entry}"
+            );
+            let after =
+                serde_json::to_string(&json!({"mcpServers": {"graphhelm": entry}})).unwrap();
+            let (rendered, envelope) = mcp_faces(&after);
+            assert!(rendered.contains("Registers MCP: refused\n"), "{rendered}");
+            for face in [&rendered, &envelope] {
+                assert!(!face.contains(sentinel), "{face}");
+                assert!(
+                    !face.contains("graphhelm.exe") && !face.contains("/bin/"),
+                    "{face}"
+                );
+            }
+            let envelope: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+            assert_eq!(
+                envelope["data"]["plan"]["spec"]["operations"][0]["registration"], "refused",
+                "{after}"
+            );
+        }
     }
 
     /// An `.mcp.json` `after` the preview cannot read as a registration says so, in both faces,

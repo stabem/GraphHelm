@@ -459,6 +459,68 @@ fn mcp_registration_other_than_the_init_shape_is_refused() {
     }
 }
 
+/// #1208 (follow-up to #1288's review): `--url` is the address the MCP bridge dials with the
+/// token. `init` writes `http://{bind}` with `bind` a loopback socket address (`parse_bind`), so
+/// only a loopback Runtime URL is accepted: `http`/`https`, host a loopback IP or `localhost`, no
+/// userinfo, no path beyond `/`, no whitespace or control characters.
+#[test]
+fn mcp_registration_url_must_be_a_loopback_runtime_url() {
+    let with_url = |url: &str| {
+        let mut entry = init_registration();
+        entry["args"][2] = json!(url);
+        entry
+    };
+    for url in [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8080/",
+        "http://127.0.0.2:8791",
+        "http://[::1]:8791",
+        "http://localhost:8791",
+        "https://127.0.0.1:8080",
+    ] {
+        assert!(
+            graphhelm_host_adoption::is_graphhelm_registration(&with_url(url)),
+            "accepted: {url}"
+        );
+    }
+    let refused = [
+        // Userinfo: a credential in the address.
+        "http://user:SECRET@127.0.0.1:7433",
+        "http://127.0.0.1:7433@evil.example",
+        // A host that is not loopback, or only looks like it.
+        "http://evil.example:7433",
+        "http://127.0.0.1.evil.example:7433",
+        "http://0.0.0.0:7433",
+        "http://[::ffff:127.0.0.1]:7433",
+        // Another scheme.
+        "file:///etc/passwd",
+        "ftp://127.0.0.1:7433",
+        "127.0.0.1:7433",
+        // A path, query or fragment init never writes.
+        "http://127.0.0.1:7433/token/SECRET",
+        "http://127.0.0.1:7433?token=SECRET",
+        "http://127.0.0.1:7433#SECRET",
+        // Whitespace and control characters.
+        "http://127.0.0.1:7433 --exec evil",
+        "http://127.0.0.1:7433\n",
+        "http://127.0.0.1:7433\u{7f}",
+        // A port that is not a port.
+        "http://127.0.0.1:",
+        "http://127.0.0.1:99999",
+        "http://localhost:evil",
+    ];
+    // Every cell is checked before any assertion fires, so a red names all the accepted ones.
+    let accepted: Vec<&str> = refused
+        .iter()
+        .copied()
+        .filter(|url| graphhelm_host_adoption::is_graphhelm_registration(&with_url(url)))
+        .collect();
+    assert!(accepted.is_empty(), "must be refused: {accepted:?}");
+    for url in refused {
+        assert_mcp_refused(&mcp_document(mine(), Some(with_url(url)), 1));
+    }
+}
+
 #[test]
 fn surfaces_outside_the_restorable_list_are_refused_before_any_write() {
     // A rules file is inventoried but is not a backup surface; `~/CLAUDE.md` is not a documented

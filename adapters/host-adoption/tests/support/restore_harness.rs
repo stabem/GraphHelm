@@ -257,6 +257,21 @@ fn partial_restore_returns_recovery_receipt_and_preserves_interfering_writer() {
     );
 }
 
+/// The adoption state directory must be private on unix: `backup` refuses a state directory any
+/// other user can read (`unix_check_private_dir`, mode & 0o077 == 0). `std::fs::create_dir`
+/// honours the umask (typically 0o755), so without this the two cells below failed on Linux with
+/// `PathUnsafe` before reaching the restore they test (#1295). `tempfile::tempdir` already creates
+/// 0o700 directories, which is why the integration suites never hit it.
+fn private_state_dir(state: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = state;
+}
+
 #[test]
 fn manual_restore_interruption_recovers_with_empty_source_chain() {
     let temp = tempfile::tempdir().unwrap();
@@ -266,6 +281,7 @@ fn manual_restore_interruption_recovers_with_empty_source_chain() {
     for root in [&project, &home, &state] {
         std::fs::create_dir(root).unwrap();
     }
+    private_state_dir(&state);
     std::fs::write(project.join("AGENTS.md"), b"checkpoint\n").unwrap();
     let checkpoint = crate::backup(&project, &home, &state).unwrap();
     std::fs::write(project.join("AGENTS.md"), b"later\n").unwrap();
@@ -305,6 +321,7 @@ fn manual_restore_recovery_accepts_published_metadata_only_change() {
     for root in [&project, &home, &state] {
         std::fs::create_dir(root).unwrap();
     }
+    private_state_dir(&state);
     let path = project.join("AGENTS.md");
     std::fs::write(&path, b"checkpoint\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();

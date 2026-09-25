@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible problem in current GraphHelm code or documentation.
+title: "[Bug] "
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Use synthetic data and remove tokens, private paths, and personal information before posting. For a suspected vulnerability, use the private reporting link in the chooser instead.
+  - type: input
+    id: revision
+    attributes:
+      label: Affected revision
+      description: A commit SHA, version, or "main" with the date you checked.
+      placeholder: "main on YYYY-MM-DD"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest graph, command, or user journey that shows the problem.
+      placeholder: "1. ...\n2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+      description: Include a stable diagnostic code or path when one exists.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Checks and evidence
+      description: Name the command and result, or say which observer was unavailable. Remove secrets from output.
+    validations:
+      required: false

@@ -1,0 +1,37 @@
+name: Feature proposal
+description: Describe a user journey and an observable outcome.
+title: "[Proposal] "
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GraphHelm starts with the user promise. A suggested implementation is welcome, but the journey and proof matter more.
+  - type: textarea
+    id: journey
+    attributes:
+      label: User journey
+      description: Who needs this, and what should they be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: Current gap
+      description: What happens with today's code? Link a command, guide, or specification if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: Observable acceptance
+      description: What evidence would show the journey works without breaking existing behavior?
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and possible approach
+      description: Optional compatibility, security, cost, recovery, or design considerations.
+    validations:
+      required: false

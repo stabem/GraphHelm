@@ -1,0 +1,30 @@
+name: Question or help
+description: Ask how to use the current code or documentation.
+title: "[Question] "
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the README, quickstart, and documentation index first. Do not post secrets or vulnerability details; use the private security reporting link for those.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the outcome, not just the command you tried.
+    validations:
+      required: true
+  - type: textarea
+    id: stuck
+    attributes:
+      label: Where are you stuck?
+      description: Include the command, relevant sanitized output, and platform if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: checked
+    attributes:
+      label: What have you already checked?
+      description: Link the guide or issue you read, if any.
+    validations:
+      required: false

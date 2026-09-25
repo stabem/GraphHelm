@@ -1,5 +1,12 @@
 # Quality gates and deployment
 
+> **Status: target deployment architecture.** This document describes the intended verification
+> graph and deployment path. It is not the current contribution or merge procedure. Today, use
+> [the delivery process](../process/DELIVERY.md): run the checks the change reaches, obtain one
+> independent review, and merge at the reviewed head. `ci/gate.ps1` is an optional full local
+> check; a merge does not wait for it. The pre-push and VPS tiers below are design targets, not
+> checks currently required of contributors.
+
 ## 1. Objective
 
 The pipeline that makes "excellent code" a measured property and makes a future change unable to

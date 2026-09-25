@@ -197,6 +197,10 @@ The [full report and patches](docs/keel/benchmark-evidence/task-1279-v11/README.
 inputs, token categories, checks, and limitations. The [benchmark protocol](docs/keel/BENCHMARK_PROTOCOL.md)
 and [ongoing study](https://github.com/stabem/GraphHelm/issues/1282) require varied tasks before
 claiming a repeatable quality or total-cost gain.
+An [authored-test replay](docs/keel/benchmark-evidence/task-1279-proof-sensitivity/README.md)
+found that all three pilot tests went red before their patches and green after them in one
+Windows configuration, but only one exercised real child-process delivery. This does not show
+that reducing unit tests improves cost or quality.
 
 ## Foundation Graph Kernel
 

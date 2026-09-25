@@ -1,0 +1,47 @@
+{
+  "historical_parent": "e85e41a8eb0b8af6ef6eac95bf39a42cc9277f8c",
+  "host": "Windows-10-10.0.26200-SP0",
+  "interpretation": "RED/GREEN alone does not establish boundary or platform coverage",
+  "pytest_invocations": 7,
+  "python": "3.11.9",
+  "rows": [
+    {
+      "arm": "a",
+      "observer_boundary": "real_child_on_windows",
+      "parent_exit": 1,
+      "parent_exit_with_python_utf8_mode": 0,
+      "parent_failed_for_expected_reason": true,
+      "parent_seconds": 1.936,
+      "parent_utf8_seconds": 1.231,
+      "patch_sha256": "4ce61ca8a045acb05baa5406ba3914d90bc21b02bb1a40f696cfb919863ca712",
+      "patched_exit": 0,
+      "patched_seconds": 1.398,
+      "test": "test_run_agent_sends_unicode_prompt_on_legacy_windows_code_page"
+    },
+    {
+      "arm": "b",
+      "observer_boundary": "mocked_subprocess_arguments",
+      "parent_exit": 1,
+      "parent_failed_for_expected_reason": true,
+      "parent_seconds": 1.016,
+      "patch_sha256": "8b0ddf1f24ccba3b96496e94406a364d6ed639deeed1c32cde48b34bd2cb286c",
+      "patched_exit": 0,
+      "patched_seconds": 0.912,
+      "test": "test_run_agent_sends_prompt_as_utf8_regardless_of_host_locale"
+    },
+    {
+      "arm": "c",
+      "observer_boundary": "mocked_subprocess_arguments",
+      "parent_exit": 1,
+      "parent_failed_for_expected_reason": true,
+      "parent_seconds": 0.975,
+      "patch_sha256": "09824f6d0a38f101df89a5f3fb210abd430c7f0cb3a71e5a3212eb9d3be6dd31",
+      "patched_exit": 0,
+      "patched_seconds": 0.878,
+      "test": "test_run_agent_encodes_prompt_as_utf8_not_locale_default"
+    }
+  ],
+  "status": "VALID",
+  "total_pytest_seconds": 8.346,
+  "validation_issues": []
+}

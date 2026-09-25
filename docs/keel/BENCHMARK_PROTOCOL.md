@@ -126,6 +126,30 @@ proves that Keel prevents regressions. The paired code-delivery runner is the br
 job is to reject false green and incomplete cost rows. The
 [task 1279 runner-v11 pilot](benchmark-evidence/task-1279-v11/README.md) retains the three
 agent patches and blind-review outcomes. It is an instrument check, not a methodology win.
+The [test-proof sensitivity replay](benchmark-evidence/task-1279-proof-sensitivity/README.md)
+replays the three authored tests against the frozen defect and their patches. It does not
+measure the effect of deleting unit tests.
+
+## Test-portfolio comparison to run next
+
+The separate hypothesis is that removing redundant tests, or replacing them with a stronger
+observer, lowers **total cost per proven delivery without losing unique defect detection**.
+Compare current Keel with current Keel plus a compact proof receipt and permission to prune a
+test only when another observer covers the same obligation. Do not mix this treatment with an
+AX executor or a different model route. Freeze paired tasks, initial source, hidden defects,
+observer commands, relevant platforms, and spending limits before running either arm; balance
+arm order. Include cases where a unit, property, concurrency, or security test is the smallest
+adequate observer, and cases requiring a real process or user journey. A task with no redundant
+tests is a valid zero-pruning result.
+
+For each retained, replaced, or removed test, record its criterion, plausible defect, independent
+expected value, observed boundary, platform and runtime mode, RED cause on the frozen defect,
+GREEN result on the known fix, and any remaining observer that covers its obligation. Report
+authored-test count, unique defects detected and missed, false greens, test run and repair time,
+review time, model spend, and complete delivery cost separately. A test-count reduction or a
+RED/GREEN result alone is not a quality win; no arm passes if a required obligation loses its
+observer. Keep this comparison separate from the existing A/B/C methodology study until its
+instruments are calibrated.
 
 ## First instrument check (2026-09-24)
 

@@ -129,6 +129,35 @@ def test_partial_transcript_cannot_claim_session_cost():
     assert "transcript_output_incomplete" in audit["reasons"]
 
 
+def test_tool_result_turns_do_not_require_distinct_assistant_ids():
+    """Claude counts user-side tool results as turns; rejecting these made a complete run unreadable."""
+    assistant = {"type": "assistant", "message": {"id": "m1", "model": "claude-sonnet-5",
+                  "usage": {"input_tokens": 5, "output_tokens": 2,
+                            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}
+    lines = [runner.json.dumps({"type": "user", "message": {"content": "task"}}),
+             runner.json.dumps(assistant),
+             runner.json.dumps({"type": "user", "message": {"content": "tool result"}})]
+    observed = runner.sum_transcript_usage(lines)
+    audit = runner.usage_audit(observed, {"num_turns": 2, "usage": {
+        "input_tokens": 5, "output_tokens": 2,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}})
+    assert observed["userMessages"] == 2
+    assert observed["assistantMessages"] == 1
+    assert audit["status"] == "PASS"
+
+
+def test_background_cli_model_does_not_replace_coding_model():
+    """CLI title/utility usage can name Haiku while assistant code turns remain Sonnet."""
+    model, all_models = runner.coding_model(
+        {"claude-haiku-4-5-20251001": {}, "claude-sonnet-5": {}}, ["claude-sonnet-5"])
+    assert model == "claude-sonnet-5"
+    assert all_models == ["claude-haiku-4-5-20251001", "claude-sonnet-5"]
+    assert runner.coding_model(None, ["claude-sonnet-5"])[0] is None
+    assert runner.coding_model({}, ["claude-sonnet-5"])[0] is None
+    assert runner.coding_model({"claude-sonnet-5": {}}, ["claude-opus-4-1"])[0] is None
+    assert runner.coding_model({}, ["claude-sonnet-5", "claude-opus-4-1"])[0] is None
+
+
 def test_cli_identity_binds_version_and_executable_bytes(tmp_path, monkeypatch):
     """A changed CLI can change transcript or cost semantics without changing the model name."""
     executable = tmp_path / "claude.exe"

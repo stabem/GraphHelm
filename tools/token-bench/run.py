@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 TASKS = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))["tasks"]
 RESULTS = HERE / "results.jsonl"
-BENCH_VERSION = 7  # v7: paired A/C proof requires acceptance, pre-existing regression, and complete usage evidence.
+BENCH_VERSION = 8  # v8: distinguish coding model from CLI background models; audit user turns.
 KEEL_SKILL = REPO / "extensions" / "builtin" / "graphhelm-development-contracts" / "skills" / "keel" / "SKILL.md"
 
 COMMON_PREFIX = """This issue is OPEN and UNFIXED. This checkout is the only source of truth: do not consult
@@ -428,7 +428,7 @@ def methodology_observer(session_id: str | None, runtime: dict | None,
 
 def sum_transcript_usage(lines: list[str], path: str | None = None) -> dict:
     tot = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
-           "assistantMessages": 0, "parseErrors": 0}
+           "assistantMessages": 0, "userMessages": 0, "parseErrors": 0}
     by_id = {}
     models = set()
     tools_seen = {}
@@ -441,6 +441,8 @@ def sum_transcript_usage(lines: list[str], path: str | None = None) -> dict:
         if not isinstance(d, dict):
             tot["parseErrors"] += 1
             continue
+        if d.get("type") == "user":
+            tot["userMessages"] += 1
         if d.get("type") != "assistant":
             continue
         message = d.get("message") or {}
@@ -481,7 +483,10 @@ def usage_audit(usage: dict, terminal: dict) -> dict:
     if usage.get("parseErrors", 0) != 0:
         reasons.append("transcript_parse_error")
     turns = terminal.get("num_turns")
-    if not isinstance(turns, int) or turns < 1 or usage.get("assistantMessages", 0) < turns:
+    # Claude's num_turns tracks user-side turns, including tool results. A live 28-turn
+    # session had 28 user records but only 26 distinct assistant message IDs.
+    if (not isinstance(turns, int) or turns < 1 or
+            usage.get("userMessages", 0) < turns or usage.get("assistantMessages", 0) < 1):
         reasons.append("transcript_turns_incomplete")
     last = terminal.get("usage")
     names = {"input": "input_tokens", "output": "output_tokens",
@@ -494,6 +499,16 @@ def usage_audit(usage: dict, terminal: dict) -> dict:
             if not isinstance(value, int) or usage.get(observed, -1) < value:
                 reasons.append(f"transcript_{observed}_incomplete")
     return {"status": "PASS" if not reasons else "INCOMPLETE", "reasons": reasons}
+
+
+def coding_model(model_usage: dict | None, transcript_models: list[str]) -> tuple[str | None, list[str]]:
+    """The coding model is in assistant records; CLI modelUsage may include background models."""
+    coding = sorted(set(transcript_models))
+    reported = set(model_usage) if isinstance(model_usage, dict) else set()
+    all_models = sorted(reported | set(coding))
+    if len(coding) != 1 or not reported or coding[0] not in reported:
+        return None, all_models
+    return coding[0], all_models
 
 
 def run_oracle(wt: Path, task: dict) -> tuple[str, int, str]:
@@ -657,15 +672,14 @@ def cmd_run(a: argparse.Namespace) -> None:
     cost = result.get("total_cost_usd")
     cli_post_digest = digest_file(Path(claude_cli["path"])) if claude_cli else None
     model_usage = result.get("modelUsage")
-    model_ids = sorted(set(model_usage.keys() if isinstance(model_usage, dict) else []) |
-                       set(usage.get("models") or []))
+    code_model, model_ids = coding_model(model_usage, usage.get("models") or [])
     agent_error = bool(result.get("is_error") or result.get("agentError") or result.get("unparseable_stdout"))
     verdict, verdict_reasons = evaluate_outcome(acceptance, regression, usage, cost,
                                                  result.get("session_id"), task, agent_error)
     if a.arm in {"b", "c"} and method["status"] != "PASS":
         verdict = "INCOMPLETE"
         verdict_reasons.append("methodology_execution_unobserved")
-    if len(model_ids) != 1:
+    if not code_model:
         verdict = "INCOMPLETE"
         verdict_reasons.append("exact_model_unobserved_or_mixed")
     if usage_check["status"] != "PASS":
@@ -696,8 +710,9 @@ def cmd_run(a: argparse.Namespace) -> None:
         "claudeCli": claude_cli,
         "claudeCliPostDigest": cli_post_digest,
         "actualModels": model_ids,
+        "modelUsage": model_usage if isinstance(model_usage, dict) else None,
         "patchArtifact": patch_artifact, "patchDigest": patch_digest,
-        "model": model_ids[0] if len(model_ids) == 1 else None,
+        "model": code_model,
         "verdict": verdict, "verdictReasons": verdict_reasons,
         "acceptance": acceptance, "oracleExit": code,
         "regression": regression, "regressionExit": regression_code,

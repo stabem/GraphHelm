@@ -9,8 +9,7 @@ are bash. The clean-host transcripts this page was checked against are
 [`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
 and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
-**What needs credentials and what does not.** A public clone needs no GitHub account; while this
-repository remains private, cloning requires repository access. Nothing after the clone needs an
+**What needs credentials and what does not.** A public clone needs no GitHub account. Nothing after the clone needs an
 account, an API key, a model provider, a database, or the network (the Studio's `npm ci` fetches
 packages once). Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and a credential; the one command that wires both is at the end of section 2,
@@ -86,10 +85,14 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
 
 ## 1. Build or install the binary
 
-Clone over HTTPS using the command below. Once the repository is public, an HTTPS read-only clone
-needs no GitHub account. SSH cloning requires a GitHub account with an authenticated key. While
-the repository remains private, either method requires an account with repository access.
-Contributors need a GitHub account to open issues and pull requests.
+The [0.1.0 CLI preview release](../releases/0.1.0.md) provides verified Windows and Ubuntu x86-64
+archives, avoiding the Rust build. Download the matching archive and its `SHA256SUMS.txt`, check
+the digest, extract it, and add the binary's directory to `PATH`. You still need the repository
+for this guide's example graphs, Studio, and installation assets. On macOS or another platform,
+build from source using the commands below.
+
+Clone over HTTPS using the command below; a read-only clone needs no GitHub account. SSH cloning
+requires an authenticated key. Contributors need a GitHub account to open issues and pull requests.
 
 ```powershell
 git clone https://github.com/stabem/GraphHelm.git

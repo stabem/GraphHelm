@@ -44,6 +44,7 @@
 
 ## Context and agents
 
+- [Skills README — left-to-right workflow and built-in catalog](skills/README.md)
 - [Context, knowledge, and Dreams](context/CONTEXT_KNOWLEDGE_DREAMS.md)
 - [Agents, skills, tools, and plugins](agents/AGENTS_SKILLS_PLUGINS.md)
 - [Universal Model Gateway](models/UNIVERSAL_MODEL_GATEWAY.md)
@@ -57,6 +58,9 @@
 
 ## Open source
 
+- [Contributing](../CONTRIBUTING.md)
+- [Security reporting](../SECURITY.md)
+- [Public repository readiness](open-source/PUBLICATION_READINESS.md)
 - [Governance and licensing](open-source/GOVERNANCE_AND_LICENSING.md)
 - [Official references](reference/PROVIDER_AND_LICENSE_REFERENCES.md)
 

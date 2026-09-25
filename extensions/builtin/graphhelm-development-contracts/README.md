@@ -1,15 +1,19 @@
 # GraphHelm development contracts
 
-An Extension package of **data only**. It ships schemas, policies, fixtures, and three entry skills.
+An Extension package of **data only**. It ships schemas, policies, fixtures, and four entry skills.
 It ships no binary, no provider, and no code that runs.
 
-## The three entry skills
+## The four entry skills
 
 | skill | what it produces | what it may never do |
 |---|---|---|
 | `code-contract` | a proposed contract: scope as a file list, acceptance criteria naming their instrument, one refusal per failure mode | enforce any of it |
 | `context-retrieval` | a proposed context capsule and a result that cites it by stable item identity | decide what is true, or drop required evidence to fit a budget |
 | `memory-curator` | advisory candidates for durable lessons | record anything directly |
+| `keel` | a scoped contract card, measured write surface, and named proof | enforce its own rules or activate the penalty ladder |
+
+For the left-to-right overview of both built-in skill packages, see the
+[skills README](../../../docs/skills/README.md).
 
 ## The authority this package holds, and why it is small
 

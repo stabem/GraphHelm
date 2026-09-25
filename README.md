@@ -261,6 +261,7 @@ product; they are not a list of features already shipped. If sources disagree, f
 - [docs/ux/STUDIO_MVP.md](docs/ux/STUDIO_MVP.md): the shipped operator surface, distinct from the planned visual Studio.
 - [docs/milestones/foundation-graph-kernel.md](docs/milestones/foundation-graph-kernel.md), [protocols-and-schema-evolution.md](docs/milestones/protocols-and-schema-evolution.md), and [production-event-evidence-store.md](docs/milestones/production-event-evidence-store.md): implemented milestones and their acceptance evidence.
 - [docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md), [docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md), and [docs/process/DELIVERY.md](docs/process/DELIVERY.md): the development method and current repository delivery process.
+- [docs/skills/README.md](docs/skills/README.md): horizontal skills flowchart and the built-in skill catalog.
 - [docs/keel/BENCHMARK_PROTOCOL.md](docs/keel/BENCHMARK_PROTOCOL.md): how the methodology's quality and total cost will be compared.
 - [docs/keel/benchmark-evidence/task-1279-v11/README.md](docs/keel/benchmark-evidence/task-1279-v11/README.md): measured coding pilot, patches, and limits.
 

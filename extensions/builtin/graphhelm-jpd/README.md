@@ -4,6 +4,9 @@
 Development contracts, observers, policies, evaluators, agent personas, fixtures, and eight
 discoverable entry skills.
 
+For the left-to-right view of how these skills fit with Keel and the development-contracts package,
+see the [skills README](../../../docs/skills/README.md).
+
 The eight skills are entry families, not the entire capability inventory and not a fixed
 eight-stage pipeline. Version 0.1.0 contains 53 atomic contributions: 8 skills, 7 agents, 18
 schemas, 3 policies, 3 evaluators, 9 fixtures, 3 host adapters, 1 observer catalog, and 1 dogfood

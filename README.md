@@ -8,7 +8,7 @@ GraphHelm is **experimental**. This repository contains a working CLI, Runtime, 
 
 ## Install the agent plugin
 
-The `graphhelm` plugin provides a [methodology guide](plugins/graphhelm/README.md) and a resume skill that offers two evidence-based next actions. Install it from this repository's marketplace:
+The `graphhelm` plugin provides a [methodology guide](plugins/graphhelm/README.md), a setup skill, and a resume skill that offers two evidence-based next actions. Install it from this repository's marketplace:
 
 **Claude Code**
 
@@ -17,7 +17,7 @@ claude plugin marketplace add stabem/GraphHelm
 claude plugin install graphhelm@graphhelm
 ```
 
-Open a new Claude session and use `/graphhelm:graphhelm-guide` or `/graphhelm:graphhelm-resume`. Claude namespaces installed plugin skills, so the resume command is not bare `/graphhelm-resume`.
+Open a new Claude session and use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`. Claude namespaces installed plugin skills, so the setup command is not bare `/graphhelm-setup`.
 
 **Codex CLI**
 
@@ -26,7 +26,7 @@ codex plugin marketplace add stabem/GraphHelm
 codex plugin add graphhelm@graphhelm
 ```
 
-Open a new Codex session and use `$graphhelm-guide` or `$graphhelm-resume`. Installing the plugin provides guidance only; it does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
+Open a new Codex session and use `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through preview and reviewed application; installing the plugin does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
 
 ## Try it locally
 

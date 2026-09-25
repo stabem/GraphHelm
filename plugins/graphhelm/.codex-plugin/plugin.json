@@ -1,7 +1,7 @@
 {
   "name": "graphhelm",
-  "version": "0.1.0",
-  "description": "GraphHelm methodology guide and evidence-based next-step selection.",
+  "version": "0.1.1",
+  "description": "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
   "author": {
     "name": "GraphHelm"
   },
@@ -10,11 +10,11 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "GraphHelm",
-    "shortDescription": "Understand the method and choose the next move.",
-    "longDescription": "A lightweight entry to GraphHelm. The guide explains how Keel, Journey-Proven Development, Runtime evidence, and host setup fit together. Resume reads current evidence and offers exactly two next actions.",
+    "shortDescription": "Understand the method, review setup, and choose the next move.",
+    "longDescription": "A lightweight entry to GraphHelm. The guide explains how Keel, Journey-Proven Development, and Runtime evidence fit together. Setup guides a reviewed host adoption with backup and restore. Resume reads current evidence and offers exactly two next actions.",
     "developerName": "GraphHelm",
     "category": "Developer Tools",
     "capabilities": ["skills"],
-    "defaultPrompt": ["Explain how GraphHelm should work here.", "Resume this work and give me two next steps."]
+    "defaultPrompt": ["Explain how GraphHelm should work here.", "Review GraphHelm setup for this host.", "Resume this work and give me two next steps."]
   }
 }

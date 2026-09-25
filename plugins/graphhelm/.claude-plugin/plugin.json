@@ -1,7 +1,7 @@
 {
   "name": "graphhelm",
-  "version": "0.1.0",
-  "description": "GraphHelm methodology guide and evidence-based next-step selection.",
+  "version": "0.1.1",
+  "description": "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
   "author": { "name": "GraphHelm" },
   "homepage": "https://github.com/stabem/GraphHelm",
   "repository": "https://github.com/stabem/GraphHelm",

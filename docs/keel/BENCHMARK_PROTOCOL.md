@@ -40,9 +40,10 @@ fix and invalidates the pair. A digest of a live MCP config does not solve that 
    uncontrolled time. If no adequate regression observer exists, record `UNOBSERVED` and do not
    count its output as a quality win.
 
-The current corpus has only tasks 1145 and 1044. Task 1145 has a pre-existing regression suite;
-task 1044 needs a calibrated regression observer before it can qualify for the main comparison.
-Both are infrastructure tasks and cannot represent GraphHelm's broader workload. A future frozen
+The current runner includes tasks 1145, 1044, and 1279. Task 1279 has a calibrated parent,
+regression observer, hidden oracle, and known fix, but remains a single-task pilot; task 1044
+still needs a calibrated regression observer before it can qualify for the main comparison.
+These tasks cannot represent GraphHelm's broader workload. A future frozen
 set should include an ordinary bug, a compatibility change, a public API change, persistence or
 concurrency, JavaScript/TypeScript/Vue, and a partial-index-coverage case. Freeze tasks and
 oracles before reading arm results. Include zero-result and partial-coverage retrieval cases;
@@ -122,7 +123,9 @@ flowchart TD
 recall; it does not observe generated code or a complete coding session. `tools/token-bench`
 observes real agent sessions but has a tiny historical corpus. Neither instrument, by itself,
 proves that Keel prevents regressions. The paired code-delivery runner is the bridge; its first
-job is to reject false green and incomplete cost rows.
+job is to reject false green and incomplete cost rows. The
+[task 1279 runner-v11 pilot](benchmark-evidence/task-1279-v11/README.md) retains the three
+agent patches and blind-review outcomes. It is an instrument check, not a methodology win.
 
 ## First instrument check (2026-09-24)
 

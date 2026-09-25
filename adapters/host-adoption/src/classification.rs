@@ -14,10 +14,17 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// The instruction surfaces `apply` accepts an operation on today. Mirrors the allow-list in
-/// `apply::preflight`; #1208 F7 records that the documented user file `home/.claude/CLAUDE.md`
-/// and the project `.claude/CLAUDE.md` / `CLAUDE.local.md` are not yet in it.
-const OPERABLE: [&str; 3] = ["project/AGENTS.md", "project/CLAUDE.md", "home/AGENTS.md"];
+/// The instruction surfaces `apply` accepts an operation on. Mirrors the instruction half of the
+/// allow-list in `apply::preflight` (#1208 F7). Rules trees are not backup surfaces, so they stay
+/// out: a replaced rule could not be restored.
+const OPERABLE: [&str; 6] = [
+    "project/AGENTS.md",
+    "project/CLAUDE.md",
+    "project/.claude/CLAUDE.md",
+    "project/CLAUDE.local.md",
+    "home/AGENTS.md",
+    "home/.claude/CLAUDE.md",
+];
 
 fn invalid() -> AdoptionError {
     AdoptionError {
@@ -233,8 +240,9 @@ pub fn resolve(inventory: &Value, resolutions: &[Resolution]) -> Result<Value, A
         return Err(review_required());
     }
     if operations.is_empty() {
-        // #1208 F6: the plan schema requires at least one operation, so a keep-everything or
-        // packages-only adoption cannot be expressed yet. Refused here, not silently padded.
+        // `resolve` never adds release packages, so a plan with no replacement installs nothing
+        // and changes nothing: there is nothing to apply. `apply` accepts a packages-only plan
+        // (#1208 F6), but it is not produced here. Refused, not silently padded.
         return Err(invalid());
     }
     seal(json!({

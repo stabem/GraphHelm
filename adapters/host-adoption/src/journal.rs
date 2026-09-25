@@ -178,7 +178,7 @@ impl Store {
         if value.version != 1
             || value.sequence == 0
             || value.transaction_id != id
-            || (value.entries.is_empty() && value.restore.is_none())
+            || (value.entries.is_empty() && value.packages.is_empty() && value.restore.is_none())
             || value.entries.len() > 256
             || value.transaction_id != crate::apply::digest(value.plan_digest.as_bytes())
             || !crate::backup::valid_backup_id(&value.backup_id)

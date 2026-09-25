@@ -51,10 +51,12 @@ graphhelm setup --project $project --home $profile --resolve 'project/AGENTS.md=
 
 `--resolve <item>=keep` answers an item without an operation; `--resolve <item>=replace:<file>`
 uses the file's bytes as the reviewed replacement and is accepted only for the surfaces `apply`
-can write today (`project/AGENTS.md`, `project/CLAUDE.md`, `home/AGENTS.md`). Any unresolved item
-left unanswered refuses the whole plan. A plan with only `keep` answers is refused too: the plan
-schema requires an operation, so a keep-everything or packages-only adoption cannot be expressed
-yet (#1208 F6). The envelope on stdout redacts the after-bytes; the private file at `--out` holds
+write and restore (`project/AGENTS.md`, `project/CLAUDE.md`, `project/.claude/CLAUDE.md`,
+`project/CLAUDE.local.md`, `home/AGENTS.md`, `home/.claude/CLAUDE.md`). Rules files are
+inventoried but are not backup surfaces, so they cannot be replaced. Any unresolved item left
+unanswered refuses the whole plan. A plan with only `keep` answers is refused too: `--resolve`
+adds no release packages, so that plan would change nothing. `apply` itself accepts a plan that
+only installs the pinned packages (#1208 F6); `--resolve` does not produce one. The envelope on stdout redacts the after-bytes; the private file at `--out` holds
 them, owner-only. Review the actual decisions, exact operation bytes, package pins and digest in
 that file. `--plan` previews an already reviewed plan in the same redacted form (digest, scopes,
 decisions, operation paths, before/after digests and after byte lengths, package pins, coverage;

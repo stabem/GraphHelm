@@ -526,6 +526,48 @@ fn both_pinned_packages_install_with_local_loading_and_remain_unverified() {
     }
 }
 
+/// #1208 F6: the least invasive adoption, the two pinned packages and no file change, is a plan
+/// `apply` accepts, and restore takes the activation back.
+#[test]
+#[cfg(windows)]
+fn packages_alone_install_without_a_file_operation_and_restore() {
+    let (p, h, s) = roots();
+    let executable = fake_host(p.path(), "2.1.265 (Claude Code)", "--plugin-dir --help");
+    let mut plan = package_plan(p.path(), h.path(), &executable, "claude", "2.1.265");
+    plan["spec"]["operations"] = serde_json::json!([]);
+    plan["spec"]["decisions"] = serde_json::json!([]);
+    let plan = seal(plan);
+    let settings = std::fs::read(p.path().join(".claude/settings.local.json")).unwrap();
+    let result = graphhelm_host_adoption::apply(
+        p.path(),
+        h.path(),
+        s.path(),
+        &plan,
+        plan["digest"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result["spec"]["state"], "installed_unverified");
+    assert_eq!(result["packages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        std::fs::read(p.path().join(".claude/settings.local.json")).unwrap(),
+        settings
+    );
+    let restore = graphhelm_host_adoption::plan_restore(s.path(), "original").unwrap();
+    let receipt = graphhelm_host_adoption::apply_restore(
+        s.path(),
+        &restore,
+        restore["digest"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["spec"]["state"], "restored");
+    for package in result["packages"].as_array().unwrap() {
+        let version = Path::new(package["path"].as_str().unwrap());
+        let root = version.parent().unwrap().parent().unwrap();
+        assert!(!root.join("active.json").exists());
+        assert!(root.join("inactive.json").exists());
+    }
+}
+
 #[cfg(not(windows))]
 #[test]
 fn package_host_preflight_requires_containment_before_any_probe_or_mutation() {

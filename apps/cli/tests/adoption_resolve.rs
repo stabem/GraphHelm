@@ -213,7 +213,8 @@ fn unresolved_items_block_the_plan_and_keep_alone_has_nothing_to_apply() {
     );
     assert!(!out.exists());
 
-    // Both kept: honest, but the plan schema needs an operation (#1208 F6) — refused, not padded.
+    // Both kept: honest, but `resolve` adds no packages, so the plan would change nothing and
+    // install nothing — refused, not padded.
     let (ok, refused) = json(
         setup(p.path(), h.path())
             .arg("--resolve")
@@ -298,5 +299,93 @@ fn a_reviewed_plan_goes_stale_when_the_source_moves_after_out() {
     assert_eq!(
         std::fs::read(p.path().join("AGENTS.md")).unwrap(),
         b"edited after review\n"
+    );
+}
+
+/// #1208 F7: the user's real Claude instruction file is operable end to end — the resolved plan
+/// applies, and `restore` brings the original bytes back.
+#[test]
+fn the_user_claude_instruction_file_resolves_applies_and_restores() {
+    const USER_ORIGINAL: &[u8] = b"Global: use the old pipeline\r\nDeny secrets\r\n";
+    const USER_REVIEWED: &[u8] = b"Global: GraphHelm JPD\r\nDeny secrets\r\n";
+    let (p, h) = seeded();
+    std::fs::write(h.path().join(".claude/CLAUDE.md"), USER_ORIGINAL).unwrap();
+    let s = private_dir();
+    let reviewed = s.path().join("CLAUDE.reviewed.md");
+    std::fs::write(&reviewed, USER_REVIEWED).unwrap();
+    let out = s.path().join("plan.json");
+
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    let user = preview["data"]["plan"]["spec"]["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["item"] == "home/.claude/CLAUDE.md")
+        .cloned()
+        .unwrap_or_else(|| panic!("home/.claude/CLAUDE.md missing: {preview}"));
+    assert_eq!(user["operable"], true);
+
+    let (ok, value) = json(
+        setup(p.path(), h.path())
+            .arg("--resolve")
+            .arg("project/AGENTS.md=keep")
+            .arg("--resolve")
+            .arg(format!(
+                "home/.claude/CLAUDE.md=replace:{}",
+                reviewed.display()
+            ))
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{value}");
+    let digest = value["data"]["acceptance"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&out)
+            .arg("--accept")
+            .arg(&digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude/CLAUDE.md")).unwrap(),
+        USER_REVIEWED
+    );
+    assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
+
+    let restore = |extra: &[&std::ffi::OsStr]| {
+        let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        command.arg("restore").arg("--state-root").arg(s.path());
+        for arg in extra {
+            command.arg(arg);
+        }
+        json(command.output().unwrap())
+    };
+    let (ok, preview) = restore(&[]);
+    assert!(ok, "{preview}");
+    let plan = &preview["data"]["plan"];
+    let planfile = s.path().join("restore.json");
+    std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
+    let (ok, restored) = restore(&[
+        "--apply".as_ref(),
+        planfile.as_os_str(),
+        "--accept".as_ref(),
+        plan["digest"].as_str().unwrap().as_ref(),
+    ]);
+    assert!(ok, "{restored}");
+    assert_eq!(restored["data"]["receipt"]["spec"]["state"], "restored");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude/CLAUDE.md")).unwrap(),
+        USER_ORIGINAL
     );
 }

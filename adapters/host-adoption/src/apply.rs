@@ -536,20 +536,40 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
             reason: AdoptionReason::ReviewRequired,
         });
     }
+    // A plan may install only the pinned release packages (#1208 F6); a plan that neither
+    // installs a package nor changes a file has nothing to apply.
+    if values.is_empty()
+        && plan["spec"]["packages"]
+            .as_array()
+            .is_none_or(|packages| packages.is_empty())
+    {
+        return Err(AdoptionError {
+            reason: AdoptionReason::InvalidConfiguration,
+        });
+    }
     let mut seen = std::collections::BTreeSet::new();
     let mut result = Vec::new();
     for (index, value) in values.iter().enumerate() {
         let root = value["root"].as_str().ok_or_else(storage::failed)?;
         let path = value["path"].as_str().ok_or_else(storage::failed)?;
         storage::relative_ok(path)?;
+        // Settings-shaped files are checked structurally by `protect_settings`: only the
+        // GraphHelm-owned part may change. `.mcp.json` is the project MCP registration
+        // `init` merges; here it is journaled and restorable like the other settings.
         let host_settings = matches!(
             (root, path),
-            ("project", ".claude/settings.local.json")
+            ("project", ".claude/settings.local.json" | ".mcp.json")
                 | ("home", ".claude/settings.json" | ".codex/config.toml")
         );
+        // Instruction files the hosts read (surfaces.rs) and backup/restore snapshot. Rules,
+        // agents and commands trees are not backup surfaces, so they cannot be restored and
+        // are not accepted here (#1208 F7).
         if !matches!(
             (root, path),
-            ("project", "AGENTS.md" | "CLAUDE.md") | ("home", "AGENTS.md")
+            (
+                "project",
+                "AGENTS.md" | "CLAUDE.md" | ".claude/CLAUDE.md" | "CLAUDE.local.md"
+            ) | ("home", "AGENTS.md" | ".claude/CLAUDE.md")
         ) && !host_settings
         {
             return Err(AdoptionError {
@@ -614,6 +634,9 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
     Ok(result)
 }
 fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<(), AdoptionError> {
+    if operation["path"] == ".mcp.json" {
+        return protect_mcp_registration(before, after);
+    }
     if operation["path"] == ".codex/config.toml" {
         let before = std::str::from_utf8(before).map_err(|_| storage::failed())?;
         let after: toml::Value =
@@ -646,6 +669,87 @@ fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<()
         });
     }
     Ok(())
+}
+/// `.mcp.json` may change in exactly one place: the `graphhelm` server entry, which must be a
+/// command registration afterwards. Every other key and every other server is kept as it was.
+fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionError> {
+    let review = || AdoptionError {
+        reason: AdoptionReason::ReviewRequired,
+    };
+    let parse = |bytes: &[u8]| -> Result<serde_json::Map<String, Value>, AdoptionError> {
+        let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        match serde_json::from_slice(bytes).map_err(|_| review())? {
+            Value::Object(map) => Ok(map),
+            _ => Err(review()),
+        }
+    };
+    // Removes the GraphHelm entry, and `mcpServers` itself when that leaves it empty, so a file
+    // that had no `mcpServers` compares equal to the same file with only our entry added.
+    let without_graphhelm = |mut map: serde_json::Map<String, Value>| {
+        let registration = match map.get_mut("mcpServers") {
+            Some(Value::Object(servers)) => {
+                let entry = servers.remove("graphhelm");
+                if servers.is_empty() {
+                    map.remove("mcpServers");
+                }
+                entry
+            }
+            Some(_) => return Err(review()),
+            None => None,
+        };
+        Ok((map, registration))
+    };
+    let (before, _) = without_graphhelm(parse(before)?)?;
+    let (after, registration) = without_graphhelm(parse(after)?)?;
+    if before != after || !registration.as_ref().is_some_and(is_graphhelm_registration) {
+        return Err(review());
+    }
+    Ok(())
+}
+/// The host spawns this entry when it opens the project, and the plan preview redacts the
+/// after-bytes, so only the shape `graphhelm init` writes is accepted: exactly `command` and
+/// `args`; `command` an absolute path to a `graphhelm` binary (`graphhelm.exe` on Windows);
+/// `args` = `mcp` followed only by the `--url`, `--token-file` and `--actor` pairs, each at most
+/// once and each value non-empty. Anything else (an interpreter, `env`, another subcommand, an
+/// unknown flag) needs a review the redacted preview cannot give.
+fn is_graphhelm_registration(entry: &Value) -> bool {
+    let Some(entry) = entry.as_object() else {
+        return false;
+    };
+    if entry.len() != 2 {
+        return false;
+    }
+    let Some(command) = entry.get("command").and_then(Value::as_str) else {
+        return false;
+    };
+    let program = Path::new(command);
+    let extension_ok = match program.extension().and_then(|e| e.to_str()) {
+        None => true,
+        Some(extension) => cfg!(windows) && extension.eq_ignore_ascii_case("exe"),
+    };
+    if !program.is_absolute()
+        || program.file_stem().and_then(|s| s.to_str()) != Some("graphhelm")
+        || !extension_ok
+    {
+        return false;
+    }
+    let Some(args) = entry
+        .get("args")
+        .and_then(Value::as_array)
+        .and_then(|args| args.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+    else {
+        return false;
+    };
+    let Some((&"mcp", pairs)) = args.split_first() else {
+        return false;
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    pairs.len() % 2 == 0
+        && pairs.chunks(2).all(|pair| {
+            matches!(pair[0], "--url" | "--token-file" | "--actor")
+                && seen.insert(pair[0])
+                && !pair[1].is_empty()
+        })
 }
 fn protect_instructions(before: &[u8], after: &[u8]) -> Result<(), AdoptionError> {
     let before = std::str::from_utf8(before).map_err(|_| AdoptionError {

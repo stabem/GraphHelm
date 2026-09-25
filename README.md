@@ -71,8 +71,9 @@ GraphHelm is a local-first platform in which the user controls, through a visual
 GraphHelm is not only a runtime; it installs a way of working into an existing agent environment
 and checks its objective contracts with code. Three pieces fit together: **adoption** puts the
 method into your Claude Code or Codex setup reversibly; **Journey-Proven Development (JPD)** makes
-an observable promise the unit of work; **Keel** bounds what an agent may read and write and
-carries a watchdog that records drift and, only if a controlled comparison shows it helps, narrows what a seat may write. The reasoning behind
+an observable promise the unit of work; **Keel** guides scoped reads and writes with a card and
+a deterministic classifier. Its watchdog and penalty routing are planned. Penalty-based limits
+await a controlled comparison; objective contract violations already block. The reasoning behind
 the paradigm choices is in the position paper
 [docs/harness/KEEL_PARADIGMS_PAPER.md](docs/harness/KEEL_PARADIGMS_PAPER.md); the normative text is
 [docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) and the Keel
@@ -125,12 +126,12 @@ flowchart TD
   MG --> V["Post-merge verification<br/>on the merged revision"]
 ```
 
-### 3. Keel: bounded writing, and a watchdog that records drift
+### 3. Keel: scoped writing and a planned watchdog
 
-Keel is the paradigm GraphHelm installs for code written by agents. For bounded code changes,
-an agent starts from a
-**contract card** (scope as a file list, exported symbols, criteria naming their instrument), then
-searches specific code on purpose and records any context the card was missing. Each node declares
+Keel is the paradigm GraphHelm installs for code written by agents. A bounded direct change
+uses a short card naming paths, the promise, and its proof; riskier work uses the full
+**contract card** with symbols and criteria. The agent then searches specific code on purpose
+and records any context the card was missing. In the full route, each node declares
 a **write surface** — new modules, types, public functions, dependencies, tests — and a
 deterministic classifier charges the diff and reports overruns **by rule id**; only objective
 contracts are refused. A test is admitted against a **named defect**, with the smallest proof that

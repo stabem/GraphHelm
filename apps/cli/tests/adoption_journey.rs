@@ -30,6 +30,65 @@ fn output(output: std::process::Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// #1208 after #1281: a plan that registers `mcpServers.graphhelm` in the project `.mcp.json`
+/// previews the command and args this test put in that `after`, from the real binary in every
+/// face a pipe can ask for, and never a sentinel placed elsewhere in the same file.
+#[test]
+fn plan_preview_shows_the_mcp_registration_it_would_write_and_nothing_else_of_the_file() {
+    let p = tempfile::tempdir().unwrap();
+    let h = tempfile::tempdir().unwrap();
+    let s = tempfile::tempdir().unwrap();
+    const SENTINEL: &str = "PRIVATE-MCP-SENTINEL-1208";
+    let binary = p
+        .path()
+        .join("graphhelm.exe")
+        .to_string_lossy()
+        .into_owned();
+    let args = json!([
+        "mcp",
+        "--url",
+        "http://127.0.0.1:7433",
+        "--token-file",
+        "token",
+        "--actor",
+        "owner"
+    ]);
+    let after = serde_json::to_string(&json!({"mcpServers":{
+        "graphhelm":{"command":binary,"args":args},
+        "other":{"command":"other-server","env":{"API_KEY":SENTINEL}}}}))
+    .unwrap();
+    let mut plan =
+        fixture::plan(graphhelm_host_adoption::root_bindings(p.path(), h.path()).unwrap());
+    plan["spec"]["decisions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"operationIndex":1,"decision":"replace","protected":false}));
+    plan["spec"]["operations"].as_array_mut().unwrap().push(json!({"root":"project","path":".mcp.json",
+        "beforeDigest":fixture::hash(b"{}"),"afterDigest":fixture::hash(after.as_bytes()),"after":after}));
+    let plan = fixture::seal(plan);
+    let planfile = s.path().join("mcp-plan.json");
+    std::fs::write(&planfile, serde_json::to_vec(&plan).unwrap()).unwrap();
+    for face in [None, Some("--json"), Some("--pretty")] {
+        let mut run = command(p.path(), h.path(), s.path());
+        run.arg("--plan").arg(&planfile);
+        if let Some(flag) = face {
+            run.arg(flag);
+        }
+        let raw = run.output().unwrap();
+        for stream in [&raw.stdout, &raw.stderr] {
+            let stream = String::from_utf8_lossy(stream);
+            assert!(!stream.contains(SENTINEL), "{face:?}: {stream}");
+            assert!(!stream.contains("other-server"), "{face:?}: {stream}");
+        }
+        let preview = output(raw);
+        assert_eq!(
+            preview["data"]["plan"]["spec"]["operations"][1]["registration"],
+            json!({"command": binary, "args": args}),
+            "{face:?}"
+        );
+    }
+}
+
 #[test]
 fn pipe_requires_exact_acceptance_and_never_promotes_self_asserted_observation() {
     let p = tempfile::tempdir().unwrap();
@@ -260,17 +319,33 @@ fn offline_cli_journey_keeps_compatible_skills_and_restores_with_later_user_key(
     let plan = fixture::seal(plan);
     let planfile = s.path().join("plan.json");
     std::fs::write(&planfile, serde_json::to_vec(&plan).unwrap()).unwrap();
-    let preview = output(
-        command(p.path(), h.path(), s.path())
-            .arg("--plan")
-            .arg(&planfile)
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(
-        preview["data"]["plan"]["spec"]["operations"][1]["disableSkills"],
-        json!([skill_paths[2]])
-    );
+    // #1208: the preview names the program `--apply` runs, and it is the `executable` this test
+    // compiled and wrote into the plan above, in every face a pipe can ask for.
+    let program = executable.to_str().unwrap();
+    for face in [None, Some("--json"), Some("--pretty")] {
+        let mut run = command(p.path(), h.path(), s.path());
+        run.arg("--plan").arg(&planfile);
+        if let Some(flag) = face {
+            run.arg(flag);
+        }
+        let preview = output(run.output().unwrap());
+        assert_eq!(
+            preview["data"]["plan"]["spec"]["host"]["program"], program,
+            "{face:?}"
+        );
+        assert_eq!(
+            preview["data"]["plan"]["spec"]["operations"][1]["disableSkills"],
+            json!([skill_paths[2]]),
+            "{face:?}"
+        );
+        assert!(
+            !preview["data"]["plan"]["spec"]["operations"][1]
+                .as_object()
+                .unwrap()
+                .contains_key("after"),
+            "{face:?}"
+        );
+    }
     let apply = || {
         output(
             command(p.path(), h.path(), s.path())

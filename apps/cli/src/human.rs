@@ -133,7 +133,33 @@ fn adoption(data: &Value, palette: Palette) -> String {
                     text(&row["afterDigest"]),
                 );
             }
+            // Only a project `.mcp.json` row carries `registration`: the binary and arguments the
+            // host will start, each quoted and escaped as a JSON string (display only).
+            match row.get("registration") {
+                Some(Value::Object(entry)) => {
+                    let mut line = format!(
+                        "Registers MCP: {}",
+                        Value::from(text(entry.get("command").unwrap_or(&Value::Null)))
+                    );
+                    for arg in entry
+                        .get("args")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let _ = write!(line, " {}", Value::from(text(arg)));
+                    }
+                    let _ = writeln!(out, "{line}");
+                }
+                Some(_) => out.push_str("Registers MCP: unreadable\n"),
+                None => {}
+            }
         }
+    }
+    if let Some(program) = plan.pointer("/spec/host/program") {
+        // The program `--apply` runs (#1208), quoted and escaped as a JSON string: a display
+        // value, never a shell command.
+        let _ = writeln!(out, "Runs: {}", Value::from(text(program)));
     }
     if let Some(digest) = plan.get("digest") {
         let _ = writeln!(out, "Plan digest: {}", text(digest));

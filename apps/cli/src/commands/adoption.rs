@@ -223,7 +223,10 @@ fn reviewed(args: &AdoptionSetupArgs, path: &std::path::Path) -> Outcome {
 /// `after` text of every instruction file and setting the owner resolved — so the envelope (and
 /// the rendered face, which reads only the envelope) gets an allow-listed view instead of the
 /// document: enough to review and to accept (`digest`), never an `after` body. A field the plan
-/// grows later is not printed until it is named here.
+/// grows later is not printed until it is named here. `host.program` is named: it is the program
+/// `--apply` runs, a path rather than a secret, and a digest accepted without it is accepted blind.
+/// For the same reason a project `.mcp.json` operation carries `registration` (see
+/// [`registration`]): the binary the host will start, read out of an otherwise redacted `after`.
 fn preview(plan: &serde_json::Value) -> serde_json::Value {
     use serde_json::{Value, json};
     let pick = |value: &Value, fields: &[&str]| -> Value {
@@ -257,6 +260,9 @@ fn preview(plan: &serde_json::Value) -> serde_json::Value {
                         ],
                     );
                     view["afterBytes"] = json!(row["after"].as_str().map(str::len));
+                    if row["root"] == "project" && row["path"] == ".mcp.json" {
+                        view["registration"] = registration(&row["after"]);
+                    }
                     view
                 })
                 .collect::<Vec<_>>()
@@ -272,13 +278,37 @@ fn preview(plan: &serde_json::Value) -> serde_json::Value {
             "coverage": spec["coverage"],
             "scopes": spec["scopes"],
             "hostBoundary": spec["hostBoundary"],
-            "host": pick(&spec["host"], &["name", "version", "mode"]),
+            "host": pick(&spec["host"], &["name", "version", "program", "mode"]),
             "packages": each("/spec/packages", &["id", "version", "digest"]),
             "decisions": each("/spec/decisions", &["operationIndex", "item", "decision", "protected"]),
             "review": each("/spec/review", &["item", "decision"]),
             "operations": operations,
         }
     })
+}
+
+/// #1208: the one part of a project `.mcp.json` `after` the preview may show — the `command` and
+/// `args` of `mcpServers.graphhelm`, the program the host will start when it opens the project.
+/// Nothing else in that file is read out (another server's `env` can hold a credential). When the
+/// entry cannot be read in that shape the preview says `unreadable` instead of saying nothing, so
+/// an approver never mistakes a missing line for a harmless one.
+fn registration(after: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let read = || -> Option<Value> {
+        let text = after.as_str()?;
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let file: Value = serde_json::from_str(text).ok()?;
+        let entry = file.get("mcpServers")?.get("graphhelm")?;
+        let command = entry.get("command")?.as_str()?;
+        let args = entry
+            .get("args")?
+            .as_array()?
+            .iter()
+            .map(|arg| arg.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?;
+        Some(json!({"command": command, "args": args}))
+    };
+    read().unwrap_or_else(|| json!("unreadable"))
 }
 
 pub(super) fn backup(args: &AdoptionBackupArgs) -> Outcome {
@@ -441,16 +471,18 @@ mod tests {
 
     /// The rendered face of `--plan` (a terminal, no `--json`) cannot be reached from a piped test
     /// process, so it is held here: the preview built from a plan whose `after` carries a sentinel
-    /// renders the path, the digests and the byte length, and never the sentinel.
+    /// renders the path, the digests, the byte length and the program `--apply` runs, and never the
+    /// sentinel.
     #[test]
     fn the_rendered_plan_preview_names_the_operation_and_never_its_contents() {
         let sentinel = "PRIVATE-AFTER-SENTINEL-1208";
         let after = format!("GraphHelm JPD\n{sentinel}\n");
         let digest = format!("sha256:{}", "1".repeat(64));
+        let program = "/home/owner/tools/codex";
         let plan = json!({"apiVersion":"p50.dev/adoption/v1","kind":"AdoptionPlan","id":"unit",
             "digest":digest,
             "spec":{"coverage":"complete","scopes":["project"],"packages":[],"hostBoundary":"quiescent",
-            "host":{"name":"codex","version":"0.114.0","program":"/home/owner/private/codex"},
+            "host":{"name":"codex","version":"0.114.0","program":program},
             "decisions":[{"operationIndex":0,"decision":"replace","protected":false}],
             "operations":[{"root":"project","path":"AGENTS.md","beforeDigest":"b".repeat(64),
                 "afterDigest":"a".repeat(64),"after":after}]}});
@@ -467,7 +499,7 @@ mod tests {
         let envelope = serde_json::to_string(&output).unwrap();
         for face in [&rendered, &envelope] {
             assert!(!face.contains(sentinel), "{face}");
-            assert!(!face.contains("/home/owner/private"), "{face}");
+            assert!(face.contains(program), "{face}");
             assert!(face.contains("AGENTS.md"), "{face}");
             assert!(face.contains(&"a".repeat(64)), "{face}");
             assert!(face.contains(&digest), "{face}");
@@ -476,5 +508,101 @@ mod tests {
             rendered.contains(&format!("({} bytes)", after.len())),
             "{rendered}"
         );
+        assert!(
+            rendered.contains(&format!("Runs: \"{program}\"\n")),
+            "{rendered}"
+        );
+    }
+
+    /// Both faces of a preview over a plan with one project `.mcp.json` operation.
+    fn mcp_faces(after: &str) -> (String, String) {
+        let plan = json!({"apiVersion":"p50.dev/adoption/v1","kind":"AdoptionPlan","id":"unit",
+            "digest":format!("sha256:{}", "1".repeat(64)),
+            "spec":{"coverage":"complete","scopes":["project"],"packages":[],"hostBoundary":"quiescent",
+            "host":{"name":"claude","version":"2.1.265"},
+            "decisions":[{"operationIndex":0,"decision":"replace","protected":false}],
+            "operations":[{"root":"project","path":".mcp.json","beforeDigest":"b".repeat(64),
+                "afterDigest":"a".repeat(64),"after":after}]}});
+        let output = crate::output::Outcome::success(
+            super::COMMAND,
+            json!({"plan": super::preview(&plan), "acceptance": {"instruction": "review"}}),
+        )
+        .output;
+        (
+            crate::human::render(&output, crate::palette::Palette::plain()).unwrap(),
+            serde_json::to_string(&output).unwrap(),
+        )
+    }
+
+    /// #1208 after #1281: `--apply` may register `mcpServers.graphhelm` in the project `.mcp.json`,
+    /// which the host starts when it opens the project. The preview shows the command and args the
+    /// plan sets, in both faces, and nothing else from that file: a sentinel in another server's
+    /// `env` stays out.
+    #[test]
+    fn the_plan_preview_shows_the_mcp_registration_and_nothing_else_of_the_file() {
+        let sentinel = "PRIVATE-MCP-SENTINEL-1208";
+        let command = "/home/owner/bin/graphhelm";
+        let args = [
+            "mcp",
+            "--url",
+            "http://127.0.0.1:7433",
+            "--token-file",
+            "/home/owner/.graphhelm/token",
+            "--actor",
+            "owner",
+        ];
+        let after = serde_json::to_string_pretty(&json!({"mcpServers":{
+            "graphhelm":{"command":command,"args":args},
+            "other":{"command":"other-server","env":{"API_KEY":sentinel}}}}))
+        .unwrap();
+        assert!(after.contains(sentinel), "control: the input carries it");
+        let (rendered, envelope) = mcp_faces(&after);
+        for face in [&rendered, &envelope] {
+            assert!(!face.contains(sentinel), "{face}");
+            assert!(!face.contains("other-server"), "{face}");
+            assert!(face.contains(command), "{face}");
+            for arg in args {
+                assert!(face.contains(arg), "{arg}: {face}");
+            }
+        }
+        let quoted: Vec<String> = args.iter().map(|arg| format!("\"{arg}\"")).collect();
+        assert!(
+            rendered.contains(&format!(
+                "Registers MCP: \"{command}\" {}\n",
+                quoted.join(" ")
+            )),
+            "{rendered}"
+        );
+        let envelope: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+        assert_eq!(
+            envelope["data"]["plan"]["spec"]["operations"][0]["registration"],
+            json!({"command": command, "args": args})
+        );
+    }
+
+    /// An `.mcp.json` `after` the preview cannot read as a registration says so, in both faces,
+    /// rather than printing no line an approver could read as "nothing registered".
+    #[test]
+    fn an_unreadable_mcp_registration_is_named_not_omitted() {
+        for after in [
+            "not json PRIVATE-MCP-SENTINEL-1208",
+            r#"{"mcpServers":{"other":{"command":"x"}}}"#,
+            r#"{"mcpServers":{"graphhelm":{"command":["sh"],"args":[]}}}"#,
+        ] {
+            let (rendered, envelope) = mcp_faces(after);
+            assert!(
+                rendered.contains("Registers MCP: unreadable\n"),
+                "{rendered}"
+            );
+            let envelope: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+            assert_eq!(
+                envelope["data"]["plan"]["spec"]["operations"][0]["registration"], "unreadable",
+                "{after}"
+            );
+            assert!(
+                !rendered.contains("PRIVATE-MCP-SENTINEL-1208"),
+                "{rendered}"
+            );
+        }
     }
 }

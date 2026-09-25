@@ -267,7 +267,15 @@ impl WorkspaceExcerptReader {
 /// Unix half: `openat` one component at a time from the root's own handle, every ancestor with
 /// `O_DIRECTORY | O_NOFOLLOW` and the final component with `O_NOFOLLOW | O_NONBLOCK`. Each step
 /// resolves a NAME inside a directory already held open, so renaming an ancestor to a symlink
-/// after the path walk is refused at that component (`ELOOP`) instead of being followed.
+/// after the path walk is refused at that component instead of being followed.
+///
+/// **Which errno means a link.** `ELOOP` (Linux, macOS) and `EMLINK` (FreeBSD) are what
+/// `O_NOFOLLOW` returns for a link and are [`SourceReadError::Escape`]. Linux checks
+/// `O_DIRECTORY` first, so an ANCESTOR that is a link fails with `ENOTDIR` — the same errno a
+/// component that is a regular file produces. The two are told apart by `fstatat` with
+/// `AT_SYMLINK_NOFOLLOW` on the name that failed: a link is `Escape`, anything else stays
+/// `Unreadable`. Both are refusals; a swap between the failed open and the `fstatat` changes
+/// only which refusal is reported, never whether bytes are served.
 ///
 /// **Residual, declared:** a directory held open and then MOVED OUT of the root by rename keeps
 /// resolving names under its new location. The post-read `still_names_opened_file` check (the
@@ -280,10 +288,6 @@ fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, S
     use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
 
-    let refusal = |error: std::io::Error| match error.raw_os_error() {
-        Some(code) if code == libc::ELOOP || code == libc::EMLINK => SourceReadError::Escape,
-        _ => SourceReadError::Unreadable,
-    };
     let root_name =
         CString::new(root.as_os_str().as_bytes()).map_err(|_| SourceReadError::Unreadable)?;
     // SAFETY: `root_name` is NUL-terminated and outlives the call; the result is checked before
@@ -295,7 +299,11 @@ fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, S
         )
     };
     if fd < 0 {
-        return Err(refusal(std::io::Error::last_os_error()));
+        return Err(refusal(
+            std::io::Error::last_os_error(),
+            libc::AT_FDCWD,
+            &root_name,
+        ));
     }
     // SAFETY: `fd` was just returned by a successful `open` and nothing else owns it.
     let mut current = unsafe { OwnedFd::from_raw_fd(fd) };
@@ -312,12 +320,57 @@ fn open_beneath(root: &Path, relative: &RelativePath) -> Result<std::fs::File, S
         // NUL-terminated; the result is checked before it is used.
         let fd = unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), flags) };
         if fd < 0 {
-            return Err(refusal(std::io::Error::last_os_error()));
+            return Err(refusal(
+                std::io::Error::last_os_error(),
+                current.as_raw_fd(),
+                &name,
+            ));
         }
         // SAFETY: `fd` was just returned by a successful `openat` and nothing else owns it.
         current = unsafe { OwnedFd::from_raw_fd(fd) };
     }
     Ok(std::fs::File::from(current))
+}
+
+/// Classify a failed `O_NOFOLLOW` open of `name` in `directory` (see `open_beneath`): `ELOOP`
+/// and `EMLINK` are a link; `ENOTDIR` is a link only when `fstatat(AT_SYMLINK_NOFOLLOW)` says the
+/// name is one now; every other errno, and an `ENOTDIR` on a regular file, is `Unreadable`.
+#[cfg(unix)]
+fn refusal(
+    error: std::io::Error,
+    directory: std::os::fd::RawFd,
+    name: &std::ffi::CStr,
+) -> SourceReadError {
+    match error.raw_os_error() {
+        Some(code) if code == libc::ELOOP || code == libc::EMLINK => SourceReadError::Escape,
+        Some(code) if code == libc::ENOTDIR && names_a_link(directory, name) => {
+            SourceReadError::Escape
+        }
+        _ => SourceReadError::Unreadable,
+    }
+}
+
+/// Whether `name` in `directory` is a symbolic link itself, never following it. A failed
+/// `fstatat` answers `false`, which keeps the caller's refusal at `Unreadable`.
+#[cfg(unix)]
+fn names_a_link(directory: std::os::fd::RawFd, name: &std::ffi::CStr) -> bool {
+    let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `name` is NUL-terminated and outlives the call, `status` is writable storage for
+    // one `stat`, and `directory` is either `AT_FDCWD` or a descriptor the caller holds open.
+    let result = unsafe {
+        libc::fstatat(
+            directory,
+            name.as_ptr(),
+            status.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result != 0 {
+        return false;
+    }
+    // SAFETY: a successful `fstatat` initialised `status`.
+    let status = unsafe { status.assume_init() };
+    status.st_mode & libc::S_IFMT == libc::S_IFLNK
 }
 
 /// Open `relative` beneath `root` with no reparse point followed anywhere in the chain (#1086
@@ -563,6 +616,60 @@ mod tests {
             "bytes outside the root were served under a path inside it: {result:?}"
         );
         assert_eq!(result, Err(SourceReadError::Escape));
+    }
+
+    /// Each errno `open_beneath` can meet on Unix, asserted against its refusal, with no race:
+    /// the states are staged before the call. A link at the root, at an ancestor (`ENOTDIR` on
+    /// Linux, because `O_DIRECTORY` is checked first) or at the final component (`ELOOP`) is
+    /// `Escape`; an ancestor that is a REGULAR FILE also answers `ENOTDIR` and must stay
+    /// `Unreadable`, as must an absent name.
+    #[cfg(unix)]
+    #[test]
+    fn unix_open_failures_name_a_link_only_when_the_component_is_one() {
+        use graphhelm_tool_broker::path::RelativePath;
+        let open = |root: &std::path::Path, relative: &str| {
+            super::open_beneath(root, &RelativePath::parse(relative).unwrap()).map(|_| ())
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/alpha.rs"), b"fn alpha() {}\n").unwrap();
+        std::fs::write(root.join("plain.rs"), b"fn plain() {}\n").unwrap();
+        let outside = directory.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("alpha.rs"), b"OUTSIDE\n").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(outside.join("alpha.rs"), root.join("src/link.rs")).unwrap();
+        let root_link = directory.path().join("root-link");
+        std::os::unix::fs::symlink(&root, &root_link).unwrap();
+
+        // Control: the unrefused path opens.
+        assert_eq!(open(&root, "src/alpha.rs"), Ok(()));
+        assert_eq!(
+            open(&root, "linked/alpha.rs"),
+            Err(SourceReadError::Escape),
+            "an ancestor link"
+        );
+        assert_eq!(
+            open(&root, "src/link.rs"),
+            Err(SourceReadError::Escape),
+            "a final-component link"
+        );
+        assert_eq!(
+            open(&root_link, "src/alpha.rs"),
+            Err(SourceReadError::Escape),
+            "a root that is a link"
+        );
+        assert_eq!(
+            open(&root, "plain.rs/alpha.rs"),
+            Err(SourceReadError::Unreadable),
+            "a regular-file ancestor answers ENOTDIR too and is not a link"
+        );
+        assert_eq!(
+            open(&root, "src/missing.rs"),
+            Err(SourceReadError::Unreadable),
+            "an absent name is not a link"
+        );
     }
 
     /// The identity check runs AFTER the read too: a path that stops naming the opened file

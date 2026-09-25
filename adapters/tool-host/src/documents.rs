@@ -498,7 +498,15 @@ fn open_child_file(parent: &File, name: &OsStr) -> Result<File, DocumentError> {
         )
     };
     if fd < 0 {
-        return Err(DocumentError::Unavailable);
+        // `O_NOFOLLOW` on a link answers `ELOOP` (Linux, macOS) or `EMLINK` (FreeBSD): the same
+        // refusal Windows reaches through `validate_opened_entry`'s reparse-point check. `name`
+        // is one component beneath an open directory and the call carries no `O_DIRECTORY`, so
+        // neither errno has another source here. Every other failure stays `Unavailable`.
+        let error = std::io::Error::last_os_error().raw_os_error();
+        return Err(match error {
+            Some(code) if code == libc::ELOOP || code == libc::EMLINK => DocumentError::InvalidPath,
+            _ => DocumentError::Unavailable,
+        });
     }
     // SAFETY: openat returned one fresh owned descriptor.
     let file = unsafe { File::from_raw_fd(fd) };
@@ -1904,6 +1912,33 @@ mod tests {
         std::os::unix::fs::symlink(dir.path().join("rule.md"), dir.path().join("link.md")).unwrap();
         let documents = ProjectDocuments::open(dir.path()).unwrap();
         assert_eq!(documents.read("link.md"), Err(DocumentError::InvalidPath));
+    }
+
+    /// Each errno `open_child_file` can meet on Unix, asserted against the refusal it maps to: a
+    /// link (live or dangling) is the `InvalidPath` Windows returns, and an absent name is still
+    /// `Unavailable` rather than a link refusal.
+    #[cfg(unix)]
+    #[test]
+    fn unix_open_failures_keep_links_and_absences_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.md"), "Rule").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("rule.md"), dir.path().join("live.md")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("absent.md"), dir.path().join("dangling.md"))
+            .unwrap();
+        let documents = ProjectDocuments::open(dir.path()).unwrap();
+
+        assert_eq!(documents.read("live.md"), Err(DocumentError::InvalidPath));
+        assert_eq!(
+            documents.read("dangling.md"),
+            Err(DocumentError::InvalidPath),
+            "a link is refused as a link whether or not its target exists"
+        );
+        assert_eq!(
+            documents.read("missing.md"),
+            Err(DocumentError::Unavailable),
+            "an absent document is not a link refusal"
+        );
+        assert_eq!(documents.read("rule.md").unwrap().content, "Rule");
     }
 
     #[test]

@@ -1,0 +1,20 @@
+{
+  "name": "graphhelm",
+  "version": "0.1.0",
+  "description": "GraphHelm methodology guide and evidence-based next-step selection.",
+  "author": {
+    "name": "GraphHelm"
+  },
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "GraphHelm",
+    "shortDescription": "Understand the method and choose the next move.",
+    "longDescription": "A lightweight entry to GraphHelm. The guide explains how Keel, Journey-Proven Development, Runtime evidence, and host setup fit together. Resume reads current evidence and offers exactly two next actions.",
+    "developerName": "GraphHelm",
+    "category": "Developer Tools",
+    "capabilities": ["skills"],
+    "defaultPrompt": ["Explain how GraphHelm should work here.", "Resume this work and give me two next steps."]
+  }
+}

@@ -1,6 +1,7 @@
 # GraphHelm skills
 
-This is the entry point for the skills shipped in GraphHelm's two built-in development extensions.
+This is the entry point for the skills shipped in GraphHelm's two built-in development extensions
+and the separately installable [GraphHelm plugin](../../plugins/graphhelm/README.md).
 The package manifests are the inventory: `graphhelm-development-contracts` contains four skills
 and `graphhelm-jpd` contains eight. A skill guides an agent; it does not grant permission, enforce
 policy, certify evidence, or publish a graph. The Runtime's typed contracts and deterministic
@@ -54,6 +55,12 @@ the author and reviewer run the checks reached by the change.
 | [Skill evaluator](../../extensions/builtin/graphhelm-jpd/skills/skill-evaluator/SKILL.md) | A task-local capsule needs assessment | An advisory evaluation candidate, not an automatic promotion |
 | [Retry provenance](../../extensions/builtin/graphhelm-jpd/skills/retry-provenance/SKILL.md) | Work is retried after a failure | A linked attempt chain that preserves the first failure |
 | [Journey verifier](../../extensions/builtin/graphhelm-jpd/skills/journey-verifier/SKILL.md) | The JPD obligations have adequate observers | The strongest result supported by observed evidence; missing proof stays unresolved |
+
+The installable `graphhelm` plugin adds [GraphHelm guide](../../plugins/graphhelm/skills/graphhelm-guide/SKILL.md)
+for an overview of the method and [GraphHelm resume](../../plugins/graphhelm/skills/graphhelm-resume/SKILL.md)
+for exactly two evidence-based next actions. These are separate from the twelve skills in the
+two built-in extension manifests. Its [installation guide](../../plugins/graphhelm/README.md)
+lists the Codex and Claude commands and the host-specific invocation names.
 
 The [development-contracts package](../../extensions/builtin/graphhelm-development-contracts/README.md)
 and [JPD package](../../extensions/builtin/graphhelm-jpd/README.md) explain permissions, manifests,

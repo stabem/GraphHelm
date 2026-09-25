@@ -1,0 +1,22 @@
+{
+  "name": "graphhelm",
+  "description": "GraphHelm guide, journey proof, and development-contract plugins.",
+  "owner": { "name": "GraphHelm" },
+  "plugins": [
+    {
+      "name": "graphhelm",
+      "source": "./plugins/graphhelm",
+      "description": "Understand GraphHelm and choose two evidence-backed next actions."
+    },
+    {
+      "name": "graphhelm-jpd",
+      "source": "./extensions/builtin/graphhelm-jpd",
+      "description": "Journey-Proven Development skills and public GraphHelm MCP adapter."
+    },
+    {
+      "name": "graphhelm-development-contracts",
+      "source": "./extensions/builtin/graphhelm-development-contracts",
+      "description": "Keel, code contracts, evidence retrieval, and advisory memory skills."
+    }
+  ]
+}

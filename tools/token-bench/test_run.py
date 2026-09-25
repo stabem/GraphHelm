@@ -234,6 +234,10 @@ def test_evaluator_snapshot_has_exact_source_without_git_metadata(tmp_path, monk
                          capture_output=True, text=True).stdout.strip()
     committed = subprocess.run(["git", "show", f"{sha}:proof.bin"], cwd=source, check=True,
                                capture_output=True).stdout
+    (source / "proof.bin").write_bytes(b"future fix")
+    subprocess.run(["git", "commit", "-qam", "future fix"], cwd=source, check=True)
+    future_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True,
+                                capture_output=True, text=True).stdout.strip()
     monkeypatch.setattr(runner, "REPO", source)
     monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
     snapshot = runner.make_snapshot("fixture", "preflight", sha)
@@ -244,6 +248,13 @@ def test_evaluator_snapshot_has_exact_source_without_git_metadata(tmp_path, monk
     assert (agent / ".git").is_dir()
     assert subprocess.run(["git", "remote"], cwd=agent, check=True,
                           capture_output=True, text=True).stdout == ""
+    assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=agent, check=True,
+                          capture_output=True, text=True).stdout.strip() == sha
+    assert subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=agent, check=True,
+                          capture_output=True, text=True).stdout.strip() == "1"
+    assert subprocess.run(["git", "cat-file", "-e", future_sha], cwd=agent,
+                          capture_output=True).returncode != 0
+    assert not (agent / ".git" / "FETCH_HEAD").exists()
 
 
 def test_missing_graphhelm_cli_stops_before_any_snapshot(tmp_path, monkeypatch):

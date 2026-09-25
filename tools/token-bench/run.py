@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 TASKS = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))["tasks"]
 RESULTS = HERE / "results.jsonl"
-BENCH_VERSION = 10  # v10: check prerequisites early and avoid Git metadata in evaluator snapshots.
+BENCH_VERSION = 11  # v11: fetch only the historical parent into the agent checkout.
 KEEL_SKILL = REPO / "extensions" / "builtin" / "graphhelm-development-contracts" / "skills" / "keel" / "SKILL.md"
 
 COMMON_PREFIX = """This issue is OPEN and UNFIXED. This checkout is the only source of truth: do not consult
@@ -229,12 +229,13 @@ def make_snapshot(task_id: str, arm: str, parent_sha: str) -> Path:
 
 def make_worktree(task_id: str, arm: str, parent_sha: str) -> Path:
     """Give the agent an isolated one-commit repository with no future refs or remote."""
-    wt = make_snapshot(task_id, arm, parent_sha)
+    name = f"tb-{task_id}-{arm}-{dt.datetime.utcnow():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    wt = scratch_root() / "checkouts" / name
+    wt.mkdir(parents=True)
     sh(["git", "init", "-q", "-b", "main"], cwd=wt)
-    sh(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid", "-c", "commit.gpgsign=false",
-        "add", "-A"], cwd=wt)
-    sh(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid", "-c", "commit.gpgsign=false",
-        "commit", "-qm", f"baseline: {parent_sha[:8]} (bench task {task_id})"], cwd=wt)
+    sh(["git", "fetch", "--no-tags", "--depth=1", "--no-write-fetch-head", REPO.resolve().as_uri(),
+        parent_sha], cwd=wt)
+    sh(["git", "reset", "--hard", parent_sha], cwd=wt)
     return wt
 
 

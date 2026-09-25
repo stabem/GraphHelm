@@ -4765,7 +4765,9 @@ fn link_retained_file_between(
                 libc::AT_EMPTY_PATH,
             )
         };
-        if direct == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+        if direct == 0
+            || !empty_path_link_needs_proc_fallback(std::io::Error::last_os_error().raw_os_error())
+        {
             direct
         } else {
             let proc_fd = CString::new(format!("/proc/self/fd/{}", source_file.as_raw_fd()))
@@ -4809,6 +4811,35 @@ fn link_retained_file_between(
         Err(EventRepositoryError::IdempotencyConflict)
     } else {
         Err(EventRepositoryError::Storage)
+    }
+}
+
+/// Whether a failed `linkat(fd, "", dir, name, AT_EMPTY_PATH)` is retried through
+/// `linkat(AT_FDCWD, "/proc/self/fd/N", dir, name, AT_SYMLINK_FOLLOW)` (#1306).
+///
+/// Both forms link the inode the retained descriptor pins, never a name an attacker could swap,
+/// and both refuse an existing destination with `EEXIST`, so the retry keeps publication
+/// no-replace. `AT_EMPTY_PATH` needs `CAP_DAC_READ_SEARCH`: without it the kernel answers `EPERM`
+/// on 6.10 and later but `ENOENT` before 6.10 (Ubuntu 22.04/24.04 GA, Debian 12, WSL 6.6), so
+/// both must retry. Any other errno, `EEXIST` above all, is the real answer and is not retried.
+/// When `/proc` is not mounted the retry itself fails and publication fails closed.
+#[cfg(target_os = "linux")]
+fn empty_path_link_needs_proc_fallback(os: Option<i32>) -> bool {
+    matches!(os, Some(libc::EPERM | libc::ENOENT))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod empty_path_link_fallback {
+    use super::empty_path_link_needs_proc_fallback;
+
+    #[test]
+    fn only_the_missing_capability_errnos_retry_through_proc() {
+        assert!(empty_path_link_needs_proc_fallback(Some(libc::EPERM)));
+        assert!(empty_path_link_needs_proc_fallback(Some(libc::ENOENT)));
+        assert!(!empty_path_link_needs_proc_fallback(Some(libc::EEXIST)));
+        assert!(!empty_path_link_needs_proc_fallback(Some(libc::EXDEV)));
+        assert!(!empty_path_link_needs_proc_fallback(Some(libc::ENOSPC)));
+        assert!(!empty_path_link_needs_proc_fallback(None));
     }
 }
 

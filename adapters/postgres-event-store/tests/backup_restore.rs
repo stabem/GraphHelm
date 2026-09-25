@@ -607,6 +607,13 @@ fn encrypted_publication_is_no_replace_and_cleans_its_owned_temporary() {
                 uuid::Uuid::new_v4().simple()
             ));
             std::fs::create_dir(&root).unwrap();
+            // Independent of the caller's umask: Linux publication refuses a group-writable
+            // parent, and Ubuntu's default umask 0002 makes one (#1306).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
             let destination = root.join("backup.ghb");
             std::fs::write(&destination, b"sentinel").unwrap();
             let codec = BackupCodec::new(Arc::new(MemoryKeyProvider));

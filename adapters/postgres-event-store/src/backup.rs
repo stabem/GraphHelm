@@ -344,6 +344,13 @@ fn unavailable(stage: UnavailableStage) -> BackupError {
     BackupError::Unavailable
 }
 
+/// `unavailable` plus the raw OS error code, an integer from the kernel and never caller input.
+#[cfg(target_os = "linux")]
+fn unavailable_os(stage: UnavailableStage, os: Option<i32>) -> BackupError {
+    eprintln!("[graphhelm-backup] unavailable={} os={os:?}", stage.code());
+    BackupError::Unavailable
+}
+
 /// Exact executable identity admitted at the process boundary.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PinnedTool {
@@ -4979,11 +4986,7 @@ mod process_tests {
 
     #[test]
     fn directory_sync_failure_rolls_back_the_published_link() {
-        let root = std::env::temp_dir().join(format!(
-            "graphhelm-backup-sync-failure-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir(&root).unwrap();
+        let root = owned_test_root("sync-failure");
         let destination = root.join("archive.ghb");
         let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
         temporary
@@ -5002,11 +5005,7 @@ mod process_tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn rollback_restores_a_concurrent_replacement_without_deleting_it() {
-        let root = std::env::temp_dir().join(format!(
-            "graphhelm-backup-rollback-race-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir(&root).unwrap();
+        let root = owned_test_root("rollback-race");
         let destination = root.join("archive.ghb");
         let displaced = root.join("owned-displaced.ghb");
         let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
@@ -5059,12 +5058,165 @@ mod process_tests {
     }
 
     #[test]
-    fn owned_backup_is_not_published_before_explicit_commit() {
+    #[cfg(target_os = "linux")]
+    fn linux_publication_errno_decisions() {
+        assert!(empty_path_link_needs_proc_fallback(Some(libc::EPERM)));
+        assert!(empty_path_link_needs_proc_fallback(Some(libc::ENOENT)));
+        assert!(!empty_path_link_needs_proc_fallback(Some(libc::EEXIST)));
+        assert!(!empty_path_link_needs_proc_fallback(Some(libc::EXDEV)));
+        assert!(!empty_path_link_needs_proc_fallback(None));
+        assert!(tmpfile_is_unsupported(Some(libc::EOPNOTSUPP)));
+        assert!(tmpfile_is_unsupported(Some(libc::EISDIR)));
+        assert!(tmpfile_is_unsupported(Some(libc::EINVAL)));
+        assert!(!tmpfile_is_unsupported(Some(libc::EACCES)));
+        assert!(!tmpfile_is_unsupported(Some(libc::ENOSPC)));
+        assert!(!tmpfile_is_unsupported(Some(libc::EEXIST)));
+        assert!(!tmpfile_is_unsupported(None));
+    }
+
+    /// A fresh publication parent. Mode 0700 on Unix so the fixture does not depend on the
+    /// caller's umask: under Ubuntu's default 0002 `create_dir` makes a group-writable parent,
+    /// which the Linux publication check refuses by design.
+    fn owned_test_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "graphhelm-backup-commit-test-{}",
+            "graphhelm-backup-{label}-{}",
             uuid::Uuid::new_v4().simple()
         ));
         std::fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        root
+    }
+
+    #[cfg(target_os = "linux")]
+    fn entries(root: &Path) -> Vec<String> {
+        let mut names = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn tmpfile_unsupported_falls_back_to_an_exclusive_named_pending_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = owned_test_root("named-publish");
+        let destination = root.join("archive.ghb");
+        fail_next_tmpfile(libc::EOPNOTSUPP);
+        let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
+        let pending = temporary.path.clone();
+        let name = pending.file_name().unwrap().to_str().unwrap().to_owned();
+        assert_eq!(pending.parent(), Some(root.as_path()));
+        assert!(name.starts_with(".graphhelm-backup-") && name.ends_with(".pending"));
+        assert_eq!(
+            std::fs::symlink_metadata(&pending)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o077,
+            0
+        );
+        temporary.file_mut().write_all(b"named archive").unwrap();
+        assert!(!destination.exists(), "nothing is published before commit");
+        temporary.publish(&destination).unwrap();
+        drop(temporary);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"named archive");
+        assert_eq!(entries(&root), vec!["archive.ghb".to_owned()]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn named_pending_is_removed_when_dropped_unpublished() {
+        for errno in [libc::EOPNOTSUPP, libc::EISDIR, libc::EINVAL] {
+            let root = owned_test_root("named-drop");
+            let destination = root.join("archive.ghb");
+            fail_next_tmpfile(errno);
+            let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
+            assert!(!temporary.path.as_os_str().is_empty(), "errno {errno}");
+            temporary.file_mut().write_all(b"partial").unwrap();
+            drop(temporary);
+            assert!(entries(&root).is_empty(), "errno {errno}");
+            std::fs::remove_dir(root).unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn named_pending_publication_is_no_replace() {
+        let root = owned_test_root("named-noreplace");
+        let destination = root.join("archive.ghb");
+        fail_next_tmpfile(libc::EOPNOTSUPP);
+        let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
+        temporary.file_mut().write_all(b"owned archive").unwrap();
+        std::fs::write(&destination, b"concurrent writer").unwrap();
+        assert_eq!(
+            temporary.publish(&destination),
+            Err(BackupError::InvalidBackup)
+        );
+        drop(temporary);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"concurrent writer");
+        assert_eq!(entries(&root), vec!["archive.ghb".to_owned()]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn named_pending_directory_sync_failure_rolls_back_both_names() {
+        let root = owned_test_root("named-rollback");
+        let destination = root.join("archive.ghb");
+        fail_next_tmpfile(libc::EOPNOTSUPP);
+        let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
+        temporary.file_mut().write_all(b"owned archive").unwrap();
+        fail_next_directory_sync();
+        assert_eq!(
+            temporary.publish(&destination),
+            Err(BackupError::Unavailable)
+        );
+        assert!(temporary.rollback_published.is_some());
+        drop(temporary);
+        assert!(entries(&root).is_empty());
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn named_pending_is_never_unlinked_after_a_swap() {
+        let root = owned_test_root("named-swap");
+        let destination = root.join("archive.ghb");
+        fail_next_tmpfile(libc::EOPNOTSUPP);
+        let temporary = OwnedTemporary::for_destination(&destination).unwrap();
+        let pending = temporary.path.clone();
+        let displaced = root.join("displaced");
+        std::fs::rename(&pending, &displaced).unwrap();
+        std::fs::write(&pending, b"attacker replacement").unwrap();
+        drop(temporary);
+        assert_eq!(std::fs::read(&pending).unwrap(), b"attacker replacement");
+        assert!(displaced.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn tmpfile_failure_other_than_unsupported_is_not_masked() {
+        let root = owned_test_root("named-eacces");
+        fail_next_tmpfile(libc::EACCES);
+        assert!(matches!(
+            OwnedTemporary::for_destination(&root.join("archive.ghb")),
+            Err(BackupError::Unavailable)
+        ));
+        assert!(entries(&root).is_empty());
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn owned_backup_is_not_published_before_explicit_commit() {
+        let root = owned_test_root("commit-test");
         let destination = root.join("archive.ghb");
         {
             let mut temporary = OwnedTemporary::for_destination(&destination).unwrap();
@@ -6561,19 +6713,36 @@ impl OwnedTemporary {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::{AsRawFd, FromRawFd};
-            let descriptor = unsafe {
-                libc::openat(
-                    parent_handle.as_raw_fd(),
-                    c".".as_ptr(),
-                    libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-                    0o600,
-                )
+            let unnamed = match injected_tmpfile_failure() {
+                Some(os) => Err(Some(os)),
+                None => {
+                    let descriptor = unsafe {
+                        libc::openat(
+                            parent_handle.as_raw_fd(),
+                            c".".as_ptr(),
+                            libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
+                            0o600,
+                        )
+                    };
+                    if descriptor < 0 {
+                        Err(std::io::Error::last_os_error().raw_os_error())
+                    } else {
+                        Ok(descriptor)
+                    }
+                }
             };
-            if descriptor < 0 {
-                return Err(unavailable(UnavailableStage::TemporaryCreate));
-            }
+            let (path, descriptor) = match unnamed {
+                Ok(descriptor) => (PathBuf::new(), descriptor),
+                Err(os) if !tmpfile_is_unsupported(os) => {
+                    return Err(unavailable_os(UnavailableStage::TemporaryCreate, os));
+                }
+                // The filesystem has no O_TMPFILE (#1306): a random-named pending file in the
+                // same parent, created exclusively through the retained parent descriptor, and
+                // published below by descriptor exactly like the unnamed one.
+                Err(_) => create_linux_named_pending(&parent_handle, parent)?,
+            };
             return Ok(Self {
-                path: PathBuf::new(),
+                path,
                 file: Some(unsafe { File::from_raw_fd(descriptor) }),
                 parent: parent_handle,
                 parent_path: parent.to_path_buf(),
@@ -6667,11 +6836,27 @@ impl OwnedTemporary {
         if self.path.as_os_str().is_empty() {
             return Ok(());
         }
-        let reopened = File::open(&self.path).map_err(io_error)?;
-        if !same_identity(self.file(), &reopened)? {
-            return Err(unavailable(UnavailableStage::FileIdentity));
+        // After publication the Linux pending name and the published name share one inode, and
+        // the only handle left on it is the rollback one.
+        #[cfg(target_os = "linux")]
+        {
+            let owned = self
+                .file
+                .as_ref()
+                .or(self.rollback_published.as_ref())
+                .ok_or_else(|| unavailable(UnavailableStage::FileIdentity))?;
+            unlink_linux_named_pending(&self.parent, &self.path, owned)?;
+            self.path = PathBuf::new();
+            Ok(())
         }
-        remove_owned_path(&self.path, self.file())
+        #[cfg(not(target_os = "linux"))]
+        {
+            let reopened = File::open(&self.path).map_err(io_error)?;
+            if !same_identity(self.file(), &reopened)? {
+                return Err(unavailable(UnavailableStage::FileIdentity));
+            }
+            remove_owned_path(&self.path, self.file())
+        }
     }
 }
 
@@ -6800,6 +6985,13 @@ fn remove_published_link(_: &OwnedTemporary, _: File) -> Result<(), BackupError>
 
 impl Drop for OwnedTemporary {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if !self.path.as_os_str().is_empty()
+            && let Some(file) = self.file.as_ref().or(self.rollback_published.as_ref())
+        {
+            let _ = unlink_linux_named_pending(&self.parent, &self.path, file);
+        }
+        #[cfg(not(target_os = "linux"))]
         if !self.path.as_os_str().is_empty()
             && let Some(file) = self.file.as_ref()
             && let Ok(reopened) = File::open(&self.path)
@@ -6892,24 +7084,147 @@ fn link_owned_file(owned: &mut OwnedTemporary, _destination: &Path) -> Result<Fi
             libc::AT_EMPTY_PATH,
         )
     };
-    let linked =
-        if direct == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
-            direct
-        } else {
-            let source = CString::new(format!("/proc/self/fd/{published_fd}"))
-                .map_err(|_| unavailable(UnavailableStage::FileIo))?;
-            unsafe {
-                libc::linkat(
-                    libc::AT_FDCWD,
-                    source.as_ptr(),
-                    owned.parent.as_raw_fd(),
-                    destination.as_ptr(),
-                    libc::AT_SYMLINK_FOLLOW,
-                )
-            }
-        };
-    map_link_result(linked)?;
+    let linked = if direct == 0
+        || !empty_path_link_needs_proc_fallback(std::io::Error::last_os_error().raw_os_error())
+    {
+        direct
+    } else {
+        let source = CString::new(format!("/proc/self/fd/{published_fd}"))
+            .map_err(|_| unavailable(UnavailableStage::FileIo))?;
+        unsafe {
+            libc::linkat(
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                owned.parent.as_raw_fd(),
+                destination.as_ptr(),
+                libc::AT_SYMLINK_FOLLOW,
+            )
+        }
+    };
+    if let Err(error) = map_link_result(linked) {
+        // A named pending file stays owned, so Drop can still unlink it by identity.
+        owned.file = Some(published);
+        return Err(error);
+    }
     Ok(published)
+}
+
+/// Whether a failed `linkat(fd, "", dir, name, AT_EMPTY_PATH)` is retried through
+/// `linkat(AT_FDCWD, "/proc/self/fd/N", dir, name, AT_SYMLINK_FOLLOW)` (#1306).
+///
+/// Both forms link the inode the descriptor pins, never a name, and both refuse an existing
+/// destination with `EEXIST`, so the retry keeps publication no-replace. `AT_EMPTY_PATH` needs
+/// `CAP_DAC_READ_SEARCH`: without it the kernel answers `EPERM` on 6.10 and later but `ENOENT`
+/// before 6.10 (Ubuntu 22.04/24.04 GA, Debian 12, WSL 6.6), so both retry. Any other errno,
+/// `EEXIST` above all, is the real answer. With `/proc` unmounted the retry fails closed.
+#[cfg(target_os = "linux")]
+fn empty_path_link_needs_proc_fallback(os: Option<i32>) -> bool {
+    matches!(os, Some(libc::EPERM | libc::ENOENT))
+}
+
+/// Whether `openat(parent, ".", O_TMPFILE)` failed because the filesystem cannot make unnamed
+/// files (#1306): `EOPNOTSUPP` (overlayfs on older kernels, 9p, some NFS), `EISDIR` (a kernel
+/// without O_TMPFILE reads the flag as a directory open) or `EINVAL`. Every other errno, such as
+/// `EACCES` or `ENOSPC`, would fail the named fallback too, so it is reported instead.
+#[cfg(target_os = "linux")]
+fn tmpfile_is_unsupported(os: Option<i32>) -> bool {
+    matches!(os, Some(libc::EOPNOTSUPP | libc::EISDIR | libc::EINVAL))
+}
+
+/// Creates `.graphhelm-backup-<hex>.pending` through the retained parent descriptor with
+/// `O_CREAT | O_EXCL | O_NOFOLLOW` at 0600, so it can neither reuse nor follow an existing entry.
+#[cfg(target_os = "linux")]
+fn create_linux_named_pending(
+    parent_handle: &File,
+    parent: &Path,
+) -> Result<(PathBuf, std::os::fd::RawFd), BackupError> {
+    use std::{ffi::CString, os::fd::AsRawFd};
+    for _ in 0..16 {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| unavailable(UnavailableStage::Random))?;
+        let name = format!(".graphhelm-backup-{}.pending", hex::encode(random));
+        random.zeroize();
+        let child = CString::new(name.as_bytes())
+            .map_err(|_| unavailable(UnavailableStage::TemporaryCreate))?;
+        let descriptor = unsafe {
+            libc::openat(
+                parent_handle.as_raw_fd(),
+                child.as_ptr(),
+                libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_RDWR | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if descriptor >= 0 {
+            return Ok((parent.join(name), descriptor));
+        }
+        let os = std::io::Error::last_os_error().raw_os_error();
+        if os != Some(libc::EEXIST) {
+            return Err(unavailable_os(UnavailableStage::TemporaryCreate, os));
+        }
+    }
+    Err(unavailable(UnavailableStage::TemporaryCreate))
+}
+
+/// Unlinks the named pending file through the retained parent descriptor, only while the entry
+/// is still the inode `owned` holds.
+#[cfg(target_os = "linux")]
+fn unlink_linux_named_pending(parent: &File, path: &Path, owned: &File) -> Result<(), BackupError> {
+    use std::{
+        ffi::CString,
+        os::fd::{AsRawFd, FromRawFd},
+        os::unix::ffi::OsStrExt,
+    };
+    let name = CString::new(
+        path.file_name()
+            .ok_or_else(|| unavailable(UnavailableStage::FileIo))?
+            .as_bytes(),
+    )
+    .map_err(|_| unavailable(UnavailableStage::FileIo))?;
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        return Err(unavailable_os(
+            UnavailableStage::FileIo,
+            std::io::Error::last_os_error().raw_os_error(),
+        ));
+    }
+    let current = unsafe { File::from_raw_fd(descriptor) };
+    if !same_identity(owned, &current)? {
+        return Err(unavailable(UnavailableStage::FileIdentity));
+    }
+    drop(current);
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(unavailable_os(
+            UnavailableStage::FileIo,
+            std::io::Error::last_os_error().raw_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+std::thread_local! {
+    static FAIL_NEXT_TMPFILE: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn fail_next_tmpfile(os: i32) {
+    FAIL_NEXT_TMPFILE.set(Some(os));
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn injected_tmpfile_failure() -> Option<i32> {
+    FAIL_NEXT_TMPFILE.take()
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+const fn injected_tmpfile_failure() -> Option<i32> {
+    None
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -6969,9 +7284,17 @@ fn map_link_result(result: i32) -> Result<(), BackupError> {
     if result == 0 {
         return Ok(());
     }
-    Err(map_link_error(std::io::Error::last_os_error()))
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        return Err(BackupError::InvalidBackup);
+    }
+    Err(unavailable_os(
+        UnavailableStage::FileIo,
+        error.raw_os_error(),
+    ))
 }
 
+#[cfg(not(target_os = "linux"))]
 fn map_link_error(error: std::io::Error) -> BackupError {
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         BackupError::InvalidBackup
@@ -6988,7 +7311,7 @@ fn same_identity(left: &File, right: &File) -> Result<bool, BackupError> {
     Ok(left.dev() == right.dev() && left.ino() == right.ino())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn remove_owned_path(path: &Path, owned: &File) -> Result<(), BackupError> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt, os::unix::fs::MetadataExt};
     let metadata = std::fs::symlink_metadata(path).map_err(io_error)?;

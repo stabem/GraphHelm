@@ -56,7 +56,9 @@ left unanswered refuses the whole plan. A plan with only `keep` answers is refus
 schema requires an operation, so a keep-everything or packages-only adoption cannot be expressed
 yet (#1208 F6). The envelope on stdout redacts the after-bytes; the private file at `--out` holds
 them, owner-only. Review the actual decisions, exact operation bytes, package pins and digest in
-that file. `--plan` previews an already reviewed plan; it does not invent approval. Acceptance is
+that file. `--plan` previews an already reviewed plan in the same redacted form (digest, scopes,
+decisions, operation paths, before/after digests and after byte lengths, package pins, coverage;
+never the after text, #1208); it does not invent approval. Acceptance is
 the single explicit `--accept` digest; pipes never confirm automatically. The CLI repeats all
 mutation checks.
 

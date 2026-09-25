@@ -119,6 +119,22 @@ fn adoption(data: &Value, palette: Palette) -> String {
             );
         }
     }
+    if let Some(rows) = plan.pointer("/spec/operations").and_then(Value::as_array) {
+        for row in rows {
+            // Only the `--plan` preview publishes `afterBytes`; a row without it prints no line,
+            // so this never reaches for the `after` text itself (#1208).
+            if let Some(bytes) = row.get("afterBytes").and_then(Value::as_u64) {
+                let _ = writeln!(
+                    out,
+                    "Operation {}:{} {} -> {} ({bytes} bytes)",
+                    text(&row["root"]),
+                    text(&row["path"]),
+                    text(&row["beforeDigest"]),
+                    text(&row["afterDigest"]),
+                );
+            }
+        }
+    }
     if let Some(digest) = plan.get("digest") {
         let _ = writeln!(out, "Plan digest: {}", text(digest));
     }

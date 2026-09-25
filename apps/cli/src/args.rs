@@ -122,7 +122,8 @@ pub struct AdoptionSetupArgs {
     /// Apply this private, reviewed plan after checking its exact digest.
     #[arg(long, requires_all = ["accept", "state_root"], conflicts_with_all = ["recover", "verify", "plan"])]
     pub apply: Option<PathBuf>,
-    /// Preview this exact reviewed plan, or bind it to a verification attempt.
+    /// Preview this exact reviewed plan (redacted: digest, scopes, decisions, operation paths,
+    /// digests and byte lengths; never the `after` text), or bind it to a verification attempt.
     #[arg(long, conflicts_with = "recover")]
     pub plan: Option<PathBuf>,
     /// Validate an activation receipt against --plan and current installed bytes.

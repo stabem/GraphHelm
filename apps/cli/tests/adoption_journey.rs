@@ -45,17 +45,60 @@ fn pipe_requires_exact_acceptance_and_never_promotes_self_asserted_observation()
         b"factory\nPrefer concise replies\nDeny secrets\n",
     )
     .unwrap();
-    let plan = fixture::plan(graphhelm_host_adoption::root_bindings(p.path(), h.path()).unwrap());
+    // #1208: the resolved `after` text is private. A sentinel planted in it (and the digest over
+    // it re-computed here, not by the code under test) must reach the plan file and never stdout
+    // or stderr of the `--plan` preview, in any face a pipe can ask for.
+    const SENTINEL: &str = "PRIVATE-AFTER-SENTINEL-1208";
+    let after = format!("GraphHelm JPD\nPrefer concise replies\nDeny secrets\n{SENTINEL}\n");
+    let mut plan =
+        fixture::plan(graphhelm_host_adoption::root_bindings(p.path(), h.path()).unwrap());
+    plan["spec"]["operations"][0]["after"] = json!(after);
+    plan["spec"]["operations"][0]["afterDigest"] = json!(fixture::hash(after.as_bytes()));
+    let plan = fixture::seal(plan);
     let planfile = s.path().join("reviewed.json");
     std::fs::write(&planfile, serde_json::to_vec(&plan).unwrap()).unwrap();
-    let preview = output(
-        command(p.path(), h.path(), s.path())
-            .arg("--plan")
-            .arg(&planfile)
-            .output()
-            .unwrap(),
+    assert!(
+        String::from_utf8(std::fs::read(&planfile).unwrap())
+            .unwrap()
+            .contains(SENTINEL),
+        "control: the sentinel is in the private plan file"
     );
-    assert_eq!(preview["data"]["plan"], plan);
+    let digest = plan["digest"].as_str().unwrap();
+    for face in [None, Some("--json"), Some("--pretty")] {
+        let mut run = command(p.path(), h.path(), s.path());
+        run.arg("--plan").arg(&planfile);
+        if let Some(flag) = face {
+            run.arg(flag);
+        }
+        let raw = run.output().unwrap();
+        for stream in [&raw.stdout, &raw.stderr] {
+            let stream = String::from_utf8_lossy(stream);
+            assert!(!stream.contains(SENTINEL), "{face:?}: {stream}");
+            assert!(
+                !stream.contains("Prefer concise replies"),
+                "{face:?}: {stream}"
+            );
+        }
+        let preview = output(raw);
+        let view = &preview["data"]["plan"];
+        assert_eq!(view["digest"], digest, "{face:?}");
+        assert_eq!(view["spec"]["scopes"], json!(["project"]), "{face:?}");
+        assert_eq!(view["spec"]["coverage"], "complete", "{face:?}");
+        assert_eq!(view["spec"]["packages"], json!([]), "{face:?}");
+        assert_eq!(
+            view["spec"]["decisions"],
+            json!([{"operationIndex":0,"decision":"replace","protected":false}]),
+            "{face:?}"
+        );
+        assert_eq!(
+            view["spec"]["operations"],
+            json!([{"root":"project","path":"AGENTS.md",
+                "beforeDigest":fixture::hash(b"factory\nPrefer concise replies\nDeny secrets\n"),
+                "afterDigest":fixture::hash(after.as_bytes()),
+                "afterBytes":after.len()}]),
+            "{face:?}"
+        );
+    }
     let mut changed = plan.clone();
     changed["id"] = json!("unreviewed");
     std::fs::write(&planfile, serde_json::to_vec(&changed).unwrap()).unwrap();

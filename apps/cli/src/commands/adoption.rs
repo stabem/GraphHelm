@@ -209,7 +209,7 @@ fn reviewed(args: &AdoptionSetupArgs, path: &std::path::Path) -> Outcome {
             .map(|receipt| serde_json::json!({"receipt":receipt}))
         } else {
             Ok(
-                serde_json::json!({"plan":plan,"acceptance":{"mode":"explicit_digest","instruction":"Review this plan, then use --apply with its file and --accept with its exact digest. A pipe never confirms automatically."}}),
+                serde_json::json!({"plan":preview(&plan),"acceptance":{"mode":"explicit_digest","instruction":"This is a redacted view: operation contents are shown only as digests and byte lengths. Review the private plan file itself for the full text, then use --apply with that file and --accept with this exact digest. A pipe never confirms automatically."}}),
             )
         }
     })();
@@ -217,6 +217,68 @@ fn reviewed(args: &AdoptionSetupArgs, path: &std::path::Path) -> Outcome {
         Ok(data) => Outcome::success(COMMAND, data),
         Err(error) => refused(error),
     }
+}
+
+/// #1208: the `--plan` preview of a sealed plan. The plan file is private — it carries the full
+/// `after` text of every instruction file and setting the owner resolved — so the envelope (and
+/// the rendered face, which reads only the envelope) gets an allow-listed view instead of the
+/// document: enough to review and to accept (`digest`), never an `after` body. A field the plan
+/// grows later is not printed until it is named here.
+fn preview(plan: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let pick = |value: &Value, fields: &[&str]| -> Value {
+        Value::Object(
+            fields
+                .iter()
+                .filter_map(|field| value.get(*field).map(|v| ((*field).to_owned(), v.clone())))
+                .collect(),
+        )
+    };
+    let each = |pointer: &str, fields: &[&str]| -> Value {
+        plan.pointer(pointer)
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().map(|row| pick(row, fields)).collect())
+            .unwrap_or_default()
+    };
+    let spec = &plan["spec"];
+    let operations = spec["operations"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    let mut view = pick(
+                        row,
+                        &[
+                            "root",
+                            "path",
+                            "beforeDigest",
+                            "afterDigest",
+                            "disableSkills",
+                        ],
+                    );
+                    view["afterBytes"] = json!(row["after"].as_str().map(str::len));
+                    view
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "apiVersion": plan["apiVersion"],
+        "kind": plan["kind"],
+        "id": plan["id"],
+        "digest": plan["digest"],
+        "redacted": true,
+        "spec": {
+            "coverage": spec["coverage"],
+            "scopes": spec["scopes"],
+            "hostBoundary": spec["hostBoundary"],
+            "host": pick(&spec["host"], &["name", "version", "mode"]),
+            "packages": each("/spec/packages", &["id", "version", "digest"]),
+            "decisions": each("/spec/decisions", &["operationIndex", "item", "decision", "protected"]),
+            "review": each("/spec/review", &["item", "decision"]),
+            "operations": operations,
+        }
+    })
 }
 
 pub(super) fn backup(args: &AdoptionBackupArgs) -> Outcome {
@@ -370,5 +432,49 @@ pub(super) fn restore(args: &crate::args::AdoptionRestoreArgs) -> Outcome {
                 SOURCE,
             )],
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    /// The rendered face of `--plan` (a terminal, no `--json`) cannot be reached from a piped test
+    /// process, so it is held here: the preview built from a plan whose `after` carries a sentinel
+    /// renders the path, the digests and the byte length, and never the sentinel.
+    #[test]
+    fn the_rendered_plan_preview_names_the_operation_and_never_its_contents() {
+        let sentinel = "PRIVATE-AFTER-SENTINEL-1208";
+        let after = format!("GraphHelm JPD\n{sentinel}\n");
+        let digest = format!("sha256:{}", "1".repeat(64));
+        let plan = json!({"apiVersion":"p50.dev/adoption/v1","kind":"AdoptionPlan","id":"unit",
+            "digest":digest,
+            "spec":{"coverage":"complete","scopes":["project"],"packages":[],"hostBoundary":"quiescent",
+            "host":{"name":"codex","version":"0.114.0","program":"/home/owner/private/codex"},
+            "decisions":[{"operationIndex":0,"decision":"replace","protected":false}],
+            "operations":[{"root":"project","path":"AGENTS.md","beforeDigest":"b".repeat(64),
+                "afterDigest":"a".repeat(64),"after":after}]}});
+        assert!(
+            plan.to_string().contains(sentinel),
+            "control: the input carries it"
+        );
+        let output = crate::output::Outcome::success(
+            super::COMMAND,
+            json!({"plan": super::preview(&plan), "acceptance": {"instruction": "review"}}),
+        )
+        .output;
+        let rendered = crate::human::render(&output, crate::palette::Palette::plain()).unwrap();
+        let envelope = serde_json::to_string(&output).unwrap();
+        for face in [&rendered, &envelope] {
+            assert!(!face.contains(sentinel), "{face}");
+            assert!(!face.contains("/home/owner/private"), "{face}");
+            assert!(face.contains("AGENTS.md"), "{face}");
+            assert!(face.contains(&"a".repeat(64)), "{face}");
+            assert!(face.contains(&digest), "{face}");
+        }
+        assert!(
+            rendered.contains(&format!("({} bytes)", after.len())),
+            "{rendered}"
+        );
     }
 }

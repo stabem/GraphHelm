@@ -105,6 +105,31 @@ def test_regression_restoration_preserves_exact_source_bytes(tmp_path, monkeypat
     assert (verdict, code) == ("PASS", 0)
 
 
+def test_proof_orchestration_runs_submitted_suite_before_restoring_tests(tmp_path, monkeypatch):
+    """The runner must not overwrite a red submitted test before observing it."""
+    test_file = tmp_path / "check.py"
+    test_file.write_text("raise SystemExit(7)\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "git_show_bytes", lambda sha, _path:
+                        b"print('old suite passes')\n" if sha == "parent" else b"print('oracle passes')\n")
+    command = [sys.executable, "check.py"]
+    task = {"parentSha": "parent", "fixSha": "fix",
+            "regression": {"files": ["check.py"], "command": command},
+            "oracle": {"file": "check.py", "command": command}}
+    submitted, historical, hidden = runner.run_proofs(tmp_path, task)
+    assert (submitted[:2], historical[:2], hidden[:2]) == (
+        ("FAIL", 7), ("PASS", 0), ("PASS", 0))
+    assert test_file.read_bytes() == b"print('oracle passes')\n"
+
+
+def test_failed_submitted_suite_blocks_proven_delivery():
+    """Hidden acceptance and old regression cannot hide a red test left by the agent."""
+    task = {"regression": {"command": ["test"]}}
+    verdict, reasons = runner.evaluate_outcome(
+        "PASS", "PASS", usage(), 0.2, "session", task, submitted_suite="FAIL")
+    assert verdict == "FAIL"
+    assert "submitted_suite_failed" in reasons
+
+
 def test_transcript_usage_deduplicates_repeated_assistant_records():
     """Catches inflated cost when a JSONL consumer repeats one assistant message."""
     message = {"type": "assistant", "uuid": "m1", "message": {

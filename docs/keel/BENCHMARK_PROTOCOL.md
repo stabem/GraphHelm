@@ -58,13 +58,18 @@ watchdog calls and retries whenever the arm pays for them. Do not substitute a f
 block for transcript-wide usage. If any usage source is missing or contradictory, mark the cost
 `INCOMPLETE` and do not compute a saving. Keep model spend separate from machine time; report both.
 
-After the agent exits, install the hidden oracle and run it. Run the pre-existing regression
-observer on the same final patch. Record each exit and diagnostic separately. Then have a reviewer
-who cannot see the arm label inspect the diff against a fixed rubric: requested behavior,
+After the agent exits, first run the declared regression command on the submitted checkout and
+record it as `submittedSuite`. A red submitted suite blocks proven delivery, but a green one is
+only development evidence because the agent can edit its tests. Then restore the historical
+regression files and run that observer on the same final patch; install the hidden oracle last.
+Record each exit and diagnostic separately. A task without a declared command reports
+`submittedSuite=UNOBSERVED`. Then have a reviewer who cannot see the arm label inspect the diff
+against a fixed rubric: requested behavior,
 preserved behavior, security, maintainability, and unnecessary surface. The reviewer must name
 the diff SHA and concrete findings. Blind review is supporting evidence; it cannot turn a red
 oracle green. Agent-written tests are useful development evidence, not an independent acceptance
-oracle.
+oracle. Run a platform-specific observer separately when portability is part of the task promise;
+a green Windows result does not imply a green POSIX result.
 
 For B/C, inspect the agent's session transcript and the private GraphHelm event journal. The
 methodology observer requires successful `start`, `briefing`, `compile_context`, and `signal` MCP

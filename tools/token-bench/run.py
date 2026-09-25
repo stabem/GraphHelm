@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 TASKS = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))["tasks"]
 RESULTS = HERE / "results.jsonl"
-BENCH_VERSION = 8  # v8: distinguish coding model from CLI background models; audit user turns.
+BENCH_VERSION = 9  # v9: observe the submitted suite before restoring independent test files.
 KEEL_SKILL = REPO / "extensions" / "builtin" / "graphhelm-development-contracts" / "skills" / "keel" / "SKILL.md"
 
 COMMON_PREFIX = """This issue is OPEN and UNFIXED. This checkout is the only source of truth: do not consult
@@ -538,6 +538,17 @@ def run_oracle(wt: Path, task: dict) -> tuple[str, int, str]:
     return verdict, proc.returncode, tail
 
 
+def run_submitted_suite(wt: Path, task: dict) -> tuple[str, int | None, str]:
+    """Observe the agent's checkout before independent test files replace its tests."""
+    spec = task.get("regression")
+    if not spec:
+        return "UNOBSERVED", None, "task has no submitted-suite command"
+    command = spec["command"] if isinstance(spec, dict) else spec
+    proc = subprocess.run(command, cwd=wt, text=True, capture_output=True, env=bench_env(task))
+    verdict = "PASS" if proc.returncode == 0 else "FAIL"
+    return verdict, proc.returncode, (proc.stdout + "\n" + proc.stderr)[-2000:]
+
+
 def run_regression(wt: Path, task: dict) -> tuple[str, int | None, str]:
     """Run only a pre-existing regression observer declared by the task manifest."""
     spec = task.get("regression")
@@ -559,14 +570,27 @@ def run_regression(wt: Path, task: dict) -> tuple[str, int | None, str]:
     return verdict, proc.returncode, tail
 
 
+def run_proofs(wt: Path, task: dict) -> tuple[tuple[str, int | None, str],
+                                               tuple[str, int | None, str],
+                                               tuple[str, int, str]]:
+    """Observe submitted tests before historical restoration and hidden-oracle installation."""
+    submitted = run_submitted_suite(wt, task)
+    regression = run_regression(wt, task)
+    acceptance = run_oracle(wt, task)
+    return submitted, regression, acceptance
+
+
 def evaluate_outcome(acceptance: str, regression: str, usage: dict, cost: object,
-                    session_id: object, task: dict, agent_error: bool = False) -> tuple[str, list[str]]:
+                    session_id: object, task: dict, agent_error: bool = False,
+                    submitted_suite: str | None = None) -> tuple[str, list[str]]:
     """Return a conservative delivery verdict; missing proof is never a win."""
     reasons = []
     if acceptance != "PASS":
         reasons.append("hidden_acceptance_failed")
     if regression != "PASS":
         reasons.append("preexisting_regression_" + regression.lower())
+    if submitted_suite == "FAIL":
+        reasons.append("submitted_suite_failed")
     if not task.get("regression"):
         reasons.append("regression_observer_missing")
     required = ("input", "output", "cacheRead", "cacheWrite", "assistantMessages")
@@ -632,6 +656,9 @@ def cmd_run(a: argparse.Namespace) -> None:
     regression = "UNOBSERVED"
     regression_code = None
     regression_tail = ""
+    submitted_suite = "UNOBSERVED"
+    submitted_code = None
+    submitted_tail = ""
     code = None
     oracle_tail = ""
     wt = make_worktree(a.task, a.arm, task["parentSha"])
@@ -659,16 +686,16 @@ def cmd_run(a: argparse.Namespace) -> None:
         diff = sh(["git", "diff", "--cached", "--stat", root], cwd=wt, check=False).stdout
         patch = sh(["git", "diff", "--cached", root], cwd=wt, check=False).stdout
         patch_artifact, patch_digest = save_patch_artifact(a.task, a.arm, patch)
-        # Some tasks use the same path for the historical regression and hidden oracle. Run the
-        # pre-existing regression before installing hidden files, then evaluate the oracle.
-        regression, regression_code, regression_tail = run_regression(wt, task)
-        acceptance, code, oracle_tail = run_oracle(wt, task)
+        # Some tasks share a test path across all three observers; their order is contractual.
+        (submitted_suite, submitted_code, submitted_tail), (
+            regression, regression_code, regression_tail), (
+            acceptance, code, oracle_tail) = run_proofs(wt, task)
     except Exception as exc:
         evaluator_error = type(exc).__name__
     finally:
         # a failed run keeps its checkout: the diff IS the evidence, and rmtree was silently
         # half-deleting it (open handles) while reporting nothing
-        if not a.keep and acceptance == "PASS" and regression == "PASS":
+        if not a.keep and acceptance == "PASS" and regression == "PASS" and submitted_suite == "PASS":
             remove_worktree(wt)
         else:
             print(f"[bench] checkout kept at {wt}", flush=True)
@@ -681,7 +708,8 @@ def cmd_run(a: argparse.Namespace) -> None:
     code_model, model_ids = coding_model(model_usage, usage.get("models") or [])
     agent_error = bool(result.get("is_error") or result.get("agentError") or result.get("unparseable_stdout"))
     verdict, verdict_reasons = evaluate_outcome(acceptance, regression, usage, cost,
-                                                 result.get("session_id"), task, agent_error)
+                                                 result.get("session_id"), task, agent_error,
+                                                 submitted_suite)
     if a.arm in {"b", "c"} and method["status"] != "PASS":
         verdict = "INCOMPLETE"
         verdict_reasons.append("methodology_execution_unobserved")
@@ -723,10 +751,14 @@ def cmd_run(a: argparse.Namespace) -> None:
         "acceptance": acceptance, "oracleExit": code,
         "regression": regression, "regressionExit": regression_code,
         "regressionTail": regression_tail,
+        "submittedSuite": submitted_suite, "submittedSuiteExit": submitted_code,
+        "submittedSuiteTail": submitted_tail,
         "automatedProof": {
             "acceptance": acceptance == "PASS", "preexistingRegression": regression == "PASS",
+            "submittedSuite": submitted_suite == "PASS",
             "sessionUsageComplete": not any("unobserved" in reason for reason in verdict_reasons),
-            "qualityClaim": "preliminary-automated-proof",
+            "qualityClaim": ("preliminary-automated-proof" if acceptance == regression == submitted_suite == "PASS"
+                             else "not-proven"),
         },
         "wallSeconds": round(wall, 1),
         "agentDurationMs": result.get("duration_ms"), "turns": result.get("num_turns"),

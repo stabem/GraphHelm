@@ -27,7 +27,7 @@ describe("the dev session", () => {
   it("presents the page's own nonce to the endpoint", async () => {
     const fetchImpl = vi.fn(async () => okReply());
     const session = await devSession(fetchImpl as never, "?session=abc123");
-    expect(session).toEqual({ token: "local-token", project: "demo" });
+    expect(session).toEqual({ token: "local-token", project: "demo", projectPath: null });
     expect(fetchImpl).toHaveBeenCalledWith(
       "/__studio/session?nonce=abc123",
       expect.objectContaining({ headers: { Accept: "application/json" } }),
@@ -37,5 +37,14 @@ describe("the dev session", () => {
   it("treats a refusal as no session, not as an error", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: false }), { status: 404 }));
     expect(await devSession(fetchImpl as never, "?session=wrong")).toBeNull();
+  });
+
+  it("passes a known folder path to the Studio without treating it as a credential", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      token: "local-token", project: "ml-saas", projectPath: "F:/github/ml-saas",
+    }), { status: 200 }));
+    expect(await devSession(fetchImpl as never, "?session=known")).toEqual({
+      token: "local-token", project: "ml-saas", projectPath: "F:/github/ml-saas",
+    });
   });
 });

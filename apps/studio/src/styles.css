@@ -447,6 +447,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   white-space: nowrap;
 }
 
+.project-path {
+  margin: -3px 10px 8px 35px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 /* Icon-only, fixed width, and it never joins the fight for the name's space. */
 .icon-action {
   border-radius: var(--r-sm);

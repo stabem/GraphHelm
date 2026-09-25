@@ -40,6 +40,7 @@ import type {
   EvidenceContent,
   ExecutionStatus,
   ExecutionSummary,
+  ReplySuggestions,
   MutationEvidence,
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
@@ -189,6 +190,10 @@ export default function App({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
+  const [replySuggestions, setReplySuggestions] = useState<ReplySuggestions | null>(null);
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [replyIssue, setReplyIssue] = useState<string | null>(null);
+  const [judgeRoute, setJudgeRoute] = useState("");
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
   /** The selected run's briefing (#1063/#1077): its NAME and OBJECTIVE live here and nowhere
@@ -268,6 +273,51 @@ export default function App({
   const [addingProject, setAddingProject] = useState(false);
   /** The Runtime's own model list, read once per draft. `null` while it is being read. */
   const [routes, setRoutes] = useState<RouteChoice | null>(null);
+  const judgeRoutes = routes?.routes.filter((route) =>
+    route.enabled && route.provider === "typesafe" && route.transport === "direct_api",
+  ) ?? [];
+  const activeJudgeRoute = judgeRoutes.some((route) => route.id === judgeRoute)
+    ? judgeRoute
+    : judgeRoutes.length === 1 ? judgeRoutes[0].id : null;
+  useEffect(() => {
+    let superseded = false;
+    setReplySuggestions(null);
+    setReplyLoading(false);
+    setReplyIssue(null);
+    const id = status?.executionId;
+    const head = status?.headSequence;
+    if (!connected || !id || status?.attention !== "needs_you" || selected !== id) return;
+    if (routes === null) {
+      setReplyIssue("Checking the available model routes…");
+      return;
+    }
+    if (activeJudgeRoute === null) {
+      setReplyIssue(judgeRoutes.length === 0
+        ? "Two recommendations need a configured TypeSafe Jev route. You can still write your own reply."
+        : "Choose a Jev route to prepare two replies.");
+      return;
+    }
+    const client = clientRef.current;
+    if (client === null) return;
+    setReplyLoading(true);
+    void client.getReplySuggestions(id, activeJudgeRoute).then((reply) => {
+      if (superseded || clientRef.current !== client) return;
+      if (reply === null) {
+        setReplyIssue("This Runtime does not offer recommended replies yet.");
+      } else if (reply.executionId !== id || reply.headSequence !== head) {
+        setReplyIssue("The run changed while its replies were prepared. Waiting for a fresh reading.");
+      } else {
+        setReplySuggestions(reply);
+      }
+    }).catch((reason: unknown) => {
+      if (!superseded && clientRef.current === client) {
+        setReplyIssue(messageOf(reason, "Recommended replies could not be prepared."));
+      }
+    }).finally(() => {
+      if (!superseded && clientRef.current === client) setReplyLoading(false);
+    });
+    return () => { superseded = true; };
+  }, [connected, selected, status?.executionId, status?.headSequence, status?.attention, routes, activeJudgeRoute]);
   // #1171: the models screen. `probes` starts empty on purpose - a route nobody has checked is
   // rendered "not checked", never green, because a dot that started green would be a claim
   // nobody measured.
@@ -2191,6 +2241,15 @@ export default function App({
                     )}
                 </div>
               )}
+              {status.attention === "needs_you" && judgeRoutes.length > 1 && (
+                <label className="judge-route-choice">
+                  Jev route
+                  <select value={activeJudgeRoute ?? ""} onChange={(event) => setJudgeRoute(event.target.value)}>
+                    <option value="">Choose a route</option>
+                    {judgeRoutes.map((route) => <option key={route.id} value={route.id}>{route.model ?? route.id} · {route.id}</option>)}
+                  </select>
+                </label>
+              )}
               <RunPanel
                 status={status}
                 events={eventList}
@@ -2214,6 +2273,9 @@ export default function App({
                 sayRecipient={sayTo}
                 owed={owedCards}
                 objective={briefing?.objective ?? null}
+                replySuggestions={replySuggestions}
+                replyLoading={replyLoading}
+                replyIssue={replyIssue}
               />
             </aside>
             )}

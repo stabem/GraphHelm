@@ -133,6 +133,7 @@ function stubClient(overrides: Record<string, unknown> = {}) {
     // through `client.startTask` has to exist on the returned type, and one that appears only
     // when overridden does not.
     listRoutes: vi.fn(async () => ({ configured: true, routes: [] })),
+    getReplySuggestions: vi.fn(async () => null),
     setRoute: vi.fn(async () => ({ routes: [] })),
     setCredential: vi.fn(async () => ({ id: "secret_route", routes: [] })),
     probeRoute: vi.fn(async () => ({ health: "available" })),
@@ -2196,6 +2197,52 @@ describe("round-2: the ledger settles debts honestly", () => {
     // codex spoke recently but asked nothing: it may be offered as someone to talk to, but
     // never under a heading that asserts it is waiting.
     expect(screen.queryByLabelText(/who is waiting for an answer/i)).not.toBeInTheDocument();
+  });
+
+  /** Selecting a recommendation must fill the owner's draft, never send it. The old address-only
+   * cards could not satisfy this, and an eager signal would write an unapproved answer. */
+  it("offers two judged replies for the current head and leaves sending to the owner", async () => {
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ({ configured: true, routes: [{
+        id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
+        model: "jev-latest", profiles: [], enabled: true,
+      }] })),
+      getReplySuggestions: vi.fn(async () => ({
+        executionId: "demo-deploy", headSequence: 13, state: "ready", suggestions: [
+          { to: "codex", draft: "Please verify the failing test before approving.", reason: "The node is blocked.", sourceSequences: [13] },
+          { to: null, draft: "Pause this run while I review the failure.", reason: "This keeps the current work safe.", sourceSequences: [13] },
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const choices = await screen.findByRole("group", { name: "Recommended replies" });
+    expect(within(choices).getAllByRole("button")).toHaveLength(2);
+    await userEvent.click(within(choices).getByRole("button", { name: /Option 1/ }));
+    expect(screen.getByLabelText(/say something into this run/i)).toHaveValue("Please verify the failing test before approving.");
+    expect(client.signal).not.toHaveBeenCalled();
+    expect(client.getReplySuggestions).toHaveBeenCalledWith("demo-deploy", "judge");
+  });
+
+  /** A slow suggestion read can finish after the run advances. Showing its old advice beside
+   * a fresh needs-you verdict would make the owner answer a question the run no longer asks. */
+  it("does not show recommendations prepared for an older head", async () => {
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ({ configured: true, routes: [{
+        id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
+        model: "jev-latest", profiles: [], enabled: true,
+      }] })),
+      getReplySuggestions: vi.fn(async () => ({
+        executionId: "demo-deploy", headSequence: 12, state: "ready", suggestions: [
+          { to: null, draft: "Old answer one", reason: "old", sourceSequences: [12] },
+          { to: null, draft: "Old answer two", reason: "old", sourceSequences: [12] },
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    expect(await screen.findByText(/run changed while its replies were prepared/i)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Recommended replies" })).not.toBeInTheDocument();
   });
 });
 

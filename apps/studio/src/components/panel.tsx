@@ -22,7 +22,7 @@ import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
-import type { ClaimEvidence, EvidenceContent, ExecutionStatus, RuntimeEvent } from "../runtime/types";
+import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
 import { moodOf, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
@@ -869,8 +869,10 @@ function SayBox({
   error,
   onSay,
   suggestions = [],
+  draftSuggestions = [],
   suggestionsClaim = "Talk to someone",
   onPickSuggestion,
+  onPickDraft,
   focusNonce = 0,
   recipient = null,
   recipientLocked = false,
@@ -883,12 +885,15 @@ function SayBox({
   onSay: (message: string, to: string | null) => void;
   /** Who to offer answering, newest first. Cards above the box; picking one addresses it. */
   suggestions?: Array<{ id: string; at: string | null }>;
+  /** Jev-ranked draft text for this exact run head, if available. */
+  draftSuggestions?: ReplySuggestion[];
   /** What the cards CLAIM about the people on them. "Who is waiting for an answer" is a claim
    * only the unanswered-question ledger may back; mere recent speakers get an honest label. */
   suggestionsClaim?: string;
   /** The verb on each card. "answer" asserts a debt — only the ledger claim may carry it. */
   suggestionsVerb?: string;
   onPickSuggestion?: (agentId: string) => void;
+  onPickDraft?: (recipient: string | null) => void;
   /** Bumped by the attention area's "answer in the thread" action. A nonce, not a boolean, so a
    * second click focuses again even though the panel never remounted. */
   focusNonce?: number;
@@ -967,7 +972,31 @@ function SayBox({
         send();
       }}
     >
-      {suggestions.length > 0 && recipient === null && (
+      {draftSuggestions.length > 0 && (
+        <div className="reply-drafts" role="group" aria-label="Recommended replies">
+          {draftSuggestions.map((suggestion, index) => (
+            <button
+              key={`${index}:${suggestion.draft}`}
+              type="button"
+              className="reply-draft"
+              onClick={() => {
+                setMessage(suggestion.draft);
+                onPickDraft?.(suggestion.to);
+                boxRef.current?.focus();
+              }}
+            >
+              <strong>Option {index + 1}</strong>
+              <span>{suggestion.draft}</span>
+              <small>{suggestion.reason}</small>
+              {suggestion.sourceSequences.length > 0 && (
+                <small>Based on event {suggestion.sourceSequences.map((sequence) => `#${sequence}`).join(", ")}</small>
+              )}
+            </button>
+          ))}
+          <p>Choosing fills the box. You can edit it before sending.</p>
+        </div>
+      )}
+      {draftSuggestions.length === 0 && suggestions.length > 0 && recipient === null && (
         <div className="reply-hints" role="group" aria-label={suggestionsClaim}>
           {suggestions.map((suggestion) => (
             <button
@@ -1309,6 +1338,9 @@ export function RunPanel({
   sayRecipient = null,
   owed,
   objective = null,
+  replySuggestions = null,
+  replyLoading = false,
+  replyIssue = null,
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1332,6 +1364,9 @@ export function RunPanel({
    * under the heading: it is the one line that says what this run is for. `null` when the
    * Runtime has no briefing route or the declaration carried none. */
   objective?: string | null;
+  replySuggestions?: ReplySuggestions | null;
+  replyLoading?: boolean;
+  replyIssue?: string | null;
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1361,6 +1396,14 @@ export function RunPanel({
   const cards = owed !== undefined && owed.length > 0 ? owed : askers;
   const cardsClaim =
     owed !== undefined && owed.length > 0 ? "Who is waiting for an answer" : "Talk to someone";
+  const readyDrafts =
+    verdict.key === "needs" &&
+    replySuggestions?.state === "ready" &&
+    replySuggestions.executionId === status.executionId &&
+    replySuggestions.headSequence === status.headSequence &&
+    replySuggestions.suggestions.length === 2
+      ? replySuggestions.suggestions
+      : [];
   const [recipient, setRecipient] = useState<string | null>(null);
   // THE CRUDE VERSION WAS GREPPABLE. Past the auto-open limit the words are not in the DOM, so
   // Ctrl-F finds nothing - but every spoken envelope is already in runEnvelopes. Search filters
@@ -1486,19 +1529,32 @@ export function RunPanel({
       )}
 
       {onSay !== undefined && status.executionId !== null && (
+        <>
+        {verdict.key === "needs" && (
+          <p className="reply-state" role="status">
+            {replyLoading
+              ? "Preparing two replies for this run…"
+              : readyDrafts.length === 2
+                ? "Jev recommended two messages for the current run. Sending a message does not approve or unblock a node."
+                : replyIssue ?? replySuggestions?.reason ?? "Two recommended replies are unavailable."}
+          </p>
+        )}
         <SayBox
           busy={saying}
           error={sayError}
           onSay={onSay}
           focusNonce={sayFocus}
           suggestions={cards}
+          draftSuggestions={readyDrafts}
           suggestionsClaim={cardsClaim}
           suggestionsVerb={owed !== undefined && owed.length > 0 ? "answer" : "message"}
           onPickSuggestion={setRecipient}
+          onPickDraft={setRecipient}
           recipient={recipient}
           onClearRecipient={() => setRecipient(null)}
           draftId={`run:${status.executionId ?? ""}`}
         />
+        </>
       )}
 
       <p className="panel-foot">

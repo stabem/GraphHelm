@@ -26,6 +26,7 @@ import type {
   ExecutionPage,
   EvidenceContent,
   ExecutionStatus,
+  ReplySuggestions,
   GraphTopology,
   ModelRouteSummary,
   MutationEvidence,
@@ -494,6 +495,25 @@ export class RuntimeClient {
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
     });
+  }
+
+  /** Read advisory drafts for this run. A 404 means an older Runtime lacks this route. */
+  async getReplySuggestions(executionId: string, judgeRoute: string): Promise<ReplySuggestions | null> {
+    const id = checkedId(executionId, "executionId");
+    const judge = checkedId(judgeRoute, "judgeRoute");
+    try {
+      return await this.#request<ReplySuggestions>({
+        method: "GET",
+        path: `/v1/executions/${encodeURIComponent(id)}/reply-suggestions?judgeRoute=${encodeURIComponent(judge)}`,
+      });
+    } catch (reason) {
+      if (
+        reason instanceof RuntimeError &&
+        reason.httpStatus === 404 &&
+        !reason.diagnostics.some((diagnostic) => diagnostic.code === EXECUTION_NOT_FOUND)
+      ) return null;
+      throw reason;
+    }
   }
 
   /**

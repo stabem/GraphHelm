@@ -485,6 +485,10 @@ fn build_router(state: ServeState) -> Router {
         .route("/health", get(health))
         .route("/v1/executions", get(routes::list_executions))
         .route("/v1/executions/{id}", get(routes::status))
+        .route(
+            "/v1/executions/{id}/reply-suggestions",
+            get(routes::reply_suggestions),
+        )
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(

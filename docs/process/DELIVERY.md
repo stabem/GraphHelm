@@ -34,12 +34,18 @@ body.
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
-  subagent** (owner order, 2026-09-24). A blind subagent is spawned for the review only and is
-  given the PR number and this document, nothing else: no author reasoning, no summary of what to
-  look for, no expected verdict. A subagent that helped write the change, or one given the author's
-  conclusions, is not blind and cannot review it. The review's first line names the reviewer and
-  the head sha it read: `Session: <ListAgents name [ref]> · Head: <sha8>`, with
-  `(blind subagent)` after the session name when a subagent reviews.
+  subagent** (owner order, 2026-09-24). A blind subagent is spawned for the review only. Its brief
+  may carry: the PR number, the identity line to sign with, where the rules live (`AGENTS.md`,
+  this document), the build directory, and questions that apply to every review (correctness,
+  security, fail-closed behaviour, test quality). It must not carry the author's reasoning, a
+  finding to look for, a summary of the change, or an expected verdict. A subagent that helped
+  write the change, or was given any of those, is not blind and cannot review it.
+- The review's first line names the reviewer and the head sha it read:
+  `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
+  name when a subagent reviews.
+- **A BLOCK stands for the head it names.** The author answers it by pushing a fix (a new head) or
+  by replying on the PR with why it does not hold; only then may a new reviewer be asked. Asking
+  another reviewer about the same head until one approves is not a review.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
 - **A change to Rust code also runs the lints on the crates it touches**, author and reviewer

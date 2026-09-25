@@ -1,6 +1,6 @@
 # Keel + GraphHelm code-delivery benchmark
 
-Status: pilot protocol for #1246. A pilot validates the instrument; it does not establish that
+Status: pilot protocol for #1282. A pilot validates the instrument; it does not establish that
 the methodology improves software delivery.
 
 ## Claim and unit of comparison
@@ -133,3 +133,36 @@ repository index. If the Runtime's model executor is enabled, this runner marks 
 `INCOMPLETE` until that executor's model usage is added to session accounting. A later
 full-methodology study needs the real executor, calibrated diverse
 tasks, complete session accounting, and blind reviews.
+
+## First live coding pilot (2026-09-24)
+
+After Claude authentication, task 1145 was run sequentially from the same frozen parent with the
+same hidden acceptance, pre-existing regression, requested `sonnet` route, USD 1.50 cap, and
+12-minute agent limit. An initial C launch failed before model execution because the Windows
+host encoded the pinned Keel skill using its legacy code page. #1279 fixed the runner to send
+UTF-8. The failed launch remains an incomplete historical row.
+
+| Arm | Agent time | First code edit | Hidden acceptance | Old regression | Final cost |
+| --- | ---: | ---: | --- | --- | --- |
+| A: ordinary | 485.5 s | about 84 s | 4/36 failed | 1/29 failed | USD 0.7924 CLI estimate |
+| B: GraphHelm | 721.2 s, timeout | about 175 s | 4/36 failed | 1/29 failed | unobserved |
+| C: GraphHelm + Keel | 720.3 s, timeout | none | 6/36 failed | 29/29 passed | unobserved |
+
+None delivered proven code. B and C had partial local transcripts, but a timeout prevented a
+terminal cost receipt. A's CLI model usage included Haiku and Sonnet while the coding transcript
+named Sonnet; its CLI turn count also exceeded distinct assistant message IDs. Those accounting
+questions remain open in #1276. #1280 now pins the Claude session ID before launch so future
+timeouts retain identifiable partial transcript usage; partial usage is never a complete cost.
+
+B called GraphHelm `start`, `briefing`, and `compile_context` and produced a patch before timing
+out. C also called GraphHelm, but did not reach a code edit or final signal. The isolated Runtime
+reported `model=false, tools=false`, so this pilot did not test a full GraphHelm tool executor or
+index-assisted retrieval. Task 1145 concerns the old PostgreSQL gate and is unsuitable as the
+sole representative of ordinary development. The C prompt forced the full GraphHelm/Keel flow;
+the broader study must choose the risk-proportional Keel route before each task, including a
+direct route where the method permits it. These single-run timing differences suggest possible
+workflow overhead, not a causal cost or quality verdict.
+
+The next calibrated task should be small enough to finish under the shared cap, then be followed
+by the frozen diverse corpus, complete accounting, and blind patch review specified above. Full
+run details and failed rows are retained in #1276; the broader study is tracked by #1282.

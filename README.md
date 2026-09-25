@@ -4,7 +4,7 @@
 
 GraphHelm is **experimental**. This repository contains a working CLI, Runtime, MCP server, host-setup flow, and a local operator Studio. It also contains specifications for a larger product; [the visual graph editor, embedded chat, Context Compiler, and Dreams Engine are not built yet](docs/product/ROADMAP_AND_ACCEPTANCE.md). There is no stable release or hosted CI service. A [CLI preview release](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) offers tested Windows and Linux x86-64 downloads; the Studio still runs from source.
 
-**Choose a path:** [Download the CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) · [Run a local example](#try-it-locally) · [Install the Runtime and Studio](docs/install/GETTING_STARTED.md) · [Explore the code](#repository-map) · [Read the methodology](#development-method) · [Contribute](CONTRIBUTING.md)
+**Choose a path:** [Download the CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) · [Install the agent plugin](plugins/graphhelm/README.md) · [Run a local example](#try-it-locally) · [Install the Runtime and Studio](docs/install/GETTING_STARTED.md) · [Explore the code](#repository-map) · [Read the methodology](#development-method) · [Contribute](CONTRIBUTING.md)
 
 ## Try it locally
 
@@ -67,6 +67,7 @@ On **this task**, Keel cost 13.4% less than GraphHelm alone with the same automa
 | [`apps/`](apps/) | CLI and local Studio. |
 | [`schemas/`](schemas/) · [`examples/`](examples/) · [`conformance/`](conformance/) | Wire contracts, runnable examples, and compatibility fixtures. |
 | [`extensions/`](extensions/) | Built-in agent skills and extension packages. |
+| [`plugins/`](plugins/graphhelm/README.md) | Installable Codex and Claude plugin guide and resume skills. |
 | [`install/`](install/) · [`deploy/`](deploy/) | Installation and deployment assets. |
 | [`ci/`](ci/) · [`scripts/`](scripts/) · [`tools/`](tools/) · [`tests/`](tests/) | Local validation, maintainer tools, and test fixtures. |
 | [`docs/`](docs/INDEX.md) | Product specifications, architecture, methodology, evidence, and decisions. |

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "graphhelm",
+  "version": "0.1.0",
+  "description": "GraphHelm methodology guide and evidence-based next-step selection.",
+  "author": { "name": "GraphHelm" },
+  "repository": "https://github.com/stabem/GraphHelm",
+  "license": "MIT"
+}

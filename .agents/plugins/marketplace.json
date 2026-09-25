@@ -1,0 +1,44 @@
+{
+  "name": "graphhelm",
+  "interface": {
+    "displayName": "GraphHelm"
+  },
+  "plugins": [
+    {
+      "name": "graphhelm",
+      "source": {
+        "source": "local",
+        "path": "./plugins/graphhelm"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "graphhelm-jpd",
+      "source": {
+        "source": "local",
+        "path": "./extensions/builtin/graphhelm-jpd"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "graphhelm-development-contracts",
+      "source": {
+        "source": "local",
+        "path": "./extensions/builtin/graphhelm-development-contracts"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

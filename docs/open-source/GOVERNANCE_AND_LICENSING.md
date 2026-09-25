@@ -183,11 +183,11 @@ The specific language may vary, but the boundaries must remain.
 1. issue/discussion for large changes;
 2. RFC when necessary;
 3. fork/branch;
-4. CLA check;
+4. confirm the contribution is authored by the contributor or is licensed for submission;
 5. tests/conformance;
 6. security/license scans;
 7. review by code owners;
-8. public CI;
+8. run the tests the change reaches and applicable Rust lints;
 9. merge with changelog;
 10. release notes.
 

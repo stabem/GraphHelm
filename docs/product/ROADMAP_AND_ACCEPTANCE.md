@@ -445,7 +445,7 @@ Mitigate with clear impact, waiver, rollback tools and incident correlation, wit
 
 ### 13.8 Open-source contribution friction
 
-Mitigate with a simple CLA, public governance and clear value for contributors.
+Mitigate with a short contributor guide, public governance, and clear value for contributors.
 
 ## 14. Documentation definition of done
 

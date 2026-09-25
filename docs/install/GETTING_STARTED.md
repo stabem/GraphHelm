@@ -9,9 +9,10 @@ are bash. The clean-host transcripts this page was checked against are
 [`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
 and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
-**What needs credentials and what does not.** The clone needs a GitHub account with access to
-the private repository (section 1). Nothing after the clone needs an account, an API key, a model
-provider, a database, or the network (the Studio's `npm ci` fetches packages once). Every execution below runs on fixtures. A run that calls a real model needs a
+**What needs credentials and what does not.** A public clone needs no GitHub account; while this
+repository remains private, cloning requires repository access. Nothing after the clone needs an
+account, an API key, a model provider, a database, or the network (the Studio's `npm ci` fetches
+packages once). Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and a credential; the one command that wires both is at the end of section 2,
 and [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) says what works
 without a provider and what changes when you add one.
@@ -85,13 +86,10 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
 
 ## 1. Build or install the binary
 
-**The repository is private.** Cloning needs access to `stabem/GraphHelm` — a GitHub invitation
-to your account — and an authenticated git. Either sign in with the GitHub CLI and clone through
-it (`gh auth login`, then `gh repo clone stabem/GraphHelm` in place of the `git clone` line
-below), or let `git clone` prompt and give your GitHub username with a personal access token as
-the password. Without access the clone stops at `fatal: could not read Username for
-'https://github.com'` (measured). The clean-machine run used a source archive of the commit
-instead of a clone and says so.
+Clone over HTTPS using the command below. Once the repository is public, an HTTPS read-only clone
+needs no GitHub account. SSH cloning requires a GitHub account with an authenticated key. While
+the repository remains private, either method requires an account with repository access.
+Contributors need a GitHub account to open issues and pull requests.
 
 ```powershell
 git clone https://github.com/stabem/GraphHelm.git

@@ -57,6 +57,8 @@ failures; initial commit and final diff. Count index construction, context compi
 watchdog calls and retries whenever the arm pays for them. Do not substitute a final-turn usage
 block for transcript-wide usage. If any usage source is missing or contradictory, mark the cost
 `INCOMPLETE` and do not compute a saving. Keep model spend separate from machine time; report both.
+Record preflight and agent-checkout seconds separately from agent session seconds. Each preflight
+observer uses its own exact-SHA source snapshot; only the agent checkout needs Git metadata.
 
 After the agent exits, first run the declared regression command on the submitted checkout and
 record it as `submittedSuite`. A red submitted suite blocks proven delivery, but a green one is

@@ -1,10 +1,13 @@
 """Focused contract tests for the token-bench verdict, not model behavior."""
 
+import argparse
 import importlib.util
 import subprocess
 import sys
 import uuid
 from pathlib import Path
+
+import pytest
 
 
 MODULE_PATH = Path(__file__).with_name("run.py")
@@ -216,6 +219,51 @@ def test_worktree_scratch_must_be_outside_repository(monkeypatch):
         assert "outside the repository" in str(exc)
     else:
         raise AssertionError("repository path was accepted as scratch")
+
+
+def test_evaluator_snapshot_has_exact_source_without_git_metadata(tmp_path, monkeypatch):
+    """Three preflight observers do not need costly git init/add/commit passes."""
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+    (source / "proof.bin").write_bytes(b"historical\x00source")
+    subprocess.run(["git", "add", "proof.bin"], cwd=source, check=True)
+    subprocess.run(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid",
+                    "commit", "-qm", "source"], cwd=source, check=True)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True,
+                         capture_output=True, text=True).stdout.strip()
+    committed = subprocess.run(["git", "show", f"{sha}:proof.bin"], cwd=source, check=True,
+                               capture_output=True).stdout
+    monkeypatch.setattr(runner, "REPO", source)
+    monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
+    snapshot = runner.make_snapshot("fixture", "preflight", sha)
+    assert (snapshot / "proof.bin").read_bytes() == committed
+    assert not (snapshot / ".git").exists()
+    agent = runner.make_worktree("fixture", "a", sha)
+    assert (agent / "proof.bin").read_bytes() == committed
+    assert (agent / ".git").is_dir()
+    assert subprocess.run(["git", "remote"], cwd=agent, check=True,
+                          capture_output=True, text=True).stdout == ""
+
+
+def test_missing_graphhelm_cli_stops_before_any_snapshot(tmp_path, monkeypatch):
+    """A missing executable once wasted six minutes on checkouts before a model could start."""
+    monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.delenv("TOKEN_BENCH_GRAPHHELM_CLI", raising=False)
+    monkeypatch.setattr(runner, "make_snapshot", lambda *_args: pytest.fail("snapshot started"))
+    with pytest.raises(SystemExit, match="TOKEN_BENCH_GRAPHHELM_CLI"):
+        runner.cmd_run(argparse.Namespace(task="1279", arm="b"))
+
+
+def test_nonlaunchable_graphhelm_file_stops_before_any_snapshot(tmp_path, monkeypatch):
+    """An existing but non-executable file must not trigger minutes of preflight work."""
+    fake = tmp_path / "graphhelm.txt"
+    fake.write_text("not an executable", encoding="utf-8")
+    monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setenv("TOKEN_BENCH_GRAPHHELM_CLI", str(fake))
+    monkeypatch.setattr(runner, "make_snapshot", lambda *_args: pytest.fail("snapshot started"))
+    with pytest.raises(SystemExit, match="not launchable"):
+        runner.cmd_run(argparse.Namespace(task="1279", arm="b"))
 
 
 def test_methodology_observer_requires_calls_card_and_persisted_signal(tmp_path, monkeypatch):

@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 TASKS = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))["tasks"]
 RESULTS = HERE / "results.jsonl"
-BENCH_VERSION = 9  # v9: observe the submitted suite before restoring independent test files.
+BENCH_VERSION = 10  # v10: check prerequisites early and avoid Git metadata in evaluator snapshots.
 KEEL_SKILL = REPO / "extensions" / "builtin" / "graphhelm-development-contracts" / "skills" / "keel" / "SKILL.md"
 
 COMMON_PREFIX = """This issue is OPEN and UNFIXED. This checkout is the only source of truth: do not consult
@@ -212,11 +212,9 @@ def scratch_root() -> Path:
     return root
 
 
-def make_worktree(task_id: str, arm: str, parent_sha: str) -> Path:
-    # NOT a git worktree: a worktree shares the repository's remote and every ref, so the
-    # agent can `git fetch origin main` and find the fix already landed (bench v1 did exactly
-    # that: "Already fixed. Nothing to do.", $1.14). The bench checkout is an archive of the
-    # parent commit inside a fresh repository with ONE commit and NO remote - it has no future.
+def make_snapshot(task_id: str, arm: str, parent_sha: str) -> Path:
+    # Evaluators need exact source bytes, not Git metadata. The agent gets a fresh one-commit
+    # repository from make_worktree; neither kind exposes refs containing the historical fix.
     name = f"tb-{task_id}-{arm}-{dt.datetime.utcnow():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
     base = scratch_root() / "checkouts"
     base.mkdir(parents=True, exist_ok=True)
@@ -226,12 +224,35 @@ def make_worktree(task_id: str, arm: str, parent_sha: str) -> Path:
     import io, tarfile
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:  # not the shell's tar: msys mangles Windows paths
         tar.extractall(wt)
+    return wt
+
+
+def make_worktree(task_id: str, arm: str, parent_sha: str) -> Path:
+    """Give the agent an isolated one-commit repository with no future refs or remote."""
+    wt = make_snapshot(task_id, arm, parent_sha)
     sh(["git", "init", "-q", "-b", "main"], cwd=wt)
     sh(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid", "-c", "commit.gpgsign=false",
         "add", "-A"], cwd=wt)
     sh(["git", "-c", "user.name=bench", "-c", "user.email=bench@invalid", "-c", "commit.gpgsign=false",
         "commit", "-qm", f"baseline: {parent_sha[:8]} (bench task {task_id})"], cwd=wt)
     return wt
+
+
+def validate_prerequisites(arm: str) -> dict:
+    """Reject missing launch inputs before creating expensive historical snapshots."""
+    scratch_root()
+    if arm in {"b", "c"}:
+        raw = os.environ.get("TOKEN_BENCH_GRAPHHELM_CLI")
+        if not raw or not Path(raw).is_file():
+            raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI must name an existing GraphHelm executable")
+        try:
+            version = subprocess.run([str(Path(raw).resolve()), "--version"], check=True,
+                                     text=True, capture_output=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI is not launchable") from exc
+        if not version.startswith("graphhelm "):
+            raise SystemExit("TOKEN_BENCH_GRAPHHELM_CLI did not identify as GraphHelm")
+    return claude_cli_identity()
 
 
 def remove_worktree(wt: Path) -> None:
@@ -618,25 +639,31 @@ def save_patch_artifact(task_id: str, arm: str, patch: str) -> tuple[str, str]:
 
 def cmd_run(a: argparse.Namespace) -> None:
     task = TASKS[a.task]
+    claude_cli = validate_prerequisites(a.arm)
+    preflight_start = time.monotonic()
     # Validate the study instrument before spending a model session. The parent must fail the
     # hidden acceptance, while its unchanged regression suite must pass.
-    preflight = make_worktree(a.task, "preflight", task["parentSha"])
-    oracle_preflight = make_worktree(a.task, "preflight-oracle", task["parentSha"])
-    fixed_preflight = make_worktree(a.task, "preflight-fixed", task["fixSha"])
+    snapshots = []
     try:
+        preflight = make_snapshot(a.task, "preflight", task["parentSha"])
+        snapshots.append(preflight)
+        oracle_preflight = make_snapshot(a.task, "preflight-oracle", task["parentSha"])
+        snapshots.append(oracle_preflight)
+        fixed_preflight = make_snapshot(a.task, "preflight-fixed", task["fixSha"])
+        snapshots.append(fixed_preflight)
         parent_regression, _, regression_tail = run_regression(preflight, task)
         parent_acceptance, _, _ = run_oracle(oracle_preflight, task)
         known_fix_acceptance, _, _ = run_oracle(fixed_preflight, task)
     finally:
-        remove_worktree(preflight)
-        remove_worktree(oracle_preflight)
-        remove_worktree(fixed_preflight)
+        for snapshot in snapshots:
+            remove_worktree(snapshot)
     if parent_acceptance == "PASS" or parent_regression != "PASS" or known_fix_acceptance != "PASS":
         raise SystemExit(
             f"invalid benchmark task {a.task}: parent acceptance={parent_acceptance}, "
             f"regression={parent_regression}, known-fix acceptance={known_fix_acceptance}\n"
             f"{regression_tail[-1000:]}"
         )
+    preflight_seconds = time.monotonic() - preflight_start
     prompt = COMMON_PREFIX + (HERE / task["prompt"]).read_text(encoding="utf-8")
     signal_path = None
     if a.arm in {"b", "c"}:
@@ -661,7 +688,9 @@ def cmd_run(a: argparse.Namespace) -> None:
     submitted_tail = ""
     code = None
     oracle_tail = ""
+    checkout_start = time.monotonic()
     wt = make_worktree(a.task, a.arm, task["parentSha"])
+    checkout_seconds = time.monotonic() - checkout_start
     print(f"[bench] task {a.task} arm {a.arm} worktree {wt}", flush=True)
     result = {"agentError": "agent_not_started"}
     wall = 0.0
@@ -672,9 +701,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     patch_artifact = None
     patch_digest = None
     evaluator_error = None
-    claude_cli = None
     try:
-        claude_cli = claude_cli_identity()
         runtime_context = isolated_runtime(wt, a.task, a.arm) if a.arm in {"b", "c"} else nullcontext((None, None))
         with runtime_context as (mcp_config, runtime_meta):
             mcp_digest = digest_file(mcp_config) if mcp_config else None
@@ -761,6 +788,8 @@ def cmd_run(a: argparse.Namespace) -> None:
                              else "not-proven"),
         },
         "wallSeconds": round(wall, 1),
+        "preflightSeconds": round(preflight_seconds, 1),
+        "checkoutSeconds": round(checkout_seconds, 1),
         "agentDurationMs": result.get("duration_ms"), "turns": result.get("num_turns"),
         "toolCalls": usage.get("toolCalls"), "toolNames": usage.get("toolNames"),
         "attempts": 1, "repairsObserved": None,

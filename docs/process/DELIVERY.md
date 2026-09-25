@@ -58,6 +58,10 @@ body.
   touched crate. Tests alone do not catch a lint: #1269 merged with passing tests and left `main`
   red under clippy until #1274. When `Cargo.toml`, `Cargo.lock` or a crate many others depend on
   changes, run the workspace form (`--workspace` instead of `-p`).
+- **A change to any Rust file also runs the workspace-wide source guards**, because they read every
+  crate's text and so are reached by any edit: `cargo +1.97.1 test --locked -p graphhelm-protocols
+  --test authored_strings_across_the_workspace` (about one second). #1281 added a string literal in
+  a test file, passed its crate's tests, and left `main` red on every platform until #1311.
 - Run tests from the **committed** head, not a dirty tree: a check that compares the branch with
   `main` (the freeze rule) sees nothing before the commit exists.
 - The verdict is a word in the comment text: `APPROVE`, `APPROVE-WITH-RISK` (name the risk) or

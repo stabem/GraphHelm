@@ -334,7 +334,17 @@ fn mcp_document(mine: Value, graphhelm: Option<Value>, note: u64) -> String {
     }
     serde_json::to_string(&json!({"mcpServers": servers, "note": note})).unwrap()
 }
-const MCP_ORIGINAL: &[u8] = b"{\n  \"mcpServers\": {\n    \"mine\": {\"command\": \"my-server\", \"args\": [\"--x\"]}\n  },\n  \"note\": 1\n}\n";
+/// A user's own pretty-printed `.mcp.json`. The indentation is the point (restore must return these
+/// exact bytes), so it is built from `pad` rather than written as whitespace runs inside a literal,
+/// which the workspace authored-strings guard refuses.
+fn mcp_original() -> Vec<u8> {
+    let pad = " ".repeat(2);
+    let deep = " ".repeat(4);
+    format!(
+        "{{\n{pad}\"mcpServers\": {{\n{deep}\"mine\": {{\"command\": \"my-server\", \"args\": [\"--x\"]}}\n{pad}}},\n{pad}\"note\": 1\n}}\n"
+    )
+    .into_bytes()
+}
 fn mine() -> Value {
     json!({"command":"my-server","args":["--x"]})
 }
@@ -342,13 +352,13 @@ fn assert_mcp_refused(after: &str) {
     let p = tempfile::tempdir().unwrap();
     let h = tempfile::tempdir().unwrap();
     let s = private_state();
-    write(p.path(), ".mcp.json", MCP_ORIGINAL);
+    write(p.path(), ".mcp.json", &mcp_original());
     let value = surface_plan(
         p.path(),
         h.path(),
         "project",
         ".mcp.json",
-        MCP_ORIGINAL,
+        &mcp_original(),
         after,
     );
     assert_eq!(
@@ -366,7 +376,7 @@ fn assert_mcp_refused(after: &str) {
     );
     assert_eq!(
         std::fs::read(p.path().join(".mcp.json")).unwrap(),
-        MCP_ORIGINAL
+        mcp_original()
     );
 }
 
@@ -386,14 +396,14 @@ fn mcp_registration_changes_only_the_graphhelm_entry_and_restores() {
     let p = tempfile::tempdir().unwrap();
     let h = tempfile::tempdir().unwrap();
     let s = private_state();
-    write(p.path(), ".mcp.json", MCP_ORIGINAL);
+    write(p.path(), ".mcp.json", &mcp_original());
     let registered = mcp_document(mine(), Some(init_registration()), 1);
     let value = surface_plan(
         p.path(),
         h.path(),
         "project",
         ".mcp.json",
-        MCP_ORIGINAL,
+        &mcp_original(),
         &registered,
     );
     graphhelm_host_adoption::apply(
@@ -411,7 +421,7 @@ fn mcp_registration_changes_only_the_graphhelm_entry_and_restores() {
     assert_eq!(restore_original(s.path())["spec"]["state"], "restored");
     assert_eq!(
         std::fs::read(p.path().join(".mcp.json")).unwrap(),
-        MCP_ORIGINAL
+        mcp_original()
     );
 }
 

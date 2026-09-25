@@ -29,6 +29,8 @@ import { clock, hueOf, initialOf, readable, runLabel, verdictOf } from "./format
 export interface Project {
   /** The folder's name. Today: the Runtime's own store. */
   name: string;
+  /** The real source folder, when the local session can identify it. */
+  path?: string | null;
   runs: ExecutionSummary[];
 }
 
@@ -147,6 +149,9 @@ export function ProjectRail({
               >
                 <Plus aria-hidden="true" />
               </button>
+            </div>
+            <div className="project-path" title={project.path ?? "Project folder path unavailable"}>
+              {project.path ?? "Project folder path unavailable"}
             </div>
 
             <div className="project-runs">

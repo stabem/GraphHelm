@@ -31,6 +31,8 @@ export interface DevSession {
   /** What to call the folder this Runtime serves, when the operator named it
    * (`GRAPHHELM_PROJECT`). `null` leaves the rail saying what it can honestly say. */
   project: string | null;
+  /** The absolute source folder, when the local launcher can identify it. */
+  projectPath?: string | null;
 }
 
 export async function devSession(
@@ -68,11 +70,14 @@ export async function devSession(
 
   const project = (payload as { project?: unknown }).project;
   const named = typeof project === "string" ? project.trim() : "";
+  const projectPath = (payload as { projectPath?: unknown }).projectPath;
+  const folder = typeof projectPath === "string" ? projectPath.trim() : "";
   return {
     token: trimmed,
     // Bounded and rendered as text: it is a label from the operator's own environment, but it
     // reaches the DOM and nothing else validates it.
     project: named.length > 0 && named.length <= 120 ? named : null,
+    projectPath: folder.length > 0 && folder.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(folder) ? folder : null,
   };
 }
 

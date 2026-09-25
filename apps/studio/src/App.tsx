@@ -133,6 +133,7 @@ export default function App({
   const [connected, setConnected] = useState(false);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
   const [projectIdentity, setProjectIdentity] = useState<string | null>(null);
   const [removedRuns, setRemovedRuns] = useState<string[]>([]);
   const removedRunsRef = useRef<string[]>([]);
@@ -1266,7 +1267,7 @@ export default function App({
   const connectionGeneration = useRef(0);
 
   const connect = useCallback(
-    async (token: string, knownProject?: string | null) => {
+    async (token: string, knownProject?: string | null, knownProjectPath?: string | null) => {
       connectionAttempted.current = true;
       const generation = ++connectionGeneration.current;
       setConnecting(true);
@@ -1278,13 +1279,16 @@ export default function App({
         // A manual reconnect must establish its public identity again. A different bearer
         // cannot inherit the previous Runtime's browser preferences merely by sharing a tab.
         let identity = knownProject;
+        let folder = knownProjectPath ?? null;
         if (identity === undefined) {
           const opened = await (session ?? devSession)().catch(() => null);
           identity = opened?.token === token ? opened.project : null;
+          folder = opened?.token === token ? opened.projectPath ?? null : null;
         }
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
         setProjectIdentity(identity);
         setProject(identity === null ? null : loadProjectName(`${location.origin}:${identity}`, identity));
+        setProjectPath(folder);
         const removed = identity === null ? [] : loadRemovedRuns(`${location.origin}:${identity}`);
         removedRunsRef.current = removed;
         setRemovedRuns(removed);
@@ -1336,7 +1340,7 @@ export default function App({
       // operator typed a token faster than the dev endpoint answered - this continuation
       // discards itself instead of starting a second connection over the manual one.
       if (cancelled || opened === null || connectionAttempted.current) return;
-      await connectRef.current(opened.token, opened.project);
+      await connectRef.current(opened.token, opened.project, opened.projectPath);
     })();
     return () => {
       cancelled = true;
@@ -1371,6 +1375,7 @@ export default function App({
     setBusy(false);
     setConnected(false);
     setProject(null);
+    setProjectPath(null);
     setProjectIdentity(null);
     setRemovedRuns([]);
     removedRunsRef.current = [];
@@ -1906,7 +1911,7 @@ export default function App({
   return (
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
-        projects={[{ name: project ?? "this runtime", runs: visibleExecutions }]}
+        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions }]}
         selected={selected}
         connected={connected}
         stale={stale}

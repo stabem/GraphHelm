@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig, loadEnv, type Plugin } from "vite";
@@ -15,6 +15,18 @@ function tokenPath(env: Record<string, string>): string | null {
   // allowlist. Mirrored here rather than guessed.
   const events = env.GRAPHHELM_EVENTS.replace(/[\\/]+$/, "");
   return join(dirname(events), `${basename(events)}.token`);
+}
+
+/** Only an explicit path or the conventional project/.graphhelm/events layout identifies a
+ * project folder. An arbitrary event store is not evidence of its owning source tree. */
+function projectFolder(env: Record<string, string>): string | null {
+  const explicit = (env.GRAPHHELM_PROJECT_PATH || "").trim();
+  if (explicit) return isAbsolute(explicit) ? resolve(explicit) : null;
+  const events = (env.GRAPHHELM_EVENTS || "").replace(/[\\/]+$/, "");
+  if (!events || !isAbsolute(events) || basename(events).toLowerCase() !== "events") return null;
+  const metadata = dirname(events);
+  if (basename(metadata).toLowerCase() !== ".graphhelm") return null;
+  return dirname(metadata);
 }
 
 /**
@@ -40,7 +52,7 @@ function tokenPath(env: Record<string, string>): string | null {
  * operator's own machine; the production bundle has no such route, and a page served from one
  * falls back to asking for the token.
  *
- * The reply carries the token and NOTHING else — no path, no directory name, no error detail. A
+ * The reply carries the token and the operator's project folder only behind the nonce gate. A
  * missing or unreadable file, like a missing or wrong nonce, is a plain 404: the page then shows
  * its connect screen, which is the correct outcome and not a diagnostic surface.
  */
@@ -100,11 +112,16 @@ function devSession(env: Record<string, string>): Plugin {
           return;
         }
         response.statusCode = 200;
-        // The project NAME, never its path. The rail needs something to call the folder; a
-        // filesystem path on screen is a disclosure with no reader who benefits. Named
-        // explicitly by the operator rather than guessed from the directory layout: a guess
-        // that is wrong puts the wrong label on somebody's work.
-        response.end(JSON.stringify({ ok: true, token, project: env.GRAPHHELM_PROJECT || null }));
+        // This nonce-gated local session may show the source folder because the operator needs
+        // to distinguish projects. Only the conventional layout or an explicit path identifies
+        // it; an arbitrary event store is never guessed into a source folder.
+        const folder = projectFolder(env);
+        response.end(JSON.stringify({
+          ok: true,
+          token,
+          project: env.GRAPHHELM_PROJECT || (folder === null ? null : basename(folder)),
+          projectPath: folder,
+        }));
       });
     },
   };

@@ -447,6 +447,16 @@ describe("opening", () => {
 });
 
 describe("the projects rail", () => {
+  it("shows the real folder under the project name when the local session supplies it", async () => {
+    render(<App
+      createClient={() => stubClient() as unknown as RuntimeClient}
+      modelContext={null}
+      session={async () => ({ token: "local-token", project: "ml-saas", projectPath: "F:/github/ml-saas" })}
+    />);
+    const rail = await screen.findByLabelText("Projects");
+    expect(within(rail).getByText("ml-saas")).toBeVisible();
+    expect(within(rail).getByText("F:/github/ml-saas")).toBeVisible();
+  });
   /** A project is a FOLDER and the runs live inside it. The rail says how many projects there
    * really are rather than implying a hierarchy the Runtime cannot back. */
   it("lists the folder, its tasks, and the way to add another folder", async () => {

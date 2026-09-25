@@ -202,9 +202,9 @@ pub(super) enum ManifestReadError {
 /// The provider's own refusals all come back as `KeyError::Storage`, which the user sees as "the
 /// keyring could not be used" with no cause (#1305). So the refusals a user can fix are named here,
 /// before the provider runs: a symlink (never followed, on any platform) and, on Unix, a directory
-/// owned by another user or an existing keyring whose directory is not mode `0700`. A directory
-/// that is merely `0755` and holds no keyring yet is NOT refused: `SealedKeyProvider::create`
-/// tightens it to `0700` itself.
+/// owned by another user, an existing keyring whose directory is not mode `0700`, and any other
+/// directory that is not `0700` and is not empty or lacks owner `rwx`. An EMPTY directory that is
+/// merely `0755` is NOT refused: `SealedKeyProvider::create` tightens it to `0700` itself.
 pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
     let named = std::fs::symlink_metadata(path)
         .map_err(|_| credential_error("the keyring directory does not exist", "/keyring"))?;
@@ -237,6 +237,20 @@ pub(super) fn require_keyring_directory(path: &Path) -> Result<(), Failure> {
         if metadata.mode() & 0o7777 != 0o700 && path.join("keyring.v1.json").exists() {
             return Err(credential_error(
                 "the keyring directory holds a keyring but is not mode 0700 (owner-only); an existing keyring is never repaired, so check who could read it, then run chmod 700 on the directory",
+                "/keyring",
+            ));
+        }
+        // What `SealedKeyProvider::create` will not tighten: a directory that already holds
+        // anything (it never chmods somebody's existing directory, `--keyring ~` included), or
+        // one whose owner bits are not `rwx` (it never adds a bit). Both are refused by the
+        // provider through its own handle; this path read only names the rule for the user.
+        let mode = metadata.mode() & 0o7777;
+        let not_empty = std::fs::read_dir(path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(true);
+        if mode != 0o700 && (mode & 0o700 != 0o700 || not_empty) {
+            return Err(credential_error(
+                "the keyring directory must be owned by the user running graphhelm and be mode 0700 (owner-only)",
                 "/keyring",
             ));
         }

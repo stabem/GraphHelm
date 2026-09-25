@@ -303,6 +303,9 @@ fn corrupt_truncated_and_reordered_journal_fail_closed() {
 #[test]
 fn keyring_authentication_no_overwrite_and_temp_cleanup_are_fail_closed() {
     let directory = TempDir::new().unwrap();
+    // A crash leftover can only exist in a directory `create` already made owner-only, and
+    // `create` never tightens a directory that holds anything.
+    set_owner_only_directory(directory.path());
     fs::write(
         directory.path().join(KEYRING_TEMP_FILE),
         b"partial crash bytes",
@@ -336,6 +339,10 @@ fn keyring_authentication_no_overwrite_and_temp_cleanup_are_fail_closed() {
 #[test]
 fn keyring_destination_symlink_is_never_followed() {
     let directory = TempDir::new().unwrap();
+    // Owner-only first: `create` only tightens an EMPTY directory, and this one is about to hold
+    // the target and the link, so without this it would stop at `KeyError::Storage` on Unix
+    // before ever reaching the keyring name.
+    set_owner_only_directory(directory.path());
     let target = directory.path().join("attacker-target");
     fs::write(&target, b"do-not-overwrite").unwrap();
     let link = directory.path().join(KEYRING_FILE);
@@ -702,6 +709,52 @@ fn create_tightens_an_owned_0755_directory_to_0700() {
 
     assert_eq!(unix_mode(&root), 0o700);
     assert_eq!(reopen(&root, 87).epoch().unwrap(), 0);
+}
+
+/// Only an EMPTY directory is tightened. One that already holds anything (here an unrelated file)
+/// is somebody's directory, not a fresh keyring: `--keyring ~` must not chmod a home directory.
+/// It is refused as before #1305, and its mode and contents are left exactly as they were.
+#[cfg(unix)]
+#[test]
+fn a_non_empty_0755_directory_is_refused_and_left_untouched() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("home");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("notes.txt"), b"unrelated").unwrap();
+    set_unix_mode(&root, 0o755);
+
+    assert_eq!(
+        key_error(SealedKeyProvider::create(
+            &root,
+            "local-key-v1",
+            SecretBytes::new(key_material(91)),
+        )),
+        KeyError::Storage
+    );
+    assert_eq!(unix_mode(&root), 0o755);
+    assert!(!root.join(LOCK_FILE).exists());
+    assert!(!root.join(KEYRING_FILE).exists());
+    assert_eq!(fs::read(root.join("notes.txt")).unwrap(), b"unrelated");
+}
+
+/// No permission bit is ever added. An empty `0500` directory lacks the owner write bit; the
+/// narrowed mode (`0500 & 0700`) is not `0700`, so it is refused rather than widened.
+#[cfg(unix)]
+#[test]
+fn a_0500_directory_is_refused_and_not_widened() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("keyring");
+    fs::create_dir(&root).unwrap();
+    set_unix_mode(&root, 0o500);
+
+    let result =
+        SealedKeyProvider::create(&root, "local-key-v1", SecretBytes::new(key_material(92)));
+    let mode = unix_mode(&root);
+    // Restore write access before asserting so `TempDir` can always clean up.
+    set_unix_mode(&root, 0o700);
+
+    assert_eq!(key_error(result), KeyError::Storage);
+    assert_eq!(mode, 0o500);
 }
 
 /// A keyring path that is itself a symlink stays refused, and the tightening never reaches the

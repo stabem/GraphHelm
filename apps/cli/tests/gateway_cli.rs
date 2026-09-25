@@ -1041,3 +1041,45 @@ fn a_route_written_disabled_is_listed_and_says_so() {
     assert!(listed.status.success(), "{}", combined_output(&listed));
     assert_eq!(json(&listed.stdout)["data"]["routes"][0]["enabled"], false);
 }
+
+/// #1305 follow-up: `gateway keyring init --keyring ~` must not chmod a home directory. A
+/// directory that is not `0700` and already holds anything is refused with the message naming
+/// the `0700` rule, and its mode is left as it was.
+#[cfg(unix)]
+#[test]
+fn keyring_init_refuses_a_non_empty_0755_directory_naming_the_0700_rule() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let keyring_dir = directory.path().join("home");
+    std::fs::create_dir_all(&keyring_dir).unwrap();
+    std::fs::write(keyring_dir.join("notes.txt"), b"unrelated").unwrap();
+    std::fs::set_permissions(&keyring_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = command()
+        .args(["gateway", "keyring", "init", "--keyring"])
+        .arg(&keyring_dir)
+        .args(["--key-id", "studio"])
+        .env("GRAPHHELM_EVENTS_KEY", passphrase())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let value = json(&output.stdout);
+    assert_eq!(
+        value["diagnostics"][0]["code"], "GHCLI010_GATEWAY_CREDENTIAL",
+        "{value}"
+    );
+    assert!(
+        value["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("mode 0700 (owner-only)"),
+        "{value}"
+    );
+    let mode = std::fs::metadata(&keyring_dir)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o755);
+}

@@ -777,18 +777,25 @@ fn open_directory_handle(
     Ok((path, file))
 }
 
-/// The Unix half of what `create` does on Windows with `apply_windows_protected_dacl`: a directory
-/// the caller owns is narrowed to `0700` before it is validated, so `mkdir keyring` (umask `0755`)
-/// followed by `create` works instead of failing with `KeyError::Storage` (#1305).
+/// The Unix half of what `create` does on Windows with `apply_windows_protected_dacl`: an EMPTY
+/// directory the caller owns is narrowed to `0700` before it is validated, so `mkdir keyring`
+/// (umask `0755`) followed by `create` works instead of failing with `KeyError::Storage` (#1305).
 ///
 /// - The mode is changed with `fchmod` on the descriptor `open_directory_handle` already opened
 ///   component by component with `O_NOFOLLOW`, never on a path: a path swapped after the open is
-///   not the one changed, and `verify_root_path` then refuses the swap.
+///   not the one changed, and `verify_root_path` then refuses the swap. Emptiness is read through
+///   that same descriptor (see [`directory_is_empty`]), never by path.
+/// - Only an empty directory is changed. A directory that already holds anything is somebody's
+///   directory, not a fresh keyring: `--keyring ~` must not chmod a home directory. It is left
+///   untouched and `validate_secure_directory` refuses it with `KeyError::Storage`, as before
+///   #1305. That covers an existing keyring whose directory was loosened after the fact too: it is
+///   refused rather than silently repaired, because the loosening may already have exposed it, and
+///   `open` keeps the same strict check.
+/// - No permission bit is ever added: the new mode is the current mode masked to the owner bits.
+///   A directory whose owner bits are not `rwx` (a `0500` one, say) is left untouched and refused.
+///   `create` needs to write there, so the only way to make it work would be to grant the owner a
+///   bit the owner withheld.
 /// - A directory owned by another user is left untouched; `validate_secure_directory` refuses it.
-/// - A directory that already holds a keyring is left untouched too. `create` refuses it anyway
-///   (`KeyError::Conflict`), and `open` keeps the strict check: a keyring whose directory was
-///   loosened after the fact is refused rather than silently repaired, because the loosening may
-///   already have exposed it.
 ///
 /// Returns the metadata read back from the descriptor after the change, which the caller
 /// validates as before.
@@ -798,46 +805,102 @@ fn tighten_owned_directory(handle: &File, metadata: Metadata) -> Result<Metadata
 
     // SAFETY: `geteuid` has no preconditions.
     let effective_uid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.uid() != effective_uid || metadata.mode() & 0o7777 == 0o700 {
+    let mode = metadata.mode() & 0o7777;
+    let narrowed = mode & 0o700;
+    if !metadata.is_dir() || metadata.uid() != effective_uid || mode == 0o700 || narrowed != 0o700 {
         return Ok(metadata);
     }
-    if regular_child_exists(handle, keyring::KEYRING_FILE)? {
+    if !directory_is_empty(handle)? {
         return Ok(metadata);
     }
     // SAFETY: `handle` owns a live directory descriptor for the duration of the call.
-    if unsafe { libc::fchmod(handle.as_raw_fd(), 0o700) } != 0 {
+    if unsafe { libc::fchmod(handle.as_raw_fd(), narrowed as libc::mode_t) } != 0 {
         return Err(KeyError::Storage);
     }
     handle.metadata().map_err(|_| KeyError::Storage)
 }
 
-/// Whether `root` has a regular file called `name`, read without following it. Anything else under
-/// that name (a symlink, say) is not a keyring: the directory is tightened, and the keyring check
-/// that follows refuses the entry with `KeyError::Integrity`.
+/// Whether the directory `root` holds no entry besides `.` and `..`. Read through an independent
+/// open file description of `root` itself (`openat(root, ".")`), so the answer is about the
+/// directory the descriptor already holds, not about whatever a path names now. A read failure is
+/// an error, never an empty directory: `errno` is cleared before every `readdir`, because POSIX
+/// returns the same null for the end of the stream and for a failure.
 #[cfg(unix)]
-fn regular_child_exists(root: &File, name: &str) -> Result<bool, KeyError> {
-    use std::{ffi::CString, mem::MaybeUninit, os::fd::AsRawFd};
-    validate_child_name(name)?;
-    let name = CString::new(name).map_err(|_| KeyError::Invalid)?;
-    let mut stat = MaybeUninit::<libc::stat>::zeroed();
-    // SAFETY: `root`, `name`, and the output storage are live for the call.
-    if unsafe {
-        libc::fstatat(
+fn directory_is_empty(root: &File) -> Result<bool, KeyError> {
+    use std::{ffi::CStr, os::fd::AsRawFd};
+
+    // SAFETY: `root` is a live directory descriptor and the name is a NUL-terminated literal.
+    let duplicate = unsafe {
+        libc::openat(
             root.as_raw_fd(),
-            name.as_ptr(),
-            stat.as_mut_ptr(),
-            libc::AT_SYMLINK_NOFOLLOW,
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
-    } == 0
+    };
+    if duplicate < 0 {
+        return Err(KeyError::Storage);
+    }
+    // SAFETY: `fdopendir` takes ownership of `duplicate` on success.
+    let stream = unsafe { libc::fdopendir(duplicate) };
+    if stream.is_null() {
+        // SAFETY: `fdopendir` failed and did not take ownership of the descriptor.
+        unsafe { libc::close(duplicate) };
+        return Err(KeyError::Storage);
+    }
+    let result = (|| {
+        loop {
+            // SAFETY: the helper returns this thread's errno cell, or null on an unlisted target.
+            let errno = unsafe { unix_errno_location() };
+            if errno.is_null() {
+                return Err(KeyError::Storage);
+            }
+            // SAFETY: `errno` is this thread's live errno cell.
+            unsafe { *errno = 0 };
+            // SAFETY: `stream` stays live until it is closed below.
+            let entry = unsafe { libc::readdir(stream) };
+            if entry.is_null() {
+                // SAFETY: no call intervened between `readdir` and this read of errno.
+                return if unsafe { *errno } == 0 {
+                    Ok(true)
+                } else {
+                    Err(KeyError::Storage)
+                };
+            }
+            // SAFETY: `d_name` is NUL-terminated for the live entry `readdir` returned.
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if !matches!(name, b"." | b"..") {
+                return Ok(false);
+            }
+        }
+    })();
+    // SAFETY: `stream` is live and closed exactly once; closing it closes `duplicate`.
+    if unsafe { libc::closedir(stream) } != 0 {
+        return Err(KeyError::Storage);
+    }
+    result
+}
+
+/// This thread's `errno` cell, or null on a target not listed here (the caller then fails
+/// closed). A subset of `unix_errno_location` in `core/events/src/local.rs`.
+#[cfg(unix)]
+#[allow(unreachable_code)]
+unsafe fn unix_errno_location() -> *mut libc::c_int {
+    #[cfg(any(target_os = "linux", target_os = "dragonfly"))]
     {
-        // SAFETY: successful `fstatat` initialized the complete structure.
-        let stat = unsafe { stat.assume_init() };
-        return Ok(stat.st_mode & libc::S_IFMT == libc::S_IFREG);
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__errno_location() };
     }
-    match std::io::Error::last_os_error().raw_os_error() {
-        Some(libc::ENOENT) => Ok(false),
-        _ => Err(KeyError::Storage),
+    #[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__errno() };
     }
+    #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+    {
+        // SAFETY: libc exposes the current thread's errno cell on these targets.
+        return unsafe { libc::__error() };
+    }
+    std::ptr::null_mut()
 }
 
 fn validate_secure_directory(metadata: &Metadata) -> Result<(), KeyError> {

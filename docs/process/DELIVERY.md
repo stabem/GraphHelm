@@ -12,7 +12,9 @@ repository; see [source provenance](../open-source/SOURCE_PROVENANCE.md).
 ## 1. Issue
 
 Every change starts from a GitHub issue. The branch is `issue-<N>-<short-kebab-description>`.
-New issues carry exactly one label: `current-wave`, `in-flight`, `tech-debt` or `product-vision`.
+New community issues receive `needs-triage`. A maintainer assigns exactly one workflow label:
+`current-wave`, `in-flight`, `tech-debt`, or `product-vision`, removing `needs-triage` when the
+issue is classified. Maintainer-created issues may start with their workflow label.
 
 ## 2. Keel card
 

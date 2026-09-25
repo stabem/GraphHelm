@@ -36,6 +36,21 @@ describe("organized work overview", () => {
     fireEvent.click(screen.getByRole("button",{name:/codex \+ helper/}));
     expect(select).toHaveBeenCalledWith("pair");
   });
+  it("shows recorded messages even while no graph node is active", () => {
+    render(<WorkOverview model={model} crew={[{id:"codex",charter:null,lastAt:"2026-09-25T17:00:00Z"}]} talks={[{key:"room",label:"everyone",participants:["codex"],count:1,lastAt:"2026-09-25T17:00:00Z",preview:"Checking the failing flow"}]} activity={[{sequence:39,actorId:"codex",occurredAt:"2026-09-25T17:00:00Z",text:"Checking the failing flow"}]} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByText("0 active nodes")).toBeInTheDocument();
+    const activity = screen.getByRole("region", {name:"Recent recorded activity"});
+    expect(activity).toHaveTextContent("codex");
+    expect(activity).toHaveTextContent("event #39");
+    expect(activity).toHaveTextContent("Checking the failing flow");
+    expect(screen.getByText("No node activity yet")).toBeInTheDocument();
+    expect(screen.getByText("Last recorded message or event", {exact:false})).toBeInTheDocument();
+    expect(screen.getByText("Checking the failing flow", {selector:".work-talk-preview"})).toBeInTheDocument();
+  });
+  it("marks sealed or unavailable message content without inventing progress", () => {
+    render(<WorkOverview model={model} activity={[{sequence:40,actorId:"reviewer",occurredAt:null,text:null}]} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("region", {name:"Recent recorded activity"})).toHaveTextContent("Message content unavailable");
+  });
 });
 
 /** #1083 F9: a completed demonstration run carried `Evidence needs attention · 6 findings` in

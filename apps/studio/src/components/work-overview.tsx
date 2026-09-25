@@ -14,12 +14,14 @@ import { moodOf, splitLint } from "../graph/model";
 import { ago, hueOf, initialOf, readable } from "./format";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
-type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null };
+type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
+type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
 
 export interface WorkOverviewProps {
   model: GraphModel;
   crew?: CrewMember[];
   talks?: Talk[];
+  activity?: RecordedActivity[];
   selectedNode: string | null;
   onSelectNode: (nodeId: string | null) => void;
   selectedAgent?: string | null;
@@ -84,6 +86,7 @@ export function WorkOverview({
   model,
   crew = [],
   talks = [],
+  activity = [],
   selectedNode,
   onSelectNode,
   selectedAgent = null,
@@ -124,7 +127,7 @@ export function WorkOverview({
         </div>
         <div className="work-counts" aria-label="Workspace counts">
           <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} nodes{!model.rosterDeclared && " seen so far"}</span>
-          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active</span>
+          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active nodes</span>
           <span><Users aria-hidden="true" size={15} /> {crew.length} agents</span>
           <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
@@ -139,6 +142,16 @@ export function WorkOverview({
         * keeps the attention banner, counted on its own. */}
       {lint.expected.length > 0 && <section className="work-note" aria-label="Log notes on a demonstration run"><details><summary>Demonstration run · {lint.expected.length} log note{lint.expected.length === 1 ? "" : "s"}</summary><p>Outcomes on this run were supplied by a fixture file, not produced by a model or a tool, so the log holds no evidence for them. These notes are expected here.</p><ul>{lint.expected.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
       {lint.disagreements.length > 0 && <section className="work-caution" aria-label="Disagreements in the event log"><details><summary>Evidence needs attention · {lint.disagreements.length} finding{lint.disagreements.length === 1 ? "" : "s"}</summary><ul>{lint.disagreements.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
+
+      <section className="work-activity" aria-label="Recent recorded activity">
+        <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Recent recorded activity</h2></div><span>Messages in the event log</span></div>
+        {activity.length === 0 ? <p className="work-empty">No messages recorded in this run yet.</p> : (
+          <ol className="work-activity-list">{activity.map((item) => <li key={item.sequence}>
+            <div className="work-activity-meta"><strong>{item.actorId ?? "Unknown actor"}</strong><span>{ago(item.occurredAt)} · event #{item.sequence}</span></div>
+            <p>{item.text ?? "Message content unavailable"}</p>
+          </li>)}</ol>
+        )}
+      </section>
 
       <div className="work-layout">
         <aside className="work-sidebar" aria-label="Collaboration">
@@ -166,11 +179,12 @@ export function WorkOverview({
                       <span className="work-agent-copy">
                         <span className="work-agent-id">{agent.id}</span>
                         <span className="work-observed">
-                          <span>Last observed</span>
+                          <span>Last node update</span>
                           {observation ? (
                             <><strong>{observation.node.id}</strong><small>{ago(observation.at)}</small></>
                           ) : <strong className="work-muted">No node activity yet</strong>}
                         </span>
+                        {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
                       </span>
                     </button>
                   );
@@ -202,6 +216,8 @@ export function WorkOverview({
                       <span className="work-talk-copy">
                         <strong>{talk.label}</strong>
                         <span>{talk.participants.length > 0 ? talk.participants.join(", ") : "Everyone"}</span>
+                        {talk.preview && <span className="work-talk-preview">{talk.preview}</span>}
+                        {talk.lastAt && <span>Last message · {ago(talk.lastAt)}</span>}
                       </span>
                       <span className="work-talk-count">{talk.count}</span>
                     </button>

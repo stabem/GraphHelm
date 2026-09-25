@@ -1217,13 +1217,23 @@ export default function App({
       // shows page one and the selected run loads by id regardless of which page held it.
       const visible = (row: ExecutionSummary) => !removedRunsRef.current.includes(row.executionId);
       let firstVisible = page.executions.find(visible);
-      let candidate = page.executions.find((row) => visible(row) && row.attention === "needs_you");
+      // The first page may contain several runs needing attention. Open the one whose log
+      // changed most recently, so a quiet old run does not hide the conversation in progress.
+      const mostRecentNeedsYou = (rows: ExecutionSummary[]) => rows
+        .filter((row) => visible(row) && row.attention === "needs_you")
+        .reduce<ExecutionSummary | undefined>((best, row) => {
+          if (best === undefined) return row;
+          const at = row.lastEventAt ? Date.parse(row.lastEventAt) : NaN;
+          const bestAt = best.lastEventAt ? Date.parse(best.lastEventAt) : NaN;
+          return Number.isFinite(at) && (!Number.isFinite(bestAt) || at > bestAt) ? row : best;
+        }, undefined);
+      let candidate = mostRecentNeedsYou(page.executions);
       let cursor = page.hasMore ? page.nextCursor : null;
       for (let hops = 0; candidate === undefined && cursor !== null && hops < 50; hops += 1) {
         const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
         if (clientRef.current !== client) return;
         firstVisible ??= next.executions.find(visible);
-        candidate = next.executions.find((row) => visible(row) && row.attention === "needs_you");
+        candidate = mostRecentNeedsYou(next.executions);
         cursor = next.hasMore ? next.nextCursor : null;
       }
       const first = candidate ?? firstVisible;
@@ -1625,6 +1635,16 @@ export default function App({
   // and your DIRECT LINE with one agent (behind that agent's own blob, not here). Each room and
   // pair becomes a bubble standing on the board.
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
+  const recentActivity = useMemo(() => eventList
+    .filter((event) => event.kind === "signal_recorded")
+    .slice(-5)
+    .reverse()
+    .map((event) => ({
+      sequence: event.sequence,
+      actorId: event.actorId,
+      occurredAt: event.occurredAt,
+      text: envelopes[event.sequence]?.text?.trim().slice(0, 220) || null,
+    })), [eventList, envelopes]);
   const { roomEvents, pairTalks, talks } = useMemo(() => {
     const spoken = eventList.filter(
       (event) =>
@@ -2350,6 +2370,7 @@ export default function App({
               busy={busy}
               runId={selected === "" ? undefined : selected}
               crew={crew}
+              activity={recentActivity}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
               onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
               onCanvasChange={setCanvasMode}

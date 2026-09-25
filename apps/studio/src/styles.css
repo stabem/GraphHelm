@@ -2333,6 +2333,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
 .work-note p { margin: 8px 0 0; }
 .work-note ul { margin: 8px 0 0; padding-left: 18px; }
+.work-activity { margin: 0 0 24px; padding: 16px; border: 1px solid #38383f; border-radius: 14px; background: #1d1d21; }
+.work-activity-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.work-activity-list li { padding: 10px 12px; border: 1px solid #34343b; border-radius: 9px; background: #25252a; }
+.work-activity-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11px; }
+.work-activity-meta strong { color: #e2d4ff; overflow-wrap: anywhere; }
+.work-activity-meta span { color: #a5a5b2; }
+.work-activity-list p { margin: 5px 0 0; color: #d2d2da; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .work-node-heading { min-height: 22px; }
 .work-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .work-section-heading > div { display: flex; align-items: center; gap: 8px; }
@@ -2353,6 +2360,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-talk-faces span { width: 23px; height: 23px; margin-top: -3px; border: 2px solid #1d1d20; border-radius: 8px; display: grid; place-items: center; color: white; font-size: 10px; }
 .work-related { border-color: #8c70bb; background: #282230; }
 .work-talk-copy > span { color: #a2a2af; font-size: 11px; overflow-wrap: anywhere; }
+.work-talk-copy .work-talk-preview { color: #d0c9dc; }
 .work-talk-count { background: #35313f; color: #d4c3ff; border-radius: 6px; padding: 2px 6px; font-size: 11px; }
 .work-main { min-width: 0; }
 .work-node-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; align-items: start; }

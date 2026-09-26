@@ -2173,7 +2173,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .topstrip { align-items: center; padding: 12px; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--edge); }
 .topstrip .strip-card { padding: 8px 10px; border-radius: 10px; }
 .topstrip .run-name { font-size: 14px; overflow-wrap: anywhere; }
-.topstrip .right { flex-shrink: 0; }
+/* WebMCP can expose many tools. Keep their status rail inside the header instead of letting its
+   intrinsic width crush the run-name button to one character per line. */
+.topstrip .strip-card:not(.right) { flex: 1 1 0; min-width: 0; }
+.topstrip .run-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.topstrip .right { flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; max-width: min(42%, 400px); }
+.topstrip .toolchips { min-width: 0; max-width: 220px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
+.topstrip .toolchips span { flex-shrink: 0; }
 .mobile-toggle { flex-shrink: 0; min-width: 36px; min-height: 36px; }
 .projects-toggle { color: var(--dim); }
 .conversation-toggle { color: var(--dim); }
@@ -2286,7 +2292,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .topstrip { flex-wrap: wrap; padding: 8px; gap: 6px; }
   .topstrip .strip-card { padding: 6px 8px; }
   .topstrip .strip-card:first-of-type { flex-basis: calc(100% - 110px); }
-  .topstrip .right { margin-left: auto; }
+  .topstrip .right { margin-left: auto; max-width: 100%; }
   .topstrip .run-name { font-size: 12px; }
   .topstrip .tag { font-size: 10px; }
   .app > .rail { top: 126px; }

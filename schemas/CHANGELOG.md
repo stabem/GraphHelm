@@ -1,5 +1,13 @@
 # Schema Changelog
 
+## event-envelope 1.0.0 - optional run topology snapshot
+
+`execution_form_declared` may carry the graph hash, entrypoints, and directed edges recorded at
+start. Studio draws these connections only when the snapshot agrees with the atomic
+`execution_started` hash and the declared node roster. Older journals omit the field and retain
+their original bytes and manual hash-checked graph-file path. The frozen 1.0.0 release schema is
+unchanged.
+
 ## activation-receipt 1.0.0
 
 Adds an offline ActivationReceipt claim bound to the exact transaction, accepted plan digest,

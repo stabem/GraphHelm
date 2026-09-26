@@ -715,6 +715,10 @@ pub struct ExecutionFormDeclared {
     pub node_ids: Vec<OpaqueId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_descriptors: BTreeMap<OpaqueId, NodeDescriptor>,
+    /// The graph's connections as they stood when this run started. Optional for old journals;
+    /// its hash must match the atomic `ExecutionStarted` before a reader draws an edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topology: Option<DeclaredTopology>,
     pub node_timeout_seconds: BTreeMap<OpaqueId, u64>,
     /// The graph document's `metadata.name` (#1063): what an authored graph calls itself, and
     /// where a synthesized graph puts the goal it was compiled from.
@@ -762,6 +766,26 @@ pub struct ExecutionFormDeclared {
     /// answer it gave before, and the honest one.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_customs_budgets: BTreeMap<OpaqueId, CustomsBudgets>,
+}
+
+/// A bounded, presentation-only snapshot of the run's graph connections. It is a declaration,
+/// not a published Graph Version or a source of operational mutations.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeclaredTopology {
+    pub graph_hash: WireHash,
+    pub entrypoints: Vec<String>,
+    pub edges: Vec<DeclaredTopologyEdge>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeclaredTopologyEdge {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    #[serde(rename = "type")]
+    pub edge_type: String,
 }
 
 /// The upper bound, in characters, on [`ExecutionFormDeclared::name`] and

@@ -376,6 +376,7 @@
             "additionalProperties": false
           }
         },
+        "topology": {"$ref": "#/$defs/declaredTopology"},
         "nodeTimeoutSeconds": {
           "type": "object",
           "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 315576000}
@@ -386,6 +387,29 @@
         "nodeCustomsBudgets": {
           "type": "object",
           "additionalProperties": {"$ref": "#/$defs/declaredCustomsBudgets"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "declaredTopology": {
+      "type": "object",
+      "required": ["graphHash", "entrypoints", "edges"],
+      "properties": {
+        "graphHash": {"$ref": "#/$defs/wireHash"},
+        "entrypoints": {"type": "array", "items": {"$ref": "#/$defs/opaqueId"}},
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "from", "to", "type"],
+            "properties": {
+              "id": {"$ref": "#/$defs/opaqueId"},
+              "from": {"$ref": "#/$defs/opaqueId"},
+              "to": {"$ref": "#/$defs/opaqueId"},
+              "type": {"enum": ["control", "data", "evidence", "event", "failure", "compensation", "human_approval"]}
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

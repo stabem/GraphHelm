@@ -134,6 +134,8 @@ export function Board({
   onSelectAgent,
   talks = [],
   activity = [],
+  agentReports = {},
+  runStatus = null,
   selectedTalk = null,
   onSelectTalk,
   focusGraphFile = 0,
@@ -173,6 +175,8 @@ export function Board({
    * the envelopes; this component only places and moves them. */
   talks?: Array<{ key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null }>;
   activity?: WorkOverviewProps["activity"];
+  agentReports?: WorkOverviewProps["agentReports"];
+  runStatus?: string | null;
   selectedTalk?: string | null;
   onSelectTalk?: (talkKey: string | null) => void;
   /** Bumped when another control (the dock's resume) needs the person AT the graph-file box:
@@ -780,7 +784,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} crew={crew} talks={talks} activity={activity} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} crew={crew} talks={talks} activity={activity} agentReports={agentReports} runStatus={runStatus} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

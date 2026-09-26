@@ -356,7 +356,9 @@ export default function App({
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
   const journalTopology = useMemo(() => topologyFromJournal(eventList), [eventList]);
-  const visibleTopology = journalTopology?.match === "matched" ? journalTopology : topology ?? journalTopology;
+  // A recorded snapshot is the run's own claim. If it fails verification, a
+  // remembered file must not make the same run look connected anyway.
+  const visibleTopology = journalTopology ?? topology;
   const model = useMemo(() => buildGraphModel(eventList, visibleTopology), [eventList, visibleTopology]);
   const unverifiedResults = pendingAcceptanceCount(model.nodes, status?.nodeStateCounts.succeeded ?? 0);
   const focusedNode = focus.kind === "node" ? focus.id : null;
@@ -2376,7 +2378,7 @@ export default function App({
               selectedNode={focusedNode}
               onSelectNode={(id) => setFocus(id === null ? { kind: "none" } : { kind: "node", id })}
               onChange={updateBoard}
-              connectionNote={journalTopology?.match === "matched" ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology)}
+              connectionNote={journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology)}
               connectionTone={connectionTone}
               graphFile={graphFile}
               onGraphFileChange={(value) => {

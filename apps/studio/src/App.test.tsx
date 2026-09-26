@@ -3039,6 +3039,40 @@ describe("the board remembers its graph file", () => {
     expect(screen.queryByLabelText("Graph file path on the Runtime host")).not.toBeInTheDocument();
     expect(client.getTopology).not.toHaveBeenCalled();
   });
+
+  it("keeps an invalid journal snapshot unverified even when a remembered file matches the hash", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    localStorage.setItem(
+      "graphhelm.studio.board.demo-deploy",
+      JSON.stringify({ positions: {}, agents: {}, strokes: [], notes: [], graphFile: "flows/demo.json" }),
+    );
+    const recorded = (sequence: number, kind: string, payload: unknown) => ({
+      sequence, kind, payload, occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli",
+      actorType: "system", idempotencyKey: `k${sequence}`, eventId: `event-${sequence}`, evidenceRefs: [],
+    });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 2, events: [
+        recorded(1, "execution_started", { executionId: "demo-deploy", graphHash: hash }),
+        recorded(2, "execution_form_declared", {
+          executionId: "demo-deploy", nodeIds: ["implementation", "deploy"],
+          topology: { graphHash: "sha256:wrong", entrypoints: ["implementation"], edges: [
+            { id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" },
+          ] },
+        }),
+      ] })),
+      getTopology: vi.fn(async () => ({
+        graphId: "g", graphVersion: 1, executionId: "demo-deploy", semanticHash: hash,
+        entrypoints: ["implementation"], nodes: [], edges: [
+          { id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" },
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await waitFor(() => expect(client.getTopology).toHaveBeenCalledWith("flows/demo.json"));
+    expect(await screen.findByText(/work connections unverified/i)).toBeInTheDocument();
+    expect((await screen.findByLabelText("Execution board")).querySelectorAll("path.edge")).toHaveLength(0);
+  });
 });
 
 /**

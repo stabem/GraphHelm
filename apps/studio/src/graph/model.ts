@@ -82,6 +82,9 @@ export interface LintFinding {
 export interface GraphNode {
   id: string;
   state: NodeStateName;
+  /** What kind of attempt evidence the latest successful outcome sealed. This identifies the
+   * producer's output, not an acceptance verdict or a named agent. Older streams may have none. */
+  resultSource?: "model_reply" | "tool_record" | "judge_verdict" | "other" | "none" | null;
   /** How many times an event has named this node. The board shows it because a node retried
    * eight times and a node run once look identical from their state alone. */
   touches: number;
@@ -91,6 +94,41 @@ export interface GraphNode {
    * the log alone: the node reached a settled terminal state at `settledAt`, and a LATER event
    * named it at `reopenedAt`, by `by`. Both coordinates cite the log; no watcher, no guess. */
   reopened: { settledAt: number; reopenedAt: number; by: string | null } | null;
+}
+
+/** A successful lifecycle transition says the attempt returned; it never proves the
+ * agent's stated goal. The source comes from the Runtime's documented attempt-evidence
+ * suffixes, and older/unknown evidence stays unknown rather than being assigned a model. */
+export function nodeResult(node: GraphNode): { executor: string; verification: string; short: string } | null {
+  if (node.state !== "succeeded") return null;
+  if (node.resultSource === "model_reply") {
+    return {
+      executor: "Model call · model identity not recorded",
+      verification: "Reply received · acceptance not verified",
+      short: "Reply received · unverified",
+    };
+  }
+  if (node.resultSource === "tool_record") {
+    return {
+      executor: "Tool call · command in evidence",
+      verification: "Tool exited successfully · goal not verified",
+      short: "Tool exited 0",
+    };
+  }
+  if (node.resultSource === "judge_verdict") {
+    return {
+      executor: "Judge call · model identity not recorded",
+      verification: "Structured judgment passed",
+      short: "Judgment passed",
+    };
+  }
+  return {
+    executor: "Executor not recorded",
+    verification: node.resultSource === "none"
+      ? "Completion recorded without attempt evidence"
+      : "Completion recorded · acceptance not verified",
+    short: "Completion · unverified",
+  };
 }
 
 /** The states after which nothing more is owed on a node. A later event against one of these is
@@ -169,6 +207,7 @@ export function buildGraphModel(
     const created: GraphNode = {
       id,
       state: "unknown",
+      resultSource: null,
       touches: 0,
       lastEventAt: null,
       history: [],
@@ -213,6 +252,17 @@ export function buildGraphModel(
     }
     node.touches += 1;
     if (nextState !== null) node.state = nextState;
+    if (event.kind === "node_outcome_recorded" && nextState === "succeeded") {
+      node.resultSource = event.evidenceRefs.some((id) => id.endsWith("-reply"))
+        ? "model_reply"
+        : event.evidenceRefs.some((id) => id.endsWith("-record"))
+          ? "tool_record"
+          : event.evidenceRefs.some((id) => id.endsWith("-judgment"))
+            ? "judge_verdict"
+          : event.evidenceRefs.length > 0 ? "other" : "none";
+    } else if (nextState !== null) {
+      node.resultSource = null;
+    }
     if (event.occurredAt !== null) node.lastEventAt = event.occurredAt;
     node.history.push({
       sequence: event.sequence,

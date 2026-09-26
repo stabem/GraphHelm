@@ -1,4 +1,43 @@
 import { describe, expect, it } from "vitest";
+import { buildGraphModel, conversationFor, moodOf, nodeResult, voiceOf } from "./model";
+
+it("distinguishes a returned model reply from a verified result and from the runtime recorder", () => {
+  const event = {
+    sequence: 11,
+    kind: "node_outcome_recorded",
+    payload: { nodeId: "review_browser_evidence", outcome: "succeeded", nextState: "succeeded" },
+    occurredAt: "2026-09-26T02:45:00Z",
+    actorId: "system-runtime",
+    actorType: "system",
+    idempotencyKey: "result-11",
+    eventId: "event-11",
+    evidenceRefs: ["exec-landing-review_browser_evidence-a1-reply"],
+  };
+  const node = buildGraphModel([event], null).nodes[0];
+  expect(node.resultSource).toBe("model_reply");
+  expect(nodeResult(node)).toEqual({
+    executor: "Model call · model identity not recorded",
+    verification: "Reply received · acceptance not verified",
+    short: "Reply received · unverified",
+  });
+  expect(node.history[0].actorId).toBe("system-runtime");
+});
+
+it("recognizes a structured judge result as a verdict rather than a plain reply", () => {
+  const model = buildGraphModel([{
+    sequence: 9,
+    kind: "node_outcome_recorded",
+    payload: { nodeId: "judge_browser", outcome: "succeeded", nextState: "succeeded" },
+    occurredAt: "2026-09-26T02:45:00Z",
+    actorId: "system-runtime",
+    actorType: "system",
+    idempotencyKey: "result-9",
+    eventId: "event-9",
+    evidenceRefs: ["exec-landing-judge_browser-a1-judgment"],
+  }], null);
+  expect(model.nodes[0].resultSource).toBe("judge_verdict");
+  expect(nodeResult(model.nodes[0])?.verification).toBe("Structured judgment passed");
+});
 
 /**
  * "Quietly reopened the part it already called done" - the reference project's best signal,
@@ -99,7 +138,6 @@ describe("the model's lint", () => {
 });
 
 import type { RuntimeEvent } from "../runtime/types";
-import { buildGraphModel, conversationFor, moodOf, voiceOf } from "./model";
 
 function event(sequence: number, kind: string, payload: unknown, actorType = "system"): RuntimeEvent {
   return {

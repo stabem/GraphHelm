@@ -24,14 +24,19 @@ import type { RuntimeEvent } from "../runtime/types";
  * A signal's sealed evidence is the full envelope document - id, source, severity, `emittedAt`
  * and all - so rendering the sealed bytes verbatim puts a wall of JSON where somebody's sentence
  * should be. Anything this cannot read a sentence out of is returned UNCHANGED: a model's reply
- * and a tool's output are sealed here too and have shapes of their own; showing their bytes is
- * right, and inventing a field name to look for in them would be guessing.
+ * and a tool's output are sealed here too. A ModelReply has the public `text` plus
+ * `usage` shape, so its words can be shown without guessing from arbitrary JSON.
  */
 export function readable_content(text: string, mediaType: string): string {
   if (!mediaType.includes("json")) return text;
   try {
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object") return text;
+    const modelReply = parsed as { text?: unknown; usage?: unknown };
+    if (typeof modelReply.text === "string" && modelReply.usage !== null
+        && typeof modelReply.usage === "object" && !Array.isArray(modelReply.usage)) {
+      return modelReply.text;
+    }
     const description = (parsed as { description?: unknown }).description;
     const type = (parsed as { type?: unknown }).type;
     if (typeof description === "string" && type === "node_delivery") {

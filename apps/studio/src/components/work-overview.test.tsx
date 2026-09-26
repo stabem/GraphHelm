@@ -6,6 +6,26 @@ import type { GraphModel } from "../graph/model";
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("shows a finished model call as unverified and labels the system actor as recorder", () => {
+    const review = {
+      ...node("review_browser_evidence"),
+      state: "succeeded",
+      resultSource: "model_reply" as const,
+      touches: 1,
+      history: [{
+        sequence: 17, kind: "node_outcome_recorded", nextState: "succeeded",
+        outcome: "succeeded", occurredAt: "2026-09-26T02:45:00Z",
+        actorId: "system-runtime", actorType: "system", evidence: 3,
+      }],
+    };
+    render(<WorkOverview model={{ ...model, nodes: [review] }} selectedNode={null} onSelectNode={vi.fn()} />);
+    const card = screen.getByRole("button", { name: /review_browser_evidence/ });
+    expect(card).toHaveTextContent("Model call · model identity not recorded");
+    expect(card).toHaveTextContent("Reply received · acceptance not verified");
+    expect(card).toHaveTextContent("Recorded by Runtime");
+    expect(card).toHaveTextContent("review needed");
+    expect(screen.getByRole("note")).toHaveTextContent("Its answer has not been checked");
+  });
   it("retains incomplete-roster and disagreement evidence in the default view", () => {
     render(<WorkOverview model={{...model,rosterDeclared:false,lint:[{kind:"done-without-evidence",detail:"Completion has no evidence",sequence:8}]}} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByText("2 nodes seen so far")).toBeInTheDocument();

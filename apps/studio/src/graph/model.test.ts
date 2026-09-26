@@ -74,6 +74,13 @@ it("requires the typed gate event rather than a sealed filename to claim pass", 
     short: "Gate passed",
   });
   expect(passed.reopened).toBeNull();
+  const reopened = buildGraphModel([
+    outcome,
+    event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true }),
+    event(12, "reuse_decision", { nodeId: "check_gate" }),
+  ], null).nodes[0];
+  expect(reopened.reopened?.reopenedAt).toBe(12);
+  expect(nodeResult(reopened)?.verification).toBe("Gate evidence received · typed pass not recorded");
 });
 
 it("keeps an incomplete event page unverified until typed verdicts for all successes arrive", () => {

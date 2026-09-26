@@ -323,6 +323,7 @@ export function buildGraphModel(
         reopenedAt: event.sequence,
         by: event.actorId,
       };
+      node.verificationEventSequence = null;
     } else if (isSettled(nextState)) {
       node.reopened = null;
     }

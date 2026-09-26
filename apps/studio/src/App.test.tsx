@@ -1665,7 +1665,7 @@ describe("the attention verdict explains itself", () => {
     const why = await screen.findByLabelText("Why this run needs you");
     // No agent has actually asked anything, and the block says so instead of demanding an
     // answer to nothing — the debt, not just the debtor.
-    expect(within(why).getByText(/nothing has asked you anything yet/)).toBeInTheDocument();
+    expect(why).toHaveTextContent(/No specific question is visible here yet/);
     expect(within(why).getByText(/no model is wired/i)).toBeInTheDocument();
   });
 
@@ -1680,7 +1680,7 @@ describe("the attention verdict explains itself", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /answer/i }));
+    await userEvent.click(within(why).getByRole("button", { name: /send direction/i }));
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await waitFor(() => expect(box).toHaveFocus());
@@ -1782,7 +1782,7 @@ describe("the answer path", () => {
 
     // The banner's own action must undo that lock before promising the answer lands.
     const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /answer in the thread/i }));
+    await userEvent.click(within(why).getByRole("button", { name: /send direction in the thread/i }));
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "resposta pra sala");
@@ -1846,7 +1846,7 @@ describe("the answer path", () => {
     await waitFor(() =>
       expect(within(why).queryByText(/Qual porta devo usar/)).not.toBeInTheDocument(),
     );
-    expect(await within(why).findByText(/nothing has asked you anything yet/)).toBeInTheDocument();
+    await waitFor(() => expect(why).toHaveTextContent(/No specific question is visible here yet/));
   });
 });
 
@@ -2188,7 +2188,7 @@ describe("round-2: the ledger settles debts honestly", () => {
     await waitFor(() =>
       expect(within(why).queryByText(/aqui esta o relatorio/)).not.toBeInTheDocument(),
     );
-    expect(within(why).getByText(/nothing has asked you anything yet/)).toBeInTheDocument();
+    expect(why).toHaveTextContent(/No specific question is visible here yet/);
   });
 
   /** The composer's reply hints claimed "Who is waiting for an answer" while listing mere
@@ -2536,9 +2536,7 @@ describe("round-3: guards without side doors", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    expect(
-      await screen.findByText(/a waiting node wants an answer in the thread/i),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".dock .hint")).toHaveTextContent(/This waiting node needs a direction in the thread/i));
     const approve = screen.getByRole("button", { name: /nothing to approve/i });
     expect(approve).not.toHaveAttribute("title");
   });

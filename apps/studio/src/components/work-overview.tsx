@@ -25,6 +25,9 @@ export interface WorkOverviewProps {
   activity?: RecordedActivity[];
   agentReports?: Record<string, AgentReport>;
   runStatus?: string | null;
+  attention?: string | null;
+  nextAction?: { label: string; detail: string } | null;
+  onNextAction?: () => void;
   selectedNode: string | null;
   onSelectNode: (nodeId: string | null) => void;
   selectedAgent?: string | null;
@@ -92,6 +95,9 @@ export function WorkOverview({
   activity = [],
   agentReports = {},
   runStatus = null,
+  attention = null,
+  nextAction = null,
+  onNextAction,
   selectedNode,
   onSelectNode,
   selectedAgent = null,
@@ -135,13 +141,18 @@ export function WorkOverview({
           {runId && <span className="work-run">Run {runId}</span>}
         </div>
         <div className="work-counts" aria-label="Workspace counts">
-          <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} nodes{!model.rosterDeclared && " seen so far"}</span>
-          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active nodes</span>
+          <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
+          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
           <span><Users aria-hidden="true" size={15} /> {crew.length} agents</span>
           <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
+
+      {nextAction && <section className="work-next-action" aria-label="Next action">
+        <div><span>Needs your attention{attention ? ` · ${readable(attention)}` : ""}</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p></div>
+        <button type="button" onClick={onNextAction}>{nextAction.label}</button>
+      </section>}
 
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
@@ -179,17 +190,12 @@ export function WorkOverview({
                   const report = agentReports[agent.id];
                   const isSelected = selectedAgent === agent.id;
                   return (
-                    <button
-                      type="button"
-                      className={`work-agent-row${isSelected ? " work-selected" : ""}`}
-                      key={agent.id}
-                      aria-pressed={isSelected}
-                      onClick={() => onSelectAgent?.(isSelected ? null : agent.id)}
-                    >
+                    <details className="work-agent-details" key={agent.id}>
+                    <summary className="work-agent-row">
                       <span className="work-avatar" style={{ background: `hsl(${hueOf(agent.id)} 52% 46%)` }} aria-hidden="true">{initialOf(agent.id)}</span>
                       <span className="work-agent-copy">
                         <span className="work-agent-id">{agent.id}</span>
-                        <span className="work-agent-report"><span>Last recorded report</span><strong>{report?.text ?? (report ? "Message content unavailable" : "No report recorded")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
+                        <span className="work-agent-report"><span>Last recorded report</span><strong>{report?.text ?? (report ? "Report text has not opened yet" : "No report recorded")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
                         <span className="work-observed">
                           <span>Last node update</span>
                           {observation ? (
@@ -198,7 +204,12 @@ export function WorkOverview({
                         </span>
                         {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
                       </span>
-                    </button>
+                    </summary>
+                    <div className="work-agent-expanded">
+                      <p>{report?.text ?? (report ? "Report text has not opened yet" : "No report recorded")}</p>
+                      <button type="button" aria-pressed={isSelected} onClick={() => onSelectAgent?.(isSelected ? null : agent.id)}>{isSelected ? "Close direct chat" : `Open direct chat with ${agent.id}`}</button>
+                    </div>
+                    </details>
                   );
                 })}
               </div>
@@ -286,7 +297,7 @@ export function WorkOverview({
         {activity.length === 0 ? <p className="work-empty">No messages recorded in this run yet.</p> : (
           <ol className="work-activity-list">{activity.map((item) => <li key={item.sequence}>
             <div className="work-activity-meta"><strong>{item.actorId ?? "Unknown actor"}</strong><span>{ago(item.occurredAt)} · event #{item.sequence}</span></div>
-            <p>{item.text ?? "Message content unavailable"}</p>
+            <p>{item.text ?? "Report text has not opened yet"}</p>
           </li>)}</ol>
         )}
       </section>

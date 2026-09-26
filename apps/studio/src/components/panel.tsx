@@ -1325,6 +1325,7 @@ export function RunPanel({
   replySuggestions = null,
   replyLoading = false,
   replyIssue = null,
+  needsDirection = false,
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1351,6 +1352,7 @@ export function RunPanel({
   replySuggestions?: ReplySuggestions | null;
   replyLoading?: boolean;
   replyIssue?: string | null;
+  needsDirection?: boolean;
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1361,7 +1363,7 @@ export function RunPanel({
   const debts: string[] = [];
   for (const reason of status.attentionReasons) {
     const kind = typeof reason.kind === "string" ? reason.kind : "";
-    if (kind === "waiting_input_node" && !debts.includes("your answer")) debts.push("your answer");
+    if (kind === "waiting_input_node" && !debts.includes(needsDirection ? "your direction" : "your answer")) debts.push(needsDirection ? "your direction" : "your answer");
     if (kind === "blocked_node" && !debts.includes("your go-ahead")) debts.push("your go-ahead");
   }
   // Recent speakers are offered as people to TALK TO — never as people "waiting for an
@@ -1420,7 +1422,7 @@ export function RunPanel({
         <div style={{ minWidth: 0 }}>
           <h2>
             {verdict.key === "needs"
-              ? "This run needs you"
+              ? needsDirection ? "This run needs direction" : "This run needs you"
               : over
                 ? `This run is ${readable(status.status ?? "")}`
                 : verdict.key === "calm"

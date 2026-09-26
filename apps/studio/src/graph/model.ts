@@ -84,7 +84,7 @@ export interface GraphNode {
   state: NodeStateName;
   /** What kind of attempt evidence the latest successful outcome sealed. This identifies the
    * producer's output, not an acceptance verdict or a named agent. Older streams may have none. */
-  resultSource?: "model_reply" | "tool_record" | "judge_verdict" | "other" | "none" | null;
+  resultSource?: "model_reply" | "tool_record" | "judge_verdict" | "gate_verdict" | "other" | "none" | null;
   /** How many times an event has named this node. The board shows it because a node retried
    * eight times and a node run once look identical from their state alone. */
   touches: number;
@@ -120,6 +120,13 @@ export function nodeResult(node: GraphNode): { executor: string; verification: s
       executor: "Judge call · model identity not recorded",
       verification: "Structured judgment passed",
       short: "Judgment passed",
+    };
+  }
+  if (node.resultSource === "gate_verdict") {
+    return {
+      executor: "Deterministic gate",
+      verification: "Gate check passed",
+      short: "Gate passed",
     };
   }
   return {
@@ -259,7 +266,9 @@ export function buildGraphModel(
           ? "tool_record"
           : event.evidenceRefs.some((id) => id.endsWith("-judgment"))
             ? "judge_verdict"
-          : event.evidenceRefs.length > 0 ? "other" : "none";
+            : event.evidenceRefs.some((id) => id.endsWith("-verdict"))
+              ? "gate_verdict"
+              : event.evidenceRefs.length > 0 ? "other" : "none";
     } else if (nextState !== null) {
       node.resultSource = null;
     }

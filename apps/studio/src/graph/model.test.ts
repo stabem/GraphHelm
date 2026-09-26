@@ -39,6 +39,26 @@ it("recognizes a structured judge result as a verdict rather than a plain reply"
   expect(nodeResult(model.nodes[0])?.verification).toBe("Structured judgment passed");
 });
 
+it("recognizes a passing deterministic gate from its sealed verdict", () => {
+  const model = buildGraphModel([{
+    sequence: 10,
+    kind: "node_outcome_recorded",
+    payload: { nodeId: "check_gate", outcome: "succeeded", nextState: "succeeded" },
+    occurredAt: "2026-09-26T02:45:00Z",
+    actorId: "system-runtime",
+    actorType: "system",
+    idempotencyKey: "result-10",
+    eventId: "event-10",
+    evidenceRefs: ["exec-landing-check_gate-a1-verdict"],
+  }], null);
+  expect(model.nodes[0].resultSource).toBe("gate_verdict");
+  expect(nodeResult(model.nodes[0])).toEqual({
+    executor: "Deterministic gate",
+    verification: "Gate check passed",
+    short: "Gate passed",
+  });
+});
+
 /**
  * "Quietly reopened the part it already called done" - the reference project's best signal,
  * derived here from OUR spine alone: a node that reached a terminal settled state (succeeded,

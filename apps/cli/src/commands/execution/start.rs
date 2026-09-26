@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, path::Path};
 use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    DeclaredExecutor, EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionPaused,
-    ExecutionStarted, NewEvent, NodeDescriptor, OpaqueId, PersistedActor, PersistedActorType,
-    Sensitivity, WireHash,
+    DeclaredExecutor, DeclaredTopology, DeclaredTopologyEdge, EdgeType, EventKind,
+    ExecutionFormDeclared, ExecutionMode, ExecutionPaused, ExecutionStarted, NewEvent,
+    NodeDescriptor, OpaqueId, PersistedActor, PersistedActorType, Sensitivity, WireHash,
 };
 
 use super::driver::{Release, drive_to_quiescence};
@@ -18,6 +18,8 @@ use crate::output::Outcome;
 use graphhelm_simulation::FixtureExecutor;
 
 const COMMAND: &str = "execution.start";
+// Leave room for the event envelope below the Event Store's 1 MiB per-event ceiling.
+const MAX_FORM_BYTES_WITH_TOPOLOGY: usize = 768 * 1024;
 
 /// Calls `execute` with the system actor and a fresh per-invocation idempotency key, exactly as
 /// before Milestone 05a Task 4 — byte-identical CLI behaviour. Unlike `pause`/`resume`/`cancel`,
@@ -336,16 +338,49 @@ pub(crate) fn execute_prepared(
         .first()
         .and_then(|entry| graph.spec.nodes.get(entry))
         .and_then(|node| declared_text(&node.objective));
-    let declared_form = ExecutionFormDeclared {
+    let topology = DeclaredTopology {
+        graph_hash: graph_hash.clone(),
+        entrypoints: graph.spec.entrypoints.clone(),
+        edges: graph
+            .spec
+            .edges
+            .iter()
+            .map(|edge| DeclaredTopologyEdge {
+                id: edge.id.clone(),
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                edge_type: match &edge.edge_type {
+                    EdgeType::Control => "control",
+                    EdgeType::Data => "data",
+                    EdgeType::Evidence => "evidence",
+                    EdgeType::Event => "event",
+                    EdgeType::Failure => "failure",
+                    EdgeType::Compensation => "compensation",
+                    EdgeType::HumanApproval => "human_approval",
+                }
+                .to_owned(),
+            })
+            .collect(),
+    };
+    let mut declared_form = ExecutionFormDeclared {
         execution_id: stream_id.clone(),
         node_ids,
         node_descriptors,
+        topology: Some(topology),
         node_timeout_seconds,
         node_customs_budgets,
         name: declared_text(&graph.metadata.name),
         objective,
         executor,
     };
+    // Keep the journal's one-event ceiling reachable for large accepted graphs. A missing
+    // snapshot leaves Studio honest (manual hash-checked topology remains available), while
+    // refusing start here would make a display convenience block execution.
+    if serde_json::to_vec(&declared_form)
+        .is_ok_and(|bytes| bytes.len() > MAX_FORM_BYTES_WITH_TOPOLOGY)
+    {
+        declared_form.topology = None;
+    }
     let hold_key = OpaqueId::parse(format!("{}-held", key.as_str())).map_err(|_| {
         execution_state(
             "the hold key could not be represented on the wire",

@@ -457,6 +457,7 @@ fn a_declared_form_without_the_briefing_fields_replays_to_the_same_bytes_and_wit
     assert_eq!(form.name, None);
     assert_eq!(form.objective, None);
     assert_eq!(form.executor, None);
+    assert_eq!(form.topology, None);
 
     let new = json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{"start":900},"name":"Ship the release","objective":"Cut 1.4 and publish the notes","executor":"gateway"}});
     let kind: EventKind = serde_json::from_value(new.clone()).unwrap();
@@ -469,6 +470,13 @@ fn a_declared_form_without_the_briefing_fields_replays_to_the_same_bytes_and_wit
         Some(graphhelm_protocols::DeclaredExecutor::Gateway)
     );
     assert_schema_valid(EVENT_ID, &event_fixture(new, false));
+
+    // Graph edge IDs are arbitrary nonempty strings, unlike node IDs. The event schema must
+    // preserve a slash here rather than silently narrowing valid authored graphs to OpaqueId.
+    let with_topology = json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start","done"],"nodeTimeoutSeconds":{},"topology":{"graphHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000","entrypoints":["start"],"edges":[{"id":"start/to_done","from":"start","to":"done","type":"control"}]}}});
+    let kind: EventKind = serde_json::from_value(with_topology.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&kind).unwrap(), with_topology);
+    assert_schema_valid(EVENT_ID, &event_fixture(with_topology, false));
 
     let unknown_executor = event_fixture(
         json!({"type":"execution_form_declared","data":{"executionId":"execution-1","nodeIds":["start"],"nodeTimeoutSeconds":{},"executor":"human"}}),

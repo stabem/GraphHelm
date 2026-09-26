@@ -1144,6 +1144,7 @@ fn declared_fixture(
                 execution_id: OpaqueId::parse(EXECUTION).unwrap(),
                 node_ids: vec![OpaqueId::parse(NODE).unwrap()],
                 node_descriptors: std::collections::BTreeMap::new(),
+                topology: None,
                 node_timeout_seconds: std::collections::BTreeMap::new(),
                 name: None,
                 objective: None,

@@ -665,6 +665,7 @@ mod tests {
         };
         projection.declared_form = Some(ExecutionFormDeclared {
             node_descriptors: Default::default(),
+            topology: None,
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),
@@ -1191,6 +1192,7 @@ mod tests {
         };
         projection.declared_form = Some(ExecutionFormDeclared {
             node_descriptors: Default::default(),
+            topology: None,
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),
@@ -1236,6 +1238,7 @@ mod tests {
         };
         projection.declared_form = Some(ExecutionFormDeclared {
             node_descriptors: Default::default(),
+            topology: None,
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),

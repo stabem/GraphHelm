@@ -770,6 +770,7 @@ mod tests {
             let mut projection = projection_fixture("implement");
             projection.declared_form = Some(ExecutionFormDeclared {
                 node_descriptors: std::collections::BTreeMap::new(),
+                topology: None,
                 execution_id: OpaqueId::parse("exec-monitor").unwrap(),
                 node_ids: vec![],
                 node_timeout_seconds: std::collections::BTreeMap::new(),

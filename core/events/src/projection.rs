@@ -3123,6 +3123,7 @@ mod tests {
                 graphhelm_protocols::Sensitivity::Internal,
                 EventKind::ExecutionFormDeclared(ExecutionFormDeclared {
                     node_descriptors: Default::default(),
+                    topology: None,
                     execution_id: OpaqueId::parse("execution-1").unwrap(),
                     node_ids: vec![
                         OpaqueId::parse("plan").unwrap(),

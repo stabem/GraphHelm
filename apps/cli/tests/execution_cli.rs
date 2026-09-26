@@ -3166,10 +3166,23 @@ fn start_once(directory: &std::path::Path, graph: &str) -> std::path::PathBuf {
 fn a_start_declares_the_shape_of_the_execution() {
     let directory = tempfile::tempdir().unwrap();
     let events = start_once(directory.path(), "examples/graphs/software-feature.yaml");
-    let declared = journal_events(&events)
-        .into_iter()
+    let journal = journal_events(&events);
+    let declared = journal
+        .iter()
         .find(|(_, kind, _)| kind == "execution_form_declared")
         .expect("a start must declare the shape of the execution");
+    let started = journal
+        .iter()
+        .find(|(_, kind, _)| kind == "execution_started")
+        .unwrap();
+    assert_eq!(declared.2["topology"]["graphHash"], started.2["graphHash"]);
+    assert_eq!(
+        declared.2["topology"]["entrypoints"],
+        serde_json::json!(["map_repository"])
+    );
+    assert!(declared.2["topology"]["edges"].as_array().unwrap().iter().any(|edge|
+        edge == &serde_json::json!({"id":"map_to_plan","from":"map_repository","to":"plan","type":"data"})
+    ));
 
     let node_ids: Vec<&str> = declared.2["nodeIds"]
         .as_array()

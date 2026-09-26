@@ -30,6 +30,7 @@ fn projection_with_unbudgeted_node_in_flight() -> graphhelm_events::ExecutionPro
         .insert("judge".to_owned(), graphhelm_protocols::NodeState::Running);
     projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
         node_descriptors: Default::default(),
+        topology: None,
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-amend").unwrap(),
         node_ids: vec![graphhelm_protocols::OpaqueId::parse("judge").unwrap()],
         // Declared with NO timeout: this is the judge's own situation.

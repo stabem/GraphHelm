@@ -649,7 +649,7 @@ export function Board({
     marqueeRef.current = { a: pointAt(event), b: pointAt(event) };
   };
 
-  const showConnect = connectOpen || graphFile.trim().length > 0 || connectionTone !== "none";
+  const showConnect = connectOpen || graphFile.trim().length > 0 || connectionTone === "refused";
 
   itemRectsRef.current = [
     ...agentPlaces.map((agent) => ({ id: `agent:${agent.id}`, x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
@@ -791,7 +791,7 @@ export function Board({
       </div>
       {organized && <div className="work-overview-scroll">
         <WorkOverview model={model} crew={crew} talks={talks} activity={activity} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
-        <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span><button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button></div>
+        <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>
       <div className="canvas-story">

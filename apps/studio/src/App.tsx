@@ -130,6 +130,12 @@ export default function App({
 
   const [canvasMode, setCanvasMode] = useState(false);
   const [runActionsOpen, setRunActionsOpen] = useState(false);
+  const [compactActions, setCompactActions] = useState(() => typeof window !== "undefined" && window.innerWidth <= 600);
+  useEffect(() => {
+    const update = () => setCompactActions(window.innerWidth <= 600);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
   const [connected, setConnected] = useState(false);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
@@ -1657,7 +1663,7 @@ export default function App({
       latest.set(event.actorId, {
         sequence: event.sequence,
         occurredAt: event.occurredAt,
-        text: envelopes[event.sequence]?.text?.trim().slice(0, 180) || null,
+        text: envelopes[event.sequence]?.text?.trim() || null,
       });
     }
     return Object.fromEntries(latest);
@@ -1768,6 +1774,16 @@ export default function App({
   }
 
   const verdict = status ? verdictOf(status.attention) : null;
+  const waitingForInput = status?.attentionReasons.some((reason) => reason.kind === "waiting_input_node") ?? false;
+  const needsDirection = verdict?.key === "needs" && waitingForInput && pendingQuestion === null;
+  const focusRunReply = () => {
+    const asker = pendingQuestion?.asker ?? null;
+    setTalkOpen(true);
+    setSayTo(asker);
+    setSayAnswer(asker === null ? null : { asker, signalId: pendingQuestion!.signalId });
+    setFocus({ kind: "run" });
+    setSayFocusNonce((nonce) => nonce + 1);
+  };
   /** What each dock verb may claim right now, and the reason for each it may not. */
   const legality = actionLegality(status);
   /** #1083: an ended run's dock drops pause, resume and cancel (see `hasEnded`). */
@@ -2160,9 +2176,13 @@ export default function App({
             </button>
           </div>
         ) : status === null ? (
-          <p className="loading">
-            <LoaderCircle className="spin" aria-hidden="true" /> opening this run…
-          </p>
+          <section className="loading" role="status">
+            {error && !busy ? (
+              <><strong>This run could not be opened.</strong><p>{error}</p><button type="button" onClick={() => void loadExecution(selected)}>Try again</button></>
+            ) : (
+              <><LoaderCircle className="spin" aria-hidden="true" /><strong>Opening this run…</strong><p>Reading its state and event history. Large runs may take a moment.</p></>
+            )}
+          </section>
         ) : (
           <div className="split">
             {talkOpen && (
@@ -2217,7 +2237,6 @@ export default function App({
                       // answer" to nothing sent a real person hunting the thread for a
                       // question that did not exist.
                       const asker = pendingQuestion?.asker ?? null;
-                      const answers = pendingQuestion?.signalId ?? null;
                       return (
                         <span key={key}>
                           {pendingQuestion !== null && asker !== null ? (
@@ -2228,34 +2247,14 @@ export default function App({
                                   ? `${pendingQuestion.text.slice(0, 240)}…`
                                   : pendingQuestion.text}
                               </q>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSayTo(asker);
-                                  // Carrying the question's id is what lets the reply SETTLE
-                                  // the ledger: it retires debts only by replyTo.
-                                  setSayAnswer({ asker, signalId: answers });
-                                  setFocus({ kind: "run" });
-                                  setSayFocusNonce((nonce) => nonce + 1);
-                                }}
-                              >
+                              <button type="button" onClick={focusRunReply}>
                                 answer {asker}
                               </button>
                             </>
                           ) : (
                             <>
-                              {node} is waiting, but nothing has asked you anything yet
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSayTo(null);
-                                  setSayAnswer(null);
-                                  setFocus({ kind: "run" });
-                                  setSayFocusNonce((nonce) => nonce + 1);
-                                }}
-                              >
-                                answer in the thread
-                              </button>
+                              {node} is waiting for direction. No specific question is visible here yet.
+                              <button type="button" onClick={focusRunReply}>send direction in the thread</button>
                             </>
                           )}
                         </span>
@@ -2313,6 +2312,7 @@ export default function App({
                 replySuggestions={replySuggestions}
                 replyLoading={replyLoading}
                 replyIssue={replyIssue}
+                needsDirection={needsDirection}
               />
             </aside>
             )}
@@ -2388,6 +2388,14 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               activity={recentActivity}
+              attention={status.attention}
+              nextAction={waitingForInput && verdict?.key === "needs" ? {
+                label: needsDirection ? "Send direction" : `Answer ${pendingQuestion?.asker ?? "in the thread"}`,
+                detail: needsDirection
+                  ? "This step is waiting. No specific question is visible yet; use a suggested message or write your own direction."
+                  : pendingQuestion?.text ?? "Open the thread to read the question.",
+              } : null}
+              onNextAction={focusRunReply}
               agentReports={agentReports}
               runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
@@ -2412,7 +2420,7 @@ export default function App({
               * `actionLegality` is the one place that judgement lives. */}
             <div className="dock" ref={dockRef}>
               <span className="canvas-execution-state">Execution / {status.status ?? "State unavailable"}</span>
-              <details className="execution-actions" open={!canvasMode || runActionsOpen} onToggle={(event) => { if (canvasMode) setRunActionsOpen(event.currentTarget.open); }}>
+              <details className="execution-actions" open={(!canvasMode && !compactActions) || runActionsOpen} onToggle={(event) => { if (canvasMode || compactActions) setRunActionsOpen(event.currentTarget.open); }}>
               <summary>Run actions</summary>
               <div className="execution-menu">
               {!ended && (<>
@@ -2471,8 +2479,7 @@ export default function App({
                 * the exact channel the resume fix three lines down already condemned. */}
               {waitingInstead && (
                 <p className="hint">
-                  Nothing is blocked. A waiting node wants an answer in the thread, not an
-                  approval.
+                  Approval is not needed. This waiting node needs {needsDirection ? "a direction" : "an answer"} in the thread.
                 </p>
               )}
               {!ended && (

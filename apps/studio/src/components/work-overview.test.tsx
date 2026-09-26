@@ -47,9 +47,9 @@ describe("organized work overview", () => {
     expect(screen.getByText("Last recorded message or event", {exact:false})).toBeInTheDocument();
     expect(screen.getByText("Checking the failing flow", {selector:".work-talk-preview"})).toBeInTheDocument();
   });
-  it("marks sealed or unavailable message content without inventing progress", () => {
+  it("keeps the report pending while its text has not opened", () => {
     render(<WorkOverview model={model} activity={[{sequence:40,actorId:"reviewer",occurredAt:null,text:null}]} selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(screen.getByRole("region", {name:"Recent recorded activity"})).toHaveTextContent("Message content unavailable");
+    expect(screen.getByRole("region", {name:"Recent recorded activity"})).toHaveTextContent("Report text has not opened yet");
   });
   it("shows where a one-node run stands and each agent's latest recorded report", () => {
     const selectAgent = vi.fn();
@@ -71,12 +71,24 @@ describe("organized work overview", () => {
     expect(snapshot).toHaveTextContent("start · unknown");
     expect(snapshot).toHaveTextContent("reviewer");
     expect(snapshot).toHaveTextContent("This run declares one graph node");
-    const builder = screen.getByRole("button", { name: /builder.*Implementing the issue/s });
+    const builder = screen.getByText("builder", {selector: ".work-agent-id"}).closest("details")!;
     expect(builder).toHaveTextContent("event #11");
-    expect(screen.getAllByRole("button", { name: /Last recorded report/ })[0]).toHaveTextContent("reviewer");
-    fireEvent.click(builder);
+    expect(screen.getAllByText("Last recorded report", {selector: ".work-agent-report > span"})[0].closest("details")).toHaveTextContent("reviewer");
+    fireEvent.click(within(builder).getByText("builder", {selector: ".work-agent-id"}).closest("summary")!);
+    expect(builder).toHaveAttribute("open");
+    expect(within(builder).getByText("Implementing the issue", {selector: ".work-agent-expanded p"})).toBeVisible();
+    expect(selectAgent).not.toHaveBeenCalled();
+    fireEvent.click(within(builder).getByRole("button", {name:"Open direct chat with builder"}));
     expect(selectAgent).toHaveBeenCalledWith("builder");
     expect(snapshot).not.toHaveTextContent("Running");
+  });
+  it("shows the next step before the activity and opens its action", () => {
+    const act = vi.fn();
+    render(<WorkOverview model={model} selectedNode={null} onSelectNode={vi.fn()} nextAction={{label:"Send direction",detail:"No question is visible yet."}} onNextAction={act} />);
+    const action = screen.getByRole("region", {name:"Next action"});
+    expect(action).toHaveTextContent("No question is visible yet.");
+    fireEvent.click(within(action).getByRole("button", {name:"Send direction"}));
+    expect(act).toHaveBeenCalledOnce();
   });
 });
 

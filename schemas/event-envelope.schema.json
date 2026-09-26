@@ -403,7 +403,7 @@
             "type": "object",
             "required": ["id", "from", "to", "type"],
             "properties": {
-              "id": {"$ref": "#/$defs/opaqueId"},
+              "id": {"type": "string", "minLength": 1},
               "from": {"$ref": "#/$defs/opaqueId"},
               "to": {"$ref": "#/$defs/opaqueId"},
               "type": {"enum": ["control", "data", "evidence", "event", "failure", "compensation", "human_approval"]}

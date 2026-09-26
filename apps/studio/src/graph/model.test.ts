@@ -179,6 +179,37 @@ const ROSTER = event(2, "execution_form_declared", {
 });
 
 describe("the board's model", () => {
+  it("keeps the declared role separate from the executor and Runtime recorder", () => {
+    const declaration = event(2, "execution_form_declared", {
+      executionId: "demo",
+      nodeIds: ["review_browser_evidence"],
+      nodeDescriptors: { review_browser_evidence: { name: "Review browser evidence", role: "evaluator" } },
+    });
+    const outcome = {
+      ...event(3, "node_outcome_recorded", {
+        nodeId: "review_browser_evidence", outcome: "succeeded", nextState: "succeeded",
+        executor: { kind: "model", routeId: "review-route" },
+      }),
+      evidenceRefs: ["demo-review_browser_evidence-a1-reply"],
+    };
+    const node = buildGraphModel([declaration, outcome]).nodes[0];
+    expect(node.declaredName).toBe("Review browser evidence");
+    expect(node.declaredRole).toBe("evaluator");
+    expect(node.actualExecutor).toEqual({ kind: "model", routeId: "review-route" });
+    expect(nodeResult(node)).toEqual({
+      executor: "Model · route review-route",
+      verification: "Reply received · acceptance not verified",
+      short: "Reply received · unverified",
+    });
+    expect(node.history[0].actorId).toBe("system-actor");
+  });
+
+  it("does not attribute a new attempt to the previous attempt's executor", () => {
+    const first = event(3, "node_outcome_recorded", { nodeId: "review", outcome: "retryable_failure", nextState: "blocked", executor: { kind: "model", routeId: "old-route" } });
+    const retry = event(4, "node_outcome_recorded", { nodeId: "review", outcome: "started", nextState: "running" });
+    expect(buildGraphModel([first, retry]).nodes[0].actualExecutor).toBeNull();
+  });
+
   it("takes its roster from the declaration, not from what happened to run", () => {
     const model = buildGraphModel([ROSTER]);
     expect(model.rosterDeclared).toBe(true);

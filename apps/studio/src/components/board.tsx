@@ -1451,13 +1451,13 @@ function NodeBlock({
         {/* Eyebrow: the log's own address for the block, and - only while something moves or
             waits - the state word breathing on the right. */}
         <span className="node-eyebrow">
-          <span className="node-tag"><GitBranch aria-hidden="true" />{entry ? "Entry node" : "Work node"}</span>
+          <span className="node-tag"><GitBranch aria-hidden="true" />{node.declaredRole ? `${node.declaredRole} · ` : ""}{entry ? "Entry node" : "Work node"}</span>
           <span className={`hist-chip ${node.resultSource === "model_reply" && node.state === "succeeded" ? "alarm" : mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`} title={node.resultSource === "model_reply" && node.state === "succeeded" ? "Runtime state: succeeded; reply not verified" : undefined}>
             {node.resultSource === "model_reply" && node.state === "succeeded" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}
             {(mood === "moving" || mood === "waiting") && <i aria-hidden="true"> ✳</i>}
           </span>
         </span>
-        <span className="node-title" title={node.id}>{node.id}</span>
+        <span className="node-title" title={node.declaredName ? `${node.declaredName} (${node.id})` : node.id}>{node.declaredName ?? node.id}</span>
         {/* Clamped: the card is a fixed box the camera frames by (cardHeight, graph/board.ts -
             taller by the objective's allowance, matched by .node-with-objective), and an
             objective may run to 2,000 characters. The whole text is one hover away on the title. */}
@@ -1477,11 +1477,12 @@ function NodeBlock({
           {nodeResult(node)?.short ?? (node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state))}
         </span>
         {node.touches > 0 && <span className="node-facts">
+          {node.actualExecutor ? <span><small>Executed by</small><strong>{nodeResult(node)?.executor ?? (node.actualExecutor.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor.kind)}</strong></span> : null}
           <span><small>Recorded by</small><strong>{last?.actorType === "system" ? "Runtime" : latestActor ?? "Not reported"}</strong></span>
-          <span><small>Latest update</small><strong>{node.lastEventAt ? ago(node.lastEventAt) : "No updates yet"}</strong></span>
+          {!node.actualExecutor && <span><small>Latest update</small><strong>{node.lastEventAt ? ago(node.lastEventAt) : "No updates yet"}</strong></span>}
         </span>}
         {node.touches > 0 && <span className="node-receipt">
-          <span>{node.touches} event{node.touches === 1 ? "" : "s"}{last?.sequence !== undefined ? ` / #${last.sequence}` : ""}</span>
+          <span>{node.touches} event{node.touches === 1 ? "" : "s"}{last?.sequence !== undefined ? ` / #${last.sequence}` : ""}{node.actualExecutor && node.lastEventAt ? ` · ${ago(node.lastEventAt)}` : ""}</span>
           <span>{connections === null ? "Connections unverified" : `${connections} connection${connections === 1 ? "" : "s"}`}</span>
         </span>}
         <span className="node-inspect">Inspect node <ArrowUpRight aria-hidden="true" /></span>

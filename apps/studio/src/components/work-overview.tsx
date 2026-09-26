@@ -158,7 +158,7 @@ export function WorkOverview({
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
         <div className="work-snapshot-grid">
-          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong></div>
+          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "completed" && model.nodes.some((node) => node.state === "succeeded" && node.resultSource === "model_reply") && <small>Model replies still need review</small>}</div>
           <div><span>Graph step</span><strong>{model.nodes.length === 1 ? `${model.nodes[0].id} · ${readable(model.nodes[0].state)}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
           <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
         </div>
@@ -276,14 +276,16 @@ export function WorkOverview({
                   <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && node.history.some(event => event.actorId === selectedAgent) ? " work-related" : ""}`} key={node.id}>
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
                       <span className="work-node-topline"><span className={statusClass(node)} title={node.state === "succeeded" && node.resultSource === "model_reply" ? "Runtime state: succeeded; reply not verified" : undefined}>{node.state === "succeeded" && node.resultSource === "model_reply" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
-                      <strong className="work-node-id">{node.id}</strong>
+                      <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
+                      {node.declaredName && <span className="work-muted">{node.id}</span>}
+                      {node.declaredRole && <span className="work-muted">Declared role · {node.declaredRole}</span>}
                       {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
                         <q className="work-node-objective" title={objective}>{objective}</q>
                       )}
                       {latest ? (
                         <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorType === "system" ? "Recorded by Runtime" : latest.actorId ? `Recorded by ${latest.actorId}` : "Recorder unknown"} · {ago(latest.occurredAt)}</small></span>
                       ) : <span className="work-node-latest"><span>Latest event</span><strong className="work-muted">Awaiting first event</strong></span>}
-                      {result && <span className="work-node-latest"><span>Executor</span><strong>{result.executor}</strong><small>{result.verification}</small></span>}
+                      {(result || node.actualExecutor) && <span className="work-node-latest"><span>Executed by</span><strong>{result?.executor ?? (node.actualExecutor?.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor?.kind ?? "Not recorded")}</strong><small>{result?.verification ?? "Latest attempt recorded"}</small></span>}
                     </button>
                     <div className="work-node-footer"><span><Clock3 aria-hidden="true" size={14} /> {node.history.length} history item{node.history.length === 1 ? "" : "s"}</span></div>
                     {model.edgesKnown ? (

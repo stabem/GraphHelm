@@ -2647,6 +2647,7 @@ mod tests {
 
         let outcome = |node: &str| {
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id: execution_id.clone(),
                 node_id: OpaqueId::parse(node).unwrap(),
                 outcome: NodeOutcome::Approved,

@@ -227,6 +227,11 @@ fn a_model_reply_is_succeeded_with_sealed_reply_evidence() {
     );
     let outcome = block_on(executor.execute(&cognitive_work())).unwrap();
     assert_eq!(outcome.outcome, NodeOutcome::Succeeded);
+    assert_eq!(outcome.executor_kind, Some(AttemptExecutorKind::Model));
+    assert_eq!(
+        outcome.model_route_id.as_deref(),
+        Some("claude_subscription")
+    );
     let sealed = outcome
         .sealables
         .iter()
@@ -292,6 +297,8 @@ fn a_tool_record_maps_by_disposition_and_seals_record_plus_streams() {
         let executor = executor(Ok(reply("unused")), disposition.clone());
         let outcome = block_on(executor.execute(&tool_work())).unwrap();
         assert_eq!(outcome.outcome, expected, "{disposition:?}");
+        assert_eq!(outcome.executor_kind, Some(AttemptExecutorKind::Tool));
+        assert_eq!(outcome.model_route_id, None);
         let suffixes: Vec<&str> = outcome
             .sealables
             .iter()
@@ -359,9 +366,10 @@ use graphhelm_events::{
     RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey, replay,
 };
 use graphhelm_protocols::{
-    ActorId, Clock, EventKind, ExecutionCompleted, ExecutionId, ExecutionMode, ExecutionStarted,
-    IdGenerator, NewEvent, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256,
-    RepositoryScope, ReuseKeyComponent, ReuseOutcome, Sensitivity, WireHash, WorkspaceId,
+    ActorId, AttemptExecutorKind, Clock, EventKind, ExecutionCompleted, ExecutionId, ExecutionMode,
+    ExecutionStarted, IdGenerator, NewEvent, OpaqueId, PersistedActor, PersistedActorType,
+    ProjectId, RawSha256, RepositoryScope, ReuseKeyComponent, ReuseOutcome, Sensitivity, WireHash,
+    WorkspaceId,
 };
 use graphhelm_runtime::context_accounting::{ACCOUNTING_RECEIPT_MEDIA_TYPE, MODEL_USAGE_PRODUCER};
 use graphhelm_runtime::driver::record_outcome_with_evidence;
@@ -568,6 +576,7 @@ fn running_node_repository_started_by(
         append(vec![plain_event(
             key,
             EventKind::NodeOutcomeRecorded(graphhelm_protocols::NodeOutcomeRecorded {
+                executor: None,
                 execution_id: execution_id.clone(),
                 node_id: OpaqueId::parse(NODE).unwrap(),
                 outcome,
@@ -602,6 +611,8 @@ fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
         },
         reuse,
         gate_verdict: None,
+        executor_kind: None,
+        model_route_id: None,
     }
 }
 
@@ -730,6 +741,44 @@ fn an_outcome_and_its_evidence_land_in_one_atomic_append() {
     let serialized = serde_json::to_string(envelope).unwrap();
     assert!(!serialized.contains("REPLY-SENTINEL"));
     assert!(!serialized.contains("STREAM-SENTINEL"));
+}
+
+/// The executor attribution is persisted on the outcome event, independently of the envelope
+/// actor. This catches a writer that drops the dispatch arm or incorrectly substitutes actor id.
+#[test]
+fn model_route_attribution_survives_outcome_persistence() {
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let scope = driver_scope();
+    let stream = OpaqueId::parse(DRIVER_STREAM).unwrap();
+    let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
+    let ids = SequenceIds::default();
+    let mut work = succeeded_work(None);
+    work.executor_kind = Some(AttemptExecutorKind::Model);
+    work.model_route_id = Some("route-primary".to_owned());
+
+    block_on(record_outcome_with_evidence(
+        &repository,
+        &protector,
+        &ids,
+        &scope,
+        &stream,
+        &execution_id,
+        &driver_actor(),
+        NODE,
+        &work,
+    ))
+    .unwrap();
+
+    let history = repository
+        .read_replay_stream(&scope, DRIVER_STREAM)
+        .unwrap();
+    let EventKind::NodeOutcomeRecorded(recorded) = &history.last().unwrap().kind else {
+        panic!("the last event is the recorded outcome");
+    };
+    let executor = recorded.executor.as_ref().expect("attempt attribution");
+    assert_eq!(executor.kind, AttemptExecutorKind::Model);
+    assert_eq!(executor.route_id.as_deref(), Some("route-primary"));
 }
 
 #[test]
@@ -880,6 +929,8 @@ fn an_unsafe_provider_token_count_refuses_before_sealing_or_append() {
         sealables: Vec::new(),
         reuse: None,
         gate_verdict: None,
+        executor_kind: None,
+        model_route_id: None,
     };
 
     let result = block_on(record_outcome_with_evidence(
@@ -922,6 +973,8 @@ fn a_no_observation_fixture_outcome_does_not_require_evidence_sealing() {
         },
         reuse: None,
         gate_verdict: None,
+        executor_kind: None,
+        model_route_id: None,
     };
 
     let recorded = block_on(record_outcome_with_evidence(
@@ -965,6 +1018,8 @@ fn sealed_work_without_provider_usage_still_emits_an_unavailable_receipt() {
         },
         reuse: None,
         gate_verdict: None,
+        executor_kind: None,
+        model_route_id: None,
     };
 
     let recorded = block_on(record_outcome_with_evidence(

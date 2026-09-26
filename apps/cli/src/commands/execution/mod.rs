@@ -27,10 +27,10 @@ use graphhelm_execution::{
 };
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    ActorId, ClaimEvidence, Diagnostic, EventEnvelope, EventKind, ExecutionId, GraphSpec,
-    IdGenerator, NewEvent, NodeOutcome, NodeOutcomeReason, NodeOutcomeRecorded, NodeState,
-    OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity,
-    SimulationStatus, WireHash, WorkspaceId,
+    ActorId, AttemptExecutor, AttemptExecutorKind, ClaimEvidence, Diagnostic, EventEnvelope,
+    EventKind, ExecutionId, GraphSpec, IdGenerator, NewEvent, NodeOutcome, NodeOutcomeReason,
+    NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId,
+    RepositoryScope, Sensitivity, SimulationStatus, WireHash, WorkspaceId,
 };
 use graphhelm_simulation::SimulationFixtures;
 
@@ -419,6 +419,7 @@ pub(super) fn append_event(
 pub(super) struct RecordedOutcome {
     pub outcome: NodeOutcome,
     pub reason: Option<NodeOutcomeReason>,
+    pub executor: Option<AttemptExecutor>,
 }
 
 impl RecordedOutcome {
@@ -427,6 +428,7 @@ impl RecordedOutcome {
         Self {
             outcome,
             reason: None,
+            executor: None,
         }
     }
 
@@ -435,7 +437,16 @@ impl RecordedOutcome {
         Self {
             outcome,
             reason: Some(reason),
+            executor: None,
         }
+    }
+
+    pub(super) fn executed_by_fixture(mut self) -> Self {
+        self.executor = Some(AttemptExecutor {
+            kind: AttemptExecutorKind::Fixture,
+            route_id: None,
+        });
+        self
     }
 }
 
@@ -485,7 +496,11 @@ pub(super) fn record_outcome_with_key(
     recorded: RecordedOutcome,
     key: OpaqueId,
 ) -> Result<NodeState, Failure> {
-    let RecordedOutcome { outcome, reason } = recorded;
+    let RecordedOutcome {
+        outcome,
+        reason,
+        executor,
+    } = recorded;
     let projection = replay_projection(store, scope, stream.as_str())?;
     let current = projection
         .node_states
@@ -517,6 +532,7 @@ pub(super) fn record_outcome_with_key(
             actor.clone(),
             Sensitivity::Internal,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor,
                 execution_id: execution_id.clone(),
                 node_id,
                 outcome,
@@ -1100,6 +1116,7 @@ mod tests {
                 ),
                 Sensitivity::Internal,
                 EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                    executor: None,
                     execution_id: OpaqueId::parse("exec-at-sequence").unwrap(),
                     node_id: OpaqueId::parse("implement".to_owned()).unwrap(),
                     outcome: NodeOutcome::Succeeded,

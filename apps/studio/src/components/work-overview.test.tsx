@@ -6,6 +6,26 @@ import type { GraphModel } from "../graph/model";
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("shows the declared step and actual model route separately from the recorder", () => {
+    const review = {
+      ...node("review_browser_evidence"),
+      declaredName: "Review browser evidence",
+      declaredRole: "evaluator",
+      actualExecutor: { kind: "model", routeId: "review-route" },
+      resultSource: "model_reply" as const,
+      state: "succeeded",
+      touches: 1,
+      history: [{ sequence: 3, kind: "node_outcome_recorded", nextState: "succeeded", outcome: "succeeded", occurredAt: null, actorId: "system-runtime", actorType: "system", evidence: 1 }],
+    };
+    render(<WorkOverview model={{ ...model, nodes: [review] }} selectedNode={null} onSelectNode={vi.fn()} />);
+    const card = screen.getByRole("button", { name: /Open node review_browser_evidence/ });
+    expect(card).toHaveTextContent("Review browser evidence");
+    expect(card).toHaveTextContent("Declared role · evaluator");
+    expect(card).toHaveTextContent("Model · route review-route");
+    expect(card).toHaveTextContent("Recorded by Runtime");
+    expect(card).toHaveTextContent("review needed");
+  });
+
   it("shows a finished model call as unverified and labels the system actor as recorder", () => {
     const review = {
       ...node("review_browser_evidence"),

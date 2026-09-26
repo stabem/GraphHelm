@@ -264,11 +264,12 @@ pub(super) fn drive_to_quiescence(
                 node,
                 // The outcome came from a fixture, so the fixture IS the cause (M07 F3):
                 // recording it keeps a simulated red from being triaged as a real one.
-                if outcome == NodeOutcome::Succeeded {
+                (if outcome == NodeOutcome::Succeeded {
                     RecordedOutcome::uncaused(outcome)
                 } else {
                     RecordedOutcome::caused(outcome, NodeOutcomeReason::FixtureScripted)
-                },
+                })
+                .executed_by_fixture(),
             )?;
         }
     }
@@ -324,7 +325,11 @@ fn record_outcome(
     node: &str,
     recorded: RecordedOutcome,
 ) -> Result<NodeState, Failure> {
-    let RecordedOutcome { outcome, reason } = recorded;
+    let RecordedOutcome {
+        outcome,
+        reason,
+        executor,
+    } = recorded;
     let projection = reread(store, scope, stream.as_str())?;
     let current = projection
         .node_states
@@ -356,6 +361,7 @@ fn record_outcome(
             actor.clone(),
             Sensitivity::Internal,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor,
                 execution_id: execution_id.clone(),
                 node_id,
                 outcome,

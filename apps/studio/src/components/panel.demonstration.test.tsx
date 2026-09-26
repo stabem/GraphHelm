@@ -37,11 +37,22 @@ describe("the demonstration label on the run panel", () => {
     expect(screen.getByText(DEMONSTRATION_SENTENCE)).toBeInTheDocument();
     expect(DEMONSTRATION_SENTENCE).toMatch(/^Demonstration run/);
     expect(DEMONSTRATION_SENTENCE).toContain("not produced by a model or a tool");
+    expect(screen.getByText("Demonstration finished · scripted outcomes")).toBeInTheDocument();
+    expect(screen.getByText("scripted steps", { exact: false })).toHaveTextContent("2");
+    expect(screen.queryByText("This run is completed")).not.toBeInTheDocument();
   });
 
   it("says nothing of the kind for a gateway run", () => {
     render(<RunPanel status={statusWith("gateway")} events={[]} onClose={vi.fn()} />);
     expect(screen.queryByText(DEMONSTRATION_SENTENCE)).toBeNull();
+  });
+
+  it("separates a completed execution from unverified model replies", () => {
+    render(<RunPanel status={statusWith("gateway")} events={[]} unverifiedReplies={3} onClose={vi.fn()} />);
+    expect(screen.getByText("Execution finished · review needed")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("3 model replies returned");
+    expect(screen.getByText("steps finished", { exact: false })).toHaveTextContent("2");
+    expect(screen.queryByText("This run is completed")).not.toBeInTheDocument();
   });
 
   it("claims nothing either way when the stream never declared an executor", () => {

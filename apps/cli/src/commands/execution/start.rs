@@ -4,8 +4,8 @@ use graphhelm_events::PreparedAppend;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
     DeclaredExecutor, EventKind, ExecutionFormDeclared, ExecutionMode, ExecutionPaused,
-    ExecutionStarted, NewEvent, OpaqueId, PersistedActor, PersistedActorType, Sensitivity,
-    WireHash,
+    ExecutionStarted, NewEvent, NodeDescriptor, OpaqueId, PersistedActor, PersistedActorType,
+    Sensitivity, WireHash,
 };
 
 use super::driver::{Release, drive_to_quiescence};
@@ -291,6 +291,7 @@ pub(crate) fn execute_prepared(
     let mut node_ids = Vec::new();
     let mut node_timeout_seconds = BTreeMap::new();
     let mut node_customs_budgets = BTreeMap::new();
+    let mut node_descriptors = BTreeMap::new();
     for (id, node) in &version.graph().spec.nodes {
         let parsed = OpaqueId::parse(id).map_err(|_| {
             execution_state(
@@ -315,6 +316,13 @@ pub(crate) fn execute_prepared(
         if let Ok(Some(customs)) = node.customs() {
             node_customs_budgets.insert(parsed.clone(), customs.budgets);
         }
+        node_descriptors.insert(
+            parsed.clone(),
+            NodeDescriptor {
+                name: declared_text(&node.name).unwrap_or_else(|| id.clone()),
+                role: node.node_type.clone(),
+            },
+        );
         node_ids.push(parsed);
     }
     // #1063: what the run is FOR, recorded where the shape is. `name` is the document's own
@@ -331,6 +339,7 @@ pub(crate) fn execute_prepared(
     let declared_form = ExecutionFormDeclared {
         execution_id: stream_id.clone(),
         node_ids,
+        node_descriptors,
         node_timeout_seconds,
         node_customs_budgets,
         name: declared_text(&graph.metadata.name),

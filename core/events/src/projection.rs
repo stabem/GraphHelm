@@ -2887,6 +2887,7 @@ mod tests {
                 ),
                 graphhelm_protocols::Sensitivity::Internal,
                 EventKind::NodeOutcomeRecorded(graphhelm_protocols::NodeOutcomeRecorded {
+                    executor: None,
                     execution_id: OpaqueId::parse("execution-1").unwrap(),
                     node_id: OpaqueId::parse("plan").unwrap(),
                     outcome: graphhelm_protocols::NodeOutcome::NeedsInput,
@@ -3121,6 +3122,7 @@ mod tests {
                 ),
                 graphhelm_protocols::Sensitivity::Internal,
                 EventKind::ExecutionFormDeclared(ExecutionFormDeclared {
+                    node_descriptors: Default::default(),
                     execution_id: OpaqueId::parse("execution-1").unwrap(),
                     node_ids: vec![
                         OpaqueId::parse("plan").unwrap(),

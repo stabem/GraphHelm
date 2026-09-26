@@ -122,6 +122,12 @@ pub async fn record_outcome_with_evidence(
             node_id: node_id.clone(),
             outcome: work.outcome,
             next_state,
+            executor: work
+                .executor_kind
+                .map(|kind| graphhelm_protocols::AttemptExecutor {
+                    kind,
+                    route_id: work.model_route_id.clone(),
+                }),
             reason: work.reason,
         }),
         sealed_work.references.clone(),
@@ -326,6 +332,8 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
         // (`last_outcome == Interrupted`), so a restated reason here would be noise, which
         // is the other half of what M07 F3 is about.
         reason: None,
+        executor_kind: None,
+        model_route_id: None,
     }
 }
 

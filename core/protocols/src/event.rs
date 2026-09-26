@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     ActorId, ArtifactReference, CustomsBudgets, EventHash, EvidenceId, EvidenceReference,
-    ExecutionMode, FreshnessClass, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType, OpaqueId, PersistedActor,
     PersistedActorType, PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp,
     PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity, SignalSeverity,
     SignalSourceKind, SimulationStatus, WireHash,
@@ -713,6 +713,8 @@ pub struct ExecutionStarted {
 pub struct ExecutionFormDeclared {
     pub execution_id: OpaqueId,
     pub node_ids: Vec<OpaqueId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_descriptors: BTreeMap<OpaqueId, NodeDescriptor>,
     pub node_timeout_seconds: BTreeMap<OpaqueId, u64>,
     /// The graph document's `metadata.name` (#1063): what an authored graph calls itself, and
     /// where a synthesized graph puts the goal it was compiled from.
@@ -835,6 +837,8 @@ pub struct NodeOutcomeRecorded {
     pub node_id: OpaqueId,
     pub outcome: NodeOutcome,
     pub next_state: NodeState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<AttemptExecutor>,
     /// WHY the outcome was what it was (M07 F3), from the closed vocabulary below.
     ///
     /// `skip_serializing_if` is REQUIRED here and is not a style choice: replay
@@ -846,6 +850,30 @@ pub struct NodeOutcomeRecorded {
     /// key out of `required` for exactly the same reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<NodeOutcomeReason>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeDescriptor {
+    pub name: String,
+    pub role: NodeType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptExecutorKind {
+    Fixture,
+    Model,
+    Tool,
+    Gate,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttemptExecutor {
+    pub kind: AttemptExecutorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_id: Option<String>,
 }
 
 /// The closed cause vocabulary for a node outcome (M07 F3).

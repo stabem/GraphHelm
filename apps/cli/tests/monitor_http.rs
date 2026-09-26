@@ -232,6 +232,7 @@ fn strand_node_running(events: &Path, execution: &str, node: &str) {
                 graphhelm_protocols::Sensitivity::Internal,
                 graphhelm_protocols::EventKind::NodeOutcomeRecorded(
                     graphhelm_protocols::NodeOutcomeRecorded {
+                        executor: None,
                         execution_id: graphhelm_protocols::OpaqueId::parse(execution).unwrap(),
                         node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
                         outcome,

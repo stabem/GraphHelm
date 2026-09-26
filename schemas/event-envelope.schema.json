@@ -364,6 +364,18 @@
       "properties": {
         "executionId": {"$ref": "#/$defs/opaqueId"},
         "nodeIds": {"type": "array", "items": {"$ref": "#/$defs/opaqueId"}},
+        "nodeDescriptors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name", "role"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "role": {"enum": ["agent", "human_decision", "planner", "classifier", "evaluator", "tool", "gate", "fork", "join", "timer", "trigger", "subgraph", "materializer", "deploy", "rollback", "artifact_transform", "dead_letter"]}
+            },
+            "additionalProperties": false
+          }
+        },
         "nodeTimeoutSeconds": {
           "type": "object",
           "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 315576000}
@@ -423,6 +435,15 @@
         "nodeId": {"$ref": "#/$defs/opaqueId"},
         "outcome": {"$ref": "#/$defs/nodeOutcome"},
         "nextState": {"$ref": "#/$defs/nodeState"},
+        "executor": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {"enum": ["fixture", "model", "tool", "gate"]},
+            "routeId": {"$ref": "#/$defs/opaqueId"}
+          },
+          "additionalProperties": false
+        },
         "reason": {"$ref": "#/$defs/nodeOutcomeReason"}
       },
       "additionalProperties": false

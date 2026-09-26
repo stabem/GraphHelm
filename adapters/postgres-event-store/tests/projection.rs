@@ -545,6 +545,7 @@ fn execution_events(execution: &str) -> Vec<NewEvent> {
             actor.clone(),
             Sensitivity::Internal,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id: execution_id.clone(),
                 node_id: OpaqueId::parse("start").unwrap(),
                 outcome: NodeOutcome::Started,
@@ -561,6 +562,7 @@ fn execution_events(execution: &str) -> Vec<NewEvent> {
             actor_running,
             Sensitivity::Internal,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id,
                 node_id: OpaqueId::parse("start").unwrap(),
                 outcome: NodeOutcome::Started,

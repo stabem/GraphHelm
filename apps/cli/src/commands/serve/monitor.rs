@@ -707,6 +707,7 @@ mod tests {
                 ),
                 Sensitivity::Internal,
                 EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                    executor: None,
                     execution_id: OpaqueId::parse("exec-monitor").unwrap(),
                     node_id: OpaqueId::parse(node.to_owned()).unwrap(),
                     outcome: NodeOutcome::Succeeded,
@@ -768,6 +769,7 @@ mod tests {
         fn with_executor(executor: Option<DeclaredExecutor>) -> ExecutionProjection {
             let mut projection = projection_fixture("implement");
             projection.declared_form = Some(ExecutionFormDeclared {
+                node_descriptors: std::collections::BTreeMap::new(),
                 execution_id: OpaqueId::parse("exec-monitor").unwrap(),
                 node_ids: vec![],
                 node_timeout_seconds: std::collections::BTreeMap::new(),

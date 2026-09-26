@@ -992,6 +992,7 @@ fn the_wedge_reads_the_declared_form_and_prefers_the_sealed_one() {
 
     // Now the DECLARED form supplies the set, and `ship` has no state at all.
     projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
+        node_descriptors: Default::default(),
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-wedge").unwrap(),
         node_ids: vec![
             graphhelm_protocols::OpaqueId::parse("build").unwrap(),
@@ -1243,6 +1244,7 @@ fn a_requeued_node_with_no_declared_bound_is_unevaluated_not_calm() {
 fn a_requeued_node_whose_calm_was_bought_is_still_named() {
     let mut projection = silent_queued_node(1);
     projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
+        node_descriptors: Default::default(),
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
         node_ids: vec![graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap()],
         node_timeout_seconds: [(
@@ -1309,6 +1311,7 @@ fn a_requeued_node_whose_calm_was_bought_is_still_named() {
 fn a_default_feed_claims_no_budget_where_the_graph_declares_one() {
     let mut projection = silent_queued_node(1);
     projection.declared_form = Some(graphhelm_protocols::ExecutionFormDeclared {
+        node_descriptors: Default::default(),
         execution_id: graphhelm_protocols::OpaqueId::parse("exec-m09-a").unwrap(),
         node_ids: vec![graphhelm_protocols::OpaqueId::parse("flaky_check").unwrap()],
         node_timeout_seconds: [(

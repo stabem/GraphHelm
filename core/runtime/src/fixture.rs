@@ -54,6 +54,8 @@ impl AsyncNodeExecutor for FixtureAsyncExecutor {
                 // simulated red from being triaged as a provider defect (M07 F3).
                 reason: (outcome != graphhelm_protocols::NodeOutcome::Succeeded)
                     .then_some(graphhelm_protocols::NodeOutcomeReason::FixtureScripted),
+                executor_kind: Some(graphhelm_protocols::AttemptExecutorKind::Fixture),
+                model_route_id: None,
             })
         })
     }

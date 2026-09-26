@@ -1101,7 +1101,9 @@ export function NodePanel({
       <header className={`panel-head ${mood}${node.resultSource === "model_reply" && node.state === "succeeded" ? " verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
-          <h2>{node.id}</h2>
+          <h2>{node.declaredName ?? node.id}</h2>
+          {node.declaredName && <p className="lbl">Node · {node.id}</p>}
+          {node.declaredRole && <p className="lbl">Declared role · {node.declaredRole}</p>}
           <p className="lbl">{node.resultSource === "model_reply" && node.state === "succeeded" ? "Reply received · review needed" : readable(node.state)}</p>
         </div>
         <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node">
@@ -1126,9 +1128,16 @@ export function NodePanel({
       {result && (
         <section className="node-result-summary" aria-label="Node result">
           <strong>{result.verification}</strong>
-          <span>{result.executor}</span>
+          <span>Executed by {result.executor}</span>
           <span>Lifecycle recorded by {node.history.at(-1)?.actorType === "system" ? "Runtime" : node.history.at(-1)?.actorId ?? "an unknown actor"}.</span>
           <span>Read the sealed reply or tool record below for what this step actually reported.</span>
+        </section>
+      )}
+      {!result && node.actualExecutor && (
+        <section className="node-result-summary" aria-label="Last attempt">
+          <strong>Last attempt · {readable(node.state)}</strong>
+          <span>Executed by {node.actualExecutor.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor.kind}</span>
+          <span>Lifecycle recorded by {node.history.at(-1)?.actorType === "system" ? "Runtime" : node.history.at(-1)?.actorId ?? "an unknown actor"}.</span>
         </section>
       )}
 
@@ -1330,6 +1339,7 @@ export const DEMONSTRATION_SENTENCE =
 export function RunPanel({
   status,
   events,
+  unverifiedReplies = 0,
   onClose,
   openEvidence,
   onSay,
@@ -1346,6 +1356,8 @@ export function RunPanel({
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
+  /** Completed model calls whose replies still lack an acceptance verdict. */
+  unverifiedReplies?: number;
   onClose: () => void;
   /** Absent when this Studio has no way to open sealed content; the thread then shows the events
    * alone rather than pretending the words are missing. */
@@ -1434,14 +1446,14 @@ export function RunPanel({
   }, [sayFocus, sayRecipient]);
   return (
     <section className="panel" aria-label={`Run ${status.executionId ?? ""}`}>
-      <header className={`panel-head ${verdict.key === "needs" ? "waiting" : ""}`}>
+      <header className={`panel-head ${verdict.key === "needs" ? "waiting" : unverifiedReplies > 0 || status.executor === "fixture" ? "verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>
             {verdict.key === "needs"
               ? needsDirection ? "This run needs direction" : "This run needs you"
               : over
-                ? `This run is ${readable(status.status ?? "")}`
+                 ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedReplies > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
                 : verdict.key === "calm"
                   ? "Running by itself"
                   : "Nothing to report yet"}
@@ -1486,7 +1498,7 @@ export function RunPanel({
               key={state}
               title={state}
             >
-              {readable(state)} <strong>{status.nodeStateCounts[state]}</strong>
+              {state === "succeeded" && status.executor === "fixture" ? "scripted steps" : state === "succeeded" && unverifiedReplies > 0 ? "steps finished" : readable(state)} <strong>{status.nodeStateCounts[state]}</strong>
             </span>
           ),
         )}
@@ -1496,6 +1508,7 @@ export function RunPanel({
             : `nothing in the other ${LIFECYCLE_STATES.filter((state) => (status.nodeStateCounts[state] ?? 0) === 0).length} states`}
         </span>
       </div>
+      {unverifiedReplies > 0 && <p className="work-note" role="note">{unverifiedReplies} model repl{unverifiedReplies === 1 ? "y" : "ies"} returned. These calls finished, but their answers have not been checked against the task's acceptance criteria.</p>}
 
       <div className="thread-search">
         <input

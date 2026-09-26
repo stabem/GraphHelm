@@ -433,6 +433,42 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
     );
     // #1064: the CLI's `start` is always fixture-driven, and its reply names that executor.
     assert_eq!(start_value["data"]["executor"], "fixture", "{start_value}");
+    // The response describes the command. The event stream must independently
+    // identify which outcomes came from a fixture, without labeling lifecycle hops.
+    let repository = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(AttributionClock),
+        std::sync::Arc::new(AttributionIds::default()),
+    )
+    .unwrap();
+    let (_stream, history) = repository.read_unique_replay_stream().unwrap();
+    let outcomes: Vec<_> = history
+        .iter()
+        .filter_map(|event| match &event.kind {
+            graphhelm_protocols::EventKind::NodeOutcomeRecorded(outcome) => Some(outcome),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| outcome.outcome == graphhelm_protocols::NodeOutcome::Succeeded)
+            .count(),
+        2
+    );
+    for outcome in outcomes {
+        if outcome.outcome == graphhelm_protocols::NodeOutcome::Succeeded {
+            assert_eq!(
+                outcome.executor.as_ref().map(|executor| executor.kind),
+                Some(graphhelm_protocols::AttemptExecutorKind::Fixture)
+            );
+        } else {
+            assert!(
+                outcome.executor.is_none(),
+                "lifecycle hops are not fixture work"
+            );
+        }
+    }
     // #192: manual-override-deploy.yaml lints clean (zero errors) but with warnings (GHG101 on
     // both nodes' missing timeoutSeconds) — those warnings were silently dropped on this exact
     // success path before the fix, since `diagnostics.extend(report.warnings)` lived only inside
@@ -476,6 +512,88 @@ fn start_drives_a_two_node_graph_to_completion_and_status_reports_it_independent
         without_graph_derived(start_value["data"].clone()),
         "status must independently replay to the same data start reported (the graph-derived dispatch view aside: start holds the graph, bare status does not)"
     );
+}
+
+struct AttributionClock;
+impl graphhelm_protocols::Clock for AttributionClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+#[derive(Default)]
+struct AttributionIds(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for AttributionIds {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+/// A valid graph may carry a node name longer than the event wire bound. Start must still
+/// commit the declaration, with the safe bounded descriptor visible in the raw event stream.
+#[test]
+fn held_start_bounds_long_node_descriptor_without_refusing() {
+    let directory = tempfile::tempdir().unwrap();
+    let graph = directory.path().join("long-name.yaml");
+    let source =
+        std::fs::read_to_string(root().join("examples/graphs/manual-override-deploy.yaml"))
+            .unwrap();
+    let long_name = "n".repeat(2_001);
+    let source = source.replacen(
+        "name: Implementação concluída",
+        &format!("name: {long_name}"),
+        1,
+    );
+    std::fs::write(&graph, source).unwrap();
+    let events = directory.path().join("events");
+
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_long",
+            "--held",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let repository = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(AttributionClock),
+        std::sync::Arc::new(AttributionIds::default()),
+    )
+    .unwrap();
+    let (_stream, history) = repository.read_unique_replay_stream().unwrap();
+    let descriptors = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            graphhelm_protocols::EventKind::ExecutionFormDeclared(form) => {
+                Some(&form.node_descriptors)
+            }
+            _ => None,
+        })
+        .expect("held start records its declaration");
+    let descriptor = descriptors
+        .iter()
+        .find(|(id, _)| id.as_str() == "implementation")
+        .map(|(_, descriptor)| descriptor)
+        .unwrap();
+    assert_eq!(descriptor.role, graphhelm_protocols::NodeType::Agent);
+    assert_eq!(descriptor.name.chars().count(), 2_000);
 }
 
 /// `execution start` refuses a stream that already has an `execution_started` on it, before the

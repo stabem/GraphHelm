@@ -81,6 +81,11 @@ export interface LintFinding {
 
 export interface GraphNode {
   id: string;
+  /** Declared with the execution, so later edits to a graph file cannot rename this run. */
+  declaredName?: string | null;
+  declaredRole?: string | null;
+  /** The latest outcome's producer, separate from the actor that appended the event. */
+  actualExecutor?: { kind: string; routeId: string | null } | null;
   state: NodeStateName;
   /** What kind of attempt evidence the latest successful outcome sealed. This identifies the
    * producer's output, not an acceptance verdict or a named agent. Older streams may have none. */
@@ -101,36 +106,41 @@ export interface GraphNode {
  * suffixes, and older/unknown evidence stays unknown rather than being assigned a model. */
 export function nodeResult(node: GraphNode): { executor: string; verification: string; short: string } | null {
   if (node.state !== "succeeded") return null;
+  const recordedExecutor = node.actualExecutor?.kind === "model"
+    ? node.actualExecutor.routeId ? `Model · route ${node.actualExecutor.routeId}` : "Model · route not recorded"
+    : node.actualExecutor?.kind === "tool" ? "Tool"
+      : node.actualExecutor?.kind === "gate" ? "Deterministic gate"
+        : node.actualExecutor?.kind === "fixture" ? "Fixture" : null;
   if (node.resultSource === "model_reply") {
     return {
-      executor: "Model call · model identity not recorded",
+      executor: recordedExecutor ?? "Model call · model identity not recorded",
       verification: "Reply received · acceptance not verified",
       short: "Reply received · unverified",
     };
   }
   if (node.resultSource === "tool_record") {
     return {
-      executor: "Tool call · command in evidence",
+      executor: recordedExecutor ?? "Tool call · command in evidence",
       verification: "Tool exited successfully · goal not verified",
       short: "Tool exited 0",
     };
   }
   if (node.resultSource === "judge_verdict") {
     return {
-      executor: "Judge call · model identity not recorded",
+      executor: recordedExecutor ?? "Judge call · model identity not recorded",
       verification: "Structured judgment passed",
       short: "Judgment passed",
     };
   }
   if (node.resultSource === "gate_verdict") {
     return {
-      executor: "Deterministic gate",
+      executor: recordedExecutor ?? "Deterministic gate",
       verification: "Gate check passed",
       short: "Gate passed",
     };
   }
   return {
-    executor: "Executor not recorded",
+    executor: recordedExecutor ?? "Executor not recorded",
     verification: node.resultSource === "none"
       ? "Completion recorded without attempt evidence"
       : "Completion recorded · acceptance not verified",
@@ -213,6 +223,9 @@ export function buildGraphModel(
     if (existing) return existing;
     const created: GraphNode = {
       id,
+      declaredName: null,
+      declaredRole: null,
+      actualExecutor: null,
       state: "unknown",
       resultSource: null,
       touches: 0,
@@ -236,6 +249,19 @@ export function buildGraphModel(
         for (const id of declared) {
           if (typeof id === "string" && id.length > 0) ensure(id);
         }
+        const descriptors = (payload as { nodeDescriptors?: unknown }).nodeDescriptors;
+        if (descriptors !== null && typeof descriptors === "object" && !Array.isArray(descriptors)) {
+          for (const id of declared) {
+            if (typeof id !== "string" || !nodes.has(id)) continue;
+            const raw = (descriptors as Record<string, unknown>)[id];
+            if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+            const name = (raw as Record<string, unknown>).name;
+            const role = (raw as Record<string, unknown>).role;
+            const node = ensure(id);
+            node.declaredName = typeof name === "string" && name.length <= 2000 ? name : null;
+            node.declaredRole = typeof role === "string" && role.length <= 80 ? role : null;
+          }
+        }
       }
       continue;
     }
@@ -245,6 +271,18 @@ export function buildGraphModel(
     const node = ensure(id);
     const nextState = stringField(event, "nextState");
     const outcome = stringField(event, "outcome");
+    if (event.kind === "node_outcome_recorded") {
+      const rawExecutor = event.payload !== null && typeof event.payload === "object"
+        ? (event.payload as { executor?: unknown }).executor : null;
+      node.actualExecutor = null;
+      if (rawExecutor !== null && typeof rawExecutor === "object" && !Array.isArray(rawExecutor)) {
+        const kind = (rawExecutor as Record<string, unknown>).kind;
+        const route = (rawExecutor as Record<string, unknown>).routeId;
+        node.actualExecutor = typeof kind === "string" && ["fixture", "model", "tool", "gate"].includes(kind)
+          ? { kind, routeId: typeof route === "string" && route.length <= 128 ? route : null }
+          : null;
+      }
+    }
     // A settled node being named again IS the signal; the first reopening wins (later ones are
     // the same story continuing), and a fresh settling clears the mark - the record moved on.
     if (isSettled(node.state) && node.reopened === null) {

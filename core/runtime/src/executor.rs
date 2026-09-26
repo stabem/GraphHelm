@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use graphhelm_protocols::{NodeOutcome, NodeOutcomeReason};
+use graphhelm_protocols::{AttemptExecutorKind, NodeOutcome, NodeOutcomeReason};
 
 /// One dispatched unit of node work.
 #[derive(Clone, Debug)]
@@ -101,6 +101,8 @@ pub struct WorkOutcome {
     /// `NodeOutcomeRecorded` kind carries. `None` on success and NEVER on a failure: an
     /// outcome the operator cannot act on is the defect the blind judge named.
     pub reason: Option<NodeOutcomeReason>,
+    pub executor_kind: Option<AttemptExecutorKind>,
+    pub model_route_id: Option<String>,
 }
 
 /// What a gate evaluation decided, in the wire vocabulary the `GateVerdict` kind carries.
@@ -256,6 +258,8 @@ fn cognitive_outcome(
                     gate_verdict: None,
                     reason: (outcome != NodeOutcome::Succeeded)
                         .then_some(NodeOutcomeReason::EmptyReply),
+                    executor_kind: None,
+                    model_route_id: None,
                 }
             }
             // Delegation, not a second mapping: 05b's outcome_for_error is the one authority
@@ -283,6 +287,8 @@ fn cognitive_outcome(
                     reuse: None,
                     gate_verdict: None,
                     reason: Some(reason_for_gateway_error(error)),
+                    executor_kind: None,
+                    model_route_id: None,
                 }
             }
         }
@@ -355,6 +361,8 @@ fn tool_outcome(
             reuse: result.reuse,
             gate_verdict: None,
             reason,
+            executor_kind: None,
+            model_route_id: None,
         }
     }
 }
@@ -379,7 +387,11 @@ impl AsyncNodeExecutor for ModelExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
-                    Ok(cognitive_work(self.model.as_ref(), &self.route_id, work).await)
+                    let mut outcome =
+                        cognitive_work(self.model.as_ref(), &self.route_id, work).await;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Model);
+                    outcome.model_route_id = Some(self.route_id.clone());
+                    Ok(outcome)
                 }
                 crate::classify::NodeWorkKind::Tool | crate::classify::NodeWorkKind::GateCheck => {
                     Err(ExecutorRefusal::Unsupported)
@@ -410,7 +422,10 @@ impl AsyncNodeExecutor for ToolExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Tool => {
-                    tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await
+                    let mut outcome =
+                        tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await?;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Tool);
+                    Ok(outcome)
                 }
                 crate::classify::NodeWorkKind::Cognitive
                 | crate::classify::NodeWorkKind::GateCheck => Err(ExecutorRefusal::Unsupported),
@@ -453,7 +468,9 @@ impl AsyncNodeExecutor for SplitExecutor {
                     let Some(gate) = work.gate_check.as_ref() else {
                         return Err(ExecutorRefusal::Unassemblable);
                     };
-                    gate_check_outcome(gate, self.gates.as_ref())
+                    let mut outcome = gate_check_outcome(gate, self.gates.as_ref())?;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Gate);
+                    Ok(outcome)
                 }
             }
         })
@@ -634,16 +651,25 @@ impl AsyncNodeExecutor for PortExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
-                    Ok(cognitive_work(self.model.as_ref(), &self.route_id, work).await)
+                    let mut outcome =
+                        cognitive_work(self.model.as_ref(), &self.route_id, work).await;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Model);
+                    outcome.model_route_id = Some(self.route_id.clone());
+                    Ok(outcome)
                 }
                 crate::classify::NodeWorkKind::Tool => {
-                    tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await
+                    let mut outcome =
+                        tool_work(self.tools.as_ref(), &self.lease, &self.actor, work).await?;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Tool);
+                    Ok(outcome)
                 }
                 crate::classify::NodeWorkKind::GateCheck => {
                     let Some(gate) = work.gate_check.as_ref() else {
                         return Err(ExecutorRefusal::Unassemblable);
                     };
-                    gate_check_outcome(gate, self.gates.as_ref())
+                    let mut outcome = gate_check_outcome(gate, self.gates.as_ref())?;
+                    outcome.executor_kind = Some(AttemptExecutorKind::Gate);
+                    Ok(outcome)
                 }
             }
         })
@@ -683,6 +709,8 @@ fn judge_outcome(
                 reuse: None,
                 gate_verdict: None,
                 reason: Some(reason_for_gateway_error(error)),
+                executor_kind: None,
+                model_route_id: None,
             };
         }
     };
@@ -726,6 +754,8 @@ fn judge_outcome(
                     findings: verdict.findings,
                 }),
                 reason: (!passed).then_some(NodeOutcomeReason::JudgeRefused),
+                executor_kind: None,
+                model_route_id: None,
             }
         }
         // The model flaked, the deliverable was never judged: retryable, bounded by the
@@ -741,6 +771,8 @@ fn judge_outcome(
             reuse: None,
             gate_verdict: None,
             reason: Some(NodeOutcomeReason::MalformedJudgment),
+            executor_kind: None,
+            model_route_id: None,
         },
     }
 }
@@ -793,5 +825,7 @@ fn gate_check_outcome(
             findings,
         }),
         reason: (!passed).then_some(NodeOutcomeReason::GateRefused),
+        executor_kind: None,
+        model_route_id: None,
     })
 }

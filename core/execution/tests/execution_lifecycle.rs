@@ -214,6 +214,7 @@ fn record_outcome(
     journal.append(vec![event(
         key,
         EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+            executor: None,
             execution_id: execution_id.clone(),
             node_id: OpaqueId::parse(node).unwrap(),
             outcome,

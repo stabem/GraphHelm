@@ -317,6 +317,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
             node_id: OpaqueId::parse(NODE).unwrap(),
             outcome,
             next_state,
+            executor: None,
             reason: None,
         }),
     )
@@ -1142,6 +1143,7 @@ fn declared_fixture(
             EventKind::ExecutionFormDeclared(graphhelm_protocols::ExecutionFormDeclared {
                 execution_id: OpaqueId::parse(EXECUTION).unwrap(),
                 node_ids: vec![OpaqueId::parse(NODE).unwrap()],
+                node_descriptors: std::collections::BTreeMap::new(),
                 node_timeout_seconds: std::collections::BTreeMap::new(),
                 name: None,
                 objective: None,

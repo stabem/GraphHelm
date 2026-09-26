@@ -617,6 +617,7 @@ mod tests {
             sequence,
             actor,
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id: OpaqueId::parse(EXECUTION).unwrap(),
                 node_id: OpaqueId::parse(node).unwrap(),
                 outcome,
@@ -663,6 +664,7 @@ mod tests {
             ..ExecutionProjection::default()
         };
         projection.declared_form = Some(ExecutionFormDeclared {
+            node_descriptors: Default::default(),
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),
@@ -1188,6 +1190,7 @@ mod tests {
             ..ExecutionProjection::default()
         };
         projection.declared_form = Some(ExecutionFormDeclared {
+            node_descriptors: Default::default(),
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),
@@ -1232,6 +1235,7 @@ mod tests {
             ..ExecutionProjection::default()
         };
         projection.declared_form = Some(ExecutionFormDeclared {
+            node_descriptors: Default::default(),
             execution_id: OpaqueId::parse(EXECUTION).unwrap(),
             node_ids: vec![
                 OpaqueId::parse("implementation").unwrap(),

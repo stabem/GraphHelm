@@ -163,6 +163,7 @@ fn execution_events(outcomes: &[Outcome]) -> Vec<EventEnvelope> {
         new_events.push(event(
             format!("outcome-{index}"),
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id: execution_id.clone(),
                 node_id: node_id.clone(),
                 outcome,
@@ -760,6 +761,7 @@ fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
         event(
             "outcome-ghost-a",
             EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                executor: None,
                 execution_id: execution_id.clone(),
                 node_id: node_id.clone(),
                 outcome,
@@ -1478,6 +1480,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
     event(
         key.to_owned(),
         EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+            executor: None,
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             node_id: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
             outcome,

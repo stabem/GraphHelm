@@ -130,6 +130,7 @@ fn outcome_event(key: &str, outcome: Outcome, next_state: NodeState) -> NewEvent
     event(
         key.to_owned(),
         EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+            executor: None,
             execution_id: OpaqueId::parse("execution-test").unwrap(),
             node_id: OpaqueId::parse(CUSTOMS_NODE).unwrap(),
             outcome,

@@ -16,12 +16,15 @@ import { ago, hueOf, initialOf, readable } from "./format";
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
 type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
+type AgentReport = { sequence: number; occurredAt: string | null; text: string | null };
 
 export interface WorkOverviewProps {
   model: GraphModel;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
+  agentReports?: Record<string, AgentReport>;
+  runStatus?: string | null;
   selectedNode: string | null;
   onSelectNode: (nodeId: string | null) => void;
   selectedAgent?: string | null;
@@ -87,6 +90,8 @@ export function WorkOverview({
   crew = [],
   talks = [],
   activity = [],
+  agentReports = {},
+  runStatus = null,
   selectedNode,
   onSelectNode,
   selectedAgent = null,
@@ -116,6 +121,10 @@ export function WorkOverview({
   const attentionNodes = model.nodes.filter((node) => ["blocked", "failed", "waiting_input", "waiting_capacity"].includes(node.state)).length;
   const nodeIds = new Set(model.nodes.map((node) => node.id));
   const lint = splitLint(model.lint, demonstration);
+  const latestReport = activity[0] ?? null;
+  const orderedCrew = [...crew].sort((left, right) =>
+    (agentReports[right.id]?.sequence ?? 0) - (agentReports[left.id]?.sequence ?? 0),
+  );
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -134,6 +143,17 @@ export function WorkOverview({
         </div>
       </header>
 
+      <section className="work-snapshot" aria-label="Where this run stands">
+        <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
+        <div className="work-snapshot-grid">
+          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong></div>
+          <div><span>Graph step</span><strong>{model.nodes.length === 1 ? `${model.nodes[0].id} · ${readable(model.nodes[0].state)}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
+          <div><span>Last recorded report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No report recorded"}</strong></div>
+        </div>
+        {latestReport?.text && <p className="work-snapshot-report">{latestReport.text}</p>}
+        {model.rosterDeclared && model.nodes.length === 1 && <p className="work-snapshot-note">This run declares one graph node. Agent reports below show work inside the run; they are not extra graph steps or proof that the node is done.</p>}
+      </section>
+
       {!model.rosterDeclared && <p className="work-caution">The complete node roster has not been read yet.</p>}
       {/* #1083 F9: on a DEMONSTRATION run (fixture executor) a settled node with no evidence is
         * expected - outcomes came from a fixture file - and an amber "needs attention" banner for
@@ -142,16 +162,6 @@ export function WorkOverview({
         * keeps the attention banner, counted on its own. */}
       {lint.expected.length > 0 && <section className="work-note" aria-label="Log notes on a demonstration run"><details><summary>Demonstration run · {lint.expected.length} log note{lint.expected.length === 1 ? "" : "s"}</summary><p>Outcomes on this run were supplied by a fixture file, not produced by a model or a tool, so the log holds no evidence for them. These notes are expected here.</p><ul>{lint.expected.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
       {lint.disagreements.length > 0 && <section className="work-caution" aria-label="Disagreements in the event log"><details><summary>Evidence needs attention · {lint.disagreements.length} finding{lint.disagreements.length === 1 ? "" : "s"}</summary><ul>{lint.disagreements.map((finding, index) => <li key={`${finding.kind}-${finding.sequence}-${index}`}>{finding.detail}{finding.sequence !== null && <span> · event #{finding.sequence}</span>}</li>)}</ul></details></section>}
-
-      <section className="work-activity" aria-label="Recent recorded activity">
-        <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Recent recorded activity</h2></div><span>Messages in the event log</span></div>
-        {activity.length === 0 ? <p className="work-empty">No messages recorded in this run yet.</p> : (
-          <ol className="work-activity-list">{activity.map((item) => <li key={item.sequence}>
-            <div className="work-activity-meta"><strong>{item.actorId ?? "Unknown actor"}</strong><span>{ago(item.occurredAt)} · event #{item.sequence}</span></div>
-            <p>{item.text ?? "Message content unavailable"}</p>
-          </li>)}</ol>
-        )}
-      </section>
 
       <div className="work-layout">
         <aside className="work-sidebar" aria-label="Collaboration">
@@ -164,8 +174,9 @@ export function WorkOverview({
               <p className="work-empty">No agents have been observed in this run.</p>
             ) : (
               <div className="work-agent-list">
-                {crew.map((agent) => {
+                {orderedCrew.map((agent) => {
                   const observation = latestObservationForAgent(model, agent.id);
+                  const report = agentReports[agent.id];
                   const isSelected = selectedAgent === agent.id;
                   return (
                     <button
@@ -178,6 +189,7 @@ export function WorkOverview({
                       <span className="work-avatar" style={{ background: `hsl(${hueOf(agent.id)} 52% 46%)` }} aria-hidden="true">{initialOf(agent.id)}</span>
                       <span className="work-agent-copy">
                         <span className="work-agent-id">{agent.id}</span>
+                        <span className="work-agent-report"><span>Last recorded report</span><strong>{report?.text ?? (report ? "Message content unavailable" : "No report recorded")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
                         <span className="work-observed">
                           <span>Last node update</span>
                           {observation ? (
@@ -269,6 +281,15 @@ export function WorkOverview({
           )}
         </section>
       </div>
+      <section className="work-activity" aria-label="Recent recorded activity">
+        <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Recent recorded activity</h2></div><span>Messages in the event log</span></div>
+        {activity.length === 0 ? <p className="work-empty">No messages recorded in this run yet.</p> : (
+          <ol className="work-activity-list">{activity.map((item) => <li key={item.sequence}>
+            <div className="work-activity-meta"><strong>{item.actorId ?? "Unknown actor"}</strong><span>{ago(item.occurredAt)} · event #{item.sequence}</span></div>
+            <p>{item.text ?? "Message content unavailable"}</p>
+          </li>)}</ol>
+        )}
+      </section>
     </main>
   );
 }

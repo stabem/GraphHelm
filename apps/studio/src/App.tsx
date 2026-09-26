@@ -1650,6 +1650,18 @@ export default function App({
       occurredAt: event.occurredAt,
       text: envelopes[event.sequence]?.text?.trim().slice(0, 220) || null,
     })), [eventList, envelopes]);
+  const agentReports = useMemo(() => {
+    const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
+    for (const event of eventList) {
+      if (event.kind !== "signal_recorded" || event.actorType !== "agent" || event.actorId === null) continue;
+      latest.set(event.actorId, {
+        sequence: event.sequence,
+        occurredAt: event.occurredAt,
+        text: envelopes[event.sequence]?.text?.trim().slice(0, 180) || null,
+      });
+    }
+    return Object.fromEntries(latest);
+  }, [eventList, envelopes]);
   const { roomEvents, pairTalks, talks } = useMemo(() => {
     const spoken = eventList.filter(
       (event) =>
@@ -2376,6 +2388,8 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               activity={recentActivity}
+              agentReports={agentReports}
+              runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
               onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
               onCanvasChange={setCanvasMode}

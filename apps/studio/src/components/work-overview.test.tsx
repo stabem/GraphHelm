@@ -51,6 +51,33 @@ describe("organized work overview", () => {
     render(<WorkOverview model={model} activity={[{sequence:40,actorId:"reviewer",occurredAt:null,text:null}]} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByRole("region", {name:"Recent recorded activity"})).toHaveTextContent("Message content unavailable");
   });
+  it("shows where a one-node run stands and each agent's latest recorded report", () => {
+    const selectAgent = vi.fn();
+    render(<WorkOverview
+      model={{ ...model, nodes: [node("start")] }}
+      crew={[{ id: "builder", charter: null }, { id: "reviewer", charter: null }]}
+      activity={[{ sequence: 20, actorId: "reviewer", occurredAt: "2026-09-25T17:02:00Z", text: "Checking the branch" }]}
+      agentReports={{
+        builder: { sequence: 11, occurredAt: "2026-09-25T17:00:00Z", text: "Implementing the issue" },
+        reviewer: { sequence: 20, occurredAt: "2026-09-25T17:02:00Z", text: "Checking the branch" },
+      }}
+      runStatus="paused"
+      selectedNode={null}
+      onSelectNode={vi.fn()}
+      onSelectAgent={selectAgent}
+    />);
+    const snapshot = screen.getByRole("region", { name: "Where this run stands" });
+    expect(snapshot).toHaveTextContent("paused");
+    expect(snapshot).toHaveTextContent("start · unknown");
+    expect(snapshot).toHaveTextContent("reviewer");
+    expect(snapshot).toHaveTextContent("This run declares one graph node");
+    const builder = screen.getByRole("button", { name: /builder.*Implementing the issue/s });
+    expect(builder).toHaveTextContent("event #11");
+    expect(screen.getAllByRole("button", { name: /Last recorded report/ })[0]).toHaveTextContent("reviewer");
+    fireEvent.click(builder);
+    expect(selectAgent).toHaveBeenCalledWith("builder");
+    expect(snapshot).not.toHaveTextContent("Running");
+  });
 });
 
 /** #1083 F9: a completed demonstration run carried `Evidence needs attention · 6 findings` in

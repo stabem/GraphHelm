@@ -788,46 +788,30 @@ export function useEnvelopes(
     if (executionId === undefined || openEvidence === undefined) return;
     const carriers = events.filter(
       (event) => event.kind === "signal_recorded" && event.evidenceRefs.length > 0,
-    );
+    ).reverse();
     let live = true;
     void (async () => {
-      const found: Record<number, { to: string | null; replyTo: string | null; text: string }> = {};
       for (const carrier of carriers) {
         try {
           const content = await openSealed(executionId, carrier.evidenceRefs[0], openEvidence);
-          found[carrier.sequence] = {
+          if (!live) return;
+          const opened = {
             ...address_of(content.content, content.mediaType),
             // The words too: the attention block quotes the pending question out of the same
             // fetch the addressing already made.
             text: readable_content(content.content, content.mediaType),
           };
+          setEnvelopes((previous) => {
+            const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
+            if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text) return previous;
+            return {
+              forId: executionId,
+              map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened },
+            };
+          });
         } catch {
           // An unopenable envelope filters as unaddressed, never as an error.
         }
-      }
-      // COMMIT ONLY CHANGE. Committing a fresh (even if equal) object re-rendered the page,
-      // which re-ran this effect (the events prop is rebuilt while the run loads), which
-      // committed again — a microtask-driven render loop React's depth guard cannot see:
-      // 70,201 renders measured before anything else could run (round-4 aftermath, live).
-      if (live) {
-        setEnvelopes((previous) => {
-          const previousKeys = Object.keys(previous.map);
-          const nextKeys = Object.keys(found);
-          const same =
-            previous.forId === executionId &&
-            previousKeys.length === nextKeys.length &&
-            nextKeys.every((key) => {
-              const before = previous.map[Number(key)];
-              const after = found[Number(key)];
-              return (
-                before !== undefined &&
-                before.to === after.to &&
-                before.replyTo === after.replyTo &&
-                before.text === after.text
-              );
-            });
-          return same ? previous : { forId: executionId, map: found };
-        });
       }
     })();
     return () => {

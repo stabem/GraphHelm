@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-import { awaitingReply, groupTurns, pinnedToLatest } from "./panel";
-import type { RuntimeEvent } from "../runtime/types";
+import { awaitingReply, groupTurns, pinnedToLatest, resetPanelCaches, useEnvelopes } from "./panel";
+import type { EvidenceContent, RuntimeEvent } from "../runtime/types";
 
 function event(sequence: number, kind: string, payload: Record<string, unknown> = {}): RuntimeEvent {
   return {
@@ -16,6 +17,26 @@ function event(sequence: number, kind: string, payload: Record<string, unknown> 
     evidenceRefs: [],
   } as RuntimeEvent;
 }
+
+it("shows the newest sealed report while an older evidence read is still pending", async () => {
+  resetPanelCaches();
+  const older = event(1, "signal_recorded");
+  const newer = event(2, "signal_recorded");
+  older.evidenceRefs = ["old"];
+  newer.evidenceRefs = ["new"];
+  const never = new Promise<EvidenceContent>(() => {});
+  const open = vi.fn(async (_run: string, id: string): Promise<EvidenceContent> => id === "old" ? never : {
+    evidenceId: "new",
+    content: JSON.stringify({ type: "operator_note", description: "Checking the branch", source: { id: "reviewer", type: "user" } }),
+    contentSha256: "hash",
+    mediaType: "application/json",
+    sensitivity: "confidential",
+  });
+  const { result } = renderHook(() => useEnvelopes([older, newer], "run", open));
+  await waitFor(() => expect(result.current[2]?.text).toBe("Checking the branch"));
+  expect(result.current[1]).toBeUndefined();
+  expect(open.mock.calls[0][1]).toBe("new");
+});
 
 /**
  * Pure, because jsdom lays nothing out: every height there is zero, so an "is it scrolled"

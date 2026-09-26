@@ -39,7 +39,15 @@ export function topologyFromJournal(events: RuntimeEvent[]): VerifiedTopology | 
   const form = events.find((event) => event.kind === "execution_form_declared");
   if (!started || !form || !form.payload || typeof form.payload !== "object") return null;
   const declaration = form.payload as { executionId?: unknown; nodeIds?: unknown; topology?: unknown };
-  if (!declaration.topology || typeof declaration.topology !== "object") return null;
+  // An absent field identifies an older journal. A present but malformed
+  // field is a rejected claim and must not enable the manual-file fallback.
+  if (!Object.prototype.hasOwnProperty.call(declaration, "topology")) return null;
+  if (declaration.topology === null || typeof declaration.topology !== "object") {
+    return {
+      match: "unverified", recordedHash: recordedGraphHash(events), fileHash: "",
+      file: "run journal", edges: [], entrypoints: [], source: "journal",
+    };
+  }
   const startId = started.payload && typeof started.payload === "object"
     ? (started.payload as { executionId?: unknown }).executionId : null;
   const snapshot = declaration.topology as { graphHash?: unknown; entrypoints?: unknown; edges?: unknown };

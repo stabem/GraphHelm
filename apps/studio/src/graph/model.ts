@@ -289,6 +289,9 @@ export function buildGraphModel(
     if (event.kind === "gate_verdict") {
       const passed = event.payload !== null && typeof event.payload === "object"
         && (event.payload as { passed?: unknown }).passed === true;
+      // The latest verdict wins. A later refusal revokes an earlier pass even if the
+      // lifecycle still says succeeded and no new attempt has started.
+      node.verificationEventSequence = null;
       if (passed && node.state === "succeeded" && (node.resultSource === "judge_verdict" || node.resultSource === "gate_verdict")) {
         node.verificationEventSequence = event.sequence;
       }

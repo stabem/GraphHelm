@@ -74,6 +74,13 @@ it("requires the typed gate event rather than a sealed filename to claim pass", 
     short: "Gate passed",
   });
   expect(passed.reopened).toBeNull();
+  const revoked = buildGraphModel([
+    outcome,
+    event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true }),
+    event(12, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: false }),
+  ], null).nodes[0];
+  expect(nodeResult(revoked)?.verification).toBe("Gate evidence received · typed pass not recorded");
+  expect(pendingAcceptanceCount([revoked], 1)).toBe(1);
   const reopened = buildGraphModel([
     outcome,
     event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true }),

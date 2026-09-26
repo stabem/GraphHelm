@@ -23,7 +23,7 @@ import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
-import { moodOf, voiceOf, type GraphNode } from "../graph/model";
+import { moodOf, nodeResult, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
   LIFECYCLE_STATES,
@@ -392,9 +392,14 @@ function Said({
     );
   };
   if (state.at === "idle") {
+    const label = evidenceId.endsWith("-context-provenance") ? "show context sources"
+      : evidenceId.endsWith("-accounting-receipt") ? "show token accounting"
+      : evidenceId.endsWith("-record") ? "show tool record"
+      : evidenceId.endsWith("-stderr") ? "show error output"
+      : "show what was said";
     return (
       <button type="button" className="show-more" onClick={fetchNow}>
-        show what was said
+        {label}
       </button>
     );
   }
@@ -644,7 +649,8 @@ function Thread({
                     executionId={executionId}
                     evidenceId={evidenceId}
                     open={openEvidence}
-                    eager={eager.has(event.sequence)}
+                    eager={eager.has(event.sequence) && (event.kind !== "node_outcome_recorded"
+                      || evidenceId.endsWith("-reply") || evidenceId.endsWith("-stdout"))}
                   />
                 ))}
               </div>
@@ -1080,7 +1086,10 @@ export function NodePanel({
   };
 }) {
   const mood = moodOf(node.state);
-  const attempts = node.history.filter((entry) => entry.outcome === "started").length;
+  const result = nodeResult(node);
+  // A dispatch records Started twice (ready -> queued -> running); only the running
+  // transition is one actual attempt. Counting outcomes doubled every attempt on real runs.
+  const attempts = node.history.filter((entry) => entry.outcome === "started" && entry.nextState === "running").length;
   const deliveryView = Boolean(executionId && openEvidence && onOpenDocument);
   const historyEvents = deliveryView ? events.filter((event) => {
     const payload = event.payload as Record<string, unknown> | null;
@@ -1089,11 +1098,11 @@ export function NodePanel({
   }) : events;
   return (
     <section className="panel" aria-label={`Node ${node.id}`}>
-      <header className={`panel-head ${mood}`}>
+      <header className={`panel-head ${mood}${node.resultSource === "model_reply" && node.state === "succeeded" ? " verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>{node.id}</h2>
-          <p className="lbl">{readable(node.state)}</p>
+          <p className="lbl">{node.resultSource === "model_reply" && node.state === "succeeded" ? "Reply received · review needed" : readable(node.state)}</p>
         </div>
         <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node">
           <X aria-hidden="true" />
@@ -1114,6 +1123,14 @@ export function NodePanel({
           <strong>{clock(node.lastEventAt)}</strong>
         </div>
       </div>
+      {result && (
+        <section className="node-result-summary" aria-label="Node result">
+          <strong>{result.verification}</strong>
+          <span>{result.executor}</span>
+          <span>Lifecycle recorded by {node.history.at(-1)?.actorType === "system" ? "Runtime" : node.history.at(-1)?.actorId ?? "an unknown actor"}.</span>
+          <span>Read the sealed reply or tool record below for what this step actually reported.</span>
+        </section>
+      )}
 
       {/* THE STATE DECIDES, not the presence of the prop: a node that is not parked must not be
         * offered an answer, because a claim against it is refused (`not_waiting`) and the button

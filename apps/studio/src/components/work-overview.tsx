@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf, splitLint } from "../graph/model";
+import { moodOf, nodeResult, splitLint } from "../graph/model";
 import { ago, hueOf, initialOf, readable } from "./format";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
@@ -85,6 +85,7 @@ function latestObservationForAgent(model: GraphModel, agentId: string): { node: 
 }
 
 function statusClass(node: GraphNode): string {
+  if (node.state === "succeeded" && node.resultSource === "model_reply") return "work-status work-status-review";
   return `work-status work-status-${moodOf(node.state)}`;
 }
 
@@ -159,7 +160,7 @@ export function WorkOverview({
         <div className="work-snapshot-grid">
           <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong></div>
           <div><span>Graph step</span><strong>{model.nodes.length === 1 ? `${model.nodes[0].id} · ${readable(model.nodes[0].state)}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
-          <div><span>Last recorded report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No report recorded"}</strong></div>
+          <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
         </div>
         {latestReport?.text && <p className="work-snapshot-report">{latestReport.text}</p>}
         {model.rosterDeclared && model.nodes.length === 1 && <p className="work-snapshot-note">This run declares one graph node. Agent reports below show work inside the run; they are not extra graph steps or proof that the node is done.</p>}
@@ -256,26 +257,33 @@ export function WorkOverview({
             <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
             <span>{model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
           </div>
+          {model.nodes.some((node) => nodeResult(node)?.executor.startsWith("Model call")) && (
+            <p className="work-note" role="note">
+              A model reply means the call finished. Its answer has not been checked against the task's acceptance criteria. Open the node to read it.
+            </p>
+          )}
           {model.nodes.length === 0 ? (
             <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
           ) : (
             <div className="work-node-grid">
               {model.nodes.map((node) => {
                 const latest = latestNodeEvent(node);
+                const result = nodeResult(node);
                 const incoming = model.edgesKnown ? model.edges.filter((edge) => edge.to === node.id && nodeIds.has(edge.from)) : [];
                 const outgoing = model.edgesKnown ? model.edges.filter((edge) => edge.from === node.id && nodeIds.has(edge.to)) : [];
                 const isSelected = selectedNode === node.id;
                 return (
                   <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && node.history.some(event => event.actorId === selectedAgent) ? " work-related" : ""}`} key={node.id}>
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
-                      <span className="work-node-topline"><span className={statusClass(node)}>{node.state === "unknown" ? "Awaiting event" : readable(node.state)}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
+                      <span className="work-node-topline"><span className={statusClass(node)} title={node.state === "succeeded" && node.resultSource === "model_reply" ? "Runtime state: succeeded; reply not verified" : undefined}>{node.state === "succeeded" && node.resultSource === "model_reply" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.id}</strong>
                       {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
                         <q className="work-node-objective" title={objective}>{objective}</q>
                       )}
                       {latest ? (
-                        <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorId ? `${latest.actorId} · ` : ""}{ago(latest.occurredAt)}</small></span>
+                        <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorType === "system" ? "Recorded by Runtime" : latest.actorId ? `Recorded by ${latest.actorId}` : "Recorder unknown"} · {ago(latest.occurredAt)}</small></span>
                       ) : <span className="work-node-latest"><span>Latest event</span><strong className="work-muted">Awaiting first event</strong></span>}
+                      {result && <span className="work-node-latest"><span>Executor</span><strong>{result.executor}</strong><small>{result.verification}</small></span>}
                     </button>
                     <div className="work-node-footer"><span><Clock3 aria-hidden="true" size={14} /> {node.history.length} history item{node.history.length === 1 ? "" : "s"}</span></div>
                     {model.edgesKnown ? (

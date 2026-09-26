@@ -2358,6 +2358,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-caution ul { margin: 8px 0 0; padding-left: 18px; }
 /* #1083 F9: a demonstration run's log findings - the same list, in a neutral voice. */
 .work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
+.node-result-summary { display: grid; gap: 5px; margin: 12px; padding: 12px; border: 1px solid #484052; border-radius: 10px; background: #24202a; color: #c9c4d1; font: 12px/1.45 var(--sans); }
+.node-result-summary strong { color: #f0eaf7; font-size: 13px; }
+.panel-head.verification-unchecked i { background: var(--signal); }
 .work-note p { margin: 8px 0 0; }
 .work-note ul { margin: 8px 0 0; padding-left: 18px; }
 .work-activity { margin: 24px 0 0; padding: 16px; border: 1px solid #38383f; border-radius: 14px; background: #1d1d21; }
@@ -2412,6 +2415,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-status-moving { background: #193c2c; color: #74e5a8; }
 .work-status-dead, .work-status-waiting { background: #493122; color: #ffbd85; }
 .work-status-done { background: #263c32; color: #9de0ba; }
+.work-status-review { background: #493329; color: #ffca99; }
 .work-node-id { font-size: 17px; font-weight: 600; letter-spacing: -.35px; overflow-wrap: anywhere; }
 .work-node-latest { display: grid; gap: 3px; font-size: 12px; }
 .work-node-latest > span { color: #9393a0; font-size: 11px; }

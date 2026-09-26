@@ -123,9 +123,9 @@ describe("the run capsule", () => {
 });
 
 describe("node evidence", () => {
-  it("shows the latest observed actor and event address", () => {
+  it("names the runtime as recorder and keeps the event address", () => {
     render(<Board model={{ ...MODEL, nodes: [...MODEL.nodes, { id: "draft", state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
-    expect(screen.getByText("system-cli")).toBeInTheDocument();
+    expect(screen.getByText("Runtime")).toBeInTheDocument();
     expect(screen.getByText(/3 events \/ #7/)).toBeInTheDocument();
     expect(screen.getByText(/Awaiting first work update/)).toBeInTheDocument();
   });

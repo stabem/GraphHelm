@@ -28,6 +28,18 @@ it("shows delivery reasons and owner edits as inert prose without inventing link
   expect(readable_content(JSON.stringify({type:"owner_document_changed", description:JSON.stringify({path:"docs/rule.md",reason:"<script>inert</script>"})}), "application/json")).toContain("<script>inert</script>");
 });
 
+it("renders a sealed model reply as its words rather than a JSON accounting blob", () => {
+  const reply = JSON.stringify({
+    text: "Browser review incomplete: no screenshots or interaction evidence were supplied.",
+    usage: { inputTokens: 125, outputTokens: 17 },
+  });
+  expect(readable_content(reply, "application/json")).toBe(
+    "Browser review incomplete: no screenshots or interaction evidence were supplied.",
+  );
+  expect(readable_content(JSON.stringify({ text: "untrusted lookalike" }), "application/json"))
+    .toContain('"text":"untrusted lookalike"');
+});
+
 describe("the shared ledger of unanswered questions", () => {
   it("owes a question an agent addressed to the operator, with the signalId an answer must cite", () => {
     const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];

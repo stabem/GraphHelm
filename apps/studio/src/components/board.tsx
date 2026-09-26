@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf, splitLint } from "../graph/model";
+import { moodOf, nodeResult, splitLint } from "../graph/model";
 import type { AgentPresence } from "../runtime/session";
 import { isAlarming } from "./format";
 import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point, type Stroke } from "../graph/board";
@@ -1452,8 +1452,8 @@ function NodeBlock({
             waits - the state word breathing on the right. */}
         <span className="node-eyebrow">
           <span className="node-tag"><GitBranch aria-hidden="true" />{entry ? "Entry node" : "Work node"}</span>
-          <span className={`hist-chip ${mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`}>
-            {node.state === "unknown" ? "Awaiting event" : readable(node.state)}
+          <span className={`hist-chip ${node.resultSource === "model_reply" && node.state === "succeeded" ? "alarm" : mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`} title={node.resultSource === "model_reply" && node.state === "succeeded" ? "Runtime state: succeeded; reply not verified" : undefined}>
+            {node.resultSource === "model_reply" && node.state === "succeeded" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}
             {(mood === "moving" || mood === "waiting") && <i aria-hidden="true"> ✳</i>}
           </span>
         </span>
@@ -1473,11 +1473,11 @@ function NodeBlock({
             reopened after done · #{node.reopened.settledAt}→#{node.reopened.reopenedAt}
           </span>
         )}
-        <span className="node-story-status">
-          {node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state)}
+        <span className="node-story-status" title={nodeResult(node)?.verification}>
+          {nodeResult(node)?.short ?? (node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state))}
         </span>
         {node.touches > 0 && <span className="node-facts">
-          <span><small>Last observed actor</small><strong>{latestActor ?? "Not reported"}</strong></span>
+          <span><small>Recorded by</small><strong>{last?.actorType === "system" ? "Runtime" : latestActor ?? "Not reported"}</strong></span>
           <span><small>Latest update</small><strong>{node.lastEventAt ? ago(node.lastEventAt) : "No updates yet"}</strong></span>
         </span>}
         {node.touches > 0 && <span className="node-receipt">

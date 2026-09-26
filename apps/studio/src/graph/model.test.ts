@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGraphModel, conversationFor, moodOf, nodeResult, voiceOf } from "./model";
+import { buildGraphModel, conversationFor, moodOf, nodeResult, pendingAcceptanceCount, voiceOf } from "./model";
 
 it("distinguishes a returned model reply from a verified result and from the runtime recorder", () => {
   const event = {
@@ -23,8 +23,8 @@ it("distinguishes a returned model reply from a verified result and from the run
   expect(node.history[0].actorId).toBe("system-runtime");
 });
 
-it("recognizes a structured judge result as a verdict rather than a plain reply", () => {
-  const model = buildGraphModel([{
+it("requires a typed passing event before calling structured judgment passed", () => {
+  const judged = {
     sequence: 9,
     kind: "node_outcome_recorded",
     payload: { nodeId: "judge_browser", outcome: "succeeded", nextState: "succeeded" },
@@ -34,13 +34,25 @@ it("recognizes a structured judge result as a verdict rather than a plain reply"
     idempotencyKey: "result-9",
     eventId: "event-9",
     evidenceRefs: ["exec-landing-judge_browser-a1-judgment"],
-  }], null);
-  expect(model.nodes[0].resultSource).toBe("judge_verdict");
-  expect(nodeResult(model.nodes[0])?.verification).toBe("Structured judgment passed");
+  };
+  const withoutVerdict = buildGraphModel([judged], null).nodes[0];
+  expect(withoutVerdict.resultSource).toBe("judge_verdict");
+  expect(nodeResult(withoutVerdict)?.verification).toBe("Judgment evidence received · typed pass not recorded");
+  const verdict = { ...event(10, "gate_verdict", { nodeId: "judge_browser", gateId: "judge", passed: true }) };
+  const withVerdict = buildGraphModel([judged, verdict], null).nodes[0];
+  expect(nodeResult(withVerdict)?.verification).toBe("Structured judgment passed · event #10");
+  expect(withVerdict.reopened).toBeNull();
+  const retried = buildGraphModel([
+    judged,
+    verdict,
+    event(11, "node_outcome_recorded", { nodeId: "judge_browser", outcome: "started", nextState: "running" }),
+    { ...judged, sequence: 12, eventId: "event-12" },
+  ], null).nodes[0];
+  expect(nodeResult(retried)?.verification).toBe("Judgment evidence received · typed pass not recorded");
 });
 
-it("recognizes a passing deterministic gate from its sealed verdict", () => {
-  const model = buildGraphModel([{
+it("requires the typed gate event rather than a sealed filename to claim pass", () => {
+  const outcome = {
     sequence: 10,
     kind: "node_outcome_recorded",
     payload: { nodeId: "check_gate", outcome: "succeeded", nextState: "succeeded" },
@@ -50,13 +62,41 @@ it("recognizes a passing deterministic gate from its sealed verdict", () => {
     idempotencyKey: "result-10",
     eventId: "event-10",
     evidenceRefs: ["exec-landing-check_gate-a1-verdict"],
-  }], null);
-  expect(model.nodes[0].resultSource).toBe("gate_verdict");
-  expect(nodeResult(model.nodes[0])).toEqual({
+  };
+  const missing = buildGraphModel([outcome], null).nodes[0];
+  expect(nodeResult(missing)?.verification).toBe("Gate evidence received · typed pass not recorded");
+  const failed = buildGraphModel([outcome, event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: false })], null).nodes[0];
+  expect(nodeResult(failed)?.verification).toBe("Gate evidence received · typed pass not recorded");
+  const passed = buildGraphModel([outcome, event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true })], null).nodes[0];
+  expect(nodeResult(passed)).toEqual({
     executor: "Deterministic gate",
-    verification: "Gate check passed",
+    verification: "Gate check passed · event #11",
     short: "Gate passed",
   });
+  expect(passed.reopened).toBeNull();
+  const revoked = buildGraphModel([
+    outcome,
+    event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true }),
+    event(12, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: false }),
+  ], null).nodes[0];
+  expect(nodeResult(revoked)?.verification).toBe("Gate evidence received · typed pass not recorded");
+  expect(pendingAcceptanceCount([revoked], 1)).toBe(1);
+  const reopened = buildGraphModel([
+    outcome,
+    event(11, "gate_verdict", { nodeId: "check_gate", gateId: "check", passed: true }),
+    event(12, "reuse_decision", { nodeId: "check_gate" }),
+  ], null).nodes[0];
+  expect(reopened.reopened?.reopenedAt).toBe(12);
+  expect(nodeResult(reopened)?.verification).toBe("Gate evidence received · typed pass not recorded");
+});
+
+it("keeps an incomplete event page unverified until typed verdicts for all successes arrive", () => {
+  const outcome = event(3, "node_outcome_recorded", { nodeId: "first", outcome: "succeeded", nextState: "succeeded" });
+  const partial = buildGraphModel([outcome], null);
+  expect(pendingAcceptanceCount(partial.nodes, 2)).toBe(2);
+  const judged = { ...outcome, evidenceRefs: ["first-a1-verdict"] };
+  const oneVerified = buildGraphModel([judged, event(4, "gate_verdict", { nodeId: "first", gateId: "check", passed: true })], null);
+  expect(pendingAcceptanceCount(oneVerified.nodes, 2)).toBe(1);
 });
 
 /**

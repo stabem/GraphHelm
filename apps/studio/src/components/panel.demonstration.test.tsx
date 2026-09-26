@@ -48,9 +48,9 @@ describe("the demonstration label on the run panel", () => {
   });
 
   it("separates a completed execution from unverified model replies", () => {
-    render(<RunPanel status={statusWith("gateway")} events={[]} unverifiedReplies={3} onClose={vi.fn()} />);
+    render(<RunPanel status={statusWith("gateway")} events={[]} unverifiedResults={3} onClose={vi.fn()} />);
     expect(screen.getByText("Execution finished · review needed")).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent("3 model replies returned");
+    expect(screen.getByRole("note")).toHaveTextContent("3 node results finished without a confirmed acceptance verdict");
     expect(screen.getByText("steps finished", { exact: false })).toHaveTextContent("2");
     expect(screen.queryByText("This run is completed")).not.toBeInTheDocument();
   });

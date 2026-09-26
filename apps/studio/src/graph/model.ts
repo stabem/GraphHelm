@@ -90,6 +90,8 @@ export interface GraphNode {
   /** What kind of attempt evidence the latest successful outcome sealed. This identifies the
    * producer's output, not an acceptance verdict or a named agent. Older streams may have none. */
   resultSource?: "model_reply" | "tool_record" | "judge_verdict" | "gate_verdict" | "other" | "none" | null;
+  /** The matching typed passing verdict for the latest successful attempt, when observed. */
+  verificationEventSequence?: number | null;
   /** How many times an event has named this node. The board shows it because a node retried
    * eight times and a node run once look identical from their state alone. */
   touches: number;
@@ -99,6 +101,18 @@ export interface GraphNode {
    * the log alone: the node reached a settled terminal state at `settledAt`, and a LATER event
    * named it at `reopenedAt`, by `by`. Both coordinates cite the log; no watcher, no guess. */
   reopened: { settledAt: number; reopenedAt: number; by: string | null } | null;
+}
+
+export function nodeStatusLabel(node: GraphNode): string | null {
+  if (node.state !== "succeeded") return null;
+  if (node.actualExecutor?.kind === "fixture") return "scripted outcome";
+  return typeof node.verificationEventSequence === "number" ? null : "review needed";
+}
+
+/** The status knows the full count even while this page has loaded only part of the journal. */
+export function pendingAcceptanceCount(nodes: GraphNode[], succeededCount: number): number {
+  const confirmed = nodes.filter((node) => node.state === "succeeded" && typeof node.verificationEventSequence === "number").length;
+  return Math.max(0, succeededCount - confirmed);
 }
 
 /** A successful lifecycle transition says the attempt returned; it never proves the
@@ -128,15 +142,15 @@ export function nodeResult(node: GraphNode): { executor: string; verification: s
   if (node.resultSource === "judge_verdict") {
     return {
       executor: recordedExecutor ?? "Judge call · model identity not recorded",
-      verification: "Structured judgment passed",
-      short: "Judgment passed",
+      verification: typeof node.verificationEventSequence === "number" ? `Structured judgment passed · event #${node.verificationEventSequence}` : "Judgment evidence received · typed pass not recorded",
+      short: typeof node.verificationEventSequence === "number" ? "Judgment passed" : "Judgment unverified",
     };
   }
   if (node.resultSource === "gate_verdict") {
     return {
       executor: recordedExecutor ?? "Deterministic gate",
-      verification: "Gate check passed",
-      short: "Gate passed",
+      verification: typeof node.verificationEventSequence === "number" ? `Gate check passed · event #${node.verificationEventSequence}` : "Gate evidence received · typed pass not recorded",
+      short: typeof node.verificationEventSequence === "number" ? "Gate passed" : "Gate unverified",
     };
   }
   return {
@@ -228,6 +242,7 @@ export function buildGraphModel(
       actualExecutor: null,
       state: "unknown",
       resultSource: null,
+      verificationEventSequence: null,
       touches: 0,
       lastEventAt: null,
       history: [],
@@ -271,7 +286,26 @@ export function buildGraphModel(
     const node = ensure(id);
     const nextState = stringField(event, "nextState");
     const outcome = stringField(event, "outcome");
+    if (event.kind === "gate_verdict") {
+      const passed = event.payload !== null && typeof event.payload === "object"
+        && (event.payload as { passed?: unknown }).passed === true;
+      // The latest verdict wins. A later refusal revokes an earlier pass even if the
+      // lifecycle still says succeeded and no new attempt has started.
+      node.verificationEventSequence = null;
+      if (passed && node.state === "succeeded" && (node.resultSource === "judge_verdict" || node.resultSource === "gate_verdict")) {
+        node.verificationEventSequence = event.sequence;
+      }
+      node.touches += 1;
+      if (event.occurredAt !== null) node.lastEventAt = event.occurredAt;
+      node.history.push({
+        sequence: event.sequence, kind: event.kind, nextState: null, outcome: null,
+        occurredAt: event.occurredAt, actorId: event.actorId, actorType: event.actorType,
+        evidence: event.evidenceRefs.length,
+      });
+      continue;
+    }
     if (event.kind === "node_outcome_recorded") {
+      node.verificationEventSequence = null;
       const rawExecutor = event.payload !== null && typeof event.payload === "object"
         ? (event.payload as { executor?: unknown }).executor : null;
       node.actualExecutor = null;
@@ -292,6 +326,7 @@ export function buildGraphModel(
         reopenedAt: event.sequence,
         by: event.actorId,
       };
+      node.verificationEventSequence = null;
     } else if (isSettled(nextState)) {
       node.reopened = null;
     }

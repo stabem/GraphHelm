@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf, nodeResult, splitLint } from "../graph/model";
+import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import type { AgentPresence } from "../runtime/session";
 import { isAlarming } from "./format";
 import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point, type Stroke } from "../graph/board";
@@ -1452,8 +1452,8 @@ function NodeBlock({
             waits - the state word breathing on the right. */}
         <span className="node-eyebrow">
           <span className="node-tag"><GitBranch aria-hidden="true" />{node.declaredRole ? `${node.declaredRole} · ` : ""}{entry ? "Entry node" : "Work node"}</span>
-          <span className={`hist-chip ${node.resultSource === "model_reply" && node.state === "succeeded" ? "alarm" : mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`} title={node.resultSource === "model_reply" && node.state === "succeeded" ? "Runtime state: succeeded; reply not verified" : undefined}>
-            {node.resultSource === "model_reply" && node.state === "succeeded" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}
+          <span className={`hist-chip ${nodeStatusLabel(node) !== null ? "alarm" : mood === "moving" ? "live pulse" : mood === "waiting" || mood === "dead" ? "alarm" : "quiet"}`} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>
+            {nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}
             {(mood === "moving" || mood === "waiting") && <i aria-hidden="true"> ✳</i>}
           </span>
         </span>

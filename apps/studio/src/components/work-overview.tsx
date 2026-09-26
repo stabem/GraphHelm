@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf, nodeResult, splitLint } from "../graph/model";
+import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { ago, hueOf, initialOf, readable } from "./format";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
@@ -85,7 +85,7 @@ function latestObservationForAgent(model: GraphModel, agentId: string): { node: 
 }
 
 function statusClass(node: GraphNode): string {
-  if (node.state === "succeeded" && node.resultSource === "model_reply") return "work-status work-status-review";
+  if (nodeStatusLabel(node) !== null) return "work-status work-status-review";
   return `work-status work-status-${moodOf(node.state)}`;
 }
 
@@ -158,7 +158,7 @@ export function WorkOverview({
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
         <div className="work-snapshot-grid">
-          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "completed" && model.nodes.some((node) => node.state === "succeeded" && node.resultSource === "model_reply") && <small>Model replies still need review</small>}</div>
+          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
           <div><span>Graph step</span><strong>{model.nodes.length === 1 ? `${model.nodes[0].id} · ${readable(model.nodes[0].state)}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
           <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
         </div>
@@ -257,9 +257,9 @@ export function WorkOverview({
             <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
             <span>{model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
           </div>
-          {model.nodes.some((node) => nodeResult(node)?.executor.startsWith("Model call")) && (
+          {model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && (
             <p className="work-note" role="note">
-              A model reply means the call finished. Its answer has not been checked against the task's acceptance criteria. Open the node to read it.
+              A finished step does not prove its goal passed. Open the node to read its evidence and acceptance verdict.
             </p>
           )}
           {model.nodes.length === 0 ? (
@@ -275,7 +275,7 @@ export function WorkOverview({
                 return (
                   <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && node.history.some(event => event.actorId === selectedAgent) ? " work-related" : ""}`} key={node.id}>
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
-                      <span className="work-node-topline"><span className={statusClass(node)} title={node.state === "succeeded" && node.resultSource === "model_reply" ? "Runtime state: succeeded; reply not verified" : undefined}>{node.state === "succeeded" && node.resultSource === "model_reply" ? "review needed" : node.state === "unknown" ? "Awaiting event" : readable(node.state)}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
+                      <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
                       {node.declaredName && <span className="work-muted">{node.id}</span>}
                       {node.declaredRole && <span className="work-muted">Declared role · {node.declaredRole}</span>}

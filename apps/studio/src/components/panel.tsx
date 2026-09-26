@@ -23,7 +23,7 @@ import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
-import { moodOf, nodeResult, voiceOf, type GraphNode } from "../graph/model";
+import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
   LIFECYCLE_STATES,
@@ -1098,13 +1098,13 @@ export function NodePanel({
   }) : events;
   return (
     <section className="panel" aria-label={`Node ${node.id}`}>
-      <header className={`panel-head ${mood}${node.resultSource === "model_reply" && node.state === "succeeded" ? " verification-unchecked" : ""}`}>
+      <header className={`panel-head ${mood}${nodeStatusLabel(node) !== null ? " verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>{node.declaredName ?? node.id}</h2>
           {node.declaredName && <p className="lbl">Node · {node.id}</p>}
           {node.declaredRole && <p className="lbl">Declared role · {node.declaredRole}</p>}
-          <p className="lbl">{node.resultSource === "model_reply" && node.state === "succeeded" ? "Reply received · review needed" : readable(node.state)}</p>
+          <p className="lbl">{nodeStatusLabel(node) === "review needed" ? node.resultSource === "model_reply" ? "Reply received · review needed" : "Finished · review needed" : nodeStatusLabel(node) ?? readable(node.state)}</p>
         </div>
         <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node">
           <X aria-hidden="true" />
@@ -1339,7 +1339,7 @@ export const DEMONSTRATION_SENTENCE =
 export function RunPanel({
   status,
   events,
-  unverifiedReplies = 0,
+  unverifiedResults = 0,
   onClose,
   openEvidence,
   onSay,
@@ -1357,7 +1357,7 @@ export function RunPanel({
   status: ExecutionStatus;
   events: RuntimeEvent[];
   /** Completed model calls whose replies still lack an acceptance verdict. */
-  unverifiedReplies?: number;
+  unverifiedResults?: number;
   onClose: () => void;
   /** Absent when this Studio has no way to open sealed content; the thread then shows the events
    * alone rather than pretending the words are missing. */
@@ -1446,14 +1446,14 @@ export function RunPanel({
   }, [sayFocus, sayRecipient]);
   return (
     <section className="panel" aria-label={`Run ${status.executionId ?? ""}`}>
-      <header className={`panel-head ${verdict.key === "needs" ? "waiting" : unverifiedReplies > 0 || status.executor === "fixture" ? "verification-unchecked" : ""}`}>
+      <header className={`panel-head ${verdict.key === "needs" ? "waiting" : unverifiedResults > 0 || status.executor === "fixture" ? "verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>
             {verdict.key === "needs"
               ? needsDirection ? "This run needs direction" : "This run needs you"
               : over
-                 ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedReplies > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
+                 ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedResults > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
                 : verdict.key === "calm"
                   ? "Running by itself"
                   : "Nothing to report yet"}
@@ -1498,7 +1498,7 @@ export function RunPanel({
               key={state}
               title={state}
             >
-              {state === "succeeded" && status.executor === "fixture" ? "scripted steps" : state === "succeeded" && unverifiedReplies > 0 ? "steps finished" : readable(state)} <strong>{status.nodeStateCounts[state]}</strong>
+              {state === "succeeded" && status.executor === "fixture" ? "scripted steps" : state === "succeeded" && unverifiedResults > 0 ? "steps finished" : readable(state)} <strong>{status.nodeStateCounts[state]}</strong>
             </span>
           ),
         )}
@@ -1508,7 +1508,7 @@ export function RunPanel({
             : `nothing in the other ${LIFECYCLE_STATES.filter((state) => (status.nodeStateCounts[state] ?? 0) === 0).length} states`}
         </span>
       </div>
-      {unverifiedReplies > 0 && <p className="work-note" role="note">{unverifiedReplies} model repl{unverifiedReplies === 1 ? "y" : "ies"} returned. These calls finished, but their answers have not been checked against the task's acceptance criteria.</p>}
+      {unverifiedResults > 0 && <p className="work-note" role="note">{unverifiedResults} node result{unverifiedResults === 1 ? "" : "s"} finished without a confirmed acceptance verdict. Open each node to inspect its evidence.</p>}
 
       <div className="thread-search">
         <input

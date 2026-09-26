@@ -44,7 +44,7 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("Reply received · acceptance not verified");
     expect(card).toHaveTextContent("Recorded by Runtime");
     expect(card).toHaveTextContent("review needed");
-    expect(screen.getByRole("note")).toHaveTextContent("Its answer has not been checked");
+    expect(screen.getByRole("note")).toHaveTextContent("A finished step does not prove its goal passed");
   });
   it("retains incomplete-roster and disagreement evidence in the default view", () => {
     render(<WorkOverview model={{...model,rosterDeclared:false,lint:[{kind:"done-without-evidence",detail:"Completion has no evidence",sequence:8}]}} selectedNode={null} onSelectNode={vi.fn()} />);

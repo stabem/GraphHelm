@@ -52,7 +52,7 @@ import {
   type ToolActivity,
   type WebMcpAvailability,
 } from "./webmcp/adapter";
-import { buildGraphModel, conversationFor } from "./graph/model";
+import { buildGraphModel, conversationFor, pendingAcceptanceCount } from "./graph/model";
 import { openQuestions } from "./graph/ledger";
 import { topologyNote, verifyTopology, type VerifiedTopology } from "./graph/topology";
 import {
@@ -356,7 +356,7 @@ export default function App({
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
   const model = useMemo(() => buildGraphModel(eventList, topology), [events, topology]);
-  const unverifiedReplies = model.nodes.filter((node) => node.state === "succeeded" && node.resultSource === "model_reply").length;
+  const unverifiedResults = pendingAcceptanceCount(model.nodes, status?.nodeStateCounts.succeeded ?? 0);
   const focusedNode = focus.kind === "node" ? focus.id : null;
   const node = useMemo(
     () =>
@@ -2028,7 +2028,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedReplies > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedReplies > 0 && status?.status === "completed" ? `execution completed · ${unverifiedReplies} replies need review` : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
+            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
           </div>
 
           <div className="strip-card right">
@@ -2290,7 +2290,7 @@ export default function App({
               <RunPanel
                 status={status}
                 events={eventList}
-                unverifiedReplies={unverifiedReplies}
+                unverifiedResults={unverifiedResults}
                 onClose={() => setTalkOpen(false)}
                 openEvidence={openEvidence}
                 onSay={(message, to) =>

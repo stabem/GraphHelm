@@ -196,7 +196,7 @@ export function WorkOverview({
                       <span className="work-avatar" style={{ background: `hsl(${hueOf(agent.id)} 52% 46%)` }} aria-hidden="true">{initialOf(agent.id)}</span>
                       <span className="work-agent-copy">
                         <span className="work-agent-id">{agent.id}</span>
-                        <span className="work-agent-report"><span>Last recorded report</span><strong>{report?.text ?? (report ? "Report text has not opened yet" : "No report recorded")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
+                        <span className="work-agent-report"><span>Last direct chat report</span><strong>{report?.text ?? (report ? "Report text has not opened yet" : "No direct chat report · see Work nodes")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
                         <span className="work-observed">
                           <span>Last node update</span>
                           {observation ? (
@@ -207,7 +207,7 @@ export function WorkOverview({
                       </span>
                     </summary>
                     <div className="work-agent-expanded">
-                      <p>{report?.text ?? (report ? "Report text has not opened yet" : "No report recorded")}</p>
+                      <p>{report?.text ?? (report ? "Report text has not opened yet" : "No direct chat report · see Work nodes")}</p>
                       <button type="button" aria-pressed={isSelected} onClick={() => onSelectAgent?.(isSelected ? null : agent.id)}>{isSelected ? "Close direct chat" : `Open direct chat with ${agent.id}`}</button>
                     </div>
                     </details>
@@ -314,3 +314,4 @@ export function WorkOverview({
     </main>
   );
 }
+

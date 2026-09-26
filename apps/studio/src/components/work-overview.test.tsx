@@ -113,7 +113,7 @@ describe("organized work overview", () => {
     expect(snapshot).toHaveTextContent("This run declares one graph node");
     const builder = screen.getByText("builder", {selector: ".work-agent-id"}).closest("details")!;
     expect(builder).toHaveTextContent("event #11");
-    expect(screen.getAllByText("Last recorded report", {selector: ".work-agent-report > span"})[0].closest("details")).toHaveTextContent("reviewer");
+    expect(screen.getAllByText("Last direct chat report", {selector: ".work-agent-report > span"})[0].closest("details")).toHaveTextContent("reviewer");
     fireEvent.click(within(builder).getByText("builder", {selector: ".work-agent-id"}).closest("summary")!);
     expect(builder).toHaveAttribute("open");
     expect(within(builder).getByText("Implementing the issue", {selector: ".work-agent-expanded p"})).toBeVisible();

@@ -1,17 +1,13 @@
 /**
  * Tying a graph document to a run — the check that has to happen before a single arrow is drawn.
  *
- * THE PROBLEM. The Runtime's log records which graph an execution started from as a HASH
- * (`execution_started.graphHash`) and never records its shape. `POST /v1/graph/topology` reads a
- * FILE. A file path is a guess: the operator types it, the file may have been edited since the
- * run began, or it may be a different graph entirely. Drawing its edges over a run's nodes on
- * that basis would produce a confident, plausible picture of the wrong graph — and a drawn arrow
- * reads as evidence, which is exactly the failure this Studio refuses everywhere else.
+ * THE PROBLEM. Older Runtime logs recorded only the graph HASH. A graph file path is a guess:
+ * the file may have changed since the run began. Newer declarations carry a topology snapshot;
+ * both sources need the run's own hash before an arrow can be drawn. A wrong arrow would be a
+ * confident picture of the wrong work, exactly the failure this Studio refuses elsewhere.
  *
- * THE CHECK. The topology reply carries the same `semanticHash` the run recorded. Equal, and the
- * edges provably belong to this run. Not equal, and they provably do not. No hash in the log
- * yet — a page that has not read back to sequence 1 — and the answer is neither, which is its own
- * state and not a reason to draw.
+ * THE CHECK. A file reply carries `semanticHash`; a run snapshot carries `graphHash`. Compare
+ * either to `execution_started.graphHash`. A partial page without the start hash draws nothing.
  *
  * Three verdicts, and only ONE of them yields edges. That is the whole module.
  */
@@ -33,6 +29,47 @@ export interface VerifiedTopology {
    * so a component cannot draw them by forgetting to branch on `match`. */
   edges: Array<{ id: string; from: string; to: string; type: string }>;
   entrypoints: string[];
+  source?: "journal";
+}
+
+/** A declaration and start are appended atomically. Even so, check the recorded hash and
+ * roster before treating the declaration as a diagram; old or partial journals have no edges. */
+export function topologyFromJournal(events: RuntimeEvent[]): VerifiedTopology | null {
+  const started = events.find((event) => event.kind === "execution_started");
+  const form = events.find((event) => event.kind === "execution_form_declared");
+  if (!started || !form || !form.payload || typeof form.payload !== "object") return null;
+  const declaration = form.payload as { executionId?: unknown; nodeIds?: unknown; topology?: unknown };
+  if (!declaration.topology || typeof declaration.topology !== "object") return null;
+  const startId = started.payload && typeof started.payload === "object"
+    ? (started.payload as { executionId?: unknown }).executionId : null;
+  const snapshot = declaration.topology as { graphHash?: unknown; entrypoints?: unknown; edges?: unknown };
+  const hash = recordedGraphHash(events);
+  const nodes = declaration.nodeIds;
+  const nodeIds = Array.isArray(nodes) && nodes.every((id) => typeof id === "string" && id.length > 0)
+    ? new Set<string>(nodes) : null;
+  const entrypoints = sanitiseIds(snapshot.entrypoints);
+  const edges = sanitiseEdges(snapshot.edges as GraphTopology["edges"]);
+  const valid = typeof startId === "string" && startId === declaration.executionId
+    && typeof snapshot.graphHash === "string" && snapshot.graphHash === hash
+    && nodeIds !== null && Array.isArray(nodes) && nodeIds.size === nodes.length
+    && Array.isArray(snapshot.entrypoints) && entrypoints.length === snapshot.entrypoints.length
+    && new Set(entrypoints).size === entrypoints.length
+    && entrypoints.every((id) => nodeIds.has(id))
+    && Array.isArray(snapshot.edges) && edges.length === snapshot.edges.length
+    && new Set(edges.map((edge) => edge.id)).size === edges.length
+    && snapshot.edges.every((edge) => edge !== null && typeof edge === "object"
+      && typeof edge.id === "string" && edge.id.length > 0
+      && typeof edge.type === "string" && edge.type.length > 0)
+    && edges.every((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
+  return {
+    match: valid ? "matched" : "unverified",
+    recordedHash: hash,
+    fileHash: typeof snapshot.graphHash === "string" ? snapshot.graphHash : "",
+    file: "run journal",
+    edges: valid ? edges : [],
+    entrypoints: valid ? entrypoints : [],
+    source: "journal",
+  };
 }
 
 /**
@@ -94,11 +131,13 @@ export function topologyNote(verified: VerifiedTopology | null): string {
     return "point the field below at the graph file this run started from";
   }
   if (verified.match === "matched") {
+    if (verified.source === "journal") return "Connections verified from this run's recorded graph.";
     return "Connections verified: this file hashes to exactly the graph this run recorded.";
   }
   if (verified.match === "mismatched") {
     return "This file is not the graph this run started from: its hash differs from the one the log recorded.";
   }
+  if (verified.source === "journal") return "Recorded connections could not be verified against this run.";
   return "This run has not reported its graph hash yet, so the file could not be checked against it.";
 }
 

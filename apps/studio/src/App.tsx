@@ -54,7 +54,7 @@ import {
 } from "./webmcp/adapter";
 import { buildGraphModel, conversationFor, pendingAcceptanceCount } from "./graph/model";
 import { openQuestions } from "./graph/ledger";
-import { topologyNote, verifyTopology, type VerifiedTopology } from "./graph/topology";
+import { topologyFromJournal, topologyNote, verifyTopology, type VerifiedTopology } from "./graph/topology";
 import {
   clearBoards,
   emptyBoard,
@@ -355,7 +355,9 @@ export default function App({
    * measured before anything else ran. The hooks now also bail on equal commits; this memo
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
-  const model = useMemo(() => buildGraphModel(eventList, topology), [events, topology]);
+  const journalTopology = useMemo(() => topologyFromJournal(eventList), [eventList]);
+  const visibleTopology = journalTopology?.match === "matched" ? journalTopology : topology ?? journalTopology;
+  const model = useMemo(() => buildGraphModel(eventList, visibleTopology), [eventList, visibleTopology]);
   const unverifiedResults = pendingAcceptanceCount(model.nodes, status?.nodeStateCounts.succeeded ?? 0);
   const focusedNode = focus.kind === "node" ? focus.id : null;
   const node = useMemo(
@@ -1858,10 +1860,10 @@ export default function App({
     lint: [],
   };
   const connectionTone: "proven" | "refused" | "none" =
-    topologyError !== "" || topology?.match === "mismatched"
-      ? "refused"
-      : topology?.match === "matched"
-        ? "proven"
+    visibleTopology?.match === "matched"
+      ? "proven"
+      : topologyError !== "" || visibleTopology?.match === "mismatched"
+        ? "refused"
         : "none";
   const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
@@ -2374,7 +2376,7 @@ export default function App({
               selectedNode={focusedNode}
               onSelectNode={(id) => setFocus(id === null ? { kind: "none" } : { kind: "node", id })}
               onChange={updateBoard}
-              connectionNote={topologyError || topologyNote(topology)}
+              connectionNote={journalTopology?.match === "matched" ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology)}
               connectionTone={connectionTone}
               graphFile={graphFile}
               onGraphFileChange={(value) => {

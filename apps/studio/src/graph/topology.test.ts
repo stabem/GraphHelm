@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphTopology, RuntimeEvent } from "../runtime/types";
 import { buildGraphModel } from "./model";
-import { recordedGraphHash, topologyNote, verifyTopology } from "./topology";
+import { recordedGraphHash, topologyFromJournal, topologyNote, verifyTopology } from "./topology";
 
 const RUN_HASH = "sha256:aa9b0715df457c2a1a364c1ab5ddee2c88bc390742c078fe6725b4b823e8a9bb";
 const OTHER_HASH = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -31,6 +31,48 @@ const STARTED = event(1, "execution_started", {
 const ROSTER = event(2, "execution_form_declared", {
   executionId: "demo",
   nodeIds: ["deploy", "implementation"],
+});
+
+const SNAPSHOT = event(2, "execution_form_declared", {
+  executionId: "demo",
+  nodeIds: ["implementation", "deploy"],
+  topology: {
+    graphHash: RUN_HASH,
+    entrypoints: ["implementation"],
+    edges: [{ id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" }],
+  },
+});
+
+describe("connections recorded with the run", () => {
+  it("shows the declared edge on a fresh load without a graph file path", () => {
+    const verified = topologyFromJournal([STARTED, SNAPSHOT]);
+    expect(verified?.match).toBe("matched");
+    expect(verified?.edges.map((edge) => edge.id)).toEqual(["implementation_to_deploy"]);
+    expect(buildGraphModel([STARTED, SNAPSHOT], verified).edgesKnown).toBe(true);
+    expect(topologyNote(verified ?? null)).toMatch(/recorded graph/i);
+  });
+
+  it("leaves old runs without a snapshot available for manual verification", () => {
+    expect(topologyFromJournal([STARTED, ROSTER])).toBeNull();
+  });
+
+  it("draws nothing when the snapshot hash, execution, or roster disagrees", () => {
+    const payload = SNAPSHOT.payload as Record<string, unknown>;
+    for (const bad of [
+      { ...payload, topology: { ...(payload.topology as object), graphHash: OTHER_HASH } },
+      { ...payload, executionId: "another-run" },
+      { ...payload, nodeIds: ["implementation"] },
+      { ...payload, topology: { ...(payload.topology as object), edges: [
+        { id: "same", from: "implementation", to: "deploy", type: "data" },
+        { id: "same", from: "deploy", to: "implementation", type: "data" },
+      ] } },
+    ]) {
+      const verified = topologyFromJournal([STARTED, { ...SNAPSHOT, payload: bad }]);
+      expect(verified?.match).toBe("unverified");
+      expect(verified?.edges).toEqual([]);
+    }
+    expect(topologyFromJournal([SNAPSHOT])).toBeNull();
+  });
 });
 
 function topology(hash: string): GraphTopology {

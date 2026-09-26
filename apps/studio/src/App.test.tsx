@@ -3017,6 +3017,28 @@ describe("the board remembers its graph file", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await waitFor(() => expect(client.getTopology).toHaveBeenCalledWith("flows/demo.json"));
   });
+
+  it("shows journal connections on a fresh browser without asking for a graph file", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const recorded = (sequence: number, kind: string, payload: unknown) => ({
+      sequence, kind, payload, occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli",
+      actorType: "system", idempotencyKey: `k${sequence}`, eventId: `event-${sequence}`, evidenceRefs: [],
+    });
+    const client = stubClient({ getEvents: vi.fn(async () => ({ head: 2, events: [
+      recorded(1, "execution_started", { executionId: "demo-deploy", graphHash: hash }),
+      recorded(2, "execution_form_declared", {
+        executionId: "demo-deploy", nodeIds: ["implementation", "deploy"],
+        topology: { graphHash: hash, entrypoints: ["implementation"], edges: [
+          { id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" },
+        ] },
+      }),
+    ] })) });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    expect(await screen.findByText(/1 connection drawn/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Graph file path on the Runtime host")).not.toBeInTheDocument();
+    expect(client.getTopology).not.toHaveBeenCalled();
+  });
 });
 
 /**

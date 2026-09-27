@@ -302,8 +302,8 @@ export default function App({
     }
     if (activeJudgeRoute === null) {
       setReplyIssue(judgeRoutes.length === 0
-        ? "Two recommendations need a configured TypeSafe Jev route. You can still write your own reply."
-        : "Choose a Jev route to prepare two replies.");
+        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
+        : "Choose a Jev model to prepare suggested replies.");
       return;
     }
     const client = clientRef.current;

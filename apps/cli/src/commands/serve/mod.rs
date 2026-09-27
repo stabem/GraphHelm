@@ -493,6 +493,7 @@ fn build_router(state: ServeState) -> Router {
         )
         .route("/v1/executions/{id}/start", post(routes::start))
         .route("/v1/executions/{id}/signal", post(routes::signal))
+        .route("/v1/executions/{id}/proposal", post(routes::proposal))
         .route("/v1/executions/{id}/documents/read", post(documents::read))
         .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))
@@ -730,6 +731,7 @@ enum MutationDecisionKind {
     /// recognized as the retry it is rather than re-run to a second refusal.
     CompletionClaim,
     CompletionCleared,
+    DraftRejected,
     Unrecognized,
 }
 
@@ -747,6 +749,7 @@ impl MutationDecisionKind {
             "execution.wake_lease" => Self::WakeLease,
             "execution.claim" => Self::CompletionClaim,
             "execution.clear" => Self::CompletionCleared,
+            "execution.proposal" => Self::DraftRejected,
             _ => Self::Unrecognized,
         }
     }
@@ -781,6 +784,13 @@ impl MutationDecisionKind {
                                 .and_then(|bytes| raw_content_sha256(&bytes).ok())
                                 .is_some_and(|digest| digest == payload.envelope_sha256)
                     })
+            }
+            (Self::DraftRejected, EventKind::DraftRejected(payload)) => {
+                request_body
+                    .get("draft")
+                    .and_then(|draft| draft.get("id"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(payload.draft_id.as_str())
             }
             (Self::NodeOutcomeRecorded, EventKind::NodeOutcomeRecorded(payload)) => {
                 payload.execution_id.as_str() == execution

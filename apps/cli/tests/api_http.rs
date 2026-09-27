@@ -2075,6 +2075,56 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(event["actor"]["id"], "agent-planner");
 }
 
+/// A typed proposal is parsed and durably rejected with the caller's actor identity. The retry
+/// is idempotent, and no graph publication event is emitted: project and node authorization are
+/// still unavailable at this boundary.
+#[test]
+fn a_typed_proposal_is_rejected_and_never_published_over_http() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-proposal";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let body = serde_json::json!({
+        "draft": {
+            "id": "draft-http-1",
+            "expectedVersion": 1,
+            "expectedHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "operations": [],
+        }
+    });
+    let headers = [
+        ("Idempotency-Key", "proposal-http-1"),
+        ("X-GraphHelm-Actor", "agent-planner"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let url = format!("{base}/v1/executions/{execution}/proposal");
+    let (status, first) = post_json(&url, &token, &headers, &body);
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["data"]["status"], "rejected");
+    assert_eq!(
+        first["data"]["reasonCode"],
+        "proposal_authorization_unavailable"
+    );
+    assert_eq!(first["data"]["actor"]["id"], "agent-planner");
+    assert!(first["data"]["nextAction"].as_str().is_some());
+
+    let (retry_status, retry) = post_json(&url, &token, &headers, &body);
+    assert_eq!(retry_status, 200, "{retry}");
+    assert_eq!(retry["data"], first["data"]);
+    assert_eq!(
+        events_of_kind(&base, &token, execution, "draft_rejected").len(),
+        1
+    );
+    assert!(events_of_kind(&base, &token, execution, "graph_version_published").is_empty());
+    assert_eq!(
+        last_event_of_kind(&base, &token, execution, "draft_rejected")["actor"]["id"],
+        "agent-planner"
+    );
+}
+
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
 /// not 409, and appends nothing — the store's own `GHE003_IDEMPOTENCY_CONFLICT` on the
 /// freshly-recomputed-sequence collision (the checkpoint this task verified empirically) is

@@ -9,6 +9,7 @@ pub(super) mod documents;
 mod driver;
 pub(super) mod list;
 pub(super) mod pause;
+pub(super) mod proposal;
 pub(super) mod resume;
 pub(super) mod signal;
 pub(super) mod start;

@@ -51,6 +51,7 @@ const BRIEFING_COMMAND: &str = "execution.briefing";
 const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
 const SIGNAL_COMMAND: &str = "execution.signal";
+const PROPOSAL_COMMAND: &str = "execution.proposal";
 const APPROVE_COMMAND: &str = "execution.approve";
 const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
@@ -1209,6 +1210,80 @@ pub(super) async fn signal(
                     MutationError::Prepared(respond(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Outcome::internal(SIGNAL_COMMAND, "the signal task failed").output,
+                    ))
+                })?;
+                Ok(recorded?)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/proposal`: accepts a typed `GraphDraft`, records the actor's
+/// proposal as a governed rejection, and reports the missing authorization policy explicitly.
+/// Publication is intentionally unavailable until project and node permissions are wired.
+#[allow(clippy::result_large_err)]
+pub(super) async fn proposal(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(PROPOSAL_COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        PROPOSAL_COMMAND,
+        &execution_id,
+        &payload,
+        &["draft"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    let Some(draft) = payload.get("draft") else {
+        return bad_request(
+            PROPOSAL_COMMAND,
+            "the request body must carry \"draft\"",
+            "/draft",
+        );
+    };
+    let draft_bytes = match serde_json::to_vec(draft) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return bad_request(
+                PROPOSAL_COMMAND,
+                "the draft could not be serialized",
+                "/draft",
+            );
+        }
+    };
+    let events = state.events.clone();
+    let drive_execution_id = execution_id.clone();
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        PROPOSAL_COMMAND,
+        identity,
+        ExecutorWiring::from_state(&state),
+        |actor, key| {
+            Box::pin(async move {
+                let recorded = tokio::task::spawn_blocking(move || {
+                    execution::proposal::execute(
+                        &events,
+                        &drive_execution_id,
+                        &draft_bytes,
+                        actor,
+                        key,
+                    )
+                })
+                .await
+                .map_err(|_| {
+                    MutationError::Prepared(respond(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Outcome::internal(PROPOSAL_COMMAND, "the proposal task failed").output,
                     ))
                 })?;
                 Ok(recorded?)

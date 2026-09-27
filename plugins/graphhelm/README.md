@@ -38,7 +38,7 @@ codex plugin add graphhelm@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.3)
+## Session hooks (version 0.1.4)
 
 This installed plugin includes command hooks for Claude Code and Codex. Unbound sessions are
 silent by default. When the session is explicitly bound to a GraphHelm execution, `SessionStart`
@@ -89,12 +89,13 @@ was not recorded: those are different results in the Runtime contract.
 
 State is scoped to host, Runtime origin, execution and session, outside the repository under the
 user's local state directory; `GRAPHHELM_HOOK_STATE_DIR` can override that path. Actors carry a
-session-specific identity rather than only a host name. These observations do not assign or
-complete operational nodes, and session end is not proof that the work passed.
+session-specific identity rather than only a host name. The end request also sends the host session
+ID as `X-GraphHelm-Actor-Session` for the Runtime's structured presence record. These observations
+do not assign or complete operational nodes, and session end is not proof that the work passed.
 
-Version 0.1.3 uses a new state and signal-key namespace: 0.1.2 timestamp files have no delivery
-acknowledgment and are not migrated as proof. A corrupt record stays unobserved; it is not silently
-replaced with a new signal under the same key. The local lock is released by the OS if the host
+Since version 0.1.3, hooks use a new state and signal-key namespace: 0.1.2 timestamp files have
+no delivery acknowledgment and are not migrated as proof. A corrupt record stays unobserved; it is
+not silently replaced with a new signal under the same key. The local lock is released by the OS if the host
 terminates the hook. Delivery deduplication is scoped to this protocol, not an exactly-once claim
 across plugin upgrades or deletion of local state.
 

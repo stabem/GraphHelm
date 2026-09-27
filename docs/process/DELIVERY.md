@@ -22,13 +22,15 @@ Keel is proportional. Use only as much of it as the change needs.
 
 | The change | What goes in the PR body |
 |---|---|
-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
+| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk. Runtime- or security-affecting config needs a full card and behavioral evidence. |
 | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
 | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
-| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
+| Persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
 
 A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
-touches, not from how big it is: a one-line change can remove a permission check.
+touches, not from how big it is: a one-line change can remove a permission check. A display-only
+config label may use the direct route; a Runtime timeout or permission setting needs behavioral
+evidence even if parsing succeeds.
 
 ## 3. Work
 

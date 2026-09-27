@@ -34,13 +34,16 @@ In **Codex CLI**:
 ```text
 codex plugin marketplace add stabem/GraphHelm
 codex plugin add graphhelm@graphhelm
+codex plugin add graphhelm-codex-hooks@graphhelm
 ```
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.4)
+## Session hooks (version 0.1.5)
 
-This installed plugin includes command hooks for Claude Code and Codex. Unbound sessions are
+This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
+separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
+registration. Unbound sessions are
 silent by default. When the session is explicitly bound to a GraphHelm execution, `SessionStart`
 injects a short Keel reminder, and startup and
 resume read one Runtime briefing and return a bounded summary of its next action and pending
@@ -107,11 +110,12 @@ summary fields, never the full objective, transcript or Runtime command text.
 ### Setup inspection
 
 The `graphhelm-setup` skill includes a hook inspection step. Resolve the actual installed plugin
-directory from the host's plugin inventory, then run:
+directory from the host's plugin inventory, then run the Claude hook from `graphhelm` or the Codex
+hook from the installed `graphhelm-codex-hooks` companion:
 
 ```text
 python <installed-plugin>/hooks/session_hook.py inspect --host claude
-python <installed-plugin>/hooks/session_hook.py inspect --host codex --session-id <actual-session-id>
+python <installed-codex-hooks>/hooks/session_hook.py inspect --host codex --session-id <actual-session-id>
 ```
 
 Inspection is read-only, makes no Runtime request, and does not read token contents. It reports
@@ -121,4 +125,4 @@ until the host's own fresh-session event is observed. Do not register a second c
 The adoption CLI does not migrate opaque hook commands; the setup skill identifies legacy
 registrations and requires an explicit, backed-up migration for those entries.
 
-To add a companion, install `graphhelm-jpd@graphhelm` or `graphhelm-development-contracts@graphhelm` with the host's `plugin install` / `plugin add` command. The [skill catalog](https://github.com/stabem/GraphHelm/blob/main/docs/skills/README.md) shows when each is useful. Their MCP registration needs `GRAPHHELM_CLI` to be an absolute trusted executable path, `GRAPHHELM_TOKEN_FILE` to name a local token file, and `GRAPHHELM_ACTOR` to identify the chat session. Never paste the token value into a manifest or prompt.
+To add a methodology companion, install `graphhelm-jpd@graphhelm` or `graphhelm-development-contracts@graphhelm` with the host's `plugin install` / `plugin add` command. Install `graphhelm-codex-hooks@graphhelm` for Codex hook compatibility as shown above. The [skill catalog](https://github.com/stabem/GraphHelm/blob/main/docs/skills/README.md) shows when each is useful. Their MCP registration needs `GRAPHHELM_CLI` to be an absolute trusted executable path, `GRAPHHELM_TOKEN_FILE` to name a local token file, and `GRAPHHELM_ACTOR` to identify the chat session. Never paste the token value into a manifest or prompt.

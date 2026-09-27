@@ -100,6 +100,26 @@ class SessionHookTests(unittest.TestCase):
         for key in ("GRAPHHELM_SESSION_ID", "GRAPHHELM_NODE_ID", "GRAPHHELM_KEEL_CONTEXT"):
             self.env.pop(key, None)
 
+    def test_codex_compatibility_package_keeps_one_hook_source(self):
+        repository = SCRIPT.parents[3]
+        companion = repository / "plugins" / "graphhelm-codex-hooks"
+        self.assertFalse((companion / "plugin.json").exists())
+        companion_manifest = json.loads(
+            (companion / ".codex-plugin" / "plugin.json").read_text()
+        )
+        self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
+        self.assertEqual(companion_manifest["version"], "0.1.5")
+        self.assertEqual(
+            SCRIPT.read_bytes(),
+            (companion / "hooks" / "session_hook.py").read_bytes(),
+        )
+        self.assertEqual(
+            (SCRIPT.parent / "codex-hooks.json").read_bytes(),
+            (companion / "hooks" / "codex-hooks.json").read_bytes(),
+        )
+        main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
+        self.assertNotIn("extensions", main_manifest)
+
     def tearDown(self):
         self.temp.cleanup()
 

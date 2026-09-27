@@ -505,6 +505,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .run.needs .run-mark { background: var(--signal); }
 .run.calm .run-mark { background: var(--live); }
 .run.review .run-mark { background: var(--signal); }
+.run.cancelled .run-mark { background: var(--faint); }
 .run-review { color: var(--signal); }
 
 /* Two stacked lines beside the room's avatar, like a conversation list entry: the name, and

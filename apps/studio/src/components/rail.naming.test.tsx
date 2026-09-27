@@ -26,6 +26,26 @@ const row = (executionId: string): ExecutionSummary => ({
 });
 
 describe("naming rows on the rail", () => {
+  it("names a cancelled run as cancelled even when its stored attention is calm", () => {
+    render(
+      <ProjectRail
+        projects={[{ name: "store", runs: [{ ...row("cancelled-run"), status: "cancelled" }] }]}
+        selected=""
+        connected
+        hasMore={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onNewTask={vi.fn()}
+        onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
+      />,
+    );
+    const run = screen.getByRole("button", { name: /cancelled-run.*cancelled/i });
+    expect(run).toHaveClass("cancelled");
+    expect(run).not.toHaveClass("calm");
+  });
+
   it("shows completed results needing review instead of a green can-sleep mark", () => {
     render(
       <ProjectRail

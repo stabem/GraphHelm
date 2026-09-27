@@ -1954,6 +1954,56 @@ fn replying_anthropic_server() -> String {
     format!("http://127.0.0.1:{}", address.port())
 }
 
+/// Hold the provider reply until the test has closed the HTTP start connection. The channel
+/// handshake proves the model call is actually in flight before the disconnect is simulated.
+fn held_anthropic_server() -> (
+    String,
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (arrived, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut content_length = 0_usize;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = rest.trim().parse().unwrap_or(0);
+            }
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let mut body = vec![0_u8; content_length];
+        if reader.read_exact(&mut body).is_err() {
+            return;
+        }
+        let _ = arrived.send(());
+        if released.recv_timeout(Duration::from_secs(20)).is_err() {
+            return;
+        }
+        let reply = serde_json::json!({
+            "content": [{"type": "text", "text": "provider completed after the browser left"}],
+            "usage": {"input_tokens": 12, "output_tokens": 5}
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            reply.len(),
+            reply
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    (format!("http://{address}"), observed, release)
+}
+
 /// A plain project directory with one small text file and no git (#1100): for drives that run
 /// only agent nodes, whose context walk needs a tree but no repository. Nothing here spawns a
 /// process, so it cannot stall a cell whose deadline is already running.
@@ -3538,6 +3588,144 @@ spec:
     let path = directory.join(format!("{execution_id}.yaml"));
     std::fs::write(&path, yaml).unwrap();
     path
+}
+
+/// A browser may close its POST after the start decision is committed but before the provider
+/// answers. The run must still finish, and retrying the same key must not dispatch it twice.
+#[test]
+fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let project = plain_project(directory.path());
+    let key_id = "runtime-http-disconnect";
+    let route_id = "disconnect_route";
+    let (provider, arrived, release) = held_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_disconnect", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "disconnect-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id,
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": provider,
+                "model": "claude-sonnet-5",
+                "credentialRef": "cred_disconnect",
+                "profiles": ["critical_reasoning"],
+                "enabled": true,
+                "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let execution = "exec-disconnected-start";
+    let graph = agent_only_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(),
+        "mode": "autopilot",
+        "project": project.to_str().unwrap(),
+    });
+    let (host, port, path) = split_url(&url);
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let payload = serde_json::to_vec(&body).unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIdempotency-Key: disconnected-start\r\nX-GraphHelm-Actor: owner-local\r\nX-GraphHelm-Actor-Type: owner\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(&payload).unwrap();
+    arrived
+        .recv_timeout(Duration::from_secs(15))
+        .expect("the model call did not begin");
+    drop(stream);
+    release.send(()).unwrap();
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = get_json(&status_url, Some(&token));
+        if status["data"]["status"] == "completed" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the run was orphaned after client disconnect: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let events_url = format!("{base}/v1/executions/{execution}/events?limit=100");
+    let tail = get_json(&events_url, Some(&token));
+    let entries = envelope_array(&tail, "events", &events_url);
+    let count = |kind: &str| {
+        entries
+            .iter()
+            .filter(|entry| entry["kind"]["type"] == kind)
+            .count()
+    };
+    assert_eq!(count("execution_started"), 1, "{tail}");
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| {
+                entry["kind"]["type"] == "node_outcome_recorded"
+                    && entry["kind"]["data"]["outcome"] == "succeeded"
+            })
+            .count(),
+        1,
+        "the model completed exactly once: {tail}"
+    );
+
+    let (retry_status, retry) = post_json(
+        &url,
+        &token,
+        &[
+            ("Idempotency-Key", "disconnected-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &body,
+    );
+    assert_eq!(retry_status, 200, "{retry}");
+    let after = get_json(&events_url, Some(&token));
+    assert_eq!(
+        envelope_array(&after, "events", &events_url).len(),
+        entries.len(),
+        "retry dispatched again: {after}"
+    );
 }
 
 /// A model-only server (no `--staging`, so no tool half and none of its workspace checks) is

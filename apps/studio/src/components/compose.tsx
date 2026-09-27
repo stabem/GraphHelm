@@ -153,6 +153,7 @@ export function Composer({
           <Send aria-hidden="true" />
           {busy ? "starting" : "start this task"}
         </button>
+        {busy && <p className="hint" role="status">The Runtime is starting this task. A model call can take minutes; the run will open when its start is confirmed.</p>}
       </form>
 
       <p className="panel-foot">

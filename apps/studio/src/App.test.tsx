@@ -3618,6 +3618,37 @@ describe("the run it just started", () => {
     return firstCall(client.startTask)[0] as string;
   }
 
+  it("opens a durably listed run while the start response is still waiting for the model", async () => {
+    let committed: string | null = null;
+    let finish!: (value: MutationEvidence) => void;
+    const base = stubClient();
+    const client = stubClient({
+      startTask: vi.fn((executionId: string) => {
+        committed = executionId;
+        return new Promise<MutationEvidence>((resolve) => { finish = resolve; });
+      }),
+      listExecutions: vi.fn(async () => {
+        const page = await base.listExecutions();
+        return committed === null ? page : {
+          ...page,
+          executions: [
+            { executionId: committed, mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 },
+            ...page.executions,
+          ],
+        };
+      }),
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={25} />);
+    await screen.findByLabelText("Projects");
+    await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
+    await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(within(screen.getByLabelText("Projects")).getByRole("button", { current: true })).toHaveTextContent(committed!));
+    expect(screen.queryByRole("button", { name: /starting/i })).not.toBeInTheDocument();
+    finish({ ...PAUSED_EVIDENCE, action: "start", executionId: committed! });
+  });
+
   it("selects the new run and opens its overview instead of an empty board", async () => {
     const client = withStarted();
     const id = await startOne(client);

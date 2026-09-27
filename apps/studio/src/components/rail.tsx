@@ -159,8 +159,8 @@ export function ProjectRail({
                 const verdict = verdictOf(run.attention);
                 const reviewCount = run.status === "completed" && run.executor !== "fixture" && typeof run.unverifiedResults === "number" && run.unverifiedResults > 0
                   ? run.unverifiedResults : 0;
-                const rowKey = reviewCount > 0 ? "review" : verdict.key;
-                const rowStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.attention);
+                const rowKey = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? "review" : verdict.key;
+                const rowStatus = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.attention);
                 const on = run.executionId === selected;
                 // #1083 F7: the row's own declared objective first (one index read names every
                 // row), the briefing a selection already read as the fallback for an older

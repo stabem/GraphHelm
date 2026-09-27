@@ -909,6 +909,26 @@ export default function App({
       draftBusyToken.current = busyToken;
       draftBusyVisible.current = true;
       setComposeError("");
+      // The Runtime records the run before its model call finishes. A slow model must not keep
+      // that real run hidden behind the draft until the HTTP start response finally returns.
+      let observingStart = false;
+      const startObserver = window.setInterval(() => {
+        if (observingStart || clientRef.current !== client || draftRef.current?.executionId !== startedId) return;
+        observingStart = true;
+        void (async () => {
+          try {
+            const listing = await client.listExecutions({ limit: LIST_PAGE_SIZE });
+            if (clientRef.current !== client || draftRef.current?.executionId !== startedId) return;
+            if (!listing.executions.some((run) => run.executionId === startedId)) return;
+            await loadList();
+            if (clientRef.current === client && draftRef.current?.executionId === startedId) select(startedId);
+          } catch {
+            // The start response still owns errors. An index read can briefly miss the commit.
+          } finally {
+            observingStart = false;
+          }
+        })();
+      }, Math.min(pollIntervalMs, 2000));
       try {
         const evidenceOfStart = await client.startTask(
           startedId,
@@ -969,6 +989,7 @@ export default function App({
         if (clientRef.current !== client) return;
         reportToDraft(startedId, messageOf(reason, "The task could not be started."));
       } finally {
+        window.clearInterval(startObserver);
         if (
           clientRef.current === client &&
           draftBusyToken.current === busyToken &&
@@ -981,7 +1002,7 @@ export default function App({
         }
       }
     },
-    [draft, loadList, select, reportToDraft],
+    [draft, loadList, select, reportToDraft, pollIntervalMs],
   );
 
   /**

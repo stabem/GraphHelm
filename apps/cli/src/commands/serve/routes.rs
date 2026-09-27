@@ -1878,7 +1878,27 @@ pub(super) async fn start(
                         // #90: `held` returned above, so this start drives.
                         false,
                     )?;
-                    drive(&drive_state, &drive_execution_id, prepared, setup).await
+                    if drive_state.runtime.is_some() {
+                        // The decision is durable before this point. A model request can take
+                        // minutes, and the HTTP client is allowed to disappear while it waits.
+                        // Keep the drive owned by the server task so dropping the request future
+                        // cannot leave a committed execution stuck at `running` forever.
+                        let background_state = drive_state.clone();
+                        let background_execution_id = drive_execution_id.clone();
+                        tokio::spawn(async move {
+                            drive(&background_state, &background_execution_id, prepared, setup)
+                                .await
+                        })
+                        .await
+                        .map_err(|_| {
+                            MutationError::Command(driver_failure(
+                                "the detached execution drive stopped unexpectedly",
+                            ))
+                        })
+                        .and_then(std::convert::identity)
+                    } else {
+                        drive(&drive_state, &drive_execution_id, prepared, setup).await
+                    }
                 } else {
                     Ok(execution::start::execute(
                         &version,
@@ -2485,7 +2505,25 @@ pub(super) async fn resume(
                         actor,
                         key,
                     )?;
-                    drive(&drive_state, &drive_execution_id, prepared, setup).await
+                    if drive_state.runtime.is_some() {
+                        // See `start`: a detached runtime drive survives the request that
+                        // triggered it, while GET status remains the progress observer.
+                        let background_state = drive_state.clone();
+                        let background_execution_id = drive_execution_id.clone();
+                        tokio::spawn(async move {
+                            drive(&background_state, &background_execution_id, prepared, setup)
+                                .await
+                        })
+                        .await
+                        .map_err(|_| {
+                            MutationError::Command(driver_failure(
+                                "the detached execution drive stopped unexpectedly",
+                            ))
+                        })
+                        .and_then(std::convert::identity)
+                    } else {
+                        drive(&drive_state, &drive_execution_id, prepared, setup).await
+                    }
                 } else {
                     Ok(execution::resume::execute(
                         &version,

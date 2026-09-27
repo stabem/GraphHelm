@@ -1451,14 +1451,13 @@ fn apply_projection_event(
             projection
                 .proposed_drafts
                 .push(payload.draft_id.to_string());
-            if let Some(digest) = &payload.proposal_sha256 {
-                if projection
+            if let Some(digest) = &payload.proposal_sha256
+                && projection
                     .proposed_draft_sha256
                     .insert(payload.draft_id.to_string(), digest.clone())
                     .is_some()
-                {
-                    return Err(ReplayError::Corrupt);
-                }
+            {
+                return Err(ReplayError::Corrupt);
             }
         }
         EventKind::DraftRejected(payload) => {

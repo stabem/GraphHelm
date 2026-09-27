@@ -1517,6 +1517,20 @@ export function RunPanel({
             : `nothing in the other ${LIFECYCLE_STATES.filter((state) => (status.nodeStateCounts[state] ?? 0) === 0).length} states`}
         </span>
       </div>
+      {Object.keys(status.nodeAssignments ?? {}).length > 0 && (
+        <section className="assignment-summary" aria-label="Node assignments">
+          <span className="lbl">Assigned work</span>
+          {Object.entries(status.nodeAssignments ?? {}).map(([node, actor]) => (
+            <div className="assignment-row" key={node}>
+              <strong>{node}</strong>
+              <span>{actor.type}: {actor.id}</span>
+              <span className={`assignment-state ${readable(status.nodeStates?.[node] ?? "ghost")}`}>
+                {readable(status.nodeStates?.[node] ?? "ghost")}
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
       {unverifiedResults > 0 && <p className="work-note" role="note">{unverifiedResults} node result{unverifiedResults === 1 ? "" : "s"} finished without a confirmed acceptance verdict. Open each node to inspect its evidence.</p>}
 
       <div className="thread-search">

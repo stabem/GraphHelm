@@ -394,6 +394,9 @@ fn proposed(
     actor: &PersistedActor,
     request_identity: &WireHash,
 ) -> Result<graphhelm_protocols::NewEvent, ApplyError> {
+    let proposal_bytes = serde_json::to_vec(draft).map_err(|_| ApplyError::InvalidOperation)?;
+    let proposal_sha256 =
+        raw_content_sha256(&proposal_bytes).map_err(|_| ApplyError::InvalidOperation)?;
     new_event(
         governor_event_key(request_identity, b"proposed")?,
         actor,
@@ -404,7 +407,7 @@ fn proposed(
                 .map_err(|_| ApplyError::InvalidOperation)?,
             operation_count: u16::try_from(draft.operations.len())
                 .map_err(|_| ApplyError::InvalidOperation)?,
-            proposal_sha256: None,
+            proposal_sha256: Some(proposal_sha256),
         }),
         vec![],
     )

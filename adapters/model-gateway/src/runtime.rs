@@ -22,7 +22,7 @@
 use std::io::{Read, Write};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use graphhelm_gateway::call::{ModelCall, ModelReply, Usage};
@@ -32,11 +32,17 @@ use serde::Deserialize;
 
 use crate::env;
 
-/// How often [`RuntimeAdapter::invoke`] polls `Child::try_wait` while waiting for the child to
+/// How often [`RuntimeAdapter::invoke`] polls the non-reaping leader observer while waiting for the child to
 /// exit or the route's deadline to expire. `std::process::Child` has no blocking "wait with
 /// timeout" in `std` (that requires either a platform-specific wait primitive or a crate this
 /// workspace does not depend on); polling is the plan's own prescribed shape for this loop.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Maximum time spent observing cleanup after a kill request. A clock read bounds the polling
+/// iterations below because each iteration performs only the non-blocking leader observer and a
+/// bounded sleep; no blocking wait or thread join is allowed past this deadline.
+const CLEANUP_GRACE: Duration = Duration::from_secs(2);
+const REAPER_CAPACITY: usize = 32;
 
 /// Bound on how much of a pipe's bytes [`spawn_capped_reader`] retains. The reader thread keeps
 /// draining the pipe past this bound (so a verbose child, or one whose grandchild keeps writing,
@@ -157,6 +163,7 @@ impl<'a> RuntimeAdapter<'a> {
             .route
             .command()
             .expect("native_runtime routes carry command — enforced by manifest validation");
+        let cleanup_permit = CleanupPermit::acquire().ok_or(GatewayError::ProviderUnavailable)?;
 
         let mut command = Command::new(&command_spec.program);
         command
@@ -169,9 +176,21 @@ impl<'a> RuntimeAdapter<'a> {
             command.env(key, value);
         }
 
+        graphhelm_process_tree::configure(&mut command);
         let mut child = command
             .spawn()
             .map_err(|_| GatewayError::ProviderUnavailable)?;
+        let mut process_group = match graphhelm_process_tree::create(&child) {
+            Ok(group) => group,
+            Err(_) => {
+                // Group creation failed, so the group adapter cannot terminate descendants.
+                // Keep the direct child bounded too: the pre-spawn permit reserves the same
+                // supervisor handoff used by timeout cleanup if the leader does not exit.
+                let _ =
+                    reap_after_observed_exit(child, Instant::now() + CLEANUP_GRACE, cleanup_permit);
+                return Err(GatewayError::ProviderUnavailable);
+            }
+        };
 
         // The prompt is written on its own thread — spawned here, before the reader threads and
         // before the deadline loop below ever runs — rather than with a direct blocking write on
@@ -221,20 +240,19 @@ impl<'a> RuntimeAdapter<'a> {
         let stderr_reader = spawn_capped_reader(stderr_pipe);
 
         let deadline = Instant::now() + Duration::from_secs(self.route.timeout_seconds());
-        let mut exited: Option<ExitStatus> = None;
+        let mut exited = false;
         let outcome = loop {
-            if exited.is_none() {
-                match child.try_wait() {
-                    Ok(Some(status)) => exited = Some(status),
-                    Ok(None) => {}
+            if !exited {
+                match graphhelm_process_tree::leader_exited(&mut child) {
+                    Ok(status) => exited = status,
                     Err(_) => break WaitOutcome::WaitFailed,
                 }
             }
-            if let Some(status) = exited
+            if exited
                 && stdout_reader.done.load(Ordering::Acquire)
                 && stderr_reader.done.load(Ordering::Acquire)
             {
-                break WaitOutcome::Exited(status);
+                break WaitOutcome::Exited;
             }
             if Instant::now() >= deadline {
                 break WaitOutcome::TimedOut;
@@ -243,12 +261,18 @@ impl<'a> RuntimeAdapter<'a> {
         };
 
         match outcome {
-            WaitOutcome::Exited(status) => {
+            WaitOutcome::Exited => {
                 // Both readers already observed EOF/an error (that is what let the loop above
                 // reach this branch), so these joins are just cleanup, not a wait.
-                let _ = stdin_writer.join();
+                graphhelm_process_tree::close(&mut process_group);
+                let status = child.wait().map_err(|_| GatewayError::RuntimeCrashed)?;
+                let writer_clean = join_writer_until(stdin_writer, Instant::now() + CLEANUP_GRACE);
+                cleanup_permit.release();
                 let stdout_complete = stdout_reader.handle.join().unwrap_or(false);
                 let _ = stderr_reader.handle.join();
+                if !writer_clean {
+                    return Err(GatewayError::RuntimeCrashed);
+                }
                 Ok(RawInvocation {
                     status,
                     stdout: take_buffer(&stdout_reader.buffer),
@@ -257,9 +281,19 @@ impl<'a> RuntimeAdapter<'a> {
                 })
             }
             WaitOutcome::TimedOut => {
+                let _ = graphhelm_process_tree::terminate(
+                    child.id(),
+                    graphhelm_process_tree::for_thread(process_group),
+                );
+                graphhelm_process_tree::close(&mut process_group);
+                // The process may have moved out of its original group. The tree termination
+                // handles descendants, while this direct kill is the bounded fallback for the
+                // leader itself.
                 let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdin_writer.join();
+                let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
+                let leader_clean =
+                    reap_after_observed_exit(child, cleanup_deadline, cleanup_permit);
+                let writer_clean = join_writer_until(stdin_writer, cleanup_deadline);
                 // Deliberately NOT joined (IMPORTANT 6): if a grandchild is still holding either
                 // pipe's write end open, these reader threads are still blocked in `read` and may
                 // never return. Dropping the `JoinHandle`s detaches them instead — they keep
@@ -269,12 +303,22 @@ impl<'a> RuntimeAdapter<'a> {
                 // an oversight — recorded in the milestone doc's honest-limits section.
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
-                Err(GatewayError::Timeout)
+                if leader_clean && writer_clean {
+                    Err(GatewayError::Timeout)
+                } else {
+                    Err(GatewayError::RuntimeCrashed)
+                }
             }
             WaitOutcome::WaitFailed => {
+                let _ = graphhelm_process_tree::terminate(
+                    child.id(),
+                    graphhelm_process_tree::for_thread(process_group),
+                );
+                graphhelm_process_tree::close(&mut process_group);
                 let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdin_writer.join();
+                let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
+                let _ = reap_after_observed_exit(child, cleanup_deadline, cleanup_permit);
+                let _ = join_writer_until(stdin_writer, cleanup_deadline);
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
                 Err(GatewayError::RuntimeCrashed)
@@ -283,13 +327,174 @@ impl<'a> RuntimeAdapter<'a> {
     }
 }
 
-/// The result of one `try_wait` poll loop: the child exited AND both readers have seen EOF/an
+/// The result of one non-reaping leader poll loop: the child exited AND both readers have seen EOF/an
 /// error, the deadline elapsed first, or the OS wait call itself failed (see
 /// [`RuntimeAdapter::invoke`]'s doc comment).
 enum WaitOutcome {
-    Exited(ExitStatus),
+    Exited,
     TimedOut,
     WaitFailed,
+}
+
+struct CleanupCapacity {
+    available: Mutex<usize>,
+}
+
+struct CleanupPermit {
+    supervisor: Option<Arc<CleanupSupervisor>>,
+}
+
+impl CleanupPermit {
+    fn acquire() -> Option<Self> {
+        let supervisor = CleanupSupervisor::get()?;
+        let mut available = supervisor.capacity.available.lock().ok()?;
+        if *available == 0 {
+            return None;
+        }
+        *available -= 1;
+        drop(available);
+        Some(Self {
+            supervisor: Some(supervisor),
+        })
+    }
+
+    fn release(mut self) {
+        let Some(supervisor) = self.supervisor.take() else {
+            return;
+        };
+        if let Ok(mut available) = supervisor.capacity.available.lock() {
+            *available += 1;
+        }
+    }
+}
+
+impl Drop for CleanupPermit {
+    fn drop(&mut self) {
+        let Some(supervisor) = self.supervisor.take() else {
+            return;
+        };
+        if let Ok(mut available) = supervisor.capacity.available.lock() {
+            *available += 1;
+        }
+    }
+}
+
+struct ReaperJob {
+    child: std::process::Child,
+    permit: CleanupPermit,
+}
+
+struct CleanupSupervisor {
+    capacity: Arc<CleanupCapacity>,
+    jobs: Arc<Mutex<Vec<ReaperJob>>>,
+}
+
+impl CleanupSupervisor {
+    fn get() -> Option<Arc<Self>> {
+        static SUPERVISOR: OnceLock<Option<Arc<CleanupSupervisor>>> = OnceLock::new();
+        SUPERVISOR
+            .get_or_init(|| Self::start().ok().map(Arc::new))
+            .clone()
+    }
+
+    fn start() -> std::io::Result<Self> {
+        let capacity = Arc::new(CleanupCapacity {
+            available: Mutex::new(REAPER_CAPACITY),
+        });
+        let jobs = Arc::new(Mutex::new(Vec::<ReaperJob>::new()));
+        let worker_jobs = Arc::clone(&jobs);
+        std::thread::Builder::new()
+            .name("graphhelm-runtime-reaper".to_owned())
+            .spawn(move || {
+                loop {
+                    let mut jobs = worker_jobs
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut index = 0;
+                    while index < jobs.len() {
+                        match jobs[index].child.try_wait() {
+                            Ok(Some(_)) => {
+                                let job = jobs.swap_remove(index);
+                                job.permit.release();
+                            }
+                            Ok(None) | Err(_) => index += 1,
+                        }
+                    }
+                    drop(jobs);
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+            })?;
+        Ok(Self { capacity, jobs })
+    }
+
+    fn handoff(&self, child: std::process::Child, permit: CleanupPermit) {
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.push(ReaperJob { child, permit });
+    }
+}
+
+/// Reap only after the non-reaping process-tree observer has confirmed the leader exited. A
+/// failed or exhausted observation transfers the child to a named background reaper, which keeps
+/// process ownership until the OS reports exit without blocking this adapter call.
+fn reap_after_observed_exit(
+    mut child: std::process::Child,
+    deadline: Instant,
+    permit: CleanupPermit,
+) -> bool {
+    loop {
+        match graphhelm_process_tree::leader_exited(&mut child) {
+            Ok(true) => {
+                let clean = child.wait().is_ok();
+                permit.release();
+                return clean;
+            }
+            Ok(false) if Instant::now() < deadline => std::thread::sleep(POLL_INTERVAL),
+            Ok(false) => {
+                let _ = child.kill();
+                spawn_background_reaper(child, permit);
+                return false;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                spawn_background_reaper(child, permit);
+                return false;
+            }
+        }
+    }
+}
+
+/// Keep ownership of a leader whose bounded observer could not yet confirm exit. The fixed
+/// supervisor was started before the child, and the permit proves one queue slot is available, so
+/// this handoff cannot create an unbounded thread or lose the child on resource exhaustion.
+fn spawn_background_reaper(child: std::process::Child, permit: CleanupPermit) {
+    let supervisor = permit
+        .supervisor
+        .as_ref()
+        .map(Arc::clone)
+        .expect("a live cleanup permit must own its supervisor");
+    supervisor.handoff(child, permit);
+}
+
+/// Join the stdin writer only while it is known to be making progress toward completion. A
+/// blocked writer is detached after the same bounded cleanup window; the caller then reports the
+/// cleanup failure rather than claiming a clean timeout.
+fn join_writer_until(writer: std::thread::JoinHandle<()>, deadline: Instant) -> bool {
+    let mut writer = Some(writer);
+    while !writer.as_ref().is_some_and(|handle| handle.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let Some(writer) = writer.take() else {
+        return false;
+    };
+    if writer.is_finished() {
+        writer.join().is_ok()
+    } else {
+        drop(writer);
+        false
+    }
 }
 
 /// A capped pipe reader running on its own thread: `buffer` accumulates up to
@@ -815,7 +1020,26 @@ fn parse_legacy_codex_jsonl(lines: &[&str]) -> CodexLegacyTranscript {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_codex_jsonl;
+    use super::{
+        CleanupPermit, Duration, Instant, REAPER_CAPACITY, join_writer_until, parse_codex_jsonl,
+        spawn_background_reaper,
+    };
+    use std::process::{Child, Command};
+    use std::sync::mpsc;
+
+    static CLEANUP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn delayed_child(seconds: u64) -> Child {
+        #[cfg(windows)]
+        let mut command = Command::new("cmd");
+        #[cfg(unix)]
+        let mut command = Command::new("sh");
+        #[cfg(windows)]
+        command.args(["/C", &format!("ping 127.0.0.1 -n {} > NUL", seconds + 1)]);
+        #[cfg(unix)]
+        command.args(["-c", &format!("sleep {seconds}")]);
+        command.spawn().expect("delayed child fixture must spawn")
+    }
 
     #[test]
     fn codex_current_object_payloads_reject_duplicate_known_fields() {
@@ -1304,5 +1528,71 @@ historical-non-json-noise
 "#;
         let reply = parse_codex_jsonl(stream).expect("legacy success reply");
         assert_eq!(reply.text, "new");
+    }
+
+    #[test]
+    fn a_blocked_stdin_writer_returns_at_the_cleanup_bound() {
+        let (release, blocked) = mpsc::channel::<()>();
+        let writer = std::thread::spawn(move || {
+            let _ = blocked.recv();
+        });
+        let started = Instant::now();
+        let clean = join_writer_until(writer, started + Duration::from_millis(50));
+        assert!(!clean, "a blocked writer must be reported as unfinished");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "blocked writer cleanup exceeded its explicit bound"
+        );
+        release
+            .send(())
+            .expect("blocked writer fixture must release");
+    }
+
+    #[test]
+    fn cleanup_admission_rejects_work_when_all_reaper_slots_are_reserved() {
+        let _lock = CLEANUP_TEST_LOCK.lock().expect("cleanup test lock");
+        let permits: Vec<_> = (0..REAPER_CAPACITY)
+            .map(|_| CleanupPermit::acquire().expect("supervisor capacity must be available"))
+            .collect();
+        assert!(
+            CleanupPermit::acquire().is_none(),
+            "a full cleanup capacity must reject a new child before spawn"
+        );
+        drop(permits);
+    }
+
+    #[test]
+    fn supervisor_reaps_an_exited_second_child_while_the_first_is_still_running() {
+        let _lock = CLEANUP_TEST_LOCK.lock().expect("cleanup test lock");
+        let first_permit = CleanupPermit::acquire().expect("first cleanup permit");
+        let second_permit = CleanupPermit::acquire().expect("second cleanup permit");
+        let held: Vec<_> = (0..REAPER_CAPACITY - 2)
+            .map(|_| CleanupPermit::acquire().expect("reserved cleanup capacity"))
+            .collect();
+        let first = delayed_child(2);
+        let first_id = first.id();
+        let second = delayed_child(0);
+        spawn_background_reaper(first, first_permit);
+        spawn_background_reaper(second, second_permit);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut second_reaped = false;
+        while Instant::now() < deadline {
+            if let Some(permit) = CleanupPermit::acquire() {
+                second_reaped = true;
+                drop(permit);
+                break;
+            }
+            std::thread::sleep(super::POLL_INTERVAL);
+        }
+        assert!(
+            second_reaped,
+            "the exited second child must release capacity independently"
+        );
+        assert!(
+            graphhelm_process_tree::process_is_running(first_id),
+            "the first child must still be running when the second child is reaped"
+        );
+        drop(held);
     }
 }

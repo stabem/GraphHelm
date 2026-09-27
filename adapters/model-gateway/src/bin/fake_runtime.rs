@@ -141,6 +141,7 @@ fn main() {
         "quota-marker-crash" => run_quota_marker_crash(),
         "hang" => run_hang(),
         "orphan" => run_orphan(),
+        "orphan-tree" => run_orphan_tree(),
         "env-dump" => run_env_dump(),
         other => {
             eprintln!("fake_runtime: unrecognized FAKE_RUNTIME_MODE '{other}'");
@@ -479,9 +480,20 @@ fn release_requested(path: &Path, metadata_error_reported: &mut bool) -> bool {
 /// the test removes its private release directory.
 fn run_orphan() {
     let exe = std::env::current_exe().expect("fake_runtime: could not resolve its own exe path");
-    let _ = std::process::Command::new(exe)
+    let child = std::process::Command::new(exe)
         .env("FAKE_RUNTIME_MODE", "hang")
         .spawn();
+    if let (Ok(child), Ok(path)) = (child, std::env::var("FAKE_RUNTIME_ORPHAN_PID_PATH")) {
+        let _ = std::fs::write(path, child.id().to_string());
+    }
+}
+
+/// `mode=orphan-tree`: the same grandchild arrangement as `orphan`, but the direct child stays
+/// alive. That keeps the inherited parent-death signal from ending the fixture before the adapter
+/// timeout can exercise process-tree termination.
+fn run_orphan_tree() {
+    run_orphan();
+    std::thread::sleep(HANG_FALLBACK);
 }
 
 /// `mode=env-dump`: the only mode that reports on its own environment rather than producing a

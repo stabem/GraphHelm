@@ -9,6 +9,7 @@ rust-version.workspace = true
 fs2.workspace = true
 graphhelm-events = { path = "../../core/events" }
 graphhelm-gateway = { path = "../../core/gateway" }
+graphhelm-process-tree = { path = "../process-tree" }
 graphhelm-protocols = { path = "../../core/protocols" }
 graphhelm-sealed-key-provider = { path = "../sealed-key-provider" }
 hex.workspace = true

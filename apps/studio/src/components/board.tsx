@@ -1474,7 +1474,9 @@ function NodeBlock({
           </span>
         )}
         <span className="node-story-status" title={nodeResult(node)?.verification}>
-          {nodeResult(node)?.short ?? (node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state))}
+          {node.state === "blocked" && last?.outcome === "retryable_failure" && last.reason
+            ? `Failed after retries · ${readable(last.reason)}`
+            : nodeResult(node)?.short ?? (node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state))}
         </span>
         {node.touches > 0 && <span className="node-facts">
           {node.actualExecutor ? <span><small>Executed by</small><strong>{nodeResult(node)?.executor ?? (node.actualExecutor.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor.kind)}</strong></span> : null}

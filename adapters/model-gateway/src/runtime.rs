@@ -22,7 +22,6 @@
 use std::io::{Read, Write};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -339,7 +338,7 @@ struct CleanupCapacity {
 }
 
 struct CleanupPermit {
-    capacity: Option<Arc<CleanupCapacity>>,
+    supervisor: Option<Arc<CleanupSupervisor>>,
 }
 
 impl CleanupPermit {
@@ -352,15 +351,15 @@ impl CleanupPermit {
         *available -= 1;
         drop(available);
         Some(Self {
-            capacity: Some(Arc::clone(&supervisor.capacity)),
+            supervisor: Some(supervisor),
         })
     }
 
     fn release(mut self) {
-        let Some(capacity) = self.capacity.take() else {
+        let Some(supervisor) = self.supervisor.take() else {
             return;
         };
-        if let Ok(mut available) = capacity.available.lock() {
+        if let Ok(mut available) = supervisor.capacity.available.lock() {
             *available += 1;
         }
     }
@@ -368,10 +367,10 @@ impl CleanupPermit {
 
 impl Drop for CleanupPermit {
     fn drop(&mut self) {
-        let Some(capacity) = self.capacity.take() else {
+        let Some(supervisor) = self.supervisor.take() else {
             return;
         };
-        if let Ok(mut available) = capacity.available.lock() {
+        if let Ok(mut available) = supervisor.capacity.available.lock() {
             *available += 1;
         }
     }
@@ -383,8 +382,8 @@ struct ReaperJob {
 }
 
 struct CleanupSupervisor {
-    sender: SyncSender<ReaperJob>,
     capacity: Arc<CleanupCapacity>,
+    jobs: Arc<Mutex<Vec<ReaperJob>>>,
 }
 
 impl CleanupSupervisor {
@@ -399,17 +398,38 @@ impl CleanupSupervisor {
         let capacity = Arc::new(CleanupCapacity {
             available: Mutex::new(REAPER_CAPACITY),
         });
-        let (sender, receiver) = mpsc::sync_channel::<ReaperJob>(REAPER_CAPACITY);
+        let jobs = Arc::new(Mutex::new(Vec::<ReaperJob>::new()));
+        let worker_jobs = Arc::clone(&jobs);
         std::thread::Builder::new()
             .name("graphhelm-runtime-reaper".to_owned())
             .spawn(move || {
-                while let Ok(job) = receiver.recv() {
-                    let mut child = job.child;
-                    let _ = child.wait();
-                    job.permit.release();
+                loop {
+                    let mut jobs = worker_jobs
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut index = 0;
+                    while index < jobs.len() {
+                        match jobs[index].child.try_wait() {
+                            Ok(Some(_)) => {
+                                let job = jobs.swap_remove(index);
+                                job.permit.release();
+                            }
+                            Ok(None) | Err(_) => index += 1,
+                        }
+                    }
+                    drop(jobs);
+                    std::thread::sleep(POLL_INTERVAL);
                 }
             })?;
-        Ok(Self { sender, capacity })
+        Ok(Self { capacity, jobs })
+    }
+
+    fn handoff(&self, child: std::process::Child, permit: CleanupPermit) {
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.push(ReaperJob { child, permit });
     }
 }
 
@@ -447,25 +467,12 @@ fn reap_after_observed_exit(
 /// supervisor was started before the child, and the permit proves one queue slot is available, so
 /// this handoff cannot create an unbounded thread or lose the child on resource exhaustion.
 fn spawn_background_reaper(child: std::process::Child, permit: CleanupPermit) {
-    let supervisor =
-        CleanupSupervisor::get().expect("cleanup supervisor was acquired before spawn");
-    match supervisor.sender.try_send(ReaperJob { child, permit }) {
-        Ok(()) => {}
-        Err(TrySendError::Full(job)) => {
-            // This violates the permit/channel invariant. Keep ownership and reap synchronously
-            // rather than dropping the child; this path is bounded by the OS kill contract.
-            let mut child = job.child;
-            let _ = child.kill();
-            let _ = child.wait();
-            job.permit.release();
-        }
-        Err(TrySendError::Disconnected(job)) => {
-            let mut child = job.child;
-            let _ = child.kill();
-            let _ = child.wait();
-            job.permit.release();
-        }
-    }
+    let supervisor = permit
+        .supervisor
+        .as_ref()
+        .map(Arc::clone)
+        .expect("a live cleanup permit must own its supervisor");
+    supervisor.handoff(child, permit);
 }
 
 /// Join the stdin writer only while it is known to be making progress toward completion. A
@@ -1012,8 +1019,24 @@ fn parse_legacy_codex_jsonl(lines: &[&str]) -> CodexLegacyTranscript {
 mod tests {
     use super::{
         CleanupPermit, Duration, Instant, REAPER_CAPACITY, join_writer_until, parse_codex_jsonl,
+        spawn_background_reaper,
     };
+    use std::process::{Child, Command};
     use std::sync::mpsc;
+
+    static CLEANUP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn delayed_child(seconds: u64) -> Child {
+        #[cfg(windows)]
+        let mut command = Command::new("cmd");
+        #[cfg(unix)]
+        let mut command = Command::new("sh");
+        #[cfg(windows)]
+        command.args(["/C", &format!("ping 127.0.0.1 -n {} > NUL", seconds + 1)]);
+        #[cfg(unix)]
+        command.args(["-c", &format!("sleep {seconds}")]);
+        command.spawn().expect("delayed child fixture must spawn")
+    }
 
     #[test]
     fn codex_current_object_payloads_reject_duplicate_known_fields() {
@@ -1524,6 +1547,7 @@ historical-non-json-noise
 
     #[test]
     fn cleanup_admission_rejects_work_when_all_reaper_slots_are_reserved() {
+        let _lock = CLEANUP_TEST_LOCK.lock().expect("cleanup test lock");
         let permits: Vec<_> = (0..REAPER_CAPACITY)
             .map(|_| CleanupPermit::acquire().expect("supervisor capacity must be available"))
             .collect();
@@ -1532,5 +1556,40 @@ historical-non-json-noise
             "a full cleanup capacity must reject a new child before spawn"
         );
         drop(permits);
+    }
+
+    #[test]
+    fn supervisor_reaps_an_exited_second_child_while_the_first_is_still_running() {
+        let _lock = CLEANUP_TEST_LOCK.lock().expect("cleanup test lock");
+        let first_permit = CleanupPermit::acquire().expect("first cleanup permit");
+        let second_permit = CleanupPermit::acquire().expect("second cleanup permit");
+        let held: Vec<_> = (0..REAPER_CAPACITY - 2)
+            .map(|_| CleanupPermit::acquire().expect("reserved cleanup capacity"))
+            .collect();
+        let first = delayed_child(2);
+        let first_id = first.id();
+        let second = delayed_child(0);
+        spawn_background_reaper(first, first_permit);
+        spawn_background_reaper(second, second_permit);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut second_reaped = false;
+        while Instant::now() < deadline {
+            if let Some(permit) = CleanupPermit::acquire() {
+                second_reaped = true;
+                drop(permit);
+                break;
+            }
+            std::thread::sleep(super::POLL_INTERVAL);
+        }
+        assert!(
+            second_reaped,
+            "the exited second child must release capacity independently"
+        );
+        assert!(
+            graphhelm_process_tree::process_is_running(first_id),
+            "the first child must still be running when the second child is reaped"
+        );
+        drop(held);
     }
 }

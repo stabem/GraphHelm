@@ -261,9 +261,12 @@ impl<'a> RuntimeAdapter<'a> {
                 // reach this branch), so these joins are just cleanup, not a wait.
                 graphhelm_process_tree::close(&mut process_group);
                 let status = child.wait().map_err(|_| GatewayError::RuntimeCrashed)?;
-                let _ = stdin_writer.join();
+                let writer_clean = join_writer_until(stdin_writer, Instant::now() + CLEANUP_GRACE);
                 let stdout_complete = stdout_reader.handle.join().unwrap_or(false);
                 let _ = stderr_reader.handle.join();
+                if !writer_clean {
+                    return Err(GatewayError::RuntimeCrashed);
+                }
                 Ok(RawInvocation {
                     status,
                     stdout: take_buffer(&stdout_reader.buffer),
@@ -282,7 +285,7 @@ impl<'a> RuntimeAdapter<'a> {
                 // leader itself.
                 let _ = child.kill();
                 let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
-                let leader_clean = reap_after_observed_exit(&mut child, cleanup_deadline);
+                let leader_clean = reap_after_observed_exit(child, cleanup_deadline);
                 let writer_clean = join_writer_until(stdin_writer, cleanup_deadline);
                 // Deliberately NOT joined (IMPORTANT 6): if a grandchild is still holding either
                 // pipe's write end open, these reader threads are still blocked in `read` and may
@@ -307,7 +310,7 @@ impl<'a> RuntimeAdapter<'a> {
                 graphhelm_process_tree::close(&mut process_group);
                 let _ = child.kill();
                 let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
-                let _ = reap_after_observed_exit(&mut child, cleanup_deadline);
+                let _ = reap_after_observed_exit(child, cleanup_deadline);
                 let _ = join_writer_until(stdin_writer, cleanup_deadline);
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
@@ -327,23 +330,37 @@ enum WaitOutcome {
 }
 
 /// Reap only after the non-reaping process-tree observer has confirmed the leader exited. A
-/// failed or exhausted observation leaves the child handle to drop after a second kill request and
-/// reports failure to the caller; it never falls back to an unbounded `wait`.
-fn reap_after_observed_exit(child: &mut std::process::Child, deadline: Instant) -> bool {
+/// failed or exhausted observation transfers the child to a named background reaper, which keeps
+/// process ownership until the OS reports exit without blocking this adapter call.
+fn reap_after_observed_exit(mut child: std::process::Child, deadline: Instant) -> bool {
     loop {
-        match graphhelm_process_tree::leader_exited(child) {
+        match graphhelm_process_tree::leader_exited(&mut child) {
             Ok(true) => return child.wait().is_ok(),
             Ok(false) if Instant::now() < deadline => std::thread::sleep(POLL_INTERVAL),
             Ok(false) => {
                 let _ = child.kill();
+                spawn_background_reaper(child);
                 return false;
             }
             Err(_) => {
                 let _ = child.kill();
+                spawn_background_reaper(child);
                 return false;
             }
         }
     }
+}
+
+/// Keep ownership of a leader whose bounded observer could not yet confirm exit. The reaper is
+/// intentionally detached: the caller's deadline has expired, while the OS wait remains the only
+/// safe way to release the child handle and reap a late exit.
+fn spawn_background_reaper(mut child: std::process::Child) {
+    std::thread::Builder::new()
+        .name("graphhelm-runtime-reaper".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+        .expect("a native runtime reaper must be spawnable");
 }
 
 /// Join the stdin writer only while it is known to be making progress toward completion. A

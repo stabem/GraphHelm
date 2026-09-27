@@ -800,10 +800,7 @@ describe("operator actions", () => {
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
     expect(optionsOf(vi.mocked(client.pause).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
-    const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /approve implementation/i }));
-    await waitFor(() => expect(client.approve).toHaveBeenCalled());
-    expect(optionsOf(vi.mocked(client.approve).mock.calls, 2).ifMatch).toBe(STATUS.headSequence);
+    expect(client.approve).not.toHaveBeenCalled();
   });
 
   /** Cancel is destructive on an append-only log, so the first press only ASKS - in the page,
@@ -1577,6 +1574,7 @@ describe("the conversation moves on its own", () => {
  */
 describe("the attention verdict explains itself", () => {
   it("shows an exhausted model crash as a retry decision, not approval of the original start", async () => {
+    let paused = false;
     const event = (sequence: number, outcome: string, nextState: string, reason?: string) => ({
       sequence,
       kind: "node_outcome_recorded",
@@ -1591,10 +1589,15 @@ describe("the attention verdict explains itself", () => {
     const client = stubClient({
       getStatus: vi.fn(async () => ({
         ...STATUS,
+        status: paused ? "paused" : "running",
         headSequence: 12,
         attentionReasons: [{ kind: "blocked_node", node: "start" }],
         nodeStateCounts: { blocked: 1 },
       })),
+      pause: vi.fn(async () => {
+        paused = true;
+        return { ...PAUSED_EVIDENCE, statusAfter: { ...STATUS, status: "paused" } };
+      }),
       getEvents: vi.fn(async () => ({
         head: 12,
         events: [
@@ -1615,7 +1618,9 @@ describe("the attention verdict explains itself", () => {
     expect(screen.getByText(/Failed after retries · runtime crashed/i)).toBeInTheDocument();
     expect(screen.getByText("blocked · retry decision")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "approve start" })).toBeNull();
-    await userEvent.click(within(why).getByRole("button", { name: "allow retry start" }));
+    await userEvent.click(within(why).getByRole("button", { name: "pause before allowing retry start" }));
+    await waitFor(() => expect(client.pause).toHaveBeenCalled());
+    await userEvent.click(within(await screen.findByLabelText("Why this run needs you")).getByRole("button", { name: "allow retry start" }));
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
   });
 
@@ -1639,18 +1644,26 @@ describe("the attention verdict explains itself", () => {
     expect(within(panel).getByText("waiting for your go-ahead")).toBeInTheDocument();
   });
 
-  it("offers approve right where the blocked reason is shown", async () => {
-    const client = stubClient();
+  it("pauses a running run before approval, then allows the approval", async () => {
+    let paused = false;
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: paused ? "paused" : "running" })),
+      pause: vi.fn(async () => {
+        paused = true;
+        return { ...PAUSED_EVIDENCE, statusAfter: { ...STATUS, status: "paused" } };
+      }),
+    });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /approve implementation/i }));
+    await userEvent.click(within(why).getByRole("button", { name: /pause before approving implementation/i }));
 
+    await waitFor(() => expect(client.pause).toHaveBeenCalled());
+    expect(client.approve).not.toHaveBeenCalled();
+    await userEvent.click(within(await screen.findByLabelText("Why this run needs you")).getByRole("button", { name: /approve implementation/i }));
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
-    const call = vi.mocked(client.approve).mock.calls[0] as unknown as [string, string];
-    expect(call[0]).toBe("demo-deploy");
-    expect(call[1]).toBe("implementation");
+    expect((vi.mocked(client.approve).mock.calls[0] as unknown as [string, string])[1]).toBe("implementation");
   });
 
   /** An immediate pause that interrupted a node leaves it `Blocked`/`Interrupted`; the Runtime
@@ -2038,6 +2051,27 @@ describe("controls that act instead of excusing", () => {
     expect(client.resume).not.toHaveBeenCalled();
     const box = screen.getByLabelText(/graph file path on the runtime host/i);
     await waitFor(() => expect(box).toHaveFocus());
+  });
+
+  it("resumes a Studio-created run with its durable one-node graph when no file is named", async () => {
+    const executionId = "run-0f250aef-8a0a-4777-84ca-01f08ea55796";
+    const objective = "Recover the paused task";
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({
+        executions: [{ executionId, mode: "autopilot", status: "paused", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13, objective }],
+        hasMore: false,
+        nextCursor: null,
+      })),
+      getStatus: vi.fn(async () => ({ ...STATUS, executionId, status: "paused", attention: "can_sleep", attentionReasons: [], headSequence: 13 })),
+      getBriefing: vi.fn(async () => ({ name: "New task", objective, executor: "gateway", nextStep: { kind: "resume_held" }, asOfSequence: 13 })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: objective }));
+    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(client.resume).toHaveBeenCalled());
+    const graph = (client.resume.mock.calls[0] as unknown[])[1] as { metadata: { executionId: string }; spec: { nodes: { start: { objective: string } } } };
+    expect(graph.metadata.executionId).toBe(executionId);
+    expect(graph.spec.nodes.start.objective).toBe(objective);
   });
 
   /** #1083 F2: the Studio's resume could not name a fixture, so a demonstration run's resumed

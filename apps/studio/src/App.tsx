@@ -1528,7 +1528,10 @@ export default function App({
   );
 
   const runMutation = useCallback(
-    async (perform: (client: RuntimeClient) => Promise<MutationEvidence>) => {
+    async (
+      perform: (client: RuntimeClient) => Promise<MutationEvidence>,
+      onError?: (reason: unknown) => string | undefined,
+    ) => {
       const client = clientRef.current;
       if (!client) return;
       // The run this mutation was fired FROM, so the catch and finally can tell a superseded
@@ -1552,7 +1555,7 @@ export default function App({
         await loadList();
       } catch (reason) {
         if (clientRef.current !== client || selectedRef.current !== forRun) return;
-        setError(messageOf(reason, "The action could not be completed."));
+        setError(onError?.(reason) ?? messageOf(reason, "The action could not be completed."));
       } finally {
         if (clientRef.current === client && selectedRef.current === forRun) setBusy(false);
       }
@@ -1883,9 +1886,21 @@ export default function App({
   const approveTarget =
     focusedNode !== null && approvable.includes(focusedNode) ? focusedNode : (approvable[0] ?? "");
   const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
+  /** A running retry failure must be paused before its owner can allow another attempt. */
+  const approvalNeedsPause = status?.status === "running" && approveTarget !== "";
   const stalledAfterFailure = status?.status === "running" && retryFailures.size > 0 &&
     ["ready", "queued", "linting", "running"].every((state) => (status.nodeStateCounts[state] ?? 0) === 0);
   const waitingInstead = approveTarget === "" && blocking.length > 0;
+  /** Reconstruct only Studio's generated one-node run. File-backed runs keep requiring their
+   * original Runtime-host path, because objective text cannot safely stand in for topology. */
+  const selectedSummary = executions.find((run) => run.executionId === selected);
+  const resumeGraph =
+    !graphFile.trim() &&
+    isGeneratedRunId(selected) &&
+    typeof (briefing?.objective ?? selectedSummary?.objective) === "string" &&
+    (briefing?.objective ?? selectedSummary?.objective)?.trim().length !== 0
+      ? draftGraph(selected, (briefing?.objective ?? selectedSummary?.objective) as string)
+      : null;
   /** The board a draft shows: the start node alone, with no history, because none exists. Built
    * here rather than through `buildGraphModel` - that reads events, and a draft has none, so
    * asking it would return an empty board and lose the one node the operator is about to fill. */
@@ -2261,16 +2276,27 @@ export default function App({
                             disabled={busy}
                             onClick={() =>
                               void runMutation((client) =>
-                                client.approve(selected, node, {
-                                  actor: OPERATOR_ACTOR,
-                                  idempotencyKey: newIdempotencyKey(),
-                                  ...ifMatchRendered,
-                                }),
+                                status.status === "running"
+                                  ? client.pause(selected, {
+                                      actor: OPERATOR_ACTOR,
+                                      idempotencyKey: newIdempotencyKey(),
+                                      ...ifMatchRendered,
+                                    })
+                                  : client.approve(selected, node, {
+                                      actor: OPERATOR_ACTOR,
+                                      idempotencyKey: newIdempotencyKey(),
+                                      ...ifMatchRendered,
+                                    }),
                               )
                             }
                           >
-                            {failure ? "allow retry" : "approve"} {node}
+                            {status.status === "running"
+                              ? `pause before ${failure ? "allowing retry" : "approving"} ${node}`
+                              : `${failure ? "allow retry" : "approve"} ${node}`}
                           </button>
+                          {status.status === "running" && (
+                            <small>Pause the running task first. Then approve this node.</small>
+                          )}
                         </span>
                       );
                     }
@@ -2519,17 +2545,30 @@ export default function App({
                 className="act"
                 onClick={() =>
                   void runMutation((client) =>
-                    client.approve(selected, approveTarget, {
-                      actor: OPERATOR_ACTOR,
-                      idempotencyKey: newIdempotencyKey(),
-                      ...ifMatchRendered,
-                    }),
+                    approvalNeedsPause
+                      ? client.pause(selected, {
+                          actor: OPERATOR_ACTOR,
+                          idempotencyKey: newIdempotencyKey(),
+                          ...ifMatchRendered,
+                        })
+                      : client.approve(selected, approveTarget, {
+                          actor: OPERATOR_ACTOR,
+                          idempotencyKey: newIdempotencyKey(),
+                          ...ifMatchRendered,
+                        }),
                   )
                 }
                 disabled={busy || approveTarget === ""}
               >
-                {approveTarget === "" ? "nothing to approve" : `${retryTarget ? "allow retry" : "approve"} ${approveTarget}`}
+                {approveTarget === ""
+                  ? "nothing to approve"
+                  : approvalNeedsPause
+                    ? `pause before ${retryTarget ? "allowing retry" : "approving"} ${approveTarget}`
+                    : `${retryTarget ? "allow retry" : "approve"} ${approveTarget}`}
               </button>
+              {approvalNeedsPause && (
+                <p className="hint">Pause the running task first. After it is paused, approve the node.</p>
+              )}
               {/* In plain dock text, not a tooltip: a disabled button never shows its title —
                 * the exact channel the resume fix three lines down already condemned. */}
               {waitingInstead && (
@@ -2545,12 +2584,12 @@ export default function App({
                     // A control that names its own missing ingredient goes and fetches it: with
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
-                    if (graphFile.trim().length === 0) {
+                    if (graphFile.trim().length === 0 && resumeGraph === null) {
                       setFileFocusNonce((nonce) => nonce + 1);
                       return;
                     }
                     void runMutation((client) =>
-                      client.resume(selected, graphFile.trim(), {
+                      client.resume(selected, resumeGraph ?? graphFile.trim(), {
                         actor: OPERATOR_ACTOR,
                         idempotencyKey: newIdempotencyKey(),
                         ...ifMatchRendered,
@@ -2562,11 +2601,22 @@ export default function App({
                           ? { fixtures: fixtureFile.trim() }
                           : {}),
                       }),
+                      (reason) => {
+                        if (
+                          resumeGraph !== null &&
+                          reason instanceof RuntimeError &&
+                          /mismatch|version/i.test(`${reason.code} ${reason.message}`)
+                        ) {
+                          setFileFocusNonce((nonce) => nonce + 1);
+                          return "The saved graph no longer matches this run. Point to the original graph file to resume safely.";
+                        }
+                        return undefined;
+                      },
                     );
                   }}
                   disabled={busy || legality.resume !== undefined}
                   title={
-                    graphFile.trim().length === 0
+                    graphFile.trim().length === 0 && resumeGraph === null
                       ? "resume re-reads the graph file — click to point at it"
                       : undefined
                   }

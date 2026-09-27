@@ -1359,13 +1359,22 @@ export class RuntimeClient {
    */
   async resume(
     executionId: string,
-    file: string,
+    graphOrFile: string | Record<string, unknown>,
     options: MutationOptions & { fixtures?: string } = {},
   ): Promise<MutationEvidence> {
-    if (typeof file !== "string" || file.length === 0 || file.length > 512) {
-      throw new RuntimeError("file must be a non-empty path of at most 512 characters.", 0, []);
-    }
-    const body: Record<string, string> = { file };
+    const body: Record<string, unknown> =
+      typeof graphOrFile === "string"
+        ? (() => {
+            if (graphOrFile.length === 0 || graphOrFile.length > 512) {
+              throw new RuntimeError("file must be a non-empty path of at most 512 characters.", 0, []);
+            }
+            return { file: graphOrFile };
+          })()
+        : graphOrFile !== null && typeof graphOrFile === "object"
+          ? { graph: graphOrFile }
+          : (() => {
+              throw new RuntimeError("graph must be an object.", 0, []);
+            })();
     if (options.fixtures !== undefined) {
       if (options.fixtures.length === 0 || options.fixtures.length > 512) {
         throw new RuntimeError("fixtures must be a path of at most 512 characters.", 0, []);

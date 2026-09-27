@@ -43,6 +43,10 @@ the agent session continue. A repeated end hook sends the same signal body and i
 Its small timestamp record lives outside the repo under the user's local state directory; set
 `GRAPHHELM_HOOK_STATE_DIR` to override that location.
 
+The Runtime must have a configured keyring for the end signal, because this hook does not write
+an unsealed `evidenceOut` file. If the Runtime has no keyring or the run has no signal capacity,
+the end record is `UNOBSERVED` and the task state is unchanged.
+
 These hooks are session hooks, not per-task hooks. A resumed session gets a fresh briefing;
 ending a session is not evidence that the task passed. The existing `claude-hook-relay` example
 can still report individual tool activity into the same execution when configured separately.

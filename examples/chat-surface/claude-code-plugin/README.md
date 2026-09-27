@@ -21,3 +21,28 @@ the log for a person who is watching the Studio and is not at this terminal.
 Everything this plugin does is `graphhelm mcp` plus documented CLI calls; deleting it loses convenience only. No state lives here: executions, events, evidence, and credentials all
 live in GraphHelm's own stores, and every skill step names the tool (and through it the API
 call) it choreographs — you can always do the same thing with `graphhelm` directly.
+
+## Optional session hooks
+
+The plugin's `hooks/hooks.json` adds two command hooks to Claude Code. `SessionStart` gives the
+agent a short Keel reminder and reads the current GraphHelm briefing when the session is bound
+to an execution. `SessionEnd` records only that the agent session ended. It does not mark a node
+or task complete. The hook does not create a run, infer a run from the project directory, or
+send the host's raw hook payload to the Runtime.
+
+The commands need Python 3 on `PATH`. Set these variables in the environment that launches
+Claude Code:
+
+- `GRAPHHELM_EXECUTION_ID`: the exact execution to bind. Omit it for Keel-only context.
+- `GRAPHHELM_TOKEN_FILE`: the path to the Runtime's token file, required for a bound run.
+- `GRAPHHELM_RUNTIME_URL`: the Runtime API origin; defaults to `http://127.0.0.1:8791`.
+
+The token stays in its file. The hook sends it only to a loopback HTTP Runtime or an HTTPS
+origin. It prints a short `UNOBSERVED` message if a bound Runtime read or write fails, and lets
+the agent session continue. A repeated end hook sends the same signal body and idempotency key.
+Its small timestamp record lives outside the repo under the user's local state directory; set
+`GRAPHHELM_HOOK_STATE_DIR` to override that location.
+
+These hooks are session hooks, not per-task hooks. A resumed session gets a fresh briefing;
+ending a session is not evidence that the task passed. The existing `claude-hook-relay` example
+can still report individual tool activity into the same execution when configured separately.

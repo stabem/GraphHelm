@@ -24,9 +24,10 @@ Open a new Claude session and use `/graphhelm:graphhelm-guide`, `/graphhelm:grap
 ```sh
 codex plugin marketplace add stabem/GraphHelm
 codex plugin add graphhelm@graphhelm
+codex plugin add graphhelm-codex-hooks@graphhelm
 ```
 
-Open a new Codex session and use `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through preview and reviewed application; installing the plugin does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
+Open a new Codex session and use `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The separate `graphhelm-codex-hooks` package is required on Codex versions whose Agent Plugin loader skips hooks. The setup skill guides the separate `graphhelm setup` CLI through preview and reviewed application; installing the plugin does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
 
 ## Try it locally
 

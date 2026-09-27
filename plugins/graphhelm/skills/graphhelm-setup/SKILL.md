@@ -14,14 +14,16 @@ This chat skill guides the existing `graphhelm setup` CLI; it does not install t
 
 ## Inspect the bundled session hooks
 
-The installed plugin also bundles session hooks. Include them in the setup inventory; installing
+The installed Claude plugin bundles Claude session hooks. Affected Codex versions use the separate
+`graphhelm-codex-hooks` compatibility companion. Include both in the setup inventory; installing
 the CLI and applying its adoption plan do not prove that a host loaded or trusted those hooks.
 Keep the plugin as the single source of hook registration. Do not copy its commands into user or
 project settings, which would add another handler.
 
 1. Resolve the actual installed plugin directory from the host's plugin inventory. Verify its
-   version and hook files. Use Python 3 to run `python <installed-plugin>/hooks/session_hook.py
-   inspect --host claude` (or `--host codex`). This inspection is local and read-only; it does not
+   version and hook files. Use Python 3 to run `python <installed-graphhelm>/hooks/session_hook.py
+   inspect --host claude`, or run the same command from the actual installed
+   `graphhelm-codex-hooks` directory with `--host codex`. This inspection is local and read-only; it does not
    contact the Runtime or read the token contents. Report its configuration and local observation
    results separately from host trust and activation, which remain unverified without a trusted
    fresh-session observer.

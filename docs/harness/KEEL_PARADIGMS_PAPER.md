@@ -30,14 +30,16 @@ reads is decided by what is always loaded and by how the tree is shaped. Always-
 files raised inference cost by more than 20% with no gain in success, and repository overviews in
 particular did not help ([arXiv 2602.11988](https://arxiv.org/abs/2602.11988)); selective,
 path-scoped context cut cache-creation tokens on every task at unchanged correctness ([arXiv
-2607.27250](https://arxiv.org/html/2607.27250)). Structure costs too: cross-file indirection cost
-about 3× after controlling for size, with 2.2× more round trips, and single-implementation
-interfaces are zero-information tokens ([arXiv 2604.07502](https://arxiv.org/html/2604.07502)).
+2607.27250](https://arxiv.org/html/2607.27250)). Structure may cost too, but the cited
+log-format experiment did not measure code architecture. Its architectural recommendations are
+hypotheses for Keel to test, not measured multipliers ([arXiv 2604.07502, sections 6.3.3 and
+8.4.4](https://arxiv.org/html/2604.07502)).
 
-Writing is where the waste hides. Stripping tokens from files on disk looks like a saving and is
-not: the most aggressive stripping cut input 17% and raised billed session cost 67%, because the
-bill is the whole session — reads, cache creation, cache reads, output, turns — not the delivered
-bytes ([PointFive](https://www.pointfive.co/press/pointfive-research-token-reduction-not-cost-reduction)).
+Writing is where the waste hides. In one log-format experiment, the most aggressive compression
+cut input tokens by about 17% but raised total session tokens by about 67%. That measures one
+model on one retrieval task, not billed cost or code-delivery quality. Keel must measure the cost
+of the whole delivery before claiming a saving ([arXiv 2604.07502, sections 6.2 and
+8.4.5](https://arxiv.org/html/2604.07502)).
 Rule compliance decays as the agent generates: an odds ratio of 0.944 per function for a trivial
 annotation rule ([arXiv 2605.10039](https://arxiv.org/abs/2605.10039)), so a rule stated once in a
 prompt is a rule that is off by the twentieth function. Passive instructions ("be concise") saved
@@ -80,7 +82,7 @@ mechanism can enforce it. Advice that only a reader can enforce is not a law; it
 | School | Kept | Discarded, and the measurement |
 |---|---|---|
 | **Design by contract** | The contract card: scope as a file list, exported symbols, criteria naming their instrument, one refusal per failure mode. Pre- and post-conditions paired, with a violating input shipped. | Postcondition-only or prompt-only contracts: honoured 23–41% in prompt alone; invalid inputs admitted 76–82% without a violating example ([ContractEval](https://arxiv.org/html/2510.12047)). |
-| **SOLID** | Single responsibility (one file, one reason to change). Dependency inversion **at the boundary only**. | "Always program to an interface", interface segregation as a default: single-implementation interfaces are zero-information tokens; indirection costs 3× ([arXiv 2604.07502](https://arxiv.org/html/2604.07502)). |
+| **SOLID** | Single responsibility where a file has one reason to change. Dependency inversion **at the boundary only**. | "Always program to an interface" and interface segregation as defaults. Whether fewer cross-file hops reduce total delivery cost is a Keel hypothesis; the cited log-format experiment did not test code architecture ([arXiv 2604.07502, section 8.4.4](https://arxiv.org/html/2604.07502)). |
 | **Clean Architecture** | The dependency rule as a tag/layer matrix with a mandatory reason per forbidden edge ([Nx module boundaries](https://nx.dev/docs/features/enforce-module-boundaries)). Vertical slices: a feature is a directory, slices talk through contracts. | The full layer stack per feature: six files opened to change one business decision ([Miller, "the codebase is the prompt"](https://jeremydmiller.com/2026/06/04/the-codebase-is-the-prompt-wolverine-vertical-slices-and-ai-assisted-development/)). The file hop is the cost, not the line count. |
 | **Clean Code** | Greppable identifiers, explicit types on signatures, files sized to one tool read, error messages that interpolate what they received ([Akita](https://akitaonrails.com/en/2026/04/20/clean-code-for-ai-agents/)). Comments that are contracts. | "Extract until each function does one thing" as a hard cap on hotspots: extraction spread complexity across more files and the agent opened more of them, tokens flat ([SonarSource minimal pairs](https://arxiv.org/abs/2605.20049)). "Delete comments": accurate comments raised model comprehension from 84% to 96%, wrong ones cut it to 61%. |
 | **Extreme Programming** | Test-first **intent**, as an attachable red-on-parent artefact the watchdog verifies; short cycles; tests immutable to the implementing agent ([Beck](https://newsletter.kentbeck.com/p/augmented-coding-beyond-the-vibes)). | TDD as a self-discipline enforced by prompt: "the genie doesn't want to do TDD"; prompt-level guidance moves the intercept, not the decay slope. Coverage as the gate (r = 0.11). Mock-every-collaborator isolation. |

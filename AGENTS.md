@@ -138,10 +138,14 @@ guidance alone (paper, section 7).
 
 | The change | What Keel asks |
 |---|---|
-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
+| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the task record when the change has a known observer and no expanded-route risk. Runtime- or security-affecting config follows the expanded route below and needs behavioral evidence. |
 | A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
 | New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
-| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |
+| The expanded route: persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow above. |
+
+For example, changing a comment-only display label can use the direct route; changing a Runtime
+timeout or permission setting needs an observer of the resulting behavior, even if the diff is one
+line. A config parser accepting the value does not observe that behavior.
 
 **The four moves, when Keel applies:**
 

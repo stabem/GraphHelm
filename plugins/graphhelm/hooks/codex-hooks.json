@@ -9,7 +9,7 @@
             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" start --host codex",
             "statusMessage": "Loading Keel and GraphHelm context",
             "timeout": 5,
-            "additionalContextLimit": 1600
+            "additionalContextLimit": 512
           }
         ]
       }

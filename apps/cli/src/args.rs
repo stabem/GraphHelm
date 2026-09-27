@@ -755,6 +755,17 @@ pub enum ExecutionCommand {
         #[arg(long)]
         node: String,
     },
+    /// Assigns an approved ghost node to an agent by its authenticated actor id.
+    Assign {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        node: String,
+        #[arg(long = "actor-id")]
+        actor_id: String,
+    },
     /// Declares how long one node may stay silent before it needs you, valid from now
     /// forward. Use it when `execution status` answers `unknown` for a node: the answer names
     /// this command as its remedy.

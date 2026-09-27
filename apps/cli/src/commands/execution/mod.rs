@@ -1,5 +1,6 @@
 pub(super) mod amend;
 pub(super) mod approve;
+pub(super) mod assign;
 pub(super) mod briefing;
 pub(super) mod cancel;
 pub(super) mod claim;
@@ -507,6 +508,15 @@ pub(super) fn record_outcome_with_key(
         .get(node)
         .copied()
         .unwrap_or(NodeState::Draft);
+    if actor.actor_type() == PersistedActorType::Agent
+        && let Some(assigned) = projection.node_assignments.get(node)
+        && assigned != actor
+    {
+        return Err(execution_state(
+            "the agent is not assigned to this node",
+            "/actor",
+        ));
+    }
     let attempts = projection.node_attempts.get(node).copied().unwrap_or(0);
     let identical_outcomes = projection.identical_outcomes_for(node, outcome);
     let next_state = apply_transition(&TransitionRequest {

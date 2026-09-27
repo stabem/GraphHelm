@@ -6,7 +6,7 @@
 
 use graphhelm_events::ExecutionProjection;
 use graphhelm_execution::{MAX_ACCEPTED_MUTATIONS, MAX_SIGNALS_PER_EXECUTION, TypedSignal};
-use graphhelm_protocols::{ExecutionMode, PolicyWaiver, SignalRecorded, WaiverScope};
+use graphhelm_protocols::{ExecutionMode, GraphDraft, PolicyWaiver, SignalRecorded, WaiverScope};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GovernanceError {
@@ -40,6 +40,9 @@ pub struct AdmittedSignal {
     pub externalize: Vec<u8>,
     /// Decision 5.4: false for an unrecognized kind, and nothing downstream may override it.
     pub may_propose_mutation: bool,
+    /// Typed draft carried by the signal, if any. The driver still decides and the Governor
+    /// still validates publication; carrying it here only prevents a second untyped parse.
+    pub proposal: Option<GraphDraft>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +92,7 @@ pub fn admit_signal(
         record,
         externalize,
         may_propose_mutation: signal.can_propose_mutation(),
+        proposal: signal.proposal().cloned(),
     })
 }
 

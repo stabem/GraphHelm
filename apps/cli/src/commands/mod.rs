@@ -316,6 +316,12 @@ pub fn run(command: TopLevel) -> Outcome {
                 execution,
                 node,
             } => execution::approve::run(&events, execution.as_deref(), &node),
+            ExecutionCommand::Assign {
+                events,
+                execution,
+                node,
+                actor_id,
+            } => execution::assign::run(&events, execution.as_deref(), &node, &actor_id),
             ExecutionCommand::AmendBudget {
                 events,
                 execution,

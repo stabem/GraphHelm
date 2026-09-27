@@ -5,7 +5,7 @@ pub(super) mod ports;
 mod routes;
 mod wake;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -110,6 +110,9 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     token: Arc<[u8]>,
+    /// Optional scoped agent credentials. They are separate from the owner bearer token and are
+    /// only accepted for agent authored proposal/evidence mutations.
+    agent_credentials: Arc<BTreeMap<String, PersistedActor>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
@@ -173,8 +176,10 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let (_, token) = secret_file::ensure_token(&args.events)
         .map_err(|error| serve_invalid(error.message(), "/token"))?;
     let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
+    let agent_credentials = load_agent_credentials()?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
+        agent_credentials: Arc::new(agent_credentials),
         project: args.project.as_deref().map(Arc::from),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
@@ -187,6 +192,59 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let rt =
         runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
     rt.block_on(serve_forever(address, state, startup_warnings))
+}
+
+fn load_agent_credentials() -> Result<BTreeMap<String, PersistedActor>, Failure> {
+    let mut result = BTreeMap::new();
+    let Some(raw) = std::env::var_os("GRAPHHELM_AGENT_CREDENTIALS") else {
+        return Ok(result);
+    };
+    for item in raw
+        .to_string_lossy()
+        .split(';')
+        .filter(|item| !item.is_empty())
+    {
+        let Some((credential, actor_id)) = item.split_once('=') else {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS must use credential=actor-id entries separated by ';'",
+                "/agentCredentials",
+            ));
+        };
+        if credential.is_empty() || credential.len() > 256 || result.contains_key(credential) {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid or duplicate credential",
+                "/agentCredentials",
+            ));
+        }
+        let actor_id = ActorId::parse(actor_id).map_err(|_| {
+            serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid actor id",
+                "/agentCredentials",
+            )
+        })?;
+        result.insert(
+            credential.to_owned(),
+            PersistedActor::new(PersistedActorType::Agent, actor_id),
+        );
+    }
+    Ok(result)
+}
+
+fn verify_agent_credential(
+    state: &ServeState,
+    headers: &HeaderMap,
+    actor: &PersistedActor,
+) -> bool {
+    let Some(credential) = headers
+        .get("x-graphhelm-agent-credential")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    state
+        .agent_credentials
+        .get(credential)
+        .is_some_and(|expected| expected == actor)
 }
 
 // #583: there is deliberately NO default program allowlist here.
@@ -500,6 +558,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/documents/read", post(documents::read))
         .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))
+        .route("/v1/executions/{id}/assign", post(routes::assign))
         .route(
             "/v1/executions/{id}/amend-budget",
             post(routes::amend_budget),

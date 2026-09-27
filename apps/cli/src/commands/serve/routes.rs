@@ -41,6 +41,7 @@ use super::ports::{
 use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
     parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
+    verify_agent_credential,
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
@@ -56,6 +57,7 @@ const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
 const SIGNAL_COMMAND: &str = "execution.signal";
 const APPROVE_COMMAND: &str = "execution.approve";
+const ASSIGN_COMMAND: &str = "execution.assign";
 const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
 const RESUME_COMMAND: &str = "execution.resume";
@@ -1952,6 +1954,16 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    if signal_value.get("proposal").is_some()
+        && (identity.actor.actor_type() != PersistedActorType::Agent
+            || !verify_agent_credential(&state, &headers, &identity.actor))
+    {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "graph proposals require a registered scoped agent credential",
+            "/actor",
+        );
+    }
     let signal_bytes = match serde_json::to_vec(signal_value) {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -2080,6 +2092,71 @@ pub(super) async fn approve(
                     &events,
                     Some(drive_execution_id.as_str()),
                     &node,
+                    actor,
+                    key,
+                )?)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/assign`: owner-only assignment of a ghost node to an agent.
+#[allow(clippy::result_large_err)]
+pub(super) async fn assign(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(ASSIGN_COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        ASSIGN_COMMAND,
+        &execution_id,
+        &payload,
+        &["outcome"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    if identity.actor.actor_type() != PersistedActorType::Owner {
+        return bad_request(ASSIGN_COMMAND, "only an owner may assign a node", "/actor");
+    }
+    let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            ASSIGN_COMMAND,
+            "the request body must carry \"node\"",
+            "/node",
+        );
+    };
+    let Some(actor_id) = payload.get("actorId").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            ASSIGN_COMMAND,
+            "the request body must carry \"actorId\"",
+            "/actorId",
+        );
+    };
+    let events = state.events.clone();
+    let execution = execution_id.clone();
+    let node = node.to_owned();
+    let actor_id = actor_id.to_owned();
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        ASSIGN_COMMAND,
+        identity,
+        ExecutorWiring::from_state(&state),
+        move |actor, key| {
+            Box::pin(async move {
+                Ok(execution::assign::execute(
+                    &events,
+                    Some(execution.as_str()),
+                    &node,
+                    &actor_id,
                     actor,
                     key,
                 )?)

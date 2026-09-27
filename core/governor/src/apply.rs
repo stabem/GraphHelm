@@ -3,11 +3,11 @@ use graphhelm_graph::{GraphError, GraphVersion, preflight_execution_graph, raw_c
 use graphhelm_policy::evaluate_transition;
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, Clock, DiagnosticComponent, DiagnosticDomainPath, DraftApplied,
-    DraftProposed, DraftRejected, EventEnvelope, EventKind, GraphDraft, GraphVersionPublished,
-    GraphVersionRef, IdGenerator, ManualOverride, ObligationStatus, OpaqueId, PersistedActor,
-    PersistedActorType, PersistedDiagnostic, PersistedGraphVersionRef, PersistedObligationStatus,
-    PolicyObligation, PolicyObligationEvaluated, PolicyReport, PolicyWaiver, PolicyWaiverCreated,
-    RepositoryScope, SafeCode, Sensitivity, Severity, WireHash,
+    DraftProposed, DraftRejected, EventEnvelope, EventKind, GhostNodeProposed, GraphDraft,
+    GraphVersionPublished, GraphVersionRef, IdGenerator, ManualOverride, ObligationStatus,
+    OpaqueId, PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersionRef,
+    PersistedObligationStatus, PolicyObligation, PolicyObligationEvaluated, PolicyReport,
+    PolicyWaiver, PolicyWaiverCreated, RepositoryScope, SafeCode, Sensitivity, Severity, WireHash,
 };
 use thiserror::Error;
 
@@ -219,6 +219,7 @@ pub fn apply_draft<'a>(
         }
 
         let waivers = create_waivers(&candidate, manual_override, &policy_report, services)?;
+        let candidate_execution_id = candidate.metadata.execution_id.clone();
         let version = GraphVersion::publish(
             candidate,
             Some(GraphVersionRef {
@@ -244,7 +245,26 @@ pub fn apply_draft<'a>(
         }
 
         let actor = persisted_actor(&services.actor)?;
-        let mut pending = vec![proposed(draft, &actor, &request_identity)?];
+        let proposal_event = proposed(draft, &actor, &request_identity)?;
+        // A scoped agent may have already durably submitted this exact sealed proposal. The
+        // Governor consumes that proposal and must not append a second DraftProposed fact while
+        // publishing it; replay treats duplicate proposal digests as corrupt.
+        let proposal_already_recorded = services
+            .event_repository
+            .read_replay_stream(&services.scope, services.stream_id.as_str())?
+            .iter()
+            .any(|event| match (&event.kind, &proposal_event.kind) {
+                (EventKind::DraftProposed(existing), EventKind::DraftProposed(candidate)) => {
+                    existing.draft_id == candidate.draft_id
+                        && existing.proposal_sha256 == candidate.proposal_sha256
+                }
+                _ => false,
+            });
+        let mut pending = if proposal_already_recorded {
+            Vec::new()
+        } else {
+            vec![proposal_event]
+        };
         pending.extend(obligation_events(
             draft,
             &policy_report.obligations,
@@ -272,6 +292,21 @@ pub fn apply_draft<'a>(
             })),
             preparation.evidence_refs.clone(),
         )?);
+        for (index, operation) in draft.operations.iter().enumerate() {
+            if let graphhelm_protocols::DraftOperation::AddNode { id, .. } = operation {
+                pending.push(new_event(
+                    governor_event_key(&request_identity, format!("ghost:{index}").as_bytes())?,
+                    &actor,
+                    EventKind::GhostNodeProposed(GhostNodeProposed {
+                        execution_id: OpaqueId::parse(&candidate_execution_id)
+                            .map_err(|_| ApplyError::InvalidOperation)?,
+                        node_id: OpaqueId::parse(id).map_err(|_| ApplyError::InvalidOperation)?,
+                        draft_id: opaque(&draft.id)?,
+                    }),
+                    preparation.evidence_refs.clone(),
+                )?);
+            }
+        }
         pending.push(new_event(
             governor_event_key(&request_identity, b"applied")?,
             &actor,
@@ -576,19 +611,42 @@ fn validate_committed_outcome_grammar(
     let Some(first) = events.first() else {
         return invalid_committed_outcome();
     };
-    if !envelope_matches_new_event(first, &expected_proposed)
-        || events.iter().any(|event| {
-            event.scope != services.scope
-                || event.stream_id != services.stream_id
-                || event.actor != actor
-                || event.sensitivity != Sensitivity::Internal
-        })
-    {
+    let proposal_matches = |event: &EventEnvelope| {
+        envelope_matches_new_event(event, &expected_proposed)
+            || matches!(
+                (&event.kind, &expected_proposed.kind),
+                (
+                    EventKind::DraftProposed(existing),
+                    EventKind::DraftProposed(candidate)
+                ) if existing.proposal_sha256.is_none()
+                    && existing.draft_id == candidate.draft_id
+                    && existing.expected_version == candidate.expected_version
+                    && existing.expected_hash == candidate.expected_hash
+                    && existing.operation_count == candidate.operation_count
+                    && event.idempotency_key == expected_proposed.idempotency_key
+                    && event.actor == expected_proposed.actor
+                    && event.sensitivity == expected_proposed.sensitivity
+                    && event.evidence_refs == expected_proposed.evidence_refs
+                    && event.artifact_refs == expected_proposed.artifact_refs
+            )
+    };
+    let mut cursor = if proposal_matches(first) {
+        1
+    } else if matches!(first.kind, EventKind::PolicyObligationEvaluated(_)) {
+        0
+    } else {
+        return invalid_committed_outcome();
+    };
+    if events.iter().any(|event| {
+        event.scope != services.scope
+            || event.stream_id != services.stream_id
+            || event.actor != actor
+            || event.sensitivity != Sensitivity::Internal
+    }) {
         return invalid_committed_outcome();
     }
-
-    let mut cursor = 1;
     let mut obligations = Vec::new();
+    let mut ghost_index = 0usize;
     while let Some(event) = events.get(cursor) {
         let EventKind::PolicyObligationEvaluated(payload) = &event.kind else {
             break;
@@ -641,6 +699,21 @@ fn validate_committed_outcome_grammar(
         cursor += 1;
     }
 
+    // Ghost facts are part of the durable pending graph view. They are emitted by the Governor
+    // after publication and before DraftApplied, so recovery validates and skips them here.
+    while let Some(event) = events.get(cursor) {
+        let EventKind::GhostNodeProposed(payload) = &event.kind else {
+            break;
+        };
+        if event.idempotency_key
+            != governor_event_key(request_identity, format!("ghost:{ghost_index}").as_bytes())?
+            || payload.draft_id.as_str() != draft.id
+        {
+            return invalid_committed_outcome();
+        }
+        cursor += 1;
+        ghost_index += 1;
+    }
     let remaining = &events[cursor..];
     let terminal = match remaining {
         [rejected] => {
@@ -660,7 +733,7 @@ fn validate_committed_outcome_grammar(
             }
             CommittedTerminal::Rejected(payload.clone())
         }
-        [published, applied] => {
+        [published, middle @ .., applied] => {
             let (
                 EventKind::GraphVersionPublished(published_payload),
                 EventKind::DraftApplied(applied_payload),
@@ -668,6 +741,17 @@ fn validate_committed_outcome_grammar(
             else {
                 return invalid_committed_outcome();
             };
+            for (index, ghost) in middle.iter().enumerate() {
+                let EventKind::GhostNodeProposed(payload) = &ghost.kind else {
+                    return invalid_committed_outcome();
+                };
+                if ghost.idempotency_key
+                    != governor_event_key(request_identity, format!("ghost:{index}").as_bytes())?
+                    || payload.draft_id.as_str() != draft.id
+                {
+                    return invalid_committed_outcome();
+                }
+            }
             if published.idempotency_key != governor_event_key(request_identity, b"published")?
                 || applied.idempotency_key != governor_event_key(request_identity, b"applied")?
                 || !applied.evidence_refs.is_empty()

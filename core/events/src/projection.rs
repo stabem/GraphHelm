@@ -1866,7 +1866,8 @@ fn apply_projection_event(
                 .insert(payload.node_id.to_string(), payload.draft_id.to_string());
         }
         EventKind::NodeAssigned(payload) => {
-            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+            if payload.assigned_actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent
+                || projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
                 || !matches!(
                     projection.node_states.get(payload.node_id.as_str()),
                     Some(NodeState::Ghost)

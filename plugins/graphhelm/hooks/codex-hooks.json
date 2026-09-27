@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" start --host codex",
+            "statusMessage": "Loading Keel and GraphHelm context",
+            "timeout": 5,
+            "additionalContextLimit": 1600
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

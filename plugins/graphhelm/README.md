@@ -38,22 +38,31 @@ codex plugin add graphhelm@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.2)
+## Session hooks (version 0.1.3)
 
-This installed plugin includes command hooks for Claude Code and Codex. `SessionStart` injects a
-short Keel reminder. When the session is explicitly bound to a GraphHelm execution, it also reads
-the latest Runtime briefing and gives the agent its sequence and next-step kind. The agent reads
-the full briefing through GraphHelm before acting. `SessionEnd` records an attributed
+This installed plugin includes command hooks for Claude Code and Codex. Unbound sessions are
+silent by default. When the session is explicitly bound to a GraphHelm execution, `SessionStart`
+injects a short Keel reminder, and startup and
+resume read one Runtime briefing and return a bounded summary of its next action and pending
+work. There is no unconditional second briefing read: request detailed evidence only when the
+next action needs it. Compaction restores cached context labeled as not refreshed, without an
+HTTP read. A cached summary never authorizes a state transition; the Runtime still validates
+the current state. `SessionEnd` records an attributed
 `agent_session_ended` signal. It never marks a task or node complete. The hook does not create a
 run, pick a run by project name, or forward the host's raw payload.
 
 Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
 agent host:
 
-- `GRAPHHELM_EXECUTION_ID`: exact execution ID to bind. Without it, the hook gives Keel context
-  only and writes to no run.
+- `GRAPHHELM_EXECUTION_ID`: exact execution ID to bind. Without it, the hook makes no Runtime
+  request and injects no context by default.
+- `GRAPHHELM_KEEL_CONTEXT=1`: explicitly enable the short Keel reminder in an unbound session.
 - `GRAPHHELM_TOKEN_FILE`: path to the local Runtime token file, required for a bound run.
 - `GRAPHHELM_RUNTIME_URL`: Runtime API origin; defaults to `http://127.0.0.1:8791`.
+- `GRAPHHELM_SESSION_ID`: optional expected host session ID. A mismatch leaves the operation
+  unobserved rather than reading or writing a different session's binding.
+- `GRAPHHELM_NODE_ID`: optional explicit node reference. It is labeled as configured; the hook
+  does not infer an assignment from the next pending node or claim that the Runtime assigned it.
 
 For example, in PowerShell before launching an agent in a terminal:
 
@@ -73,9 +82,42 @@ refused. The hook prints `UNOBSERVED` if a bound read or write fails, without bl
 session or claiming a record landed. End signals require a Runtime keyring; this hook does not
 write an unsealed `evidenceOut` file. A full signal budget also leaves the end unobserved.
 
-A repeated end hook uses the same signal body and idempotency key. The timestamp record is kept
-outside the repo under the user's local state directory; `GRAPHHELM_HOOK_STATE_DIR` can override
-that path. A resumed agent session reads a new briefing. Session end is a host lifecycle fact,
-not proof that the work passed.
+A repeated end hook uses the same signal body and idempotency key. Once the Runtime acknowledges
+the matching execution and signal IDs, the hook saves that confirmation and skips later sends.
+An unconfirmed request remains retryable. A rejected graph mutation does not mean the signal
+was not recorded: those are different results in the Runtime contract.
+
+State is scoped to host, Runtime origin, execution and session, outside the repository under the
+user's local state directory; `GRAPHHELM_HOOK_STATE_DIR` can override that path. Actors carry a
+session-specific identity rather than only a host name. These observations do not assign or
+complete operational nodes, and session end is not proof that the work passed.
+
+Version 0.1.3 uses a new state and signal-key namespace: 0.1.2 timestamp files have no delivery
+acknowledgment and are not migrated as proof. A corrupt record stays unobserved; it is not silently
+replaced with a new signal under the same key. The local lock is released by the OS if the host
+terminates the hook. Delivery deduplication is scoped to this protocol, not an exactly-once claim
+across plugin upgrades or deletion of local state.
+
+The hook calls no model. Cached compaction avoids a Runtime request, and confirmed repeated end
+delivery avoids another request. These are request-count guarantees covered by local HTTP tests,
+not a measured reduction in a complete task's billed tokens. The hook returns only bounded typed
+summary fields, never the full objective, transcript or Runtime command text.
+
+### Setup inspection
+
+The `graphhelm-setup` skill includes a hook inspection step. Resolve the actual installed plugin
+directory from the host's plugin inventory, then run:
+
+```text
+python <installed-plugin>/hooks/session_hook.py inspect --host claude
+python <installed-plugin>/hooks/session_hook.py inspect --host codex --session-id <actual-session-id>
+```
+
+Inspection is read-only, makes no Runtime request, and does not read token contents. It reports
+configuration and local script observations. It cannot establish that the host trusted or loaded
+the hook; a manual invocation can also create a local observation. Keep activation unverified
+until the host's own fresh-session event is observed. Do not register a second copy in settings.
+The adoption CLI does not migrate opaque hook commands; the setup skill identifies legacy
+registrations and requires an explicit, backed-up migration for those entries.
 
 To add a companion, install `graphhelm-jpd@graphhelm` or `graphhelm-development-contracts@graphhelm` with the host's `plugin install` / `plugin add` command. The [skill catalog](https://github.com/stabem/GraphHelm/blob/main/docs/skills/README.md) shows when each is useful. Their MCP registration needs `GRAPHHELM_CLI` to be an absolute trusted executable path, `GRAPHHELM_TOKEN_FILE` to name a local token file, and `GRAPHHELM_ACTOR` to identify the chat session. Never paste the token value into a manifest or prompt.

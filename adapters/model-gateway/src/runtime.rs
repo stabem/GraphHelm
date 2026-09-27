@@ -169,9 +169,18 @@ impl<'a> RuntimeAdapter<'a> {
             command.env(key, value);
         }
 
+        graphhelm_process_tree::configure(&mut command);
         let mut child = command
             .spawn()
             .map_err(|_| GatewayError::ProviderUnavailable)?;
+        let mut process_group = match graphhelm_process_tree::create(&child) {
+            Ok(group) => group,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(GatewayError::ProviderUnavailable);
+            }
+        };
 
         // The prompt is written on its own thread — spawned here, before the reader threads and
         // before the deadline loop below ever runs — rather than with a direct blocking write on
@@ -257,7 +266,12 @@ impl<'a> RuntimeAdapter<'a> {
                 })
             }
             WaitOutcome::TimedOut => {
-                let _ = child.kill();
+                let _ = graphhelm_process_tree::terminate(
+                    child.id(),
+                    graphhelm_process_tree::for_thread(process_group),
+                );
+                let _ = graphhelm_process_tree::await_leader_exit(&mut child);
+                graphhelm_process_tree::close(&mut process_group);
                 let _ = child.wait();
                 let _ = stdin_writer.join();
                 // Deliberately NOT joined (IMPORTANT 6): if a grandchild is still holding either
@@ -272,7 +286,12 @@ impl<'a> RuntimeAdapter<'a> {
                 Err(GatewayError::Timeout)
             }
             WaitOutcome::WaitFailed => {
-                let _ = child.kill();
+                let _ = graphhelm_process_tree::terminate(
+                    child.id(),
+                    graphhelm_process_tree::for_thread(process_group),
+                );
+                let _ = graphhelm_process_tree::await_leader_exit(&mut child);
+                graphhelm_process_tree::close(&mut process_group);
                 let _ = child.wait();
                 let _ = stdin_writer.join();
                 drop(stdout_reader.handle);

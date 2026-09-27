@@ -18,6 +18,7 @@ use graphhelm_model_gateway::runtime::RuntimeAdapter;
 use graphhelm_protocols::NodeOutcome;
 
 const ORPHAN_RELEASE_DIR_ENV: &str = "FAKE_RUNTIME_ORPHAN_RELEASE_DIR";
+const ORPHAN_PID_PATH_ENV: &str = "FAKE_RUNTIME_ORPHAN_PID_PATH";
 
 struct OrphanFixtureGuard {
     release_dir: Option<tempfile::TempDir>,
@@ -657,6 +658,47 @@ fn an_orphaned_grandchild_holding_the_pipe_does_not_wedge_past_the_deadline() {
     // Keep the grandchild and its inherited pipes alive until both original assertions above
     // have run. Drop also attempts this release during a panic; a normal-path failure panics so
     // cleanup cannot silently certify the fixture.
+    fixture.release();
+}
+
+/// The timeout path must terminate the whole native-runtime tree, including a grandchild that
+/// inherits the adapter's pipes. Existing coverage only observed that the adapter returned by its
+/// deadline; it could still pass while leaving the grandchild alive. This test captures the
+/// grandchild's process id, then asks the OS whether that process is gone.
+#[test]
+fn a_timeout_terminates_an_orphaned_grandchild() {
+    let mut fixture = OrphanFixtureGuard::new();
+    let pid_dir = tempfile::tempdir().expect("create orphan pid directory");
+    let pid_file = pid_dir.path().join("grandchild.pid");
+    let manifest = native_manifest("claude_code", Some(5));
+    let release_env = fixture.env();
+    let route = &manifest.routes()[0];
+    let adapter = RuntimeAdapter::new(
+        route,
+        vec![
+            ("FAKE_RUNTIME_MODE".to_owned(), "orphan-tree".to_owned()),
+            release_env,
+            (
+                ORPHAN_PID_PATH_ENV.to_owned(),
+                pid_file
+                    .to_str()
+                    .expect("pid path is valid UTF-8")
+                    .to_owned(),
+            ),
+        ],
+    );
+    let error = adapter.call(&call("hi")).unwrap_err();
+    assert_eq!(error, GatewayError::Timeout);
+    let pid = fs::read_to_string(&pid_file)
+        .expect("orphan fixture must expose its grandchild identity")
+        .trim()
+        .parse::<u32>()
+        .expect("orphan fixture pid must be numeric");
+    assert!(
+        !graphhelm_process_tree::process_is_running(pid),
+        "native runtime timeout must terminate the grandchild, not only its direct parent"
+    );
+
     fixture.release();
 }
 

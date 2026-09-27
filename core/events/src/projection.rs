@@ -441,6 +441,10 @@ pub struct ExecutionProjection {
     /// append-only `node_assigned` event; it is never inferred from the event recorder.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_assignments: BTreeMap<String, PersistedActor>,
+    /// Draft identity for each ghost. Kept separately from `node_assignments` so an assignment
+    /// cannot be replayed against a different proposal digest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ghost_drafts: BTreeMap<String, String>,
     /// M11 #160: the OPEN wait per node, identified by the envelope sequence of the event that
     /// parked it.
     ///
@@ -1858,6 +1862,9 @@ fn apply_projection_event(
                 return Err(ReplayError::LimitExceeded);
             }
             projection.node_states.insert(node, NodeState::Ghost);
+            projection
+                .ghost_drafts
+                .insert(payload.node_id.to_string(), payload.draft_id.to_string());
         }
         EventKind::NodeAssigned(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
@@ -1868,6 +1875,11 @@ fn apply_projection_event(
                 || projection
                     .node_assignments
                     .contains_key(payload.node_id.as_str())
+                || projection
+                    .ghost_drafts
+                    .get(payload.node_id.as_str())
+                    .and_then(|draft| projection.proposed_draft_sha256.get(draft))
+                    != Some(&payload.proposal_sha256)
             {
                 return Err(ReplayError::Corrupt);
             }

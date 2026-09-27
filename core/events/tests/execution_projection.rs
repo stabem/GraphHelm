@@ -726,6 +726,16 @@ fn ghost_proposal_events() -> Vec<EventEnvelope> {
         ),
         event(
             "ghost-proposed",
+            EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                expected_version: 1,
+                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                operation_count: 1,
+                proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
+            }),
+        ),
+        event(
+            "ghost-proposed-node",
             EventKind::GhostNodeProposed(GhostNodeProposed {
                 execution_id,
                 node_id: OpaqueId::parse("ghost-a").unwrap(),
@@ -771,6 +781,16 @@ fn ghost_proposal_over_existing_node() -> Vec<EventEnvelope> {
         ),
         event(
             "ghost-proposed",
+            EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                expected_version: 1,
+                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                operation_count: 1,
+                proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
+            }),
+        ),
+        event(
+            "ghost-proposed-node",
             EventKind::GhostNodeProposed(GhostNodeProposed {
                 execution_id,
                 node_id,
@@ -872,6 +892,16 @@ fn a_ghost_assignment_survives_replay_and_duplicate_assignment_is_corrupt() {
         ),
         event(
             "ghost-proposed",
+            EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                expected_version: 1,
+                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                operation_count: 1,
+                proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
+            }),
+        ),
+        event(
+            "ghost-proposed-node",
             EventKind::GhostNodeProposed(GhostNodeProposed {
                 execution_id: execution_id.clone(),
                 node_id: OpaqueId::parse("ghost-a").unwrap(),
@@ -903,6 +933,16 @@ fn a_ghost_assignment_survives_replay_and_duplicate_assignment_is_corrupt() {
         ),
         event(
             "ghost-proposed",
+            EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+                expected_version: 1,
+                expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                operation_count: 1,
+                proposal_sha256: Some(RawSha256::parse("b".repeat(64)).unwrap()),
+            }),
+        ),
+        event(
+            "ghost-proposed-node",
             EventKind::GhostNodeProposed(GhostNodeProposed {
                 execution_id: OpaqueId::parse("execution-test").unwrap(),
                 node_id: OpaqueId::parse("ghost-a").unwrap(),

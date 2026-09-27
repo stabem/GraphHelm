@@ -126,6 +126,11 @@ export function WorkOverview({
     : "Dependencies awaiting evidence";
   const activeNodes = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).length;
   const attentionNodes = model.nodes.filter((node) => ["blocked", "failed", "waiting_input", "waiting_capacity"].includes(node.state)).length;
+  const singleStep = model.nodes.length === 1 ? model.nodes[0] : null;
+  const singleStepStatus = singleStep === null ? null : nodeStatusLabel(singleStep);
+  const singleStepText = singleStep === null ? null : singleStepStatus === "review needed"
+    ? singleStep.resultSource === "model_reply" ? "reply received · review needed" : "finished · review needed"
+    : singleStepStatus ?? readable(singleStep.state);
   const nodeIds = new Set(model.nodes.map((node) => node.id));
   const lint = splitLint(model.lint, demonstration);
   const latestReport = activity[0] ?? null;
@@ -159,7 +164,7 @@ export function WorkOverview({
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
         <div className="work-snapshot-grid">
           <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
-          <div><span>Graph step</span><strong>{model.nodes.length === 1 ? `${model.nodes[0].id} · ${readable(model.nodes[0].state)}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
+          <div><span>Graph step</span><strong>{singleStep ? `${singleStep.id} · ${singleStepText}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
           <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
         </div>
         {latestReport?.text && <p className="work-snapshot-report">{latestReport.text}</p>}

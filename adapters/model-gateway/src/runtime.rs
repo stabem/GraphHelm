@@ -32,7 +32,7 @@ use serde::Deserialize;
 
 use crate::env;
 
-/// How often [`RuntimeAdapter::invoke`] polls `Child::try_wait` while waiting for the child to
+/// How often [`RuntimeAdapter::invoke`] polls the non-reaping leader observer while waiting for the child to
 /// exit or the route's deadline to expire. `std::process::Child` has no blocking "wait with
 /// timeout" in `std` (that requires either a platform-specific wait primitive or a crate this
 /// workspace does not depend on); polling is the plan's own prescribed shape for this loop.
@@ -230,20 +230,19 @@ impl<'a> RuntimeAdapter<'a> {
         let stderr_reader = spawn_capped_reader(stderr_pipe);
 
         let deadline = Instant::now() + Duration::from_secs(self.route.timeout_seconds());
-        let mut exited: Option<ExitStatus> = None;
+        let mut exited = false;
         let outcome = loop {
-            if exited.is_none() {
-                match child.try_wait() {
-                    Ok(Some(status)) => exited = Some(status),
-                    Ok(None) => {}
+            if !exited {
+                match graphhelm_process_tree::leader_exited(&mut child) {
+                    Ok(status) => exited = status,
                     Err(_) => break WaitOutcome::WaitFailed,
                 }
             }
-            if let Some(status) = exited
+            if exited
                 && stdout_reader.done.load(Ordering::Acquire)
                 && stderr_reader.done.load(Ordering::Acquire)
             {
-                break WaitOutcome::Exited(status);
+                break WaitOutcome::Exited;
             }
             if Instant::now() >= deadline {
                 break WaitOutcome::TimedOut;
@@ -252,9 +251,11 @@ impl<'a> RuntimeAdapter<'a> {
         };
 
         match outcome {
-            WaitOutcome::Exited(status) => {
+            WaitOutcome::Exited => {
                 // Both readers already observed EOF/an error (that is what let the loop above
                 // reach this branch), so these joins are just cleanup, not a wait.
+                graphhelm_process_tree::close(&mut process_group);
+                let status = child.wait().map_err(|_| GatewayError::RuntimeCrashed)?;
                 let _ = stdin_writer.join();
                 let stdout_complete = stdout_reader.handle.join().unwrap_or(false);
                 let _ = stderr_reader.handle.join();
@@ -270,8 +271,11 @@ impl<'a> RuntimeAdapter<'a> {
                     child.id(),
                     graphhelm_process_tree::for_thread(process_group),
                 );
-                let _ = graphhelm_process_tree::await_leader_exit(&mut child);
                 graphhelm_process_tree::close(&mut process_group);
+                // The process may have moved out of its original group. The tree termination
+                // handles descendants, while this direct kill is the bounded fallback for the
+                // leader itself; `Child::wait` is then a reap, not an unbounded cleanup wait.
+                let _ = child.kill();
                 let _ = child.wait();
                 let _ = stdin_writer.join();
                 // Deliberately NOT joined (IMPORTANT 6): if a grandchild is still holding either
@@ -290,8 +294,8 @@ impl<'a> RuntimeAdapter<'a> {
                     child.id(),
                     graphhelm_process_tree::for_thread(process_group),
                 );
-                let _ = graphhelm_process_tree::await_leader_exit(&mut child);
                 graphhelm_process_tree::close(&mut process_group);
+                let _ = child.kill();
                 let _ = child.wait();
                 let _ = stdin_writer.join();
                 drop(stdout_reader.handle);
@@ -302,11 +306,11 @@ impl<'a> RuntimeAdapter<'a> {
     }
 }
 
-/// The result of one `try_wait` poll loop: the child exited AND both readers have seen EOF/an
+/// The result of one non-reaping leader poll loop: the child exited AND both readers have seen EOF/an
 /// error, the deadline elapsed first, or the OS wait call itself failed (see
 /// [`RuntimeAdapter::invoke`]'s doc comment).
 enum WaitOutcome {
-    Exited(ExitStatus),
+    Exited,
     TimedOut,
     WaitFailed,
 }

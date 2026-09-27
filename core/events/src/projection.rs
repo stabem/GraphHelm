@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use graphhelm_protocols::{
     AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind,
     EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
-    MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
-    PersistedMemoryPublicationState, PersistedMemorySemanticState, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
+    MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    PersistedGraphVersion, PersistedMemoryPublicationState, PersistedMemorySemanticState,
+    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
+    WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -428,10 +429,18 @@ pub struct ExecutionProjection {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub memory_records: BTreeMap<String, MemoryRecordProjection>,
     pub proposed_drafts: Vec<String>,
+    /// Digest of the sealed proposal bytes for new governed drafts. Absent means a legacy draft
+    /// event predating durable proposal sealing; callers must refuse approval without it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub proposed_draft_sha256: BTreeMap<String, graphhelm_protocols::RawSha256>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
     pub waivers: Vec<PolicyWaiver>,
     pub node_states: BTreeMap<String, NodeState>,
+    /// Authenticated actor assigned to each proposed node. This is a replay projection of the
+    /// append-only `node_assigned` event; it is never inferred from the event recorder.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_assignments: BTreeMap<String, PersistedActor>,
     /// M11 #160: the OPEN wait per node, identified by the envelope sequence of the event that
     /// parked it.
     ///
@@ -1438,6 +1447,15 @@ fn apply_projection_event(
             projection
                 .proposed_drafts
                 .push(payload.draft_id.to_string());
+            if let Some(digest) = &payload.proposal_sha256 {
+                if projection
+                    .proposed_draft_sha256
+                    .insert(payload.draft_id.to_string(), digest.clone())
+                    .is_some()
+                {
+                    return Err(ReplayError::Corrupt);
+                }
+            }
         }
         EventKind::DraftRejected(payload) => {
             projection
@@ -1840,6 +1858,22 @@ fn apply_projection_event(
                 return Err(ReplayError::LimitExceeded);
             }
             projection.node_states.insert(node, NodeState::Ghost);
+        }
+        EventKind::NodeAssigned(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || !matches!(
+                    projection.node_states.get(payload.node_id.as_str()),
+                    Some(NodeState::Ghost)
+                )
+                || projection
+                    .node_assignments
+                    .contains_key(payload.node_id.as_str())
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection
+                .node_assignments
+                .insert(payload.node_id.to_string(), payload.assigned_actor.clone());
         }
         EventKind::MutationAccepted(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())

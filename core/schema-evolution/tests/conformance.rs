@@ -1733,6 +1733,16 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             false,
         ),
         (
+            "node_assigned",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "ghost-test",
+                "assignedActor": {"type": "agent", "id": "agent-test"},
+                "proposalSha256": raw_digest()
+            }),
+            false,
+        ),
+        (
             "mutation_accepted",
             json!({
                 "executionId": "execution-test",

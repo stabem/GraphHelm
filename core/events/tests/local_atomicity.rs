@@ -736,6 +736,7 @@ fn direct_append_rejects_secret_shaped_persistent_surfaces_without_mutation() {
                     expected_version: 1,
                     expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
                     operation_count: 1,
+                    proposal_sha256: None,
                 });
                 PreparedAppend::new(
                     scope(),

@@ -15,10 +15,10 @@ use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_protocols::{
     ActorId, Clock, EventEnvelope, EventKind, ExecutionId, ExecutionMode, ExecutionModeChanged,
     ExecutionPaused, ExecutionResumed, ExecutionStarted, GhostNodeProposed, IdGenerator,
-    MutationAccepted, NewEvent, NodeOutcome, NodeOutcome as Outcome, NodeOutcomeRecorded,
-    NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
-    Sensitivity, SignalRecorded as SignalRecordedPayload, SignalSeverity, SignalSourceKind,
-    SimulationStatus, WireHash, WorkspaceId,
+    MutationAccepted, NewEvent, NodeAssigned, NodeOutcome, NodeOutcome as Outcome,
+    NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedActorType, ProjectId,
+    RawSha256, RepositoryScope, Sensitivity, SignalRecorded as SignalRecordedPayload,
+    SignalSeverity, SignalSourceKind, SimulationStatus, WireHash, WorkspaceId,
 };
 
 const STREAM: &str = "stream-execution-test";
@@ -847,6 +847,90 @@ fn a_proposed_ghost_appears_in_ghost_state() {
     assert_eq!(
         projection.node_states.get("ghost-a"),
         Some(&NodeState::Ghost)
+    );
+}
+
+/// Assignment is a durable fact keyed by the proposal digest. Replay exposes the target actor
+/// and refuses duplicate assignment, so a retried or stale owner command cannot silently replace
+/// the worker attached to a node.
+#[test]
+fn a_ghost_assignment_survives_replay_and_duplicate_assignment_is_corrupt() {
+    let execution_id = OpaqueId::parse("execution-test").unwrap();
+    let assigned = PersistedActor::new(
+        PersistedActorType::Agent,
+        ActorId::parse("agent-readonly").unwrap(),
+    );
+    let events = append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "ghost-proposed",
+            EventKind::GhostNodeProposed(GhostNodeProposed {
+                execution_id: execution_id.clone(),
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+            }),
+        ),
+        event(
+            "node-assigned",
+            EventKind::NodeAssigned(NodeAssigned {
+                execution_id,
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                assigned_actor: assigned.clone(),
+                proposal_sha256: RawSha256::parse("b".repeat(64)).unwrap(),
+            }),
+        ),
+    ]);
+    let projection = replay(&scope(), STREAM, &events).unwrap();
+    assert_eq!(projection.node_assignments.get("ghost-a"), Some(&assigned));
+
+    let duplicate = append(vec![
+        event(
+            "execution-started",
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Supervised,
+            }),
+        ),
+        event(
+            "ghost-proposed",
+            EventKind::GhostNodeProposed(GhostNodeProposed {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                draft_id: OpaqueId::parse("draft-1").unwrap(),
+            }),
+        ),
+        event(
+            "node-assigned",
+            EventKind::NodeAssigned(NodeAssigned {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                assigned_actor: assigned.clone(),
+                proposal_sha256: RawSha256::parse("b".repeat(64)).unwrap(),
+            }),
+        ),
+        event(
+            "node-assigned-again",
+            EventKind::NodeAssigned(NodeAssigned {
+                execution_id: OpaqueId::parse("execution-test").unwrap(),
+                node_id: OpaqueId::parse("ghost-a").unwrap(),
+                assigned_actor: assigned,
+                proposal_sha256: RawSha256::parse("b".repeat(64)).unwrap(),
+            }),
+        ),
+    ]);
+    assert_eq!(
+        replay(&scope(), STREAM, &duplicate).unwrap_err(),
+        ReplayError::Corrupt
     );
 }
 

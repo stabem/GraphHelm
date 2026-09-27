@@ -404,6 +404,7 @@ fn proposed(
                 .map_err(|_| ApplyError::InvalidOperation)?,
             operation_count: u16::try_from(draft.operations.len())
                 .map_err(|_| ApplyError::InvalidOperation)?,
+            proposal_sha256: None,
         }),
         vec![],
     )

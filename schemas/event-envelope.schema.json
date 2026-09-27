@@ -224,7 +224,8 @@
         "draftId": {"$ref": "#/$defs/opaqueId"},
         "expectedVersion": {"$ref": "#/$defs/positiveSafeInteger"},
         "expectedHash": {"$ref": "#/$defs/wireHash"},
-        "operationCount": {"type": "integer", "minimum": 1, "maximum": 1024}
+        "operationCount": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "proposalSha256": {"$ref": "#/$defs/rawSha256"}
       },
       "additionalProperties": false
     },
@@ -539,6 +540,17 @@
         "executionId": {"$ref": "#/$defs/opaqueId"},
         "nodeId": {"$ref": "#/$defs/opaqueId"},
         "draftId": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "nodeAssigned": {
+      "type": "object",
+      "required": ["executionId", "nodeId", "assignedActor", "proposalSha256"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "assignedActor": {"$ref": "#/$defs/actor"},
+        "proposalSha256": {"$ref": "#/$defs/rawSha256"}
       },
       "additionalProperties": false
     },
@@ -1157,6 +1169,15 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "node_assigned"},
+            "data": {"$ref": "#/$defs/nodeAssigned"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "mutation_accepted"},
             "data": {"$ref": "#/$defs/mutationAccepted"}
           },
@@ -1404,6 +1425,7 @@
     {"properties": {"kind": {"properties": {"type": {"const": "execution_completed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "signal_recorded"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "ghost_node_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "node_assigned"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "mutation_accepted"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "execution_paused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "execution_resumed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

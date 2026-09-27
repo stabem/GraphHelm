@@ -198,6 +198,10 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             false,
         ),
         (
+            json!({"type":"node_assigned","data":{"executionId":"execution-1","nodeId":"ghost-a","assignedActor":{"type":"agent","id":"agent-readonly"},"proposalSha256":raw}}),
+            false,
+        ),
+        (
             json!({"type":"mutation_accepted","data":{"executionId":"execution-1","draftId":"draft-1","mode":"autopilot","graphVersion":4}}),
             false,
         ),

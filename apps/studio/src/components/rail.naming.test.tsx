@@ -26,6 +26,27 @@ const row = (executionId: string): ExecutionSummary => ({
 });
 
 describe("naming rows on the rail", () => {
+  it("shows completed results needing review instead of a green can-sleep mark", () => {
+    render(
+      <ProjectRail
+        projects={[{ name: "store", runs: [{ ...row("review-me"), executor: "gateway", unverifiedResults: 1 }] }]}
+        selected=""
+        connected
+        hasMore={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onNewTask={vi.fn()}
+        onAddProject={vi.fn()}
+        onOpenModels={vi.fn()}
+      />,
+    );
+    const run = screen.getByRole("button", { name: /review-me.*result needs review/i });
+    expect(run).toHaveClass("review");
+    expect(run).toHaveTextContent("review needed");
+    expect(run).not.toHaveClass("calm");
+  });
+
   it("reads the objective straight off the index row, with no briefing at all", () => {
     render(
       <ProjectRail

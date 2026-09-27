@@ -7,10 +7,11 @@
 //! smallest correct JSON answer to the same question, on the same authenticated Public Runtime
 //! API every other verb uses.
 //!
-//! ONE TRUTH, NOT A SECOND PROJECTION. Each row is a KEY SUBSET of the exact `render` value
-//! `execution status` and `GET /v1/executions/{id}` reply with - same replay, same attention
-//! judgement, same instants. A row therefore cannot disagree with the status read that follows
-//! it; it can only carry fewer fields. `summary_of` names that subset in one place, and
+//! ONE TRUTH, NOT A SECOND PROJECTION. Most row fields are a KEY SUBSET of the exact `render`
+//! value `execution status` and `GET /v1/executions/{id}` reply with - same replay, same attention
+//! judgement, same instants. The declared objective and the review count are derived from that
+//! same already-loaded history because status does not carry them. `summary_of` names the subset,
+//! and
 //! `every_index_row_field_equals_the_status_reply_for_the_same_execution` in
 //! `apps/cli/tests/api_http.rs` holds it to that claim by comparing the two surfaces field by
 //! field on a live store - it fails on a row whose `attention` is decided anywhere but here.
@@ -22,6 +23,9 @@
 //! and never skips one.
 
 use std::path::Path;
+
+use graphhelm_events::ExecutionProjection;
+use graphhelm_protocols::{EventEnvelope, EventKind, NodeState};
 
 use super::{Failure, argument, finish, render, repository_failure};
 use crate::commands::event_store;
@@ -116,7 +120,13 @@ pub(crate) fn execute(
                     .declared_form
                     .as_ref()
                     .and_then(|form| form.objective.as_deref());
-                summary_of(&stream.stream_id, &full, head, objective)
+                summary_of(
+                    &stream.stream_id,
+                    &full,
+                    head,
+                    objective,
+                    unverified_result_count(&projection, &history),
+                )
             }
             Err(_) => unreadable_row(&stream.stream_id, head),
         };
@@ -148,16 +158,18 @@ pub(crate) fn execute(
 /// checkable in one place. `executionId` falls back to the STREAM id when the projection carries
 /// none - an index whose rows cannot be addressed is not an index.
 ///
-/// `objective` (#1083 F7) is the ONE key that is not taken from the status reply: it is the
+/// `objective` (#1083 F7) is one key not taken from the status reply: it is the
 /// declared form's objective, the same value `execution briefing` publishes, so the Studio rail
 /// can name every run by what it was started for without one briefing read per row. Its content
 /// is the operator's own words, re-bounded here by `MAX_DECLARED_OBJECTIVE_CHARS`; `null` when the
-/// stream declared none (or was recorded before the field existed).
+/// stream declared none (or was recorded before the field existed). `unverifiedResults` is the
+/// other derived key: it counts successful node results lacking a confirmed typed verdict.
 fn summary_of(
     stream_id: &str,
     full: &serde_json::Value,
     head_sequence: Option<u64>,
     objective: Option<&str>,
+    unverified_results: Option<usize>,
 ) -> serde_json::Value {
     const CARRIED: [&str; 7] = [
         "executionId",
@@ -190,6 +202,10 @@ fn summary_of(
         "objective".to_owned(),
         serde_json::json!(objective.and_then(graphhelm_protocols::bound_declared_text)),
     );
+    row.insert(
+        "unverifiedResults".to_owned(),
+        serde_json::json!(unverified_results),
+    );
     serde_json::Value::Object(row)
 }
 
@@ -206,7 +222,65 @@ fn unreadable_row(stream_id: &str, head_sequence: Option<u64>) -> serde_json::Va
         "executor": serde_json::Value::Null,
         "headSequence": head_sequence.unwrap_or(0),
         "objective": serde_json::Value::Null,
+        "unverifiedResults": serde_json::Value::Null,
     })
+}
+
+/// Counts succeeded node results that do not have a passing typed gate verdict in the same replay.
+///
+/// A successful lifecycle outcome is only an executor result. The Studio's review marker is
+/// cleared by a later node outcome and by a later gate verdict, then restored only when the gate
+/// passes for a result whose evidence identifies a judge or gate. Replaying the already-loaded
+/// history here preserves that distinction without issuing a second read per execution.
+fn unverified_result_count(
+    projection: &ExecutionProjection,
+    history: &[EventEnvelope],
+) -> Option<usize> {
+    if history.is_empty() {
+        return None;
+    }
+
+    #[derive(Default)]
+    struct ResultReview {
+        succeeded: bool,
+        eligible_for_verification: bool,
+        verified: bool,
+    }
+
+    let mut reviews = std::collections::BTreeMap::<String, ResultReview>::new();
+    for event in history {
+        match &event.kind {
+            EventKind::NodeOutcomeRecorded(payload) => {
+                let node = payload.node_id.to_string();
+                let eligible = payload.next_state == NodeState::Succeeded
+                    && event.evidence_refs.iter().any(|reference| {
+                        let id = reference.evidence_id().as_str();
+                        id.ends_with("-judgment") || id.ends_with("-verdict")
+                    });
+                let review = reviews.entry(node).or_default();
+                review.succeeded = payload.next_state == NodeState::Succeeded;
+                review.eligible_for_verification = eligible;
+                review.verified = false;
+            }
+            EventKind::GateVerdict(payload) => {
+                let review = reviews.entry(payload.node_id.to_string()).or_default();
+                review.verified = false;
+                if payload.passed && review.succeeded && review.eligible_for_verification {
+                    review.verified = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Some(
+        projection
+            .node_states
+            .iter()
+            .filter(|(_, state)| **state == NodeState::Succeeded)
+            .filter(|(node, _)| !reviews.get(*node).is_some_and(|review| review.verified))
+            .count(),
+    )
 }
 
 pub fn run(events: &Path, after: Option<&str>, limit: Option<usize>) -> Outcome {
@@ -242,9 +316,9 @@ mod tests {
     #[test]
     fn every_carried_key_holds_the_status_reply_value() {
         let full = status_like("exec-a", "needs_you");
-        let row = summary_of("exec-a", &full, Some(9), None);
+        let row = summary_of("exec-a", &full, Some(9), None, Some(2));
         for (key, value) in row.as_object().expect("the row is an object") {
-            if key == "headSequence" || key == "objective" {
+            if key == "headSequence" || key == "objective" || key == "unverifiedResults" {
                 continue;
             }
             assert_eq!(
@@ -254,6 +328,7 @@ mod tests {
             );
         }
         assert_eq!(row["headSequence"], serde_json::json!(9));
+        assert_eq!(row["unverifiedResults"], serde_json::json!(2));
         // #1064: the executor is one of the carried keys, so the index can mark a demonstration.
         assert_eq!(row["executor"], serde_json::json!("fixture"));
     }
@@ -263,7 +338,13 @@ mod tests {
     /// index stops replaying it would silently vanish.
     #[test]
     fn the_row_omits_the_detail_fields_status_owns() {
-        let row = summary_of("exec-a", &status_like("exec-a", "can_sleep"), Some(3), None);
+        let row = summary_of(
+            "exec-a",
+            &status_like("exec-a", "can_sleep"),
+            Some(3),
+            None,
+            Some(0),
+        );
         for absent in [
             "attentionReasons",
             "nodeStateCounts",
@@ -287,7 +368,7 @@ mod tests {
     fn a_projection_without_an_execution_id_falls_back_to_the_stream_id() {
         let mut full = status_like("exec-a", "unknown");
         full["executionId"] = serde_json::Value::Null;
-        let row = summary_of("stream-fallback", &full, None, None);
+        let row = summary_of("stream-fallback", &full, None, None, Some(0));
         assert_eq!(row["executionId"], serde_json::json!("stream-fallback"));
         assert_eq!(row["headSequence"], serde_json::json!(0));
     }
@@ -301,6 +382,7 @@ mod tests {
             &status_like("exec-a", "can_sleep"),
             Some(4),
             Some("Ship it"),
+            Some(0),
         );
         let unreadable = unreadable_row("exec-a", Some(4));
         let readable_keys: Vec<_> = readable
@@ -317,6 +399,109 @@ mod tests {
             .collect();
         assert_eq!(readable_keys, unreadable_keys);
         assert_eq!(unreadable["attention"], serde_json::json!("unknown"));
+        assert_eq!(unreadable["unverifiedResults"], serde_json::Value::Null);
+    }
+
+    /// A succeeded result is review-needed until a later passing gate verdict confirms the
+    /// result. This catches the plausible defect of counting every successful node as accepted,
+    /// which would hide exactly the rail warning this field exists to drive. The helper is fed
+    /// the same replay history the list loop already loaded, so this also guards against adding a
+    /// second per-run read to derive the count.
+    #[test]
+    fn unverified_result_count_tracks_passing_verdicts_from_the_same_history() {
+        use chrono::{TimeZone, Utc};
+        use graphhelm_protocols::{
+            ActorId, AttemptExecutor, AttemptExecutorKind, EventHash, EvidenceId,
+            EvidenceReference, ExecutionId, GateFinding, GateVerdict, NewEvent, NodeOutcome,
+            PersistedActor, PersistedActorType, PersistedTimestamp, ProjectId, RawSha256,
+            RepositoryScope, Sensitivity, WorkspaceId,
+        };
+
+        fn event(
+            sequence: u64,
+            kind: EventKind,
+            evidence_refs: Vec<EvidenceReference>,
+        ) -> EventEnvelope {
+            EventEnvelope::new(
+                graphhelm_protocols::OpaqueId::parse(format!("event-{sequence}")).unwrap(),
+                RepositoryScope::new(
+                    WorkspaceId::parse("workspace-1").unwrap(),
+                    ProjectId::parse("project-1").unwrap(),
+                    Some(ExecutionId::parse("exec-a").unwrap()),
+                ),
+                graphhelm_protocols::OpaqueId::parse("exec-a").unwrap(),
+                sequence,
+                PersistedTimestamp::from_datetime(
+                    Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap(),
+                )
+                .unwrap(),
+                NewEvent::new(
+                    graphhelm_protocols::OpaqueId::parse(format!("request-{sequence}")).unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("system-test").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    kind,
+                    evidence_refs,
+                    vec![],
+                ),
+                EventHash::parse(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                )
+                .unwrap(),
+                EventHash::parse(
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                )
+                .unwrap(),
+            )
+        }
+
+        let mut projection = ExecutionProjection::default();
+        projection
+            .node_states
+            .insert("unreviewed".to_owned(), NodeState::Succeeded);
+        projection
+            .node_states
+            .insert("reviewed".to_owned(), NodeState::Succeeded);
+
+        let succeeded = |node: &str| {
+            EventKind::NodeOutcomeRecorded(graphhelm_protocols::NodeOutcomeRecorded {
+                execution_id: graphhelm_protocols::OpaqueId::parse("exec-a").unwrap(),
+                node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
+                outcome: NodeOutcome::Succeeded,
+                next_state: NodeState::Succeeded,
+                executor: Some(AttemptExecutor {
+                    kind: AttemptExecutorKind::Gate,
+                    route_id: None,
+                }),
+                reason: None,
+            })
+        };
+        let evidence = EvidenceReference::new(
+            EvidenceId::parse("result-verdict").unwrap(),
+            RawSha256::parse("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+                .unwrap(),
+            RawSha256::parse("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+                .unwrap(),
+        );
+        let passed = |node: &str| {
+            EventKind::GateVerdict(GateVerdict {
+                execution_id: graphhelm_protocols::OpaqueId::parse("exec-a").unwrap(),
+                node_id: graphhelm_protocols::OpaqueId::parse(node).unwrap(),
+                gate_id: graphhelm_protocols::OpaqueId::parse("gate-1").unwrap(),
+                passed: true,
+                findings: Vec::<GateFinding>::new(),
+            })
+        };
+
+        let history = vec![
+            event(1, succeeded("unreviewed"), vec![]),
+            event(2, passed("unreviewed"), vec![]),
+            event(3, succeeded("reviewed"), vec![evidence]),
+            event(4, passed("reviewed"), vec![]),
+        ];
+        assert_eq!(unverified_result_count(&projection, &history), Some(1));
     }
 
     /// #1083 F7: the row carries the declared objective, bounded, and `null` when there is none -
@@ -324,14 +509,20 @@ mod tests {
     #[test]
     fn the_row_carries_the_declared_objective_bounded() {
         let full = status_like("exec-a", "can_sleep");
-        let named = summary_of("exec-a", &full, Some(3), Some("  Locate related tests  "));
+        let named = summary_of(
+            "exec-a",
+            &full,
+            Some(3),
+            Some("  Locate related tests  "),
+            Some(1),
+        );
         assert_eq!(
             named["objective"],
             serde_json::json!("Locate related tests")
         );
 
         let long = "é".repeat(graphhelm_protocols::MAX_DECLARED_OBJECTIVE_CHARS + 7);
-        let bounded = summary_of("exec-a", &full, Some(3), Some(&long));
+        let bounded = summary_of("exec-a", &full, Some(3), Some(&long), Some(1));
         assert_eq!(
             bounded["objective"]
                 .as_str()
@@ -344,7 +535,7 @@ mod tests {
         let blank = " ".repeat(3);
         for none in [None, Some(blank.as_str())] {
             assert_eq!(
-                summary_of("exec-a", &full, Some(3), none)["objective"],
+                summary_of("exec-a", &full, Some(3), none, Some(1))["objective"],
                 serde_json::Value::Null
             );
         }

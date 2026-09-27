@@ -44,6 +44,8 @@ export interface ExecutionSummary {
   startedAt: string | null;
   lastEventAt: string | null;
   headSequence: number;
+  /** Null when replay could not establish a review count. Older Runtimes omit the field. */
+  unverifiedResults?: number | null;
   /** The executor declared at start, carried on the row (#1064) so the rail can mark a
    * demonstration without opening the run. Absent on streams recorded before the field. */
   executor?: "fixture" | "gateway" | null;

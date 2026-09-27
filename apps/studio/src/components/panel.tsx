@@ -441,10 +441,12 @@ function Thread({
   events,
   executionId,
   openEvidence,
+  emptyMessage = "Nothing has been said about this yet.",
 }: {
   events: RuntimeEvent[];
   executionId?: string;
   openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
+  emptyMessage?: string;
 }) {
   // THE CHAT OPENS AT THE END, because a conversation is read from where it is happening. The
   // first version opened at the top and the person had to scroll past the whole history to find
@@ -476,7 +478,7 @@ function Thread({
   }, [events]);
 
   if (events.length === 0) {
-    return <p className="panel-empty">Nothing has been said about this yet.</p>;
+    return <p className="panel-empty">{emptyMessage}</p>;
   }
   // Newest first is what gets opened, because that is what someone watching is here to read.
   const eager = new Set(
@@ -1106,7 +1108,7 @@ export function NodePanel({
           {node.declaredRole && <p className="lbl">Declared role · {node.declaredRole}</p>}
           <p className="lbl">{nodeStatusLabel(node) === "review needed" ? node.resultSource === "model_reply" ? "Reply received · review needed" : "Finished · review needed" : nodeStatusLabel(node) ?? readable(node.state)}</p>
         </div>
-        <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node">
+        <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node" autoFocus>
           <X aria-hidden="true" />
         </button>
       </header>
@@ -1531,6 +1533,7 @@ export function RunPanel({
         events={shown}
         executionId={status.executionId ?? undefined}
         openEvidence={openEvidence}
+        emptyMessage={needle !== "" ? "No messages match your search." : undefined}
       />
 
       {awaitingReply(events, runEnvelopes) && (

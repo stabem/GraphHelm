@@ -504,6 +504,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .run.needs .run-mark { background: var(--signal); }
 .run.calm .run-mark { background: var(--live); }
+.run.review .run-mark { background: var(--signal); }
+.run-review { color: var(--signal); }
 
 /* Two stacked lines beside the room's avatar, like a conversation list entry: the name, and
    when it last moved. */
@@ -1993,14 +1995,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* The search over the thread: filters what the page already holds, opens nothing new.
    (Added by the logic lane; visual pass welcome to restyle.) */
 .thread-search {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 6px 12px;
   background: var(--surface);
 }
 .thread-search input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   background: var(--void);
   color: var(--text);
@@ -2014,7 +2016,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 .thread-search input::placeholder { color: var(--faint); }
 .thread-search input:focus { outline: none; border-color: var(--signal); }
-.thread-search .hint { padding: 0; white-space: nowrap; }
+.thread-search .hint { padding: 0; white-space: normal; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
 /* A turn's citable coordinate: the sequence is the log's own address for the line. */
 .turn-seq {
@@ -2638,6 +2640,18 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #1077: what a run is about, where its id used to stand alone. */
 .run-objective { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--edge); }
 .run-objective q { quotes: none; font: 14px/1.45 var(--sans); color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 600px), (max-height: 600px) {
+  .talk .attention { display: none; }
+  .run-objective { max-height: 66px; overflow: auto; }
+  .talk .reply-hints { flex-wrap: nowrap; overflow-x: auto; }
+  .talk .reply-hint { flex: 0 0 auto; }
+  .talk .saybox { padding: 6px 10px; gap: 4px; }
+  .talk .saybox textarea { min-height: 56px; }
+  .talk .composer-hint, .talk .saybox > .hint, .talk .panel-foot { display: none; }
+}
+@media (max-width: 600px) {
+  .app.conversation-open .scene .dock { display: none; }
+}
 .work-node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; quotes: none; margin: 6px 0 0; font: 13px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
 .node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; quotes: none; margin: 4px 0 10px; font: 12px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
 .composer-hint { margin: -4px 0 8px; }

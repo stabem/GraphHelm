@@ -2327,6 +2327,41 @@ describe("round-2: the live tail neither starves nor freezes", () => {
 });
 
 describe("round-2: controls stop betraying their own guards", () => {
+  it("calls a filtered empty conversation a search miss and restores the log on clear", async () => {
+    await open(stubClient());
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const panel = await screen.findByLabelText(/^Run demo-deploy/);
+    const search = within(panel).getByRole("textbox", { name: "Search this conversation" });
+    await userEvent.type(search, "no-such-report-987");
+    expect(within(panel).getByText("No messages match your search.")).toBeInTheDocument();
+    expect(within(panel).queryByText("Nothing has been said about this yet.")).not.toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "clear" }));
+    expect(search).toHaveValue("");
+    expect(within(panel).queryByText("No messages match your search.")).not.toBeInTheDocument();
+  });
+
+  it("moves keyboard focus into node details and returns it to the node", async () => {
+    await open(stubClient());
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const opener = within(await screen.findByLabelText("Execution board")).getByRole("button", { name: /implementation/i });
+    opener.focus();
+    await userEvent.keyboard("{Enter}");
+    const details = await screen.findByLabelText("Node implementation");
+    expect(within(details).getByRole("button", { name: "Close this node" })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("returns focus to the conversation toggle when its panel closes", async () => {
+    await open(stubClient());
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const panel = await screen.findByLabelText(/^Run demo-deploy/);
+    const close = within(panel).getByRole("button", { name: "Close this panel" });
+    close.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveFocus());
+  });
+
   it("a double-click cannot fire the armed disconnect", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));

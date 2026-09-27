@@ -1141,6 +1141,7 @@ dependencies = [
  "fs2",
  "graphhelm-events",
  "graphhelm-gateway",
+ "graphhelm-process-tree",
  "graphhelm-protocols",
  "graphhelm-sealed-key-provider",
  "hex",

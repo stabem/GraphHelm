@@ -24,6 +24,7 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("Model · route review-route");
     expect(card).toHaveTextContent("Recorded by Runtime");
     expect(card).toHaveTextContent("review needed");
+    expect(screen.getByText("review_browser_evidence · reply received · review needed")).toBeInTheDocument();
   });
 
   it("shows a finished model call as unverified and labels the system actor as recorder", () => {
@@ -45,6 +46,16 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("Recorded by Runtime");
     expect(card).toHaveTextContent("review needed");
     expect(screen.getByRole("note")).toHaveTextContent("A finished step does not prove its goal passed");
+  });
+  it("keeps a typed verified step distinct from an unverified model reply", () => {
+    const verified = {
+      ...node("review_browser_evidence"),
+      state: "succeeded",
+      resultSource: "gate_verdict" as const,
+      verificationEventSequence: 18,
+    };
+    render(<WorkOverview model={{ ...model, nodes: [verified] }} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByText("review_browser_evidence · succeeded")).toBeInTheDocument();
   });
   it("retains incomplete-roster and disagreement evidence in the default view", () => {
     render(<WorkOverview model={{...model,rosterDeclared:false,lint:[{kind:"done-without-evidence",detail:"Completion has no evidence",sequence:8}]}} selectedNode={null} onSelectNode={vi.fn()} />);

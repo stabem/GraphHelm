@@ -157,6 +157,10 @@ export function ProjectRail({
             <div className="project-runs">
               {project.runs.map((run) => {
                 const verdict = verdictOf(run.attention);
+                const reviewCount = run.status === "completed" && run.executor !== "fixture" && typeof run.unverifiedResults === "number" && run.unverifiedResults > 0
+                  ? run.unverifiedResults : 0;
+                const rowKey = reviewCount > 0 ? "review" : verdict.key;
+                const rowStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.attention);
                 const on = run.executionId === selected;
                 // #1083 F7: the row's own declared objective first (one index read names every
                 // row), the briefing a selection already read as the fallback for an older
@@ -166,8 +170,8 @@ export function ProjectRail({
                   typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
                 );
                 return (
-                  <div key={run.executionId} className={`run-row ${verdict.key} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${verdict.key} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} onClick={() => onSelect(run.executionId)} title={readable(run.attention)}>
+                  <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} onClick={() => onSelect(run.executionId)} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -198,6 +202,7 @@ export function ProjectRail({
                         {run.executor === "fixture" && (
                           <span className="run-demo"> · demonstration</span>
                         )}
+                        {reviewCount > 0 && <span className="run-review"> · review needed</span>}
                       </span>
                     </span>
                     {/* The hover word lives on the BUTTON's title; putting it here too made
@@ -205,7 +210,7 @@ export function ProjectRail({
                     <span className="run-mark" aria-hidden="true" />
                     {/* The state reaches a screen reader as words: the mark alone would leave it
                         as a colour, which is not a name for anything. */}
-                    <span className="sr-only">{readable(run.attention)}</span>
+                    <span className="sr-only">{rowStatus}</span>
                   </button>
                   {onRemoveRun && (confirmRemove === run.executionId ? <span className="run-remove-confirm"><span>Remove from this browser’s list; history stays intact and execution continues.</span><button type="button" onClick={() => { onRemoveRun(run.executionId); setConfirmRemove(null); }}>Remove</button><button type="button" onClick={() => setConfirmRemove(null)} aria-label="Cancel remove">Cancel</button></span> : <button type="button" className="icon-action run-remove" onClick={() => setConfirmRemove(run.executionId)} aria-label={`Remove ${run.executionId} from this browser's list`} title="Remove from this browser’s list"><Trash2 aria-hidden="true" /></button>)}
                   </div>

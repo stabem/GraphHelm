@@ -183,6 +183,7 @@ export default function App({
    * run, its board and its crew stay; the run's name in the top strip brings it back. The old
    * wiring deselected the whole run and left "This board is empty" over 19 messages. */
   const [talkOpen, setTalkOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
+  const conversationToggleRef = useRef<HTMLButtonElement | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
 
   const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
@@ -231,6 +232,7 @@ export default function App({
   const [topologyError, setTopologyError] = useState("");
 
   const [focus, setFocus] = useState<Focus>({ kind: "none" });
+  const nodeFocusOrigin = useRef<HTMLElement | null>(null);
   /** A task being composed: an execution id reserved locally and nothing else. `null` means the
    * page is showing a real run. Held here rather than in the rail because the board and the panel
    * both render from it. */
@@ -318,7 +320,10 @@ export default function App({
       }
     }).catch((reason: unknown) => {
       if (!superseded && clientRef.current === client) {
-        setReplyIssue(messageOf(reason, "Recommended replies could not be prepared."));
+        const detail = messageOf(reason, "Recommended replies could not be prepared.");
+        setReplyIssue(detail.includes("GRAPHHELM_GATEWAY_KEY")
+          ? "Recommended replies are unavailable: the Runtime needs its model gateway key. You can still write your own message."
+          : `Recommended replies are unavailable: ${detail}`);
       }
     }).finally(() => {
       if (!superseded && clientRef.current === client) setReplyLoading(false);
@@ -2006,7 +2011,7 @@ export default function App({
       <div className="stage">
         <div className="topstrip">
           <button type="button" className="ghost mobile-toggle projects-toggle" aria-expanded={projectsOpen} aria-controls="projects-rail" onClick={() => setProjectsOpen((open) => !open)} aria-label="Toggle projects"><Menu aria-hidden="true" /></button>
-          <button type="button" className="ghost mobile-toggle conversation-toggle" disabled={addingProject || (!draft && selected === "")} aria-expanded={talkOpen} aria-controls="conversation-panel" onClick={() => setTalkOpen((open) => !open)} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
+          <button type="button" className="ghost mobile-toggle conversation-toggle" ref={conversationToggleRef} disabled={addingProject || (!draft && selected === "")} aria-expanded={talkOpen} aria-controls="conversation-panel" onClick={() => setTalkOpen((open) => !open)} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
           <div className="strip-card">
             {selected ? (
               <button
@@ -2160,9 +2165,10 @@ export default function App({
                 model={draftModel}
                 board={board}
                 selectedNode={focus.kind === "node" ? focus.id : null}
-                onSelectNode={(id) =>
-                  setFocus(id === null ? { kind: "none" } : { kind: "node", id })
-                }
+                onSelectNode={(id) => {
+                  if (id !== null) nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  setFocus(id === null ? { kind: "none" } : { kind: "node", id });
+                }}
                 onChange={setBoard}
                 connectionNote="Nothing has run yet. This node starts the task."
                 connectionTone="none"
@@ -2295,7 +2301,10 @@ export default function App({
                 status={status}
                 events={eventList}
                 unverifiedResults={unverifiedResults}
-                onClose={() => setTalkOpen(false)}
+                onClose={() => {
+                  setTalkOpen(false);
+                  window.setTimeout(() => conversationToggleRef.current?.focus(), 0);
+                }}
                 openEvidence={openEvidence}
                 onSay={(message, to) =>
                   void say(
@@ -2376,7 +2385,10 @@ export default function App({
               model={model}
               board={board}
               selectedNode={focusedNode}
-              onSelectNode={(id) => setFocus(id === null ? { kind: "none" } : { kind: "node", id })}
+              onSelectNode={(id) => {
+                if (id !== null) nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                setFocus(id === null ? { kind: "none" } : { kind: "node", id });
+              }}
               onChange={updateBoard}
               connectionNote={journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology)}
               connectionTone={connectionTone}
@@ -2675,7 +2687,13 @@ export default function App({
                 <NodePanel
                   node={node}
                   events={nodeThread}
-                  onClose={() => setFocus({ kind: "none" })}
+                  onClose={() => {
+                    setFocus({ kind: "none" });
+                    window.setTimeout(() => {
+                      if (nodeFocusOrigin.current?.isConnected) nodeFocusOrigin.current.focus();
+                      nodeFocusOrigin.current = null;
+                    }, 0);
+                  }}
                   executionId={selected === "" ? undefined : selected}
                   openEvidence={openEvidence}
                   onOpenDocument={openProjectDocument}

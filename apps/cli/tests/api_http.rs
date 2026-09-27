@@ -5537,8 +5537,8 @@ fn the_index_refuses_an_over_large_limit_rather_than_clamping_it() {
     assert_eq!(unparsable.status, 400, "{}", unparsable.body);
 }
 
-/// ONE STORE, ONE TRUTH. Every field an index row carries must equal the value the per-execution
-/// status read reports for the same stream, at the same head. A row that disagreed with the
+/// ONE STORE, ONE TRUTH. Every shared field an index row carries must equal the per-execution
+/// status read for the same stream, at the same head. A shared field that disagreed with the
 /// detail view would make the index a second projection - the exact thing `execution::list`'s
 /// own doc comment forbids - and no test on either surface alone could see it.
 #[test]
@@ -5555,8 +5555,8 @@ fn every_index_row_field_equals_the_status_reply_for_the_same_execution() {
         let id = row["executionId"].as_str().unwrap();
         let status = get_json(&format!("{base}/v1/executions/{id}"), Some(&token));
         let detail = &status["data"];
-        // #1083 F7: `objective` is the one row key the status reply does not carry; it is the
-        // declared objective, so it must equal the BRIEFING's for the same execution.
+        // Objective comes from the briefing; the review count comes from this same replayed
+        // history. Neither is a status field, so both have their own observations below.
         let briefing = get_json(&format!("{base}/v1/executions/{id}/briefing"), Some(&token));
         assert!(
             row["objective"].is_string(),
@@ -5567,7 +5567,7 @@ fn every_index_row_field_equals_the_status_reply_for_the_same_execution() {
             "index row objective for {id} disagrees with the briefing"
         );
         for (key, value) in row.as_object().unwrap() {
-            if key == "objective" {
+            if key == "objective" || key == "unverifiedResults" {
                 continue;
             }
             assert_eq!(
@@ -5575,6 +5575,11 @@ fn every_index_row_field_equals_the_status_reply_for_the_same_execution() {
                 "index row field {key} for {id} disagrees with the status reply: {row} vs {detail}"
             );
         }
+        assert_eq!(
+            row["unverifiedResults"],
+            serde_json::json!(if id == "index-beta" { 1 } else { 0 }),
+            "the successful fixture result stays review-needed in the list: {row}"
+        );
         // And the row is a STRICT subset: the detail fields stay where they belong.
         for detail_only in [
             "attentionReasons",

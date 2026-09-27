@@ -184,6 +184,7 @@ class SessionHookTests(unittest.TestCase):
         sent = [request for request in RuntimeHandler.requests if request[0] == "POST"]
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0][2]["X-Graphhelm-Actor-Type"], "agent")
+        self.assertEqual(sent[0][2]["X-Graphhelm-Actor-Session"], "session-123")
         signal = sent[0][3]["signal"]
         self.assertEqual(signal["type"], "agent_session_ended")
         self.assertEqual(signal["source"], {"type": "tool", "id": "claude-session-session-123"})

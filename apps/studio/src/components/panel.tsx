@@ -1355,6 +1355,7 @@ export function RunPanel({
   replyLoading = false,
   replyIssue = null,
   needsDirection = false,
+  retryFailureNodes = [],
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1384,6 +1385,8 @@ export function RunPanel({
   replyLoading?: boolean;
   replyIssue?: string | null;
   needsDirection?: boolean;
+  /** Blocked nodes whose latest recorded outcome exhausted retryable attempts. */
+  retryFailureNodes?: string[];
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1395,7 +1398,11 @@ export function RunPanel({
   for (const reason of status.attentionReasons) {
     const kind = typeof reason.kind === "string" ? reason.kind : "";
     if (kind === "waiting_input_node" && !debts.includes(needsDirection ? "your direction" : "your answer")) debts.push(needsDirection ? "your direction" : "your answer");
-    if (kind === "blocked_node" && !debts.includes("your go-ahead")) debts.push("your go-ahead");
+    if (kind === "blocked_node") {
+      const debt = typeof reason.node === "string" && retryFailureNodes.includes(reason.node)
+        ? "your decision to retry a failed step" : "your go-ahead";
+      if (!debts.includes(debt)) debts.push(debt);
+    }
   }
   // Recent speakers are offered as people to TALK TO — never as people "waiting for an
   // answer": that claim belongs to the ledger alone (the `owed` prop). The old cards made the

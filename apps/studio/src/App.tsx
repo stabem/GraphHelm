@@ -365,6 +365,15 @@ export default function App({
   // remembered file must not make the same run look connected anyway.
   const visibleTopology = journalTopology ?? topology;
   const model = useMemo(() => buildGraphModel(eventList, visibleTopology), [eventList, visibleTopology]);
+  // A blocked node can mean several things. Only a recorded retryable failure supports calling
+  // the owner's approval a retry; an older or incomplete journal keeps the generic wording.
+  const retryFailures = new Map<string, { reason: string; executor: string | null }>();
+  for (const candidate of model.nodes) {
+    const latest = candidate.history.at(-1);
+    if (candidate.state === "blocked" && latest?.outcome === "retryable_failure" && latest.reason) {
+      retryFailures.set(candidate.id, { reason: latest.reason, executor: candidate.actualExecutor?.kind ?? null });
+    }
+  }
   const unverifiedResults = pendingAcceptanceCount(model.nodes, status?.nodeStateCounts.succeeded ?? 0);
   const focusedNode = focus.kind === "node" ? focus.id : null;
   const node = useMemo(
@@ -1873,6 +1882,9 @@ export default function App({
       .filter((candidate): candidate is string => candidate !== null) ?? [];
   const approveTarget =
     focusedNode !== null && approvable.includes(focusedNode) ? focusedNode : (approvable[0] ?? "");
+  const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
+  const stalledAfterFailure = status?.status === "running" && retryFailures.size > 0 &&
+    ["ready", "queued", "linting", "running"].every((state) => (status.nodeStateCounts[state] ?? 0) === 0);
   const waitingInstead = approveTarget === "" && blocking.length > 0;
   /** The board a draft shows: the start node alone, with no history, because none exists. Built
    * here rather than through `buildGraphModel` - that reads events, and a draft has none, so
@@ -2058,7 +2070,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
+            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
           </div>
 
           <div className="strip-card right">
@@ -2236,9 +2248,12 @@ export default function App({
                       (candidate) => candidate.kind === "waiting_input_node",
                     );
                     if ((kind === "blocked_node" || kind === "untriaged_interruption") && node !== null) {
+                      const failure = kind === "blocked_node" ? retryFailures.get(node) : undefined;
                       return (
                         <span key={key}>
-                          {kind === "untriaged_interruption"
+                          {failure
+                            ? `${node} failed after retries: ${readable(failure.reason)}. Check ${failure.executor === "model" ? "the model route" : "the failed step"} before allowing another attempt.`
+                            : kind === "untriaged_interruption"
                             ? `${node} was interrupted and awaits triage - approving it is the triage`
                             : `${node} is blocked`}
                           <button
@@ -2254,7 +2269,7 @@ export default function App({
                               )
                             }
                           >
-                            approve {node}
+                            {failure ? "allow retry" : "approve"} {node}
                           </button>
                         </span>
                       );
@@ -2349,6 +2364,7 @@ export default function App({
                 replyLoading={replyLoading}
                 replyIssue={replyIssue}
                 needsDirection={needsDirection}
+                retryFailureNodes={[...retryFailures.keys()]}
               />
             </aside>
             )}
@@ -2512,7 +2528,7 @@ export default function App({
                 }
                 disabled={busy || approveTarget === ""}
               >
-                {approveTarget === "" ? "nothing to approve" : `approve ${approveTarget}`}
+                {approveTarget === "" ? "nothing to approve" : `${retryTarget ? "allow retry" : "approve"} ${approveTarget}`}
               </button>
               {/* In plain dock text, not a tooltip: a disabled button never shows its title —
                 * the exact channel the resume fix three lines down already condemned. */}

@@ -1576,6 +1576,49 @@ describe("the conversation moves on its own", () => {
  * an answer; an answer without an action is homework.
  */
 describe("the attention verdict explains itself", () => {
+  it("shows an exhausted model crash as a retry decision, not approval of the original start", async () => {
+    const event = (sequence: number, outcome: string, nextState: string, reason?: string) => ({
+      sequence,
+      kind: "node_outcome_recorded",
+      payload: { nodeId: "start", outcome, nextState, ...(reason ? { reason } : {}) },
+      occurredAt: "2026-08-27T12:01:00Z",
+      actorId: "system-runtime",
+      actorType: "system",
+      idempotencyKey: `k-${sequence}`,
+      eventId: `event-${sequence}`,
+      evidenceRefs: [],
+    });
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({
+        ...STATUS,
+        headSequence: 12,
+        attentionReasons: [{ kind: "blocked_node", node: "start" }],
+        nodeStateCounts: { blocked: 1 },
+      })),
+      getEvents: vi.fn(async () => ({
+        head: 12,
+        events: [
+          event(3, "approved", "ready"),
+          event(6, "retryable_failure", "queued", "runtime_crashed"),
+          event(8, "retryable_failure", "queued", "runtime_crashed"),
+          event(10, "retryable_failure", "queued", "runtime_crashed"),
+          event(12, "retryable_failure", "blocked", "runtime_crashed"),
+        ],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+
+    const why = await screen.findByLabelText("Why this run needs you");
+    expect(why).toHaveTextContent(/start failed after retries: runtime crashed/i);
+    expect(within(screen.getByLabelText(/^Run /)).getByText(/waiting for your decision to retry a failed step/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed after retries · runtime crashed/i)).toBeInTheDocument();
+    expect(screen.getByText("blocked · retry decision")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "approve start" })).toBeNull();
+    await userEvent.click(within(why).getByRole("button", { name: "allow retry start" }));
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+  });
+
   it("says in words why the run needs you, next to the tag", async () => {
     const client = stubClient();
     await open(client);

@@ -163,7 +163,7 @@ export function WorkOverview({
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
         <div className="work-snapshot-grid">
-          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
+          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "running" && activeNodes === 0 && attentionNodes > 0 && <small>No node is working; a step needs attention</small>}{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
           <div><span>Graph step</span><strong>{singleStep ? `${singleStep.id} · ${singleStepText}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
           <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
         </div>

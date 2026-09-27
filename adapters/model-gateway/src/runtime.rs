@@ -38,6 +38,11 @@ use crate::env;
 /// workspace does not depend on); polling is the plan's own prescribed shape for this loop.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Maximum time spent observing cleanup after a kill request. A clock read bounds the polling
+/// iterations below because each iteration performs only the non-blocking leader observer and a
+/// bounded sleep; no blocking wait or thread join is allowed past this deadline.
+const CLEANUP_GRACE: Duration = Duration::from_secs(2);
+
 /// Bound on how much of a pipe's bytes [`spawn_capped_reader`] retains. The reader thread keeps
 /// draining the pipe past this bound (so a verbose child, or one whose grandchild keeps writing,
 /// never backs up and stalls on its own `write`), but bytes beyond it are discarded rather than
@@ -274,10 +279,11 @@ impl<'a> RuntimeAdapter<'a> {
                 graphhelm_process_tree::close(&mut process_group);
                 // The process may have moved out of its original group. The tree termination
                 // handles descendants, while this direct kill is the bounded fallback for the
-                // leader itself; `Child::wait` is then a reap, not an unbounded cleanup wait.
+                // leader itself.
                 let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdin_writer.join();
+                let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
+                let leader_clean = reap_after_observed_exit(&mut child, cleanup_deadline);
+                let writer_clean = join_writer_until(stdin_writer, cleanup_deadline);
                 // Deliberately NOT joined (IMPORTANT 6): if a grandchild is still holding either
                 // pipe's write end open, these reader threads are still blocked in `read` and may
                 // never return. Dropping the `JoinHandle`s detaches them instead — they keep
@@ -287,7 +293,11 @@ impl<'a> RuntimeAdapter<'a> {
                 // an oversight — recorded in the milestone doc's honest-limits section.
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
-                Err(GatewayError::Timeout)
+                if leader_clean && writer_clean {
+                    Err(GatewayError::Timeout)
+                } else {
+                    Err(GatewayError::RuntimeCrashed)
+                }
             }
             WaitOutcome::WaitFailed => {
                 let _ = graphhelm_process_tree::terminate(
@@ -296,8 +306,9 @@ impl<'a> RuntimeAdapter<'a> {
                 );
                 graphhelm_process_tree::close(&mut process_group);
                 let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdin_writer.join();
+                let cleanup_deadline = Instant::now() + CLEANUP_GRACE;
+                let _ = reap_after_observed_exit(&mut child, cleanup_deadline);
+                let _ = join_writer_until(stdin_writer, cleanup_deadline);
                 drop(stdout_reader.handle);
                 drop(stderr_reader.handle);
                 Err(GatewayError::RuntimeCrashed)
@@ -313,6 +324,45 @@ enum WaitOutcome {
     Exited,
     TimedOut,
     WaitFailed,
+}
+
+/// Reap only after the non-reaping process-tree observer has confirmed the leader exited. A
+/// failed or exhausted observation leaves the child handle to drop after a second kill request and
+/// reports failure to the caller; it never falls back to an unbounded `wait`.
+fn reap_after_observed_exit(child: &mut std::process::Child, deadline: Instant) -> bool {
+    loop {
+        match graphhelm_process_tree::leader_exited(child) {
+            Ok(true) => return child.wait().is_ok(),
+            Ok(false) if Instant::now() < deadline => std::thread::sleep(POLL_INTERVAL),
+            Ok(false) => {
+                let _ = child.kill();
+                return false;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return false;
+            }
+        }
+    }
+}
+
+/// Join the stdin writer only while it is known to be making progress toward completion. A
+/// blocked writer is detached after the same bounded cleanup window; the caller then reports the
+/// cleanup failure rather than claiming a clean timeout.
+fn join_writer_until(writer: std::thread::JoinHandle<()>, deadline: Instant) -> bool {
+    let mut writer = Some(writer);
+    while !writer.as_ref().is_some_and(|handle| handle.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let Some(writer) = writer.take() else {
+        return false;
+    };
+    if writer.is_finished() {
+        writer.join().is_ok()
+    } else {
+        drop(writer);
+        false
+    }
 }
 
 /// A capped pipe reader running on its own thread: `buffer` accumulates up to

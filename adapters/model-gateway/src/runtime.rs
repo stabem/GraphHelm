@@ -183,8 +183,11 @@ impl<'a> RuntimeAdapter<'a> {
         let mut process_group = match graphhelm_process_tree::create(&child) {
             Ok(group) => group,
             Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                // Group creation failed, so the group adapter cannot terminate descendants.
+                // Keep the direct child bounded too: the pre-spawn permit reserves the same
+                // supervisor handoff used by timeout cleanup if the leader does not exit.
+                let _ =
+                    reap_after_observed_exit(child, Instant::now() + CLEANUP_GRACE, cleanup_permit);
                 return Err(GatewayError::ProviderUnavailable);
             }
         };

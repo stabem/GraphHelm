@@ -2385,7 +2385,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|pending| {
                 pending.iter().any(|reason| {
-                reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "approval must resolve the briefing obligation: {resolved_briefing}"
@@ -2460,7 +2460,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|reasons| {
                 reasons.iter().any(|reason| {
-                reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "restart must preserve the resolved draft attention state: {restarted_status}"

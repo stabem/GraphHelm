@@ -389,3 +389,187 @@ fn the_user_claude_instruction_file_resolves_applies_and_restores() {
         USER_ORIGINAL
     );
 }
+
+/// #1323: `setup` registers the `graphhelm` MCP server at Claude Code's user scope
+/// (`~/.claude.json`) and upserts the marked GraphHelm + Keel block into the user instruction file,
+/// both through the reviewed plan -> digest -> journaled apply path. A second run finds nothing
+/// left to do, the user's other servers and lines survive, and restore returns the original bytes.
+#[test]
+fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
+    const USER_CLAUDE: &[u8] = b"# Mine\r\nDeny secrets\r\n";
+    let user_json = br#"{"numStartups":3,"mcpServers":{"mine":{"command":"my-server","args":[]}}}"#;
+    let (p, h) = seeded();
+    std::fs::write(h.path().join(".claude/CLAUDE.md"), USER_CLAUDE).unwrap();
+    std::fs::write(h.path().join(".claude.json"), user_json).unwrap();
+    let s = private_dir();
+    let out = s.path().join("plan.json");
+
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    let suggested = preview["data"]["suggestedResolutions"].as_array().unwrap();
+    assert!(
+        suggested.contains(&"home/.claude.json=register-mcp".into()),
+        "{preview}"
+    );
+    assert!(
+        suggested.contains(&"home/.claude/CLAUDE.md=graphhelm-block".into()),
+        "{preview}"
+    );
+
+    let resolve = |out: &Path| {
+        json(
+            setup(p.path(), h.path())
+                .arg("--resolve")
+                .arg("project/AGENTS.md=keep")
+                .arg("--resolve")
+                .arg("home/.claude/CLAUDE.md=graphhelm-block")
+                .arg("--resolve")
+                .arg("home/.claude.json=register-mcp")
+                .arg("--out")
+                .arg(out)
+                .output()
+                .unwrap(),
+        )
+    };
+    let (ok, value) = resolve(&out);
+    assert!(ok, "{value}");
+    let digest = value["data"]["acceptance"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // The redacted preview names the program the host will start, and nothing else of the file.
+    let (ok, reviewed) = json(
+        setup(p.path(), h.path())
+            .arg("--plan")
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{reviewed}");
+    let operation = reviewed["data"]["plan"]["spec"]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == ".claude.json")
+        .cloned()
+        .unwrap_or_else(|| panic!("no .claude.json operation: {reviewed}"));
+    assert_eq!(operation["registration"]["args"][0], "mcp");
+    assert_eq!(
+        operation["registration"]["args"][2],
+        "http://127.0.0.1:8791"
+    );
+    assert_eq!(operation["registration"]["args"][6], "agent-chat");
+
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&out)
+            .arg("--accept")
+            .arg(&digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+
+    let registered: Value =
+        serde_json::from_slice(&std::fs::read(h.path().join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(registered["numStartups"], 3);
+    assert_eq!(registered["mcpServers"]["mine"]["command"], "my-server");
+    let entry = &registered["mcpServers"]["graphhelm"];
+    assert!(
+        graphhelm_host_adoption::is_graphhelm_registration(entry),
+        "{entry}"
+    );
+    let token = std::path::Path::new(entry["args"][4].as_str().unwrap());
+    assert!(token.is_absolute() && token.starts_with(std::path::absolute(p.path()).unwrap()));
+
+    let user =
+        String::from_utf8(std::fs::read(h.path().join(".claude/CLAUDE.md")).unwrap()).unwrap();
+    assert!(user.starts_with("# Mine\r\nDeny secrets\r\n"), "{user:?}");
+    assert_eq!(user.matches("<!-- graphhelm:begin -->").count(), 1);
+    assert!(user.contains("mcp__graphhelm__"));
+    assert!(
+        !user.replace("\r\n", "").contains('\n'),
+        "line endings follow the file"
+    );
+
+    // Second run: the block is current (keep) and the registration is present (nothing), so the
+    // plan would change nothing and is refused rather than padded; no file moves.
+    let again = s.path().join("again.json");
+    let (ok, refused) = resolve(&again);
+    assert!(!ok, "{refused}");
+    assert_eq!(
+        refused["diagnostics"][0]["path"],
+        "/adoption/invalid_configuration"
+    );
+    assert!(!again.exists());
+
+    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let (ok, restore) = json(
+        command
+            .arg("restore")
+            .arg("--state-root")
+            .arg(s.path())
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{restore}");
+    let plan = &restore["data"]["plan"];
+    let planfile = s.path().join("restore.json");
+    std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
+    let mut command = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let (ok, restored) = json(
+        command
+            .arg("restore")
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&planfile)
+            .arg("--accept")
+            .arg(plan["digest"].as_str().unwrap())
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{restored}");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        user_json
+    );
+    assert_eq!(
+        std::fs::read(h.path().join(".claude/CLAUDE.md")).unwrap(),
+        USER_CLAUDE
+    );
+}
+
+/// #1323: the generated decisions are bounded to their surfaces. A block cannot target a settings
+/// file, a registration cannot target an instruction file, and an unknown decision is refused.
+#[test]
+fn generated_decisions_are_refused_outside_their_surfaces() {
+    let (p, h) = seeded();
+    let s = private_dir();
+    let out = s.path().join("plan.json");
+    for resolve in [
+        "home/.claude/settings.json=graphhelm-block",
+        "project/AGENTS.md=register-mcp",
+        "project/AGENTS.md=graphhelm",
+    ] {
+        let (ok, refused) = json(
+            setup(p.path(), h.path())
+                .arg("--resolve")
+                .arg(resolve)
+                .arg("--out")
+                .arg(&out)
+                .output()
+                .unwrap(),
+        );
+        assert!(!ok, "{resolve}");
+        assert_eq!(
+            refused["diagnostics"][0]["path"], "/adoption/invalid_configuration",
+            "{resolve}"
+        );
+    }
+    assert!(!out.exists());
+}

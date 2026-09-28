@@ -107,8 +107,10 @@ pub struct AdoptionSetupArgs {
     pub home: PathBuf,
     #[arg(long, conflicts_with_all = ["apply", "recover", "verify"])]
     pub dry_run: bool,
-    /// Owner decision for one unresolved item: `<item>=keep` or `<item>=replace:<file>` whose
-    /// bytes are the reviewed replacement. Repeatable. With any `--resolve`, `--out` is required
+    /// Owner decision for one unresolved item: `<item>=keep`, `<item>=replace:<file>` whose
+    /// bytes are the reviewed replacement, or `<item>=graphhelm-block` (the marked GraphHelm +
+    /// Keel block, upserted into the item's current bytes). `home/.claude.json=register-mcp` or
+    /// `project/.mcp.json=register-mcp` opts in to the `graphhelm` MCP registration. Repeatable. With any `--resolve`, `--out` is required
     /// because the resulting plan carries bytes that never go to stdout.
     #[arg(long = "resolve", conflicts_with_all = ["apply", "recover", "verify", "plan"])]
     pub resolve: Vec<String>,

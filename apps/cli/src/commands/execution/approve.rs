@@ -7,7 +7,8 @@ use graphhelm_governor::{
 };
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
-    Actor, ActorType, DraftOperation, EventKind, NodeOutcome, NodeState, OpaqueId, PersistedActor,
+    Actor, ActorType, DraftOperation, EventKind, GraphDraft, NodeOutcome, NodeState, OpaqueId,
+    PersistedActor,
 };
 
 use super::{
@@ -83,9 +84,9 @@ pub fn run(
     )
 }
 
-/// Approves a sealed graph proposal and immediately records the owner decision. Assignment is
-/// optional and is appended only after the approval has replayed successfully. Every input used to
-/// apply the draft comes from authenticated sealed evidence or the verified active snapshot.
+/// Approves one exact sealed graph proposal and atomically records the owner decision, complete
+/// assignments, and the successor publication. Every input used to apply the draft comes from
+/// authenticated sealed evidence or the verified active snapshot.
 pub(crate) fn execute_governed(
     events: &Path,
     execution: Option<&str>,
@@ -202,7 +203,11 @@ pub(crate) fn execute_governed(
         let Some(digest) = payload.proposal_sha256.as_ref() else {
             continue;
         };
-        let Some(reference) = event.evidence_refs.first() else {
+        let Some(reference) = event
+            .evidence_refs
+            .iter()
+            .find(|reference| reference.content_sha256() == digest)
+        else {
             continue;
         };
         let sealed = match store
@@ -218,11 +223,13 @@ pub(crate) fn execute_governed(
             plaintext
                 .expose(|bytes| serde_json::from_slice(bytes))
                 .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?;
-        let typed = graphhelm_execution::TypedSignal::parse(&envelope)
+        let draft = serde_json::from_value::<GraphDraft>(envelope.clone())
+            .or_else(|_| {
+                graphhelm_execution::TypedSignal::parse(&envelope)
+                    .map_err(|_| ())
+                    .and_then(|typed| typed.proposal().cloned().ok_or(()))
+            })
             .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?;
-        let Some(draft) = typed.proposal().cloned() else {
-            continue;
-        };
         let calculated = raw_content_sha256(
             &serde_json::to_vec(&draft)
                 .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?,

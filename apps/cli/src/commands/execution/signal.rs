@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use graphhelm_events::{EvidenceInput, EvidenceProtector, EvidenceSealer, SecretBytes};
+use graphhelm_events::{
+    EvidenceInput, EvidenceProtector, EvidenceSealer, SealedEvidence, SecretBytes,
+};
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_sealed_key_provider::SealedKeyProvider;
 
@@ -377,6 +379,7 @@ pub(crate) fn execute(
         vec![],
     );
     let mut pending = vec![event];
+    let mut proposal_sealed: Option<SealedEvidence> = None;
     if let Some(draft) = admitted.proposal.as_ref() {
         if !admitted.may_propose_mutation {
             return Err(signal_invalid(
@@ -393,6 +396,37 @@ pub(crate) fn execute(
                 "/signal/proposal",
             )
         })?;
+        let protector = open_sealer(sealing.ok_or_else(|| {
+            execution_state(
+                "a graph proposal requires sealed evidence; start the Runtime with --keyring and --key-id",
+                "/signal/proposal",
+            )
+        })?)?;
+        let input = EvidenceInput::new(
+            format!("proposal-{}", proposal_sha256.as_str()),
+            "application/json",
+            Sensitivity::Confidential,
+            "standard",
+            SecretBytes::new(proposal_bytes),
+        )
+        .map_err(|_| execution_state("the graph proposal cannot be sealed", "/signal/proposal"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|_| execution_state("the sealing runtime could not start", "/keyring"))?;
+        proposal_sealed = Some(
+            runtime
+                .block_on(protector.seal(scope.clone(), input))
+                .map_err(|_| {
+                    execution_state("the graph proposal could not be sealed", "/signal/proposal")
+                })?,
+        );
+        let proposal_refs = vec![
+            proposal_sealed
+                .as_ref()
+                .expect("proposal evidence was assigned above")
+                .reference()
+                .clone(),
+        ];
         let proposal_key = OpaqueId::parse(format!("proposal-{}", proposal_sha256.as_str()))
             .map_err(|_| {
                 execution_state(
@@ -427,7 +461,7 @@ pub(crate) fn execute(
                 })?,
                 proposal_sha256: Some(proposal_sha256.clone()),
             }),
-            evidence_refs.clone(),
+            proposal_refs,
             vec![],
         ));
         // Ghost nodes are published only by the Governor after owner approval. Recording them at
@@ -443,7 +477,11 @@ pub(crate) fn execute(
                 stream_id.clone(),
                 next_sequence,
                 pending,
-                vec![item],
+                if let Some(proposal) = proposal_sealed {
+                    vec![item, proposal]
+                } else {
+                    vec![item]
+                },
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;

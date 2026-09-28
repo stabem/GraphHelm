@@ -114,6 +114,10 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
     },
 ];
 
+/// CLI-only development leaves are explicit exceptions because they intentionally have no MCP or
+/// HTTP transport. The reverse checks below keep this declaration closed in both directions.
+const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
+
 /// The tools that are deliberately NOT development operations -- the exceptions that make
 /// `every_real_mcp_tool_is_classified` below a closed question rather than an open one.
 ///
@@ -599,11 +603,41 @@ fn every_real_cli_development_leaf_is_a_declared_family() {
         assert!(
             DEVELOPMENT_OPERATION_FAMILIES
                 .iter()
-                .any(|family| family.cli == leaf.as_str()),
+                .any(|family| family.cli == leaf.as_str())
+                || CLI_ONLY_DEVELOPMENT_LEAVES.contains(&leaf.as_str()),
             "{leaf:?} is a real `development` CLI subcommand that DEVELOPMENT_OPERATION_FAMILIES \
-             does not name. Either it was never added to the const (this test's whole reason to \
-             exist), or it is a leaf the forward test above never checked against MCP/HTTP at \
-             all -- add it to DEVELOPMENT_OPERATION_FAMILIES in this file."
+             does not name and is not an explicit CLI-only exception. Either it was never added \
+             to a declaration (this test's whole reason to exist), or it is a leaf the forward \
+             test above never checked against MCP/HTTP at all."
+        );
+    }
+}
+
+/// THE OTHER DIRECTION for the bounded CLI-only exception: a stale declaration must fail rather
+/// than silently excusing a renamed or removed command.
+#[test]
+fn every_declared_cli_only_development_leaf_is_a_real_cli_leaf() {
+    let cli_leaves = real_cli_development_leaves();
+    assert!(
+        !cli_leaves.is_empty(),
+        "HARNESS-BROKE: `development --help` listed no subcommands at all"
+    );
+    assert!(
+        !CLI_ONLY_DEVELOPMENT_LEAVES.is_empty(),
+        "CLI_ONLY_DEVELOPMENT_LEAVES is empty; the exception declaration must be explicit"
+    );
+
+    for leaf in CLI_ONLY_DEVELOPMENT_LEAVES {
+        assert!(
+            cli_leaves.iter().any(|actual| actual == leaf),
+            "CLI_ONLY_DEVELOPMENT_LEAVES names {leaf:?}, but the real `development --help` \
+             output has no such leaf: {cli_leaves:?}"
+        );
+        assert!(
+            !DEVELOPMENT_OPERATION_FAMILIES
+                .iter()
+                .any(|family| family.cli == *leaf),
+            "{leaf:?} is classified both as CLI-only and as a three-surface family"
         );
     }
 }

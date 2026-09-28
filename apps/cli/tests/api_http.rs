@@ -2293,6 +2293,21 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     assert_eq!(approve_status, 200, "{approve_reply}");
     let head = head_sequence(&base, &owner_token, "exec_feature");
 
+    // Snapshot resume must use the authenticated successor snapshot. It must not send that
+    // recovered authoring record through the file-resume hash comparison, which compares the
+    // authoring hash with the published safe hash and rejects the valid successor.
+    let (snapshot_resume_status, snapshot_resume_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/resume"),
+        &owner_token,
+        &[("Idempotency-Key", "governed-resume-snapshot-1")],
+        &serde_json::json!({}),
+    );
+    assert_ne!(snapshot_resume_status, 409, "{snapshot_resume_reply}");
+    assert_ne!(
+        snapshot_resume_reply["diagnostics"][0]["path"], "/execution/graph",
+        "snapshot resume used the file hash seam: {snapshot_resume_reply}"
+    );
+
     let delivery = serde_json::json!({
         "signal": {
             "id": "signal-http-delivery-denied",

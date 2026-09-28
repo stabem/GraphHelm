@@ -1343,8 +1343,8 @@ export class RuntimeClient {
     const nodeId = checkedId(node, "node");
     const body: Record<string, unknown> = { node: nodeId };
     if (options.governed !== undefined) {
-      if (!/^sha256:[0-9a-f]{64}$/.test(options.governed.proposalDigest)) {
-        throw new RuntimeError("proposalDigest must be sha256:<64 lowercase hex>.", 0, []);
+      if (!/^[0-9a-f]{64}$/.test(options.governed.proposalDigest)) {
+        throw new RuntimeError("proposalDigest must be 64 lowercase hex characters.", 0, []);
       }
       body.draftId = checkedId(options.governed.draftId, "draftId");
       body.proposalDigest = options.governed.proposalDigest;

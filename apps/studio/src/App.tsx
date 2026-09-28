@@ -1813,53 +1813,70 @@ export default function App({
     if (cancelIllegal) setConfirmCancel(false);
   }, [cancelIllegal]);
 
-  const proposalReviewNode = (() => {
-    const candidates = model.nodes.filter((candidate) => candidate.state === "ghost" && candidate.proposal?.status === "proposed" && candidate.proposal.digest !== null);
-    return focusedNode !== null && candidates.some((candidate) => candidate.id === focusedNode)
-      ? candidates.find((candidate) => candidate.id === focusedNode) ?? null
-      : candidates[0] ?? null;
-  })();
-  const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], reason: null });
+  const closedDraftIds = new Set(eventList.flatMap((event) => {
+    if (event.kind !== "draft_rejected" && event.kind !== "draft_applied" && event.kind !== "mutation_accepted") return [];
+    const payload = event.payload;
+    if (payload === null || typeof payload !== "object") return [];
+    const draftId = (payload as Record<string, unknown>).draftId;
+    return typeof draftId === "string" ? [draftId] : [];
+  }));
+  const durableProposals = eventList.flatMap((event) => {
+    if (event.kind !== "draft_proposed" || event.payload === null || typeof event.payload !== "object") return [];
+    const value = event.payload as Record<string, unknown>;
+    const draftId = typeof value.draftId === "string" ? value.draftId : null;
+    const digest = typeof value.proposalSha256 === "string" ? value.proposalSha256 : null;
+    if (draftId === null || digest === null || closedDraftIds.has(draftId)) return [];
+    return [{ draftId, digest, evidenceId: event.evidenceRefs[0] ?? null }];
+  });
+  const [governedDraftId, setGovernedDraftId] = useState("");
+  const selectedDraftProposal = durableProposals.find((proposal) => proposal.draftId === governedDraftId) ?? null;
+  const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; nodeIds: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], nodeIds: [], reason: null });
   useEffect(() => {
-    const proposal = proposalReviewNode?.proposal;
-    if (proposal === undefined || proposal === null || proposal.evidenceId === null) {
-      setProposalReview({ draftId: proposal?.draftId ?? "", state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor is unavailable." });
+    const proposal = selectedDraftProposal;
+    if (proposal === null || proposal.evidenceId === null) {
+      setProposalReview({ draftId: proposal?.draftId ?? "", state: "unavailable", steps: [], edges: [], nodeIds: [], reason: "Select a sealed typed proposal to review." });
       return;
     }
     let cancelled = false;
-    setProposalReview({ draftId: proposal.draftId, state: "loading", steps: [], edges: [], reason: null });
+    setProposalReview({ draftId: proposal.draftId, state: "loading", steps: [], edges: [], nodeIds: [], reason: null });
     void openEvidence(selected, proposal.evidenceId).then(async (evidence) => {
       if (cancelled) return;
       try {
+        const openedDigest = await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle);
+        if (openedDigest !== proposal.digest) throw new Error("the sealed proposal bytes do not match the recorded digest");
         const parsed: unknown = JSON.parse(evidence.content);
         const envelope = parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
         const candidate = envelope?.proposal !== null && typeof envelope?.proposal === "object" ? envelope.proposal : envelope;
         const draft = candidate !== null && typeof candidate === "object" ? candidate as Record<string, unknown> : null;
         const operations = draft?.id === proposal.draftId && Array.isArray(draft.operations) ? draft.operations : null;
         if (operations === null || operations.length === 0 || operations.length > 64) throw new Error("typed proposal operations are unavailable");
-        const openedDigest = await digestOf(new TextEncoder().encode(JSON.stringify(draft)).buffer, globalThis.crypto.subtle);
-        if (openedDigest !== proposal.digest) throw new Error("the opened proposal digest does not match the recorded proposal");
         const steps: string[] = [];
         const edges: string[] = [];
+        const nodeIds: string[] = [];
         for (const operation of operations) {
           if (operation === null || typeof operation !== "object") throw new Error("typed proposal operation is invalid");
           const value = operation as Record<string, unknown>;
-          if (value.op === "addNode" && (typeof value.id === "string" || typeof value.path === "string")) steps.push(String(value.id ?? value.path));
+          if (value.op === "addNode" && (typeof value.id === "string" || typeof value.path === "string")) {
+            const id = String(value.id ?? value.path);
+            nodeIds.push(id);
+            const nodeValue = value.value !== null && typeof value.value === "object" ? value.value as Record<string, unknown> : null;
+            steps.push(nodeValue !== null && typeof nodeValue.name === "string" ? `${id} · ${nodeValue.name}` : id);
+          }
           else if (value.op === "addEdge" && (value.edge !== null && typeof value.edge === "object" || value.value !== null && typeof value.value === "object")) {
             const edge = (value.edge ?? value.value) as Record<string, unknown>;
             if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} → ${edge.to}`);
           } else if (typeof value.op === "string") steps.push(value.op);
         }
         if (steps.length === 0 && edges.length === 0) throw new Error("typed proposal has no reviewable operations");
-        setProposalReview({ draftId: proposal.draftId, state: "ready", steps, edges, reason: null });
+        setProposalReview({ draftId: proposal.draftId, state: "ready", steps, edges, nodeIds, reason: null });
       } catch (reason) {
-        setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: reason instanceof Error ? reason.message : "The typed proposal descriptor is invalid." });
+        setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], nodeIds: [], reason: reason instanceof Error ? reason.message : "The typed proposal descriptor is invalid." });
       }
     }).catch(() => {
-      if (!cancelled) setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor could not be opened." });
+      if (!cancelled) setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], nodeIds: [], reason: "The sealed typed proposal descriptor could not be opened." });
     });
     return () => { cancelled = true; };
-  }, [proposalReviewNode?.proposal?.draftId, proposalReviewNode?.proposal?.evidenceId, selected, openEvidence]);
+  }, [selectedDraftProposal?.draftId, selectedDraftProposal?.evidenceId, selected, openEvidence]);
 
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
@@ -1938,10 +1955,7 @@ export default function App({
   // to the latest draft or the legacy node-only approval body when the digest or assignment is
   // unavailable; that would approve a different proposal or hide the real blocker.
   const governedApprovalNode = (() => {
-    const candidates = model.nodes.filter((candidate) =>
-      candidate.state === "ghost" && candidate.proposal?.status === "proposed" &&
-      candidate.proposal.digest !== null,
-    );
+    const candidates = model.nodes.filter((candidate) => candidate.state === "ghost" && candidate.proposal?.status === "proposed");
     return focusedNode !== null && candidates.some((candidate) => candidate.id === focusedNode)
       ? candidates.find((candidate) => candidate.id === focusedNode) ?? null
       : candidates[0] ?? null;
@@ -1951,19 +1965,17 @@ export default function App({
     ...model.nodes.flatMap((candidate) => candidate.assignedActor?.type === "agent" ? [candidate.assignedActor.id] : []),
   ])].sort((left, right) => left.localeCompare(right));
   const governedApproval = (() => {
-    const selectedNode = governedApprovalNode;
-    const proposal = selectedNode?.proposal;
-    if (selectedNode === null || selectedNode === undefined || proposal === null || proposal === undefined || proposal.digest === null) return null;
-    const draftNodes = model.nodes.filter((candidate) => candidate.proposal?.draftId === proposal.draftId && candidate.proposal.status === "proposed");
+    const proposal = selectedDraftProposal;
+    if (proposal === null || proposalReview.state !== "ready" || proposalReview.nodeIds.length === 0) return null;
     const assignments: Record<string, string> = {};
-    for (const candidate of draftNodes) {
-      const actor = candidate.id === selectedNode.id
-        ? governedActorByNode[candidate.id] ?? candidate.assignedActor?.id ?? governedActorChoices[0]
-        : candidate.assignedActor?.id ?? governedActorByNode[candidate.id];
+    for (const nodeId of proposalReview.nodeIds) {
+      const candidate = model.nodes.find((node) => node.id === nodeId && node.proposal?.draftId === proposal.draftId);
+      const actor = governedActorByNode[nodeId] ?? candidate?.assignedActor?.id ?? governedActorChoices[0];
       if (actor === undefined || actor.length === 0) return null;
-      assignments[candidate.id] = actor;
+      assignments[nodeId] = actor;
     }
-    return { node: selectedNode, draftId: proposal.draftId, proposalDigest: proposal.digest, assignments };
+    const selectedNode = governedApprovalNode?.id ?? proposalReview.nodeIds[0];
+    return { node: { id: selectedNode }, draftId: proposal.draftId, proposalDigest: proposal.digest, assignments };
   })();
   const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
   /** A running retry failure must be paused before its owner can allow another attempt. */
@@ -2620,14 +2632,21 @@ export default function App({
                 </button>
               </span>
               </>)}
-              {governedApprovalNode !== null && governedApprovalNode.proposal?.digest !== null && model.nodes
-                .filter((candidate) => candidate.proposal?.draftId === governedApprovalNode.proposal?.draftId && candidate.proposal?.status === "proposed")
-                .map((candidate) => (
-                  <label className="action-choice" key={`assignment-${candidate.id}`}>
-                    Responsible actor for {candidate.id}
+              {durableProposals.length > 0 && (
+                <label className="action-choice">
+                  Draft to review
+                  <select value={governedDraftId} onChange={(event) => setGovernedDraftId(event.target.value)} disabled={busy}>
+                    <option value="">Select a sealed draft</option>
+                    {durableProposals.map((proposal) => <option value={proposal.draftId} key={proposal.draftId}>{proposal.draftId} · {proposal.digest}</option>)}
+                  </select>
+                </label>
+              )}
+              {selectedDraftProposal !== null && proposalReview.state === "ready" && proposalReview.nodeIds.map((nodeId) => (
+                  <label className="action-choice" key={`assignment-${nodeId}`}>
+                    Responsible actor for {nodeId}
                     <select
-                      value={governedActorByNode[candidate.id] ?? candidate.assignedActor?.id ?? governedActorChoices[0] ?? ""}
-                      onChange={(event) => setGovernedActorByNode((current) => ({ ...current, [candidate.id]: event.target.value }))}
+                      value={governedActorByNode[nodeId] ?? model.nodes.find((candidate) => candidate.id === nodeId)?.assignedActor?.id ?? governedActorChoices[0] ?? ""}
+                      onChange={(event) => setGovernedActorByNode((current) => ({ ...current, [nodeId]: event.target.value }))}
                       disabled={busy || governedActorChoices.length === 0}
                     >
                       {governedActorChoices.length === 0
@@ -2636,10 +2655,10 @@ export default function App({
                     </select>
                   </label>
                 ))}
-              {governedApprovalNode !== null && governedApprovalNode.proposal?.digest !== null && (
+              {selectedDraftProposal !== null && (
                 <section className="proposal-review" aria-label="Typed proposal review">
-                  <strong>Review draft {governedApprovalNode.proposal?.draftId}</strong>
-                  <span>Proposal digest · {governedApprovalNode.proposal?.digest}</span>
+                  <strong>Review draft {selectedDraftProposal.draftId}</strong>
+                  <span>Proposal digest · {selectedDraftProposal.digest}</span>
                   {proposalReview.state === "loading" && <span>Opening the sealed typed proposal…</span>}
                   {proposalReview.state === "unavailable" && <span>{proposalReview.reason ?? "The typed proposal descriptor is unavailable."}</span>}
                   {proposalReview.state === "ready" && <>
@@ -2660,7 +2679,7 @@ export default function App({
                           idempotencyKey: newIdempotencyKey(),
                           ...ifMatchRendered,
                         })
-                    : governedApproval !== null
+                    : governedApproval !== null || durableProposals.length > 0
                       ? Promise.reject(new Error("Review the sealed typed proposal before approving it."))
                     : approvalNeedsPause
                       ? client.pause(selected, {
@@ -2675,18 +2694,20 @@ export default function App({
                         }),
                   )
                 }
-                disabled={busy || (approveTarget === "" && governedApproval === null) || (governedApproval !== null && proposalReview.state !== "ready")}
+                disabled={busy || (approveTarget === "" && governedApproval === null) || durableProposals.length > 0 && governedApproval === null}
               >
                 {governedApproval !== null
                   ? `approve proposal for ${governedApproval.node.id}`
+                  : durableProposals.length > 0
+                  ? "review selected proposal"
                   : approveTarget === ""
                   ? "nothing to approve"
                   : approvalNeedsPause
                     ? `pause before ${retryTarget ? "allowing retry" : "approving"} ${approveTarget}`
                     : `${retryTarget ? "allow retry" : "approve"} ${approveTarget}`}
               </button>
-              {governedApproval === null && model.nodes.some((candidate) => candidate.state === "ghost") && (
-                <p className="hint">A proposed node needs a recorded assigned actor and proposal digest before it can be approved.</p>
+              {durableProposals.length > 0 && governedApproval === null && (
+                <p className="hint">Select a sealed draft, review its typed nodes and dependencies, then choose a responsible actor for each node.</p>
               )}
               {approvalNeedsPause && (
                 <p className="hint">Pause the running task first. After it is paused, approve the node.</p>

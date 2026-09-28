@@ -2002,6 +2002,13 @@ pub(super) async fn signal(
             );
         }
     };
+    if identity.actor.actor_type() == PersistedActorType::Agent && evidence_out.is_some() {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "scoped agents cannot choose a Runtime filesystem evidence path",
+            "/evidenceOut",
+        );
+    }
     // Milestone 05d Task 9 STEP 5: flips the Task 6 declared discrepancy — when the server was
     // launched with a keyring (`state.sealing`), the signal route now seals through it, exactly
     // as the CLI's own `execution signal --keyring` does; absent a keyring, the API seam keeps

@@ -4,6 +4,7 @@ mod artifact;
 mod budget;
 mod canonical;
 mod customs;
+mod dreams;
 mod evidence;
 mod integrity;
 mod jsonl;
@@ -20,6 +21,7 @@ mod sweep;
 pub use artifact::{ArtifactRegistration, ArtifactRegistrationError, validate_artifact_reference};
 pub use budget::{READ_BUDGET_CHECK_INTERVAL, ReadBudget, ReadBudgetExceeded};
 pub use customs::{ClaimError, ClaimOutcome, ClaimRequest, ClearError, claim, clear, refusal};
+pub use dreams::{DreamShadowAppend, prepare_dream_shadow};
 pub use evidence::{
     EvidenceError, EvidenceInput, EvidenceOpener, EvidenceProtector, EvidenceSealer,
     MAX_EVIDENCE_ITEMS_PER_BATCH, SealedEvidence, SecretBytes,

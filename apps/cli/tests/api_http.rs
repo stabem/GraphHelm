@@ -2314,6 +2314,43 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         "draftId": draft_id,
         "assignments": {"a-step": "agent-planner", "z-step": "agent-z"}
     });
+    // The HTTP boundary must expose the same owner obligation as the core seam before the
+    // approval is submitted. The enum's wire contract is explicit: the tag is snake_case
+    // (`pending_draft`) while its real identity field is snake_case (`draft_id`). A node id is
+    // not an acceptable substitute because one draft can contain many node operations.
+    let pending_status = get_json(
+        &format!("{base}/v1/executions/exec_feature"),
+        Some(&owner_token),
+    );
+    assert_eq!(
+        pending_status["data"]["attention"], "needs_you",
+        "{pending_status}"
+    );
+    assert!(
+        pending_status["data"]["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons.iter().any(|reason| {
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                })
+            }),
+        "status must publish the sealed draft's real identity: {pending_status}"
+    );
+    let pending_briefing = get_json(
+        &format!("{base}/v1/executions/exec_feature/briefing"),
+        Some(&owner_token),
+    );
+    assert!(
+        pending_briefing["data"]["pending"]
+            .as_array()
+            .is_some_and(|pending| {
+                pending.iter().any(|reason| {
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                })
+            }),
+        "briefing must carry the same sealed draft obligation: {pending_briefing}"
+    );
+
     let headers = [
         ("Idempotency-Key", "governed-approve-1"),
         ("X-GraphHelm-Actor", "owner-local"),
@@ -2326,6 +2363,34 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         &body,
     );
     assert_eq!(approve_status, 200, "{approve_reply}");
+    let resolved_status = get_json(
+        &format!("{base}/v1/executions/exec_feature"),
+        Some(&owner_token),
+    );
+    assert!(
+        !resolved_status["data"]["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons.iter().any(|reason| {
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                })
+            }),
+        "approval must resolve this draft's attention reason: {resolved_status}"
+    );
+    let resolved_briefing = get_json(
+        &format!("{base}/v1/executions/exec_feature/briefing"),
+        Some(&owner_token),
+    );
+    assert!(
+        !resolved_briefing["data"]["pending"]
+            .as_array()
+            .is_some_and(|pending| {
+                pending.iter().any(|reason| {
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                })
+            }),
+        "approval must resolve the briefing obligation: {resolved_briefing}"
+    );
     let head = head_sequence(&base, &owner_token, "exec_feature");
 
     // Snapshot resume must use the authenticated successor snapshot. It must not send that
@@ -2386,6 +2451,20 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
             ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
         ],
+    );
+    let restarted_status = get_json(
+        &format!("{base}/v1/executions/exec_feature"),
+        Some(&owner_token),
+    );
+    assert!(
+        !restarted_status["data"]["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons.iter().any(|reason| {
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
+                })
+            }),
+        "restart must preserve the resolved draft attention state: {restarted_status}"
     );
     let (retry_status, retry_reply) = post_json(
         &format!("{base}/v1/executions/exec_feature/approve"),

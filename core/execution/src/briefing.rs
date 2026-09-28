@@ -421,7 +421,8 @@ fn next_step(projection: &ExecutionProjection, answer: &Attention) -> NextStep {
         AttentionReason::SilentNode { .. }
         | AttentionReason::FailedNode { .. }
         | AttentionReason::WedgedQuiescence
-        | AttentionReason::ForeignWakeConsumption { .. } => None,
+        | AttentionReason::ForeignWakeConsumption { .. }
+        | AttentionReason::PendingDraft { .. } => None,
     });
     if let Some((node, remedy, claim_seq)) = named {
         return NextStep::Answer {

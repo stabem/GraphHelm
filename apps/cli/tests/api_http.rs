@@ -2228,7 +2228,10 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         "proposal": draft
     });
     let credential = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-    let binding = format!("{credential}=agent-planner|project-local|exec_feature");
+    let wrong_credential = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let binding = format!(
+        "{credential}=agent-planner|project-local|exec_feature;{wrong_credential}=agent-other|project-local|exec_feature"
+    );
     let extra = [
         "--keyring",
         keyring.to_str().unwrap(),
@@ -2281,6 +2284,41 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     );
     assert_eq!(approve_status, 200, "{approve_reply}");
     let head = head_sequence(&base, &owner_token, "exec_feature");
+
+    let delivery = serde_json::json!({
+        "signal": {
+            "id": "signal-http-delivery-denied",
+            "source": {"type": "node", "id": "implementation"},
+            "type": "node_delivery",
+            "severity": "high",
+            "description": "delivery from the assigned implementation node",
+            "evidence": ["exec_feature"],
+            "emittedAt": "2026-08-13T00:00:00Z"
+        }
+    });
+    let delivery_headers = [
+        ("Idempotency-Key", "delivery-wrong-agent"),
+        ("X-GraphHelm-Actor", "owner-forged"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let (wrong_status, wrong_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        wrong_credential,
+        &delivery_headers,
+        &delivery,
+    );
+    assert_eq!(wrong_status, 400, "{wrong_reply}");
+    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
+
+    let (assigned_status, assigned_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        credential,
+        &[("Idempotency-Key", "delivery-assigned-agent")],
+        &delivery,
+    );
+    assert_eq!(assigned_status, 200, "{assigned_reply}");
+    let delivered_head = head_sequence(&base, &owner_token, "exec_feature");
+    assert!(delivered_head > head);
     drop(_guard);
 
     let (_guard, base, owner_token) = serve_with_env(
@@ -2298,7 +2336,10 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         &body,
     );
     assert_eq!(retry_status, 200, "{retry_reply}");
-    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
+    assert_eq!(
+        head_sequence(&base, &owner_token, "exec_feature"),
+        delivered_head
+    );
 
     let mut changed = body.clone();
     changed["proposalDigest"] = serde_json::json!(
@@ -2311,7 +2352,10 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         &changed,
     );
     assert_eq!(mismatch_status, 409, "{mismatch_reply}");
-    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
+    assert_eq!(
+        head_sequence(&base, &owner_token, "exec_feature"),
+        delivered_head
+    );
 }
 
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,

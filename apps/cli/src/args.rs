@@ -338,8 +338,9 @@ pub enum DevelopmentCommand {
     },
     /// Propose caller-supplied content for governed memory and report the admission verdict.
     MemoryPropose {
-        /// Observation to screen before any durable boundary.
-        #[arg(long)]
+        /// Observation to screen. Omission keeps the legacy admission-only probe; neither
+        /// this probe nor explicit CLI content publishes a durable memory record.
+        #[arg(long, default_value = "a proposal with no input argument yet")]
         content: String,
         #[arg(long, default_value = "workspace-local")]
         workspace_id: String,

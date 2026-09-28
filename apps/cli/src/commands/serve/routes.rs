@@ -4357,6 +4357,18 @@ pub(super) async fn development_memory_propose(
         }
         return memory_failure("memory idempotency key was reused for different content or scope");
     }
+    let observed_head = history.last().map_or(0, |event| event.sequence);
+    if identity
+        .if_match
+        .is_some_and(|expected| expected != observed_head)
+    {
+        return super::if_match_conflict(COMMAND, Some(observed_head));
+    }
+    // Pin the sequence observed before sealing. A concurrent writer must produce a conflict,
+    // not silently advance the caller's accepted precondition while asynchronous work runs.
+    let Some(expected) = observed_head.checked_add(1) else {
+        return memory_failure("memory stream sequence is exhausted");
+    };
     let input = match EvidenceInput::new(
         evidence_id.to_string(),
         "application/json",
@@ -4404,10 +4416,6 @@ pub(super) async fn development_memory_propose(
     {
         return memory_failure("source graph or authoring snapshot changed during publication");
     }
-    let expected = match events.next_sequence(&repo_scope, stream_id.as_str()) {
-        Ok(value) => value,
-        Err(_) => return memory_failure("memory stream head is unavailable"),
-    };
     let record = graphhelm_governor::MemoryRecord::new(record_id.clone()).bind_durable(
         scope,
         digest.clone(),

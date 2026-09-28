@@ -207,13 +207,14 @@ pub fn context_refusal(code: DevelopmentRefusalCode, message: String) -> Outcome
 
 /// Propose content for governed memory and report the admission verdict, over the CLI surface.
 ///
-/// The caller supplies content and scope; this command performs admission only. Durable
+/// Explicit content and scope are screened; omission retains the legacy CLI probe. This command
+/// performs admission only. Durable
 /// publication requires the authenticated HTTP flow and its separately recorded validation receipt.
 ///
 /// **It returns the VERDICT and no identifier, and that is a measurement rather than a choice.**
-/// Nothing persists a `MemoryCandidate` or a `MemoryRecord` -- both exist only in `core/governor`,
-/// built in memory -- so an id would name something no later call could resolve. The verdict is the
-/// one thing the admission path can honestly answer today: admitted, or refused with its code.
+/// This command persists neither a `MemoryCandidate` nor a `MemoryRecord`; durable records belong
+/// to the authenticated HTTP path. An id here would name something this invocation did not create.
+/// The admission verdict is admitted, or refused with its code.
 ///
 /// The admission path is CONSUMED, not restated. `capture_memory` holds the opt-in above the first
 /// boundary touch and `admit_memory_candidate` screens scope, origin and content; an adapter that

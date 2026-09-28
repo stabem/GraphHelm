@@ -200,9 +200,10 @@ const TOOLS: [ToolSpec; 31] = [
     },
     ToolSpec {
         name: "memory_propose",
-        description: "Propose content for governed memory and report the admission verdict \
-                      (POST /v1/development/memory). Returns the verdict and no id: nothing \
-                      persists a candidate, so an id would name what cannot be fetched.",
+        description: "Publish opt-in durable memory through POST /v1/development/memory. \
+                      Requires content, exact workspace/project, expiry, sourceExecutionId and \
+                      a separately authenticated validatorSignalId. Returns committed record \
+                      and sealed Evidence ids; missing or mismatched validation is refused.",
         schema: memory_propose_schema,
     },
     ToolSpec {

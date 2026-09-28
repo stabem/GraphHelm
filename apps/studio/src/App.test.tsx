@@ -406,6 +406,7 @@ describe("opening", () => {
     ] });
     const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
     const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [] })),
       getEvents: vi.fn(async () => ({
         head: 4,
         events: [
@@ -418,6 +419,11 @@ describe("opening", () => {
     await open(client);
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-wire");
     expect(await screen.findByText(/Proposed nodes · 2/)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Review pending proposal");
+    expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("owner review");
+    expect(screen.getByText(/Needs your attention · needs you/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
     expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
     const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
     await waitFor(() => expect(approve).toBeEnabled());

@@ -78,7 +78,10 @@ function latestObservationForAgent(model: GraphModel, agentId: string): { node: 
   let latest: { node: GraphNode; at: string | null; timestamp: number } | null = null;
   for (const node of model.nodes) {
     for (const event of node.history) {
-      if (event.actorId !== agentId) continue;
+      // Runtime lifecycle events may be recorded by system-runtime while the durable assignment
+      // names the agent doing the work. Keep recorder and responsible actor separate, but let the
+      // collaboration card follow the assigned agent's actual node history.
+      if (event.actorId !== agentId && node.assignedActor?.id !== agentId) continue;
       const timestamp = event.sequence;
       if (latest === null || timestamp >= latest.timestamp) {
         latest = { node, at: event.occurredAt, timestamp };
@@ -301,7 +304,7 @@ export function WorkOverview({
                 const outgoing = model.edgesKnown ? model.edges.filter((edge) => edge.from === node.id && nodeIds.has(edge.to)) : [];
                 const isSelected = selectedNode === node.id;
                 return (
-                  <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && node.history.some(event => event.actorId === selectedAgent) ? " work-related" : ""}`} key={node.id}>
+                <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && (node.assignedActor?.id === selectedAgent || node.history.some(event => event.actorId === selectedAgent)) ? " work-related" : ""}`} key={node.id}>
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
                       <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.declaredName ?? node.id}</strong>

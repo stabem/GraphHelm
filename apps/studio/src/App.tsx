@@ -1919,6 +1919,13 @@ export default function App({
     setFocus({ kind: "run" });
     setSayFocusNonce((nonce) => nonce + 1);
   };
+  const pendingOwnerReview = durableProposals.length > 0;
+  const focusPendingProposal = () => {
+    setGovernedDraftId((current) => current || durableProposals[0]?.draftId || "");
+    setRunActionsOpen(true);
+    setTalkOpen(false);
+    setFocus({ kind: "run" });
+  };
   /** What each dock verb may claim right now, and the reason for each it may not. */
   const legality = actionLegality(status);
   /** #1083: an ended run's dock drops pause, resume and cancel (see `hasEnded`). */
@@ -2524,6 +2531,7 @@ export default function App({
                 replyIssue={replyIssue}
                 needsDirection={needsDirection}
                 retryFailureNodes={[...retryFailures.keys()]}
+                nodeNames={Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : []))}
               />
             </aside>
             )}
@@ -2605,14 +2613,17 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               activity={recentActivity}
-              attention={status.attention}
-              nextAction={waitingForInput && verdict?.key === "needs" ? {
+              attention={pendingOwnerReview ? "needs_you" : status.attention}
+              nextAction={pendingOwnerReview ? {
+                label: "Review pending proposal",
+                detail: "A sealed proposal is waiting for an owner review, assignment, and approval.",
+              } : waitingForInput && verdict?.key === "needs" ? {
                 label: needsDirection ? "Send direction" : `Answer ${pendingQuestion?.asker ?? "in the thread"}`,
                 detail: needsDirection
                   ? "This step is waiting. No specific question is visible yet; use a suggested message or write your own direction."
                   : pendingQuestion?.text ?? "Open the thread to read the question.",
               } : null}
-              onNextAction={focusRunReply}
+              onNextAction={pendingOwnerReview ? focusPendingProposal : focusRunReply}
               agentReports={agentReports}
               runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}

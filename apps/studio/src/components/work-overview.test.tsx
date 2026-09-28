@@ -66,6 +66,22 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("reviewer");
     expect(card).toHaveTextContent("assignment is separate from the Runtime recorder");
   });
+  /** Observable contract: an assigned agent sees the node's latest Runtime-recorded outcome in
+   * its collaboration card. This catches the defect where filtering only by event actor makes
+   * system-runtime recorded work look like "No node activity" for the responsible agent. */
+  it("shows assigned node activity even when Runtime recorded the outcome", () => {
+    const assigned = {
+      ...node("implementation"),
+      state: "succeeded" as const,
+      assignedActor: { type: "agent", id: "builder" },
+      touches: 1,
+      history: [{ sequence: 12, kind: "node_outcome_recorded", nextState: "succeeded", outcome: "succeeded", occurredAt: "2026-09-28T12:00:00Z", actorId: "system-runtime", actorType: "system", evidence: 1 }],
+    };
+    render(<WorkOverview model={{ ...model, nodes: [assigned] }} crew={[{ id: "builder", charter: null }]} selectedNode={null} onSelectNode={vi.fn()} />);
+    const agent = screen.getByText("builder", { selector: ".work-agent-id" }).closest("details")!;
+    expect(agent).toHaveTextContent("implementation");
+    expect(agent).not.toHaveTextContent("No node activity yet");
+  });
   it("keeps a typed verified step distinct from an unverified model reply", () => {
     const verified = {
       ...node("review_browser_evidence"),

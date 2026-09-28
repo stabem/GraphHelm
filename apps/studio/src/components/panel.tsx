@@ -541,7 +541,7 @@ export function Thread({
                           {said === null ? (
                             <>
                               <p className="turn-text">{readable(entry.kind)}</p>
-                              <code>{JSON.stringify(entry.payload)}</code>
+                              <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(entry.payload)}</code></details>
                             </>
                           ) : (
                             <>
@@ -635,7 +635,7 @@ export function Thread({
               {line === null ? (
                 <>
                   <p className="turn-text">{readable(event.kind)}</p>
-                  <code>{JSON.stringify(event.payload)}</code>
+                  <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>
                 </>
               ) : (
                 <>
@@ -1374,6 +1374,7 @@ export function RunPanel({
   replyIssue = null,
   needsDirection = false,
   retryFailureNodes = [],
+  nodeNames = {},
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1405,6 +1406,8 @@ export function RunPanel({
   needsDirection?: boolean;
   /** Blocked nodes whose latest recorded outcome exhausted retryable attempts. */
   retryFailureNodes?: string[];
+  /** Human declared node names, with wire ids as the honest fallback. */
+  nodeNames?: Record<string, string>;
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1540,7 +1543,8 @@ export function RunPanel({
           <span className="lbl">Assigned work</span>
           {Object.entries(status.nodeAssignments ?? {}).map(([node, actor]) => (
             <div className="assignment-row" key={node}>
-              <strong>{node}</strong>
+              <strong>{nodeNames[node] ?? node}</strong>
+              {nodeNames[node] && <small>{node}</small>}
               <span>{actor.type}: {actor.id}</span>
               <span className={`assignment-state ${readable(status.nodeStates?.[node] ?? "ghost")}`}>
                 {readable(status.nodeStates?.[node] ?? "ghost")}

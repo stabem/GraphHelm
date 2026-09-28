@@ -37,6 +37,17 @@ it("keeps authoring evidence closed until the reader opens it", async () => {
   expect(await screen.findByText("FULL SERIALIZED GRAPH")).toBeVisible();
 });
 
+/** Observable contract: bookkeeping payloads stay collapsed while the event remains inspectable.
+ * This catches technical JSON overwhelming the conversation and verifies that the evidence is
+ * still available behind an explicit control. */
+it("collapses technical payloads without dropping the recorded event", () => {
+  render(React.createElement(Thread, { events: [event(9, "draft_proposed", { draftId: "draft-1", proposalSha256: "sha256:sealed" })] }));
+  expect(screen.getByText("draft proposed")).toBeInTheDocument();
+  const details = screen.getByText("Technical details").closest("details");
+  expect(details).not.toHaveAttribute("open");
+  expect(details).toHaveTextContent("draft-1");
+});
+
 it("shows the newest sealed report while an older evidence read is still pending", async () => {
   resetPanelCaches();
   const older = event(1, "signal_recorded");

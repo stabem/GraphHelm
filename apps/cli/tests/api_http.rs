@@ -2135,6 +2135,19 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     assert_eq!(event["actor"]["type"], "agent");
     assert_eq!(event["actor"]["id"], "agent-planner");
 
+    let before_owner_route = head_sequence(&base, credential, execution);
+    let (approve_status, approve_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/approve"),
+        credential,
+        &[("Idempotency-Key", "scoped-agent-approve-1")],
+        &serde_json::json!({"node": "implementation"}),
+    );
+    assert_eq!(approve_status, 401, "{approve_reply}");
+    assert_eq!(
+        head_sequence(&base, credential, execution),
+        before_owner_route
+    );
+
     let foreign = format!("{base}/v1/executions/exec-http-other/signal");
     let (foreign_status, foreign_reply) = post_json(&foreign, credential, &headers, &body);
     assert_eq!(foreign_status, 401, "{foreign_reply}");

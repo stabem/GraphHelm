@@ -37,5 +37,5 @@ pub use memory::{
 };
 pub use publish::{
     PublicationPreparationObserver, PublicationPreparationServices, PublicationStage,
-    prepare_draft_publication, prepare_draft_publication_observed,
+    prepare_draft_publication, prepare_draft_publication_observed, prepare_genesis_publication,
 };

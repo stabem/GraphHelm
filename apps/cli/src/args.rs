@@ -581,6 +581,11 @@ pub enum ExecutionCommand {
         /// reasoning #79 was closed on.
         #[arg(long)]
         held: bool,
+        /// Sealing keyring for a governed genesis snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
     },
     /// Lists the execution streams the event store holds: one summary row per stream, ordered
     /// by execution id, sliced by `--after` (exclusive) and `--limit`.
@@ -825,13 +830,18 @@ pub enum ExecutionCommand {
     /// execution started with — the driver has no other source of the spec to drive against.
     Resume {
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
         #[arg(long)]
         events: PathBuf,
         #[arg(long)]
         fixtures: Option<PathBuf>,
         #[arg(long)]
         execution: Option<String>,
+        /// Recover the graph from the authenticated persisted authoring snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
     },
     /// Evaluates the stream's customs stages and journals the result: one `sweep_performed`, plus
     /// one `overdue_exception` for every episode found lapsed, appended together.

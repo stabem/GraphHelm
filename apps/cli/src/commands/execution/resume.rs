@@ -1,6 +1,8 @@
 use std::path::Path;
 
+use graphhelm_events::EvidenceRead;
 use graphhelm_execution::{ResumeError, recovery_plan, resume_preconditions};
+use graphhelm_governor::recover_verified_authoring_snapshot;
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
     EventKind, ExecutionResumed, NewEvent, NodeOutcome, NodeState, OpaqueId, PersistedActor,
@@ -27,11 +29,31 @@ const COMMAND: &str = "execution.resume";
 /// before Milestone 05a Task 4 — byte-identical CLI behaviour (the same pattern Task 3 established
 /// for `signal`/`approve`).
 pub fn run(
-    file: &Path,
+    file: Option<&Path>,
     events: &Path,
     fixtures: Option<&Path>,
     execution: Option<&str>,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
 ) -> Outcome {
+    if keyring.is_some() || key_id.is_some() {
+        return finish(
+            COMMAND,
+            run_from_snapshot(events, fixtures, execution, keyring, key_id),
+            |value| value,
+        );
+    }
+    let Some(file) = file else {
+        return Outcome::application(
+            COMMAND,
+            graphhelm_protocols::Diagnostic::error(
+                "GHCLI001_ARGUMENT_INVALID",
+                "--file is required unless --keyring and --key-id recover the persisted snapshot",
+                "/file",
+                "cli",
+            ),
+        );
+    };
     let loaded = match graphhelm_schema::load_graph(file) {
         Ok(loaded) => loaded,
         Err(diagnostics) => return Outcome::domain(COMMAND, diagnostics),
@@ -65,6 +87,74 @@ pub fn run(
     .with_warnings(warnings)
 }
 
+fn run_from_snapshot(
+    events: &Path,
+    fixtures: Option<&Path>,
+    execution: Option<&str>,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
+) -> Result<serde_json::Value, Failure> {
+    let (keyring, key_id) = match (keyring, key_id) {
+        (Some(keyring), Some(key_id)) => (keyring, key_id),
+        _ => {
+            return Err(execution_state(
+                "--keyring and --key-id are required together for snapshot recovery",
+                "/keyring",
+            ));
+        }
+    };
+    let sealing = super::signal::SignalKeyring {
+        directory: keyring.to_path_buf(),
+        key_id: key_id.to_owned(),
+    };
+    let opener = super::signal::open_sealer(&sealing)?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let (scope, stream, projection) = super::load_projection(&store, execution)?;
+    let active = projection
+        .current_graph
+        .as_ref()
+        .ok_or_else(|| execution_state("no persisted graph snapshot exists", "/graph"))?;
+    let snapshot_ref = projection
+        .authoring_snapshots
+        .get(&active.number())
+        .ok_or_else(|| execution_state("the authoring snapshot is unavailable", "/graph"))?;
+    let snapshot = match store
+        .sealed_evidence(&scope, snapshot_ref.evidence_id())
+        .map_err(|error| repository_failure(&error))?
+    {
+        EvidenceRead::Available(value) => value,
+        EvidenceRead::Unavailable(_) => {
+            return Err(execution_state(
+                "the authoring snapshot is unavailable",
+                "/graph",
+            ));
+        }
+    };
+    let record = block_on_local(recover_verified_authoring_snapshot(
+        &opener, scope, active, &snapshot,
+    ))
+    .map_err(|_| execution_state("the authoring snapshot failed integrity checks", "/graph"))?;
+    let version = GraphVersion::from_record(record)
+        .map_err(|_| execution_state("the authoring snapshot is invalid", "/graph"))?;
+    execute_with_verification(
+        &version,
+        events,
+        fixtures,
+        Some(stream.as_str()),
+        owner_actor(),
+        idempotency_key("execution-resumed"),
+        false,
+    )
+}
+
+fn block_on_local<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("local runtime")
+        .block_on(future)
+}
+
 /// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as
 /// explicit parameters, exactly as Task 3 did for `signal`/`approve`.
 ///
@@ -89,7 +179,27 @@ pub(crate) fn execute(
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<serde_json::Value, Failure> {
-    let prepared = execute_prepared(version, events, fixtures, execution, actor, key)?;
+    execute_with_verification(version, events, fixtures, execution, actor, key, true)
+}
+
+fn execute_with_verification(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    verify_graph: bool,
+) -> Result<serde_json::Value, Failure> {
+    let prepared = execute_prepared_with_verification(
+        version,
+        events,
+        fixtures,
+        execution,
+        actor,
+        key,
+        verify_graph,
+    )?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let projection = drive_to_quiescence(
         &store,
@@ -165,6 +275,18 @@ pub(crate) fn execute_prepared(
     actor: PersistedActor,
     key: OpaqueId,
 ) -> Result<PreparedDrive, Failure> {
+    execute_prepared_with_verification(version, events, fixtures, execution, actor, key, true)
+}
+
+fn execute_prepared_with_verification(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    verify_graph: bool,
+) -> Result<PreparedDrive, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let fixtures = load_fixtures(fixtures)?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
@@ -179,7 +301,9 @@ pub(crate) fn execute_prepared(
     // started from, checked BEFORE any recovery append so a refused resume leaves the store
     // untouched. The check itself moved to `verify_graph_matches_execution` (#159) when `claim`
     // and `clear` started needing the same seam; its messages are unchanged.
-    verify_graph_matches_execution(version, &initial, &history, "resume")?;
+    if verify_graph {
+        verify_graph_matches_execution(version, &initial, &history, "resume")?;
+    }
 
     // Crash triage on entry (the pause-recover-approve order 04e settled): every node still
     // `Running` when the execution stopped has unknown effects. `recovery_plan` names them, and

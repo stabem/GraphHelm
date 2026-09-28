@@ -198,6 +198,26 @@ describe("Studio organization and responsive navigation", () => {
   afterEach(() => localStorage.clear());
 
   it.each([
+    [false, "demo-deploy"],
+    [false, "demo-calm"],
+    [true, "demo-deploy"],
+    [true, "demo-calm"],
+  ])("closes mobile projects navigation after choosing %s / %s while preserving desktop navigation", async (wide, run) => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: wide, media: query }));
+    try {
+      await open(stubClient());
+      const toggle = screen.getByRole("button", { name: "Toggle projects" });
+      if (!wide) await userEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText(run, { exact: true }));
+      expect(toggle).toHaveAttribute("aria-expanded", wide ? "true" : "false");
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
     ["needs_you", "Needs you"],
     ["can_sleep", "Can sleep"],
   ])("names lifecycle and %s verdict in the run header", async (attention, label) => {

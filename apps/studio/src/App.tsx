@@ -2149,6 +2149,9 @@ export default function App({
         onSelect={(id) => {
           setModelsOpen(false);
           select(id);
+          if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
+            setProjectsOpen(false);
+          }
         }}
         onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
         onNewTask={() => {

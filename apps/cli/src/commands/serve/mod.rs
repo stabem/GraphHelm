@@ -14,7 +14,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -112,7 +112,7 @@ struct ServeState {
     token: Arc<[u8]>,
     /// Optional scoped agent credentials. They are separate from the owner bearer token and are
     /// only accepted for agent authored proposal/evidence mutations.
-    agent_credentials: Arc<BTreeMap<String, PersistedActor>>,
+    agent_credentials: Arc<BTreeMap<String, ScopedAgentCredential>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
@@ -194,7 +194,14 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     rt.block_on(serve_forever(address, state, startup_warnings))
 }
 
-fn load_agent_credentials() -> Result<BTreeMap<String, PersistedActor>, Failure> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScopedAgentCredential {
+    actor: PersistedActor,
+    project: String,
+    execution: String,
+}
+
+fn load_agent_credentials() -> Result<BTreeMap<String, ScopedAgentCredential>, Failure> {
     let mut result = BTreeMap::new();
     let Some(raw) = std::env::var_os("GRAPHHELM_AGENT_CREDENTIALS") else {
         return Ok(result);
@@ -206,13 +213,32 @@ fn load_agent_credentials() -> Result<BTreeMap<String, PersistedActor>, Failure>
     {
         let Some((credential, actor_id)) = item.split_once('=') else {
             return Err(serve_invalid(
-                "GRAPHHELM_AGENT_CREDENTIALS must use credential=actor-id entries separated by ';'",
+                "GRAPHHELM_AGENT_CREDENTIALS must use credential=actor-id|project-id|execution-id entries separated by ';'",
                 "/agentCredentials",
             ));
         };
         if credential.is_empty() || credential.len() > 256 || result.contains_key(credential) {
             return Err(serve_invalid(
                 "GRAPHHELM_AGENT_CREDENTIALS contains an invalid or duplicate credential",
+                "/agentCredentials",
+            ));
+        }
+        let mut fields = actor_id.split('|');
+        let (Some(actor_id), Some(project), Some(execution), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid scope",
+                "/agentCredentials",
+            ));
+        };
+        if project.is_empty()
+            || project.len() > 128
+            || execution.is_empty()
+            || execution.len() > 128
+        {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid scope",
                 "/agentCredentials",
             ));
         }
@@ -224,7 +250,11 @@ fn load_agent_credentials() -> Result<BTreeMap<String, PersistedActor>, Failure>
         })?;
         result.insert(
             credential.to_owned(),
-            PersistedActor::new(PersistedActorType::Agent, actor_id),
+            ScopedAgentCredential {
+                actor: PersistedActor::new(PersistedActorType::Agent, actor_id),
+                project: project.to_owned(),
+                execution: execution.to_owned(),
+            },
         );
     }
     Ok(result)
@@ -243,8 +273,11 @@ fn verify_agent_credential(
     };
     state
         .agent_credentials
-        .get(credential)
-        .is_some_and(|expected| expected == actor)
+        .iter()
+        .any(|(expected_credential, expected)| {
+            constant_time_eq(credential.as_bytes(), expected_credential.as_bytes())
+                && expected.actor == *actor
+        })
 }
 
 // #583: there is deliberately NO default program allowlist here.
@@ -667,11 +700,44 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let authorized =
-        presented.is_some_and(|token| constant_time_eq(token.as_bytes(), &state.token));
-    if authorized {
+    let Some(presented) = presented.map(str::to_owned) else {
+        return unauthorized_response();
+    };
+    if constant_time_eq(presented.as_bytes(), &state.token) {
         return next.run(request).await;
     }
+    // Agent credentials are bearer principals in their own right. They are never accepted as
+    // owner credentials, and the authenticated actor is copied into the request before any
+    // handler sees caller-controlled actor headers. This keeps legacy handlers safe until they
+    // all consume an explicit principal extractor.
+    let Some((_, scoped)) = state.agent_credentials.iter().find(|(credential, scoped)| {
+        constant_time_eq(presented.as_bytes(), credential.as_bytes())
+            && request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
+            && request
+                .headers()
+                .get("x-graphhelm-project")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|project| {
+                    constant_time_eq(project.as_bytes(), scoped.project.as_bytes())
+                })
+    }) else {
+        return unauthorized_response();
+    };
+    let mut request = request;
+    if let Ok(actor) = HeaderValue::from_str(scoped.actor.id().as_str()) {
+        request.headers_mut().insert("x-graphhelm-actor", actor);
+    }
+    request
+        .headers_mut()
+        .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+    request.headers_mut().insert(
+        "x-graphhelm-agent-credential",
+        HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
+    );
+    next.run(request).await
+}
+
+fn unauthorized_response() -> Response {
     respond(
         StatusCode::UNAUTHORIZED,
         Outcome::domain(

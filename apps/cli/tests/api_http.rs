@@ -2226,17 +2226,11 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             panic!("the HTTP start must record execution_started graph hash: {start_events}")
         });
 
-    let (pause_status, pause_reply) = post_json(
-        &format!("{base}/v1/executions/exec_feature/pause"),
-        &owner_token,
-        &[
-            ("Idempotency-Key", "governed-pause-1"),
-            ("X-GraphHelm-Actor", "owner-observer"),
-            ("X-GraphHelm-Actor-Type", "owner"),
-        ],
-        &serde_json::json!({}),
+    let held_status = get_json(
+        &format!("{base}/v1/executions/exec_feature"),
+        Some(&owner_token),
     );
-    assert_eq!(pause_status, 200, "{pause_reply}");
+    assert_eq!(held_status["data"]["status"], "paused", "{held_status}");
 
     let draft = serde_json::json!({
         "id": "draft-http-two-node",

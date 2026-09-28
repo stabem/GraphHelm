@@ -241,6 +241,17 @@ fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
     serve_with_env(events, extra, &[])
 }
 
+/// Starts a test server with its own sealing keyring. Scoped agents cannot select a host
+/// filesystem path for evidence; these tests exercise their signal behavior through the server's
+/// sealed-evidence path instead.
+fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let keyring_text = keyring.to_str().unwrap();
+    let extra = ["--keyring", keyring_text, "--key-id", "signal-key"];
+    serve_with_env(events, &extra, &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)])
+}
+
 /// `serve_with` plus environment variables the child alone sees — the gateway passphrase a
 /// server that leases a `direct_api` credential reads fresh from `GRAPHHELM_GATEWAY_KEY`.
 fn serve_with_env(
@@ -2302,7 +2313,6 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         "draftId": draft_id,
         "assignments": {"a-step": "agent-planner", "z-step": "agent-z"}
     });
-
     // The HTTP boundary must expose the same owner obligation as the core seam before the
     // approval is submitted. The enum's wire contract is explicit: the tag is snake_case
     // (`pending_draft`) while its real identity field is snake_case (`draft_id`). A node id is
@@ -2375,7 +2385,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|pending| {
                 pending.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draftId"] == draft_id
+                reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "approval must resolve the briefing obligation: {resolved_briefing}"
@@ -2450,7 +2460,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|reasons| {
                 reasons.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draftId"] == draft_id
+                reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "restart must preserve the resolved draft attention state: {restarted_status}"
@@ -2496,11 +2506,9 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let headers = [
         ("Idempotency-Key", "sig-cmd-retry-1"),
@@ -2538,7 +2546,6 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
     // decision sequence, not this newer head and not any caller-supplied sequence.
     let unrelated_body = serde_json::json!({
         "signal": signal_envelope("signal-http-unrelated", "unexpected_dependency"),
-        "evidenceOut": directory.path().join("unrelated-evidence.json").to_str().unwrap(),
     });
     let (unrelated_status, unrelated_reply) = post_json(
         &url,
@@ -2628,10 +2635,9 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry-actor-binding", "no_progress"),
-        "evidenceOut": directory.path().join("actor-evidence.json").to_str().unwrap(),
     });
     let url = format!("{base}/v1/executions/{execution}/signal");
     let (first_status, first_reply) = post_json(
@@ -2752,14 +2758,13 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
     // different event kind, avoiding a test-side copy of the digest algorithm that could drift.
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry-kind-binding", "no_progress"),
-        "evidenceOut": directory.path().join("kind-evidence.json").to_str().unwrap(),
     });
     let headers = [
         ("Idempotency-Key", "sig-cmd-retry-kind-binding"),
         ("X-GraphHelm-Actor", "agent-kind"),
         ("X-GraphHelm-Actor-Type", "agent"),
     ];
-    let (probe_guard, probe_base, probe_token) = serve(&probe_events);
+    let (probe_guard, probe_base, probe_token) = serve_sealed(&probe_events);
     let probe_url = format!("{probe_base}/v1/executions/{execution}/signal");
     let (probe_status, probe_reply) = post_json(&probe_url, &probe_token, &headers, &body);
     assert_eq!(probe_status, 200, "{probe_reply}");
@@ -2775,7 +2780,7 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
     drop(probe_guard);
 
     append_wrong_decision_kind(&target_events, execution, &derived_key, "agent-kind");
-    let (_target_guard, target_base, target_token) = serve(&target_events);
+    let (_target_guard, target_base, target_token) = serve_sealed(&target_events);
     let target_url = format!("{target_base}/v1/executions/{execution}/signal");
     // The raw event endpoint is the narrow observer for the question here: did the refused retry
     // append anything? It does not make this guard depend on any aggregate status projection.
@@ -2822,11 +2827,9 @@ fn missing_or_invalid_actor_headers_are_400_before_the_store_is_touched() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-bad-headers", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let url = format!("{base}/v1/executions/{execution}/signal");
     let head_before = head_sequence(&base, &token, execution);
@@ -3813,13 +3816,11 @@ fn two_agents_share_information_only_through_the_api() {
         "the fixture must leave exactly one node blocked for agent-builder to approve: {start_data}"
     );
 
-    let (_guard, base, token) = serve(&events);
+    let (_guard, base, token) = serve_sealed(&events);
 
     // agent-scout signals — the only thing it does that agent-builder could possibly learn from.
-    let evidence_out = directory.path().join("scout-evidence.json");
     let signal_body = serde_json::json!({
         "signal": signal_envelope("signal-scout-1", "unexpected_dependency"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let (signal_status, signal_reply) = post_json(
         &format!("{base}/v1/executions/{execution}/signal"),
@@ -5105,8 +5106,8 @@ fn a_signal_on_a_fixture_only_parked_execution_still_names_the_mode_in_diagnosti
         &token,
         &[
             ("Idempotency-Key", "m248-signal-cmd"),
-            ("X-GraphHelm-Actor", "agent-planner"),
-            ("X-GraphHelm-Actor-Type", "agent"),
+            ("X-GraphHelm-Actor", "owner-planner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
         ],
         &serde_json::json!({
             "signal": signal_envelope("m248-signal-1", "no_progress"),
@@ -8448,7 +8449,6 @@ struct PresenceHarness {
     _guard: ServerGuard,
     base: String,
     token: String,
-    evidence_out: PathBuf,
     issued: std::cell::Cell<u32>,
 }
 
@@ -8458,14 +8458,12 @@ impl PresenceHarness {
         let events = directory.path().join("events");
         let fixtures = all_success_fixtures(directory.path());
         cli_start(&events, &fixtures, PRESENCE_EXECUTION);
-        let evidence_out = directory.path().join("presence-evidence.json");
-        let (guard, base, token) = serve(&events);
+        let (guard, base, token) = serve_sealed(&events);
         Self {
             _directory: directory,
             _guard: guard,
             base,
             token,
-            evidence_out,
             issued: std::cell::Cell::new(0),
         }
     }
@@ -8493,7 +8491,6 @@ impl PresenceHarness {
         headers.extend_from_slice(declaration);
         let body = serde_json::json!({
             "signal": signal_envelope(&format!("signal-presence-{nth}"), "no_progress"),
-            "evidenceOut": self.evidence_out.to_str().unwrap(),
         });
         post_json(
             &format!("{}/v1/executions/{PRESENCE_EXECUTION}/signal", self.base),

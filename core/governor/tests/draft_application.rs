@@ -517,6 +517,50 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
             .unwrap(),
         )
         .unwrap();
+    // A governed approval must not reuse a terminal result for a changed existing node. Seed a
+    // reviewed patch proposal so the rejection proves the acceptance guard itself, rather than a
+    // missing proposal or stale digest check.
+    let mut invalid = proposed.clone();
+    invalid.id = "draft-existing-node-mutation".into();
+    invalid.operations = vec![DraftOperation::PatchNode {
+        id: "docs".into(),
+        patch: serde_json::json!({"objective": "changed after completion"}),
+    }];
+    let invalid_digest = raw_content_sha256(&serde_json::to_vec(&invalid).unwrap()).unwrap();
+    repository
+        .append_atomic(
+            &PreparedAppend::new(
+                scope.clone(),
+                execution.clone(),
+                repository
+                    .next_sequence(&scope, execution.as_str())
+                    .unwrap(),
+                vec![NewEvent::new(
+                    OpaqueId::parse("proposal-existing-node-mutation").unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::Agent,
+                        ActorId::parse("agent-reviewer").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                        draft_id: OpaqueId::parse(&invalid.id).unwrap(),
+                        expected_version: invalid.expected_version,
+                        expected_hash: graphhelm_protocols::WireHash::parse(
+                            invalid.expected_hash.as_str(),
+                        )
+                        .unwrap(),
+                        operation_count: invalid.operations.len() as u16,
+                        proposal_sha256: Some(invalid_digest.clone()),
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let mut assignments = std::collections::BTreeMap::new();
     assignments.insert(
         OpaqueId::parse("archive").unwrap(),
@@ -543,6 +587,36 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
         ids: &ids,
         externalizer: &externalizer,
     };
+    let head_before_rejected_mutation = repository
+        .read_replay_stream(&services.scope, services.stream_id.as_str())
+        .unwrap()
+        .len();
+    let rejected_acceptance = graphhelm_governor::ExecutionDraftAcceptance {
+        draft_id: OpaqueId::parse(&invalid.id).unwrap(),
+        mode: ExecutionMode::Supervised,
+        proposal_sha256: invalid_digest,
+        assignments: std::collections::BTreeMap::new(),
+        decision_key: None,
+        decision_node: None,
+    };
+    let rejection = block_on(graphhelm_governor::apply_draft_with_acceptance(
+        &base,
+        &invalid,
+        &services,
+        Some(&rejected_acceptance),
+    ));
+    assert!(matches!(
+        rejection,
+        Err(graphhelm_governor::ApplyError::InvalidOperation)
+    ));
+    assert_eq!(
+        repository
+            .read_replay_stream(&services.scope, services.stream_id.as_str())
+            .unwrap()
+            .len(),
+        head_before_rejected_mutation,
+        "existing-node mutation must not append or change the execution head"
+    );
     let result = block_on(graphhelm_governor::apply_draft_with_acceptance(
         &base,
         &proposed,

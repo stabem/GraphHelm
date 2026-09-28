@@ -134,6 +134,12 @@ fn snapshot_keeps_search_and_read_on_the_same_generation_after_mutation() {
         ports.reader().read_prefix("README.md", 4096).unwrap().bytes,
         b"old_generation_marker\n"
     );
+    assert_eq!(
+        ports.search().snapshot_digest(),
+        ports.reader().snapshot_digest(),
+        "search and reader expose one immutable source identity"
+    );
+    assert!(ports.search().snapshot_digest().is_some());
 }
 
 #[test]

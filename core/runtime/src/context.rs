@@ -46,7 +46,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use graphhelm_protocols::GraphNode;
+use graphhelm_protocols::{GraphNode, RawSha256};
 use serde::{Deserialize, Serialize};
 
 use crate::executor::ExecutorRefusal;
@@ -323,6 +323,10 @@ pub struct NodeContextSummary {
     /// Closed, content-free reason for the search origin. It never carries paths or query text.
     #[serde(default)]
     pub search_reason: SourceSearchReason,
+    /// Immutable source generation shared by the search and reader, when both ports declared
+    /// the same validated content identity. Absent for live providers and unavailable compiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_digest: Option<RawSha256>,
     pub terms: Vec<String>,
     /// Repository-relative paths shipped in the capsule, in rank order.
     pub sources: Vec<String>,
@@ -610,6 +614,7 @@ pub fn retrieve_and_compile_in(
         root,
         search_origin: SourceSearchOrigin::default(),
         search_reason: SourceSearchReason::default(),
+        source_snapshot_digest: None,
         terms: terms.to_vec(),
         sources: Vec::new(),
         excerpted_sources: 0,
@@ -652,6 +657,15 @@ pub fn retrieve_and_compile_in(
     };
     summary.search_origin = search_result.provenance.origin;
     summary.search_reason = search_result.provenance.reason;
+    let search_digest = search.snapshot_digest();
+    let reader_digest = reader.snapshot_digest();
+    if search_digest != reader_digest {
+        // A one-sided declaration is just as unsafe as two different generations: reading now
+        // could combine paths from one source with bytes from another. Refuse before the first
+        // candidate read and use the existing unavailable fallback vocabulary.
+        return fallback(summary, ContextFallback::SearchUnavailable);
+    }
+    summary.source_snapshot_digest = search_digest;
     let candidates = search_result.paths;
     summary.candidates_returned = candidates.len() as u64;
     if candidates.is_empty() {

@@ -70,6 +70,13 @@
         "snapshot_coverage_gap"
       ]
     },
+    "sourceSnapshotDigest": {
+      "description": "The validated immutable source generation shared by search and reader. Absent for live providers or when a consistent identity could not be established; it does not claim current workspace freshness.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "minLength": 64,
+      "maxLength": 64
+    },
     "terms": {
       "type": "array",
       "maxItems": 12,

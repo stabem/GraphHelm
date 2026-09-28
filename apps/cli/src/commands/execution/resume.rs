@@ -17,6 +17,7 @@ use super::{
     verify_graph_matches_execution,
 };
 use crate::commands::{event_store, owner, publish_loaded};
+use crate::error_codes::GHCLI001_ARGUMENT_INVALID;
 use crate::output::Outcome;
 use graphhelm_simulation::FixtureExecutor;
 
@@ -47,7 +48,7 @@ pub fn run(
         return Outcome::application(
             COMMAND,
             graphhelm_protocols::Diagnostic::error(
-                "GHCLI001_ARGUMENT_INVALID",
+                GHCLI001_ARGUMENT_INVALID,
                 "--file is required unless --keyring and --key-id recover the persisted snapshot",
                 "/file",
                 "cli",

@@ -2084,7 +2084,12 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     create_signal_keyring(&keyring);
     let (_guard, base, token) = serve_with_env(
         &events,
-        &["--keyring", keyring.to_str().unwrap(), "--key-id", "signal-key"],
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
         &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
     );
     let body = serde_json::json!({
@@ -2130,7 +2135,12 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     create_signal_keyring(&keyring);
     let (_guard, base, _owner_token) = serve_with_env(
         &events,
-        &["--keyring", keyring.to_str().unwrap(), "--key-id", "signal-key"],
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
         &[
             ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
             ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),

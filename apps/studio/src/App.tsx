@@ -1717,6 +1717,12 @@ export default function App({
       occurredAt: event.occurredAt,
       text: envelopes[event.sequence]?.text?.trim().slice(0, 220) || null,
     })), [eventList, envelopes]);
+  const latestRecordedUpdate = useMemo(() => eventList.reduce<{ sequence: number; occurredAt: string | null } | null>(
+    (latest, event) => latest === null || event.sequence > latest.sequence
+      ? { sequence: event.sequence, occurredAt: event.occurredAt }
+      : latest,
+    null,
+  ), [eventList]);
   const agentReports = useMemo(() => {
     const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
     for (const event of eventList) {
@@ -2573,6 +2579,9 @@ export default function App({
             <Board
               initialLayout="overview"
               model={model}
+              projectName={project}
+              projectPath={projectPath}
+              latestRecordedUpdate={latestRecordedUpdate}
               board={board}
               selectedNode={focusedNode}
               onSelectNode={(id) => {

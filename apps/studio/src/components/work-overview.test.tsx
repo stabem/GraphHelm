@@ -121,6 +121,34 @@ describe("organized work overview", () => {
     render(<WorkOverview model={model} activity={[{sequence:40,actorId:"reviewer",occurredAt:null,text:null}]} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByRole("region", {name:"Recent recorded activity"})).toHaveTextContent("Report text has not opened yet");
   });
+  it("identifies the active project and chooses the newest recorded update by event sequence", () => {
+    render(<WorkOverview
+      model={model}
+      projectName="GraphHelm"
+      projectPath="F:/github/GraphHelm"
+      latestRecordedUpdate={{ sequence: 21, occurredAt: "2026-09-26T16:00:00Z" }}
+      activity={[
+        { sequence: 12, actorId: "older", occurredAt: "2026-09-26T17:00:00Z", text: "Older update" },
+        { sequence: 14, actorId: "newer", occurredAt: "2026-09-26T16:00:00Z", text: "Newest journal update" },
+      ]}
+      selectedNode={null}
+      onSelectNode={vi.fn()}
+    />);
+    const identity = screen.getByRole("region", { name: "Active workspace" });
+    expect(identity).toHaveTextContent("GraphHelm");
+    expect(identity).toHaveTextContent("F:/github/GraphHelm");
+    expect(identity).toHaveTextContent("Event #21 · recorded");
+    expect(screen.getByRole("region", { name: "Where this run stands" })).toHaveTextContent("newer");
+    expect(screen.getByText("Active workspace")).toBeInTheDocument();
+  });
+  it("states when the project folder and recorded timestamp are unavailable", () => {
+    render(<WorkOverview model={model} latestRecordedUpdate={{ sequence: 9, occurredAt: null }} selectedNode={null} onSelectNode={vi.fn()} />);
+    const identity = screen.getByRole("region", { name: "Active workspace" });
+    expect(identity).toHaveTextContent("Project name unavailable");
+    expect(identity).toHaveTextContent("Project folder unavailable");
+    expect(identity).toHaveTextContent("Event #9 · timestamp unavailable");
+    expect(screen.queryByText("Live workspace")).not.toBeInTheDocument();
+  });
   it("shows where a one-node run stands and each agent's latest recorded report", () => {
     const selectAgent = vi.fn();
     render(<WorkOverview

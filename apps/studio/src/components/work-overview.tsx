@@ -11,15 +11,19 @@ import {
 
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
-import { ago, hueOf, initialOf, readable } from "./format";
+import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
 type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
 type AgentReport = { sequence: number; occurredAt: string | null; text: string | null };
+type RecordedUpdate = { sequence: number; occurredAt: string | null };
 
 export interface WorkOverviewProps {
   model: GraphModel;
+  projectName?: string | null;
+  projectPath?: string | null;
+  latestRecordedUpdate?: RecordedUpdate | null;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
@@ -91,6 +95,9 @@ function statusClass(node: GraphNode): string {
 
 export function WorkOverview({
   model,
+  projectName = null,
+  projectPath = null,
+  latestRecordedUpdate = null,
   crew = [],
   talks = [],
   activity = [],
@@ -133,7 +140,17 @@ export function WorkOverview({
     : singleStepStatus ?? readable(singleStep.state);
   const nodeIds = new Set(model.nodes.map((node) => node.id));
   const lint = splitLint(model.lint, demonstration);
-  const latestReport = activity[0] ?? null;
+  const latestReport = activity.reduce<typeof activity[number] | null>(
+    (latest, item) => latest === null || item.sequence > latest.sequence ? item : latest,
+    null,
+  );
+  const recordedUpdate = latestRecordedUpdate === null
+    ? "No recorded update yet"
+    : latestRecordedUpdate.occurredAt === null
+      ? `Event #${latestRecordedUpdate.sequence} · timestamp unavailable`
+      : Number.isNaN(new Date(latestRecordedUpdate.occurredAt).valueOf())
+        ? `Event #${latestRecordedUpdate.sequence} · timestamp invalid`
+        : `Event #${latestRecordedUpdate.sequence} · recorded ${fullInstant(latestRecordedUpdate.occurredAt)}`;
   const orderedCrew = [...crew].sort((left, right) =>
     (agentReports[right.id]?.sequence ?? 0) - (agentReports[left.id]?.sequence ?? 0),
   );
@@ -142,7 +159,7 @@ export function WorkOverview({
     <main className="work-overview" aria-label="Work overview">
       <header className="work-header">
         <div className="work-heading">
-          <span className="work-kicker"><Activity aria-hidden="true" size={16} /> Live workspace</span>
+          <span className="work-kicker"><Activity aria-hidden="true" size={16} /> Active workspace</span>
           <h1>Work overview</h1>
           {runId && <span className="work-run">Run {runId}</span>}
         </div>
@@ -154,6 +171,12 @@ export function WorkOverview({
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
+
+      <section className="work-identity" aria-label="Active workspace">
+        <div><span>Project</span><strong>{projectName ?? "Project name unavailable"}</strong></div>
+        <div><span>Project folder</span><strong>{projectPath ?? "Project folder unavailable"}</strong></div>
+        <div><span>Latest recorded update</span><strong>{recordedUpdate}</strong></div>
+      </section>
 
       {nextAction && <section className="work-next-action" aria-label="Next action">
         <div><span>Needs your attention{attention ? ` · ${readable(attention)}` : ""}</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p></div>

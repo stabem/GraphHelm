@@ -445,10 +445,11 @@ describe("opening", () => {
     expect(screen.getByRole("button", { name: "review selected proposal" })).toBeDisabled();
   });
   it("opens the organized overview without applying saved canvas coordinates", async () => {
-    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm"})} />);
+    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"F:/github/GraphHelm"})} />);
     expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();
     expect(screen.getByRole("button",{name:/^Overview$/})).toHaveAttribute("aria-pressed","true");
     expect(screen.queryByRole("combobox",{name:"Find on board"})).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("F:/github/GraphHelm");
   });
   /** THE POINT OF THE SESSION WORK. Nobody types anything: the page asks the dev server, gets the
    * token the Runtime already wrote, and is connected before the operator does a thing. */

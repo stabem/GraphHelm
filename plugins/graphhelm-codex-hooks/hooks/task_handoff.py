@@ -482,7 +482,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.11"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.12"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})
@@ -492,8 +492,10 @@ def _mcp_stdio() -> int:
                 params = request_value.get("params")
                 if not isinstance(params, dict):
                     raise ValueError("tools/call params must be an object")
-                if set(params) - {"name", "arguments"}:
+                if set(params) - {"name", "arguments", "_meta"}:
                     raise ValueError("tools/call params contain an unsupported field")
+                if "_meta" in params and not isinstance(params["_meta"], dict):
+                    raise ValueError("tools/call metadata must be an object")
                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
             else:
                 response = _mcp_error(request_id, -32601, "method not found")

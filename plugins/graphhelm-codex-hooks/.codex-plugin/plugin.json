@@ -1,6 +1,6 @@
 {
   "name": "graphhelm-codex-hooks",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Codex session hook compatibility companion for GraphHelm versions that skip hooks in the Agent Plugin manifest.",
   "author": {
     "name": "GraphHelm"

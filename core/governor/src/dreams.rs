@@ -172,13 +172,13 @@ mod tests {
             trigger: DreamTrigger::Manual,
             category: DreamCategory::CodeFinding,
             input_bytes: 1,
-            input_sha256: RawSha256::parse(&"0".repeat(64)).unwrap(),
-            evidence_sha256: vec![RawSha256::parse(&"1".repeat(64)).unwrap()],
+            input_sha256: RawSha256::parse("0".repeat(64)).unwrap(),
+            evidence_sha256: vec![RawSha256::parse("1".repeat(64)).unwrap()],
             planner_id: OpaqueId::parse("planner-test").unwrap(),
             critic_id: OpaqueId::parse("critic-test").unwrap(),
             critic_verdict: DreamCriticVerdict::Accepted,
             write_critical: false,
-            finding_sha256: Some(RawSha256::parse(&"2".repeat(64)).unwrap()),
+            finding_sha256: Some(RawSha256::parse("2".repeat(64)).unwrap()),
             task_id: Some(OpaqueId::parse("task-test").unwrap()),
         }
     }

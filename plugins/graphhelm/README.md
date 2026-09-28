@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.8)
+## Session hooks (version 0.1.9)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -121,6 +121,34 @@ The hook calls no model. Cached compaction avoids a Runtime request, and confirm
 delivery avoids another request. These are request-count guarantees covered by local HTTP tests,
 not a measured reduction in a complete task's billed tokens. The hook returns only bounded typed
 summary fields, never the full objective, transcript or Runtime command text.
+
+### Explicit task handoff
+
+`hooks/task_handoff.py` is a provider-neutral command adapter for any host that can run Python.
+It is explicit and is never called automatically by SessionStart or SessionEnd. `offer` records a
+sealed `task_handoff_offer` signal for one exact recipient host and session. `receive` reads the
+original journal event, opens its sealed envelope, reads a fresh bounded briefing, and records a
+sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status` reconstructs
+offers and matching receipts from the Runtime journal.
+
+```powershell
+python <installed-plugin>/hooks/task_handoff.py offer --host claude --session-id <sender-session> --recipient-host codex --recipient-session-id <receiver-session> --handoff-id <bounded-id>
+python <installed-plugin>/hooks/task_handoff.py receive --host codex --session-id <receiver-session> --offer-id <offer-id>
+python <installed-plugin>/hooks/task_handoff.py status --host codex --session-id <receiver-session> --offer-id <offer-id>
+```
+
+The adapter requires the Runtime to seal the signal evidence. It re-reads the journal and sealed
+evidence on retries, so losing local hook state does not create a second offer. It validates the
+execution, source actor, target actor, protocol metadata, evidence hash, and `replyTo`; bounded
+incomplete pagination or missing evidence stays unobserved. A receipt proves that the receiving
+adapter retrieved the offer and current briefing. It does not prove model comprehension, task
+acceptance, node ownership, permission transfer, or completion. Runtime owner credentials authorize
+declared actor labels; they do not cryptographically authenticate the host or model.
+
+Each explicit handoff request allows up to five seconds of socket inactivity per Runtime request;
+the caller must still impose its own whole-process deadline. A timeout remains unobserved and is
+not retried automatically. `--handoff-id` distinguishes multiple offers between the same two
+sessions in one execution; repeating the same id replays the journal record after local state loss.
 
 ### Setup inspection
 

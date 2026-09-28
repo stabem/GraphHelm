@@ -92,7 +92,8 @@ host identity such as `--host my-agent`; unknown hosts use the `graphhelm-portab
 contract automatically. `start` returns a bounded `context`, `end` returns its acknowledged
 delivery state, and `inspect` returns local observations. A portable response reports the adapter
 boundary and `activation: "unobserved"`; it does not claim that the host loaded the hook or
-accepted a task. Use `--format native` only for the built-in `claude` and `codex` host envelopes.
+accepted a task. Use `--format portable` when the host wants this shared machine-readable
+contract; the built-in `claude` and `codex` hooks keep their native envelopes by default.
 
 The token stays in its file and travels only to a loopback HTTP or HTTPS Runtime. A redirect is
 refused. The hook prints `UNOBSERVED` if a bound read or write fails, without blocking the agent

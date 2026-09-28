@@ -263,10 +263,10 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if bound is None:
         if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
             if output_format == "portable":
-                print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": ""}, separators=(",", ":")))
+                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": ""}, separators=(",", ":")))
             return
         if output_format == "portable":
-            print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": KEEL_CONTEXT}, separators=(",", ":")))
+            print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": KEEL_CONTEXT}, separators=(",", ":")))
         else:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT}}))
         return
@@ -291,7 +291,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
     if output_format == "portable":
-        print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": context}, separators=(",", ":")))
+        print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": context}, separators=(",", ":")))
     else:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}))
 
@@ -315,7 +315,8 @@ def _signal(execution: str, session: str, host: str, emitted_at: str, node_id: s
     key = f"session-end-v2-{digest}"
     actor = f"{host}-session-{session}"
     if len(actor) > 128:
-        raise ValueError("host and session identity too long")
+        identity = f"{host}\0{session}"
+        actor = f"agent-session-{hashlib.sha256(identity.encode()).hexdigest()[:48]}"
     description = f"{actor} session ended; task outcome was not verified by this hook."
     if node_id:
         description += f" Declared node binding label: {node_id}."
@@ -457,10 +458,6 @@ def main() -> int:
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
-    if host in {"claude", "codex"} and output_format == "portable":
-        raise SystemExit("portable format is for third-party hosts")
-    if host not in {"claude", "codex"} and output_format == "native":
-        raise SystemExit("native format is reserved for Claude and Codex")
     try:
         if args.phase == "inspect":
             inspect(host, args.session_id, output_format)
@@ -471,7 +468,7 @@ def main() -> int:
             else:
                 delivered = end(payload, host, output_format)
                 if output_format == "portable":
-                    print(json.dumps({"phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
+                    print(json.dumps({"format": "graphhelm-portable-v1", "phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
     except (OSError, ValueError, KeyError, RecursionError) as error:
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
         if args.phase == "inspect":
@@ -479,11 +476,11 @@ def main() -> int:
             return 1
         if args.phase == "start":
             if output_format == "portable":
-                print(json.dumps({"phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
+                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
             else:
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
         elif output_format == "portable":
-            print(json.dumps({"phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
+            print(json.dumps({"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
     return 0
 
 

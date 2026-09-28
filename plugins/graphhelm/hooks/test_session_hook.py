@@ -149,31 +149,28 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertEqual(RuntimeHandler.requests, [])
 
-    def test_portable_host_uses_explicit_json_contract_for_start_end_and_inspect(self):
+    def test_portable_format_is_shared_with_native_host_identity(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
-        start = self.run_hook("start", host="third-party-agent")
-        self.assertEqual(start.returncode, 0, start.stderr)
-        start_report = json.loads(start.stdout)
-        self.assertEqual(start_report["phase"], "start")
-        self.assertEqual(start_report["host"], "third-party-agent")
-        self.assertIn('sequence 19; nextStep {"kind":"diagnose"}', start_report["context"])
-        end = self.run_hook("end", host="third-party-agent")
-        self.assertEqual(json.loads(end.stdout)["delivery"], "acknowledged")
-        inspect = subprocess.run(
-            [sys.executable, str(SCRIPT), "inspect", "--host", "third-party-agent"],
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "start", "--host", "claude", "--format", "portable"],
+            input=json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=6, check=False,
         )
-        report = json.loads(inspect.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
         self.assertEqual(report["format"], "graphhelm-portable-v1")
-        self.assertTrue(report["localObservations"][0]["deliveryDelivered"])
-        self.assertEqual(len(RuntimeHandler.requests), 2)
+        self.assertEqual(report["host"], "claude")
 
-    def test_portable_host_identity_is_bounded_before_state_or_runtime(self):
+    def test_long_valid_identities_use_bounded_actor_label(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
-        invalid = "host/with/path"
-        result = self.run_hook("end", host=invalid)
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(RuntimeHandler.requests, [])
+        host = "h" * 64
+        session = "s" * 128
+        result = self.run_hook("end", host=host, session_id=session)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["delivery"], "acknowledged")
+        signal = RuntimeHandler.requests[0][3]["signal"]
+        self.assertLessEqual(len(signal["source"]["id"]), 128)
+        self.assertTrue(signal["source"]["id"].startswith("agent-session-"))
 
     def test_portable_host_uses_explicit_json_contract_for_start_end_and_inspect(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

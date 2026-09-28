@@ -12,7 +12,7 @@ use graphhelm_protocols::{
     NodeOutcomeRecorded, NodeState, ObligationStatus, OpaqueId, PersistedActor, PersistedActorType,
     PersistedDiagnostic, PersistedGraphVersionRef, PersistedObligationStatus, PolicyObligation,
     PolicyObligationEvaluated, PolicyReport, PolicyWaiver, PolicyWaiverCreated, RepositoryScope,
-    SafeCode, Sensitivity, Severity, WireHash,
+    SafeCode, Sensitivity, Severity, SimulationStatus, WireHash,
 };
 use thiserror::Error;
 
@@ -175,6 +175,14 @@ pub fn apply_draft_with_acceptance<'a>(
             if !proposal_is_recorded {
                 return Err(ApplyError::InvalidOperation);
             }
+            if projection.simulation_status != Some(SimulationStatus::Paused)
+                || projection
+                    .node_states
+                    .values()
+                    .any(|state| *state == NodeState::Running)
+            {
+                return Err(ApplyError::InvalidOperation);
+            }
             // Governed execution approval only accepts additive topology. Existing nodes may
             // already have terminal outcomes; approving a patch or removal here would publish a
             // new promise while leaving the old execution result attached to it.
@@ -188,7 +196,16 @@ pub fn apply_draft_with_acceptance<'a>(
                 .collect();
             if draft.operations.iter().any(|operation| match operation {
                 DraftOperation::AddNode { .. } => false,
-                DraftOperation::AddEdge { edge } => !proposed_nodes.contains(edge.to.as_str()),
+                DraftOperation::AddEdge { edge } => {
+                    if proposed_nodes.contains(edge.to.as_str()) {
+                        false
+                    } else {
+                        !matches!(
+                            projection.node_states.get(edge.to.as_str()),
+                            Some(NodeState::Draft | NodeState::Ready)
+                        )
+                    }
+                }
                 DraftOperation::RemoveNode { .. }
                 | DraftOperation::PatchNode { .. }
                 | DraftOperation::RemoveEdge { .. } => true,

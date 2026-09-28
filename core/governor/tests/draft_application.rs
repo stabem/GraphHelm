@@ -25,10 +25,11 @@ use graphhelm_governor::{
 use graphhelm_graph::{GraphVersion, raw_content_sha256};
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, ArtifactId, Clock, DraftOperation, DraftRejected, EventEnvelope,
-    EventKind, EvidenceId, ExecutionId, ExecutionMode, ExecutionStarted, GraphDraft, GraphImported,
-    GraphSourceKind, GraphVersionPublished, GraphVersionRecord, IdGenerator, NewEvent, NodeState,
-    OpaqueId, PersistedActor, PersistedActorType, PersistedGraphVersion, PersistedGraphVersionRef,
-    ProjectId, RawSha256, RepositoryScope, SafeCode, SemanticHash, Sensitivity, WorkspaceId,
+    EventKind, EvidenceId, ExecutionId, ExecutionMode, ExecutionPaused, ExecutionStarted,
+    GraphDraft, GraphImported, GraphSourceKind, GraphVersionPublished, GraphVersionRecord,
+    IdGenerator, NewEvent, NodeState, OpaqueId, PersistedActor, PersistedActorType,
+    PersistedGraphVersion, PersistedGraphVersionRef, ProjectId, RawSha256, RepositoryScope,
+    SafeCode, SemanticHash, Sensitivity, WorkspaceId,
 };
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -486,6 +487,20 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
                             )
                             .unwrap(),
                             mode: ExecutionMode::Supervised,
+                        }),
+                        vec![],
+                        vec![],
+                    ),
+                    NewEvent::new(
+                        OpaqueId::parse("execution-paused").unwrap(),
+                        PersistedActor::new(
+                            PersistedActorType::Owner,
+                            ActorId::parse("owner-local").unwrap(),
+                        ),
+                        Sensitivity::Internal,
+                        EventKind::ExecutionPaused(ExecutionPaused {
+                            execution_id: OpaqueId::parse(&base.graph().metadata.execution_id)
+                                .unwrap(),
                         }),
                         vec![],
                         vec![],

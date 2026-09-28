@@ -465,7 +465,9 @@ def _mcp_stdio() -> int:
         request_id = None
         if len(raw) > MAX_MCP_MESSAGE or not raw.endswith(b"\n"):
             print(json.dumps(_mcp_error(None, -32600, "invalid request"), separators=(",", ":")), flush=True)
-            continue
+            # This read may be only a prefix of one physical frame. Its remaining bytes
+            # must never be interpreted as a second request with Runtime side effects.
+            return 1
         try:
             request_value = json.loads(raw)
             if not isinstance(request_value, dict) or request_value.get("jsonrpc") != "2.0":
@@ -480,7 +482,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.10"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.12"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})
@@ -490,8 +492,10 @@ def _mcp_stdio() -> int:
                 params = request_value.get("params")
                 if not isinstance(params, dict):
                     raise ValueError("tools/call params must be an object")
-                if set(params) - {"name", "arguments"}:
+                if set(params) - {"name", "arguments", "_meta"}:
                     raise ValueError("tools/call params contain an unsupported field")
+                if "_meta" in params and not isinstance(params["_meta"], dict):
+                    raise ValueError("tools/call metadata must be an object")
                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
             else:
                 response = _mcp_error(request_id, -32601, "method not found")

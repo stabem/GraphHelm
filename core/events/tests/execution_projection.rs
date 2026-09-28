@@ -705,6 +705,7 @@ fn signal_events(n: usize) -> Vec<EventEnvelope> {
                 kind: "no_progress".to_owned(),
                 severity: SignalSeverity::Medium,
                 envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+                scoped_agent_authenticated: None,
             }),
         ));
     }

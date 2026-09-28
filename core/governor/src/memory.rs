@@ -913,6 +913,7 @@ pub fn durable_memory_evidence_bytes_bound(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn durable_memory_evidence_bytes_bound_full(
     candidate: &MemoryCandidate,
     expires_at_unix: i64,

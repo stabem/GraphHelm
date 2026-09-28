@@ -316,8 +316,7 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
     serve_with_keyring(events, None)
 }
 
-const FIXTURE_EVENTS_KEY: &str =
-    "0101010101010101010101010101010101010101010101010101010101010101";
+const FIXTURE_EVENTS_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
 
 /// Starts the real server with an offline fixture keyring. Agent callers then omit
@@ -361,12 +360,7 @@ fn serve_with_keyring(
         "127.0.0.1:0",
     ]);
     if let Some((keyring, key_id)) = keyring {
-        command.args([
-            "--keyring",
-            keyring.to_str().unwrap(),
-            "--key-id",
-            key_id,
-        ]);
+        command.args(["--keyring", keyring.to_str().unwrap(), "--key-id", key_id]);
         command.env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY);
     }
     let mut child = command
@@ -494,7 +488,16 @@ fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
     } else {
         serve(&events)
     };
-    let graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
+    let source_graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
+    let graph = if sealed {
+        // Sealed start stores governed genesis, so the graph and stream must name the same run.
+        let mut value: serde_json::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&source_graph).unwrap()).unwrap();
+        value["metadata"]["executionId"] = serde_json::json!(execution);
+        write_json_file(directory.path(), "graph.json", &value)
+    } else {
+        source_graph
+    };
     let (status, reply) = post_json(
         &base,
         &token,
@@ -1079,16 +1082,15 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
             serde_json::json!({
                 "executionId": "exec-mcp-map",
                 "signal": {"not": "a signal"},
-                "evidenceOut": harness.token_file.with_file_name("ev-bad.json").to_str().unwrap(),
             }),
         ),
     ]);
     let (is_error, envelope) = tool_envelope(&session.replies[1]);
     assert!(is_error, "an API failure is isError true: {envelope}");
     assert_eq!(envelope["ok"], serde_json::json!(false));
-    assert!(
-        serde_json::to_string(&envelope).unwrap().contains("GHCLI"),
-        "the envelope's own code reaches the chat intact: {envelope}"
+    assert_eq!(
+        envelope["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID",
+        "the signal validation code reaches the chat, rather than a filesystem refusal: {envelope}"
     );
 }
 

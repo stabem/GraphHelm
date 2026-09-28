@@ -2100,6 +2100,17 @@ describe("controls that act instead of excusing", () => {
     await waitFor(() => expect(box).toHaveFocus());
   });
 
+  it("opens the Free canvas and focuses the graph field from the default overview", async () => {
+    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })) });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    await screen.findByRole("main", { name: "Work overview" });
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
+    expect(client.resume).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText(/graph file path on the runtime host/i)).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Free canvas" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("resumes a Studio-created run with its durable one-node graph when no file is named", async () => {
     const executionId = "run-0f250aef-8a0a-4777-84ca-01f08ea55796";
     const objective = "Recover the paused task";

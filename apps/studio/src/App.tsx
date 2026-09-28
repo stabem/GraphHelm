@@ -2749,6 +2749,9 @@ export default function App({
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
                     if (graphFile.trim().length === 0 && resumeGraph === null) {
+                      const freeCanvas = [...document.querySelectorAll<HTMLButtonElement>("button")]
+                        .find((button) => button.textContent?.trim() === "Free canvas");
+                      freeCanvas?.click();
                       setFileFocusNonce((nonce) => nonce + 1);
                       return;
                     }

@@ -4302,11 +4302,15 @@ pub(super) async fn development_memory_propose(
         Ok(bytes) => bytes,
         Err(_) => return memory_failure("memory evidence could not be prepared"),
     };
+    // Keep the committed key independent of the request digest. Otherwise changed intent derives
+    // a new event key and bypasses both the retry probe and the store's atomic conflict check.
+    let memory_key = graphhelm_protocols::OpaqueId::parse(identity.keys[0].prefix.clone())
+        .expect("validated mutation key prefix");
     // The idempotency identity includes every signed/bound input. Content alone is insufficient:
     // two legitimate keys may publish the same text with different validation/source intent.
     let intent = serde_json::json!({
-        "actor": identity.actor.id(),
-        "idempotencyKey": identity.keys[0].full.as_str(),
+        "actor": identity.actor,
+        "idempotencyKey": memory_key.as_str(),
         "workspaceId": scope.workspace_id.as_str(),
         "projectId": scope.project_id.as_str(),
         "contentDigest": digest,
@@ -4339,7 +4343,7 @@ pub(super) async fn development_memory_propose(
     };
     if let Some(existing) = history
         .iter()
-        .find(|event| event.idempotency_key.as_str() == identity.keys[0].full.as_str())
+        .find(|event| event.idempotency_key == memory_key)
     {
         let same_record = existing.scope == repo_scope
             && matches!(
@@ -4372,6 +4376,35 @@ pub(super) async fn development_memory_propose(
         Ok(value) => value,
         Err(_) => return memory_failure("memory evidence could not be sealed"),
     };
+    if !graphhelm_runtime::retrieval::source_content_is_available(
+        &source_scope,
+        graph.content_slots(),
+        &source_store,
+        opener.as_ref(),
+    )
+    .await
+    {
+        return memory_failure("source graph content became unavailable or invalid");
+    }
+    let current_source =
+        match execution::load_projection(&source_store, Some(source_execution_id.as_str())) {
+            Ok((current_scope, current_stream, projection))
+                if current_scope == source_scope && current_stream == source_stream =>
+            {
+                projection
+            }
+            _ => return memory_failure("source execution became unavailable"),
+        };
+    if !current_source
+        .current_graph
+        .as_ref()
+        .is_some_and(|current| {
+            current.number() == graph.number() && current.semantic_hash() == graph.semantic_hash()
+        })
+        || current_source.authoring_snapshots.get(&graph.number()) != Some(snapshot_reference)
+    {
+        return memory_failure("source graph or authoring snapshot changed during publication");
+    }
     let expected = match events.next_sequence(&repo_scope, stream_id.as_str()) {
         Ok(value) => value,
         Err(_) => return memory_failure("memory stream head is unavailable"),
@@ -4386,7 +4419,7 @@ pub(super) async fn development_memory_propose(
         repo_scope,
         stream_id,
         expected,
-        identity.keys[0].full.clone(),
+        memory_key,
         identity.actor.clone(),
     )
     .with_validation_fact(

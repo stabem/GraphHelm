@@ -52,11 +52,17 @@ missing Evidence, forged reference, self actor, scope mismatch, digest mismatch,
 identity refuses publication. The validation fact is projected on its own semantic axis; generic
 publication Evidence never upgrades semantic state.
 
-Retrieval repeats the source loader and identity comparison after replay. It excludes records when
+Retrieval replays the source stream and repeats the identity comparison. It excludes records when
 the source execution, trusted graph, or authoring snapshot is missing or changed. Publication and
 retrieval also require each original graph content slot to remain available, authenticated, and
 digest-valid. A retained authoring snapshot cannot restore an erased source member. This contract
 claims snapshot identity freshness only; it does not claim Git HEAD freshness.
+
+Publication checks source members and projection identity again after asynchronous sealing.
+Retrieval rechecks identity before returning context. These are point-in-time observations, not a
+cross-stream lock: a subsequent source change invalidates later retrieval rather than rewriting
+the append-only publication history. A validation receipt never revives contradicted, deprecated,
+or expired semantic state.
 
 The idempotency identity covers the authenticated actor, idempotency key, candidate digest, scope,
 expiry, validator and source references, graph version, and authoring snapshot identity. Retries

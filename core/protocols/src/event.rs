@@ -582,8 +582,8 @@ pub struct MemoryValidationRecorded {
 
 /// Whether a memory record's content is still believed. Never touched by
 /// [`MemoryPublicationTransitioned`] -- this is the axis ADR-032 decision 3 keeps independent of
-/// publication, and the only durable event that moves it is [`MemoryRecordSuperseded`], for the
-/// PREDECESSOR side of a supersession, never as a standalone transition of its own.
+/// publication. [`MemoryValidationRecorded`] validates a candidate; [`MemoryRecordSuperseded`]
+/// changes the predecessor's semantic state. Validation never revives a terminal record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PersistedMemorySemanticState {

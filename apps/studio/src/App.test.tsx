@@ -20,6 +20,7 @@ import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
 import type { MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
+import { digestOf } from "./runtime/customs";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -397,6 +398,35 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  it("reviews a raw-digest DraftProposed before any ghost event and submits plain AddNode ids", async () => {
+    const content = JSON.stringify({ id: "draft-wire", operations: [
+      { op: "addNode", path: "/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },
+      { op: "addNode", path: "/nodes/verify", value: { name: "Verify", objective: "Check the summary" } },
+      { op: "addEdge", value: { from: "summarize", to: "verify", type: "data" } },
+    ] });
+    const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({
+        head: 4,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k2", eventId: "e2", evidenceRefs: [] },
+          { sequence: 3, kind: "draft_proposed", payload: { draftId: "draft-wire", expectedVersion: 1, expectedHash: "sha256:expected", proposalSha256: rawDigest, operationCount: 3 }, occurredAt: null, actorId: "agent-a", actorType: "agent", idempotencyKey: "k3", eventId: "e3", evidenceRefs: ["sealed-draft"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "sealed-draft", mediaType: "application/json", sensitivity: "confidential", contentSha256: rawDigest, content })),
+    });
+    await open(client);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-wire");
+    expect(await screen.findByText(/Proposed nodes · 2/)).toBeVisible();
+    expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
+    const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
+    await waitFor(() => expect(approve).toBeEnabled());
+    await userEvent.click(approve);
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+    const [, node, options] = firstCall(client.approve as unknown as { mock: { calls: unknown[][] } });
+    expect(node).toBe("summarize");
+    expect(options).toEqual(expect.objectContaining({ governed: { draftId: "draft-wire", proposalDigest: rawDigest, assignments: { summarize: "agent-a", verify: "agent-a" } } }));
+  });
   it("opens the organized overview without applying saved canvas coordinates", async () => {
     render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm"})} />);
     expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();

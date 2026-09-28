@@ -1,14 +1,9 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "graphhelm",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "GraphHelm methodology, host setup guidance, and evidence-based next-step selection.",
   "author": { "name": "GraphHelm" },
   "repository": "https://github.com/stabem/GraphHelm",
-  "license": "MIT",
-  "extensions": {
-    "com.openai": {
-      "hooks": "./hooks/codex-hooks.json"
-    }
-  }
+  "license": "MIT"
 }

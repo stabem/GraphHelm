@@ -7,6 +7,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use graphhelm_protocols::RawSha256;
 use graphhelm_runtime::ports::{
     BoundedSourceReader, BoundedSourceSearch, SourceExcerpt, SourceReadError, SourceSearchBounds,
     SourceSearchError, SourceSearchProvenance, SourceSearchReason, SourceSearchResult,
@@ -28,6 +29,7 @@ const SNAPSHOT_SCOPE: &[&str] = &[
 #[derive(Clone)]
 pub struct KeelSnapshotPorts {
     snapshot: Arc<Snapshot>,
+    digest: RawSha256,
 }
 
 /// The result of selecting a source generation for one context compile.
@@ -62,8 +64,11 @@ impl KeelSnapshotPorts {
                 reason: SourceSearchReason::SnapshotCoverageGap,
             });
         }
+        let digest = RawSha256::parse(snapshot.digest().to_owned())
+            .map_err(|_| "the Keel snapshot returned an invalid content digest".to_owned())?;
         Ok(KeelSnapshotSelection::Snapshot(Self {
             snapshot: Arc::new(snapshot),
+            digest,
         }))
     }
 
@@ -71,6 +76,7 @@ impl KeelSnapshotPorts {
     pub fn search(&self) -> KeelSnapshotSearch {
         KeelSnapshotSearch {
             snapshot: self.snapshot.clone(),
+            digest: self.digest.clone(),
         }
     }
 
@@ -78,6 +84,7 @@ impl KeelSnapshotPorts {
     pub fn reader(&self) -> KeelSnapshotReader {
         KeelSnapshotReader {
             snapshot: self.snapshot.clone(),
+            digest: self.digest.clone(),
         }
     }
 }
@@ -85,6 +92,7 @@ impl KeelSnapshotPorts {
 /// Search over one retained Keel snapshot.
 pub struct KeelSnapshotSearch {
     snapshot: Arc<Snapshot>,
+    digest: RawSha256,
 }
 
 impl BoundedSourceSearch for KeelSnapshotSearch {
@@ -114,11 +122,16 @@ impl BoundedSourceSearch for KeelSnapshotSearch {
             },
         })
     }
+
+    fn snapshot_digest(&self) -> Option<RawSha256> {
+        Some(self.digest.clone())
+    }
 }
 
 /// Prefix reader over the same retained snapshot as [`KeelSnapshotSearch`].
 pub struct KeelSnapshotReader {
     snapshot: Arc<Snapshot>,
+    digest: RawSha256,
 }
 
 impl BoundedSourceReader for KeelSnapshotReader {
@@ -145,6 +158,10 @@ impl BoundedSourceReader for KeelSnapshotReader {
             bytes: bytes[..take].to_vec(),
             file_len,
         })
+    }
+
+    fn snapshot_digest(&self) -> Option<RawSha256> {
+        Some(self.digest.clone())
     }
 }
 

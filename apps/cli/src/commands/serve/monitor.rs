@@ -202,6 +202,9 @@ fn attention_line(answer: &Attention) -> String {
                     "{session}: a wake lease was taken by a writer that is not this server — check who is writing to this store"
                 )
             }
+            AttentionReason::PendingDraft { draft_id } => {
+                format!("governed draft {draft_id} is sealed and waiting for owner attention")
+            }
         })
         .collect();
     format!("needs you: {}", reasons.join("; "))
@@ -966,6 +969,7 @@ mod tests {
                 graphhelm_execution::AttentionReason::ForeignWakeConsumption { session } => {
                     session.clone()
                 }
+                graphhelm_execution::AttentionReason::PendingDraft { draft_id } => draft_id.clone(),
             };
             assert!(
                 page.contains(&node),

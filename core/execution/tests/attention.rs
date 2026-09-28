@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use graphhelm_events::ExecutionProjection;
 use graphhelm_execution::attention::{Attention, AttentionReason, attention};
-use graphhelm_protocols::{NodeOutcome, NodeState, SimulationStatus};
+use graphhelm_protocols::{NodeOutcome, NodeState, RawSha256, SimulationStatus};
 
 fn projection(
     states: &[(&str, NodeState)],
@@ -53,6 +53,67 @@ fn with_mis_burn(session: &str, at_sequence: u64) -> ExecutionProjection {
         },
     );
     projection
+}
+
+fn sealed_draft(projection: &mut ExecutionProjection, draft_id: &str) {
+    projection.proposed_drafts.push(draft_id.to_owned());
+    projection.proposed_draft_sha256.insert(
+        draft_id.to_owned(),
+        RawSha256::parse("a".repeat(64)).expect("fixture digest is valid"),
+    );
+}
+
+/// A sealed proposal is an owner obligation. The real draft id travels through the shared
+/// reason so status, briefing, API, and monitor cannot turn it into a fake node id.
+#[test]
+fn a_sealed_unresolved_draft_needs_owner_attention() {
+    let mut projection = projection(
+        &[("build", NodeState::Succeeded)],
+        Some(SimulationStatus::Completed),
+    );
+    sealed_draft(&mut projection, "draft-42");
+
+    assert_eq!(
+        attention(&projection, &AttentionInputs::default()).reasons(),
+        &[AttentionReason::PendingDraft {
+            draft_id: "draft-42".to_owned(),
+        }]
+    );
+}
+
+/// A legacy proposal without a sealed digest cannot safely become an approval prompt. It stays
+/// out of attention rather than inventing bytes for an owner to approve.
+#[test]
+fn an_unsealed_legacy_draft_is_not_presented_as_approval_work() {
+    let mut projection = projection(
+        &[("build", NodeState::Succeeded)],
+        Some(SimulationStatus::Completed),
+    );
+    projection.proposed_drafts.push("legacy-draft".to_owned());
+
+    assert_eq!(
+        attention(&projection, &AttentionInputs::default()).verdict,
+        graphhelm_execution::Verdict::CanSleep
+    );
+}
+
+/// Terminal outcomes are per draft. Applying one draft must not clear a different sealed draft.
+#[test]
+fn each_sealed_draft_keeps_its_own_pending_obligation() {
+    let mut projection = projection(
+        &[("build", NodeState::Succeeded)],
+        Some(SimulationStatus::Completed),
+    );
+    sealed_draft(&mut projection, "draft-applied");
+    sealed_draft(&mut projection, "draft-pending");
+    projection.applied_drafts.push("draft-applied".to_owned());
+
+    assert_eq!(
+        attention(&projection, &AttentionInputs::default()).reasons(),
+        &[AttentionReason::PendingDraft {
+            draft_id: "draft-pending".to_owned(),
+        }]
+    );
 }
 
 /// #119: the fold records a consumption that burned an arming other than the one it captured,

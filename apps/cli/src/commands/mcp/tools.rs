@@ -738,10 +738,8 @@ fn wake_wait_schema() -> serde_json::Value {
     )
 }
 
-/// Closed like every other schema here. `fixture` and `route` are both optional and the route
-/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
-/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
-/// same reason `start_schema` does not encode file-or-graph.
+/// The `assign` tool's schema: a mutation (so it carries the optional `ifMatch` head pin) naming
+/// the execution, the node, and the actor to assign to that node, all three required.
 fn assign_schema() -> serde_json::Value {
     mutating_schema(
         serde_json::json!({
@@ -753,6 +751,10 @@ fn assign_schema() -> serde_json::Value {
     )
 }
 
+/// Closed like every other schema here. `fixture` and `route` are both optional and the route
+/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
+/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
+/// same reason `start_schema` does not encode file-or-graph.
 fn synthesize_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({

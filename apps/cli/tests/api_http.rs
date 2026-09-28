@@ -30,6 +30,18 @@ type SpawnObserver = Box<dyn FnOnce(&Child)>;
 mod support;
 use support::{RawResponse, parse_response, split_url};
 
+const SIGNAL_KEY_HEX: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
+fn create_signal_keyring(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        path,
+        "signal-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+}
+
 /// Owns the `graphhelm serve` child process and kills it on drop — `Drop::drop` still runs while
 /// a panicking assertion unwinds the test thread, so a failing test never leaks a listening
 /// server into the rest of the suite.
@@ -2151,6 +2163,155 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     let foreign = format!("{base}/v1/executions/exec-http-other/signal");
     let (foreign_status, foreign_reply) = post_json(&foreign, credential, &headers, &body);
     assert_eq!(foreign_status, 401, "{foreign_reply}");
+}
+
+/// Journey contract: a sealed two-node draft is approved over HTTP exactly once. A retry after
+/// the server is restarted returns the original success and appends no duplicate publication;
+/// changing the reviewed digest fails closed and leaves the head unchanged. This catches the
+/// plausible defect where the HTTP idempotency key is checked only in memory or where approval
+/// uses the caller's latest draft instead of the sealed reviewed digest.
+#[test]
+fn governed_http_approval_is_restart_safe_and_digest_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let graph_hash = cli(&["graph", "hash", graph.to_str().unwrap()])["data"]["hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_feature",
+            "--held",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&start.stdout)
+    );
+
+    let draft = serde_json::json!({
+        "id": "draft-http-two-node",
+        "expectedVersion": 1,
+        "expectedHash": graph_hash,
+        "operations": [
+            {"op": "patchNode", "path": "/spec/nodes/implementation/objective", "value": "review implementation"},
+            {"op": "patchNode", "path": "/spec/nodes/deploy/objective", "value": "review deploy"}
+        ]
+    });
+    let signal = serde_json::json!({
+        "id": "signal-http-governed",
+        "source": {"type": "node", "id": "implementation"},
+        "type": "unexpected_dependency",
+        "severity": "high",
+        "description": "the reviewed graph needs approval",
+        "evidence": ["exec_feature"],
+        "emittedAt": "2026-08-13T00:00:00Z",
+        "proposal": draft
+    });
+    let credential = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let binding = format!("{credential}=agent-planner|project-local|exec_feature");
+    let extra = [
+        "--keyring",
+        keyring.to_str().unwrap(),
+        "--key-id",
+        "signal-key",
+    ];
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &extra,
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let (signal_status, signal_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        credential,
+        &[("Idempotency-Key", "governed-signal-1")],
+        &serde_json::json!({"signal": signal}),
+    );
+    assert_eq!(signal_status, 200, "{signal_reply}");
+    let tail = get_json(
+        &format!("{base}/v1/executions/exec_feature/events?limit=1000"),
+        Some(&owner_token),
+    );
+    let proposed = tail["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"]["type"] == "draft_proposed")
+        .unwrap_or_else(|| panic!("no sealed draft proposal in tail: {tail}"));
+    let proposal_digest = proposed["kind"]["data"]["proposalSha256"].as_str().unwrap();
+    let draft_id = proposed["kind"]["data"]["draftId"].as_str().unwrap();
+    let body = serde_json::json!({
+        "node": "implementation",
+        "proposalDigest": proposal_digest,
+        "draftId": draft_id,
+        "assignments": {"implementation": "agent-planner"}
+    });
+    let headers = [
+        ("Idempotency-Key", "governed-approve-1"),
+        ("X-GraphHelm-Actor", "owner-local"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let (approve_status, approve_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &body,
+    );
+    assert_eq!(approve_status, 200, "{approve_reply}");
+    let head = head_sequence(&base, &owner_token, "exec_feature");
+    drop(_guard);
+
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &extra,
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let (retry_status, retry_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &body,
+    );
+    assert_eq!(retry_status, 200, "{retry_reply}");
+    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
+
+    let mut changed = body.clone();
+    changed["proposalDigest"] = serde_json::json!(
+        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
+    let (mismatch_status, mismatch_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &changed,
+    );
+    assert_eq!(mismatch_status, 409, "{mismatch_reply}");
+    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
 }
 
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,

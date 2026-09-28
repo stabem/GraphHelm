@@ -79,6 +79,22 @@ import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
+function rawSha256(digest: string): string {
+  return digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
+}
+
+function nodeIdFromDraftPath(path: unknown): string | null {
+  if (typeof path !== "string" || !path.startsWith("/nodes/") || path.length <= "/nodes/".length) return null;
+  const encoded = path.slice("/nodes/".length);
+  if (encoded.includes("/")) return null;
+  let decoded: string;
+  try {
+    decoded = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
+  } catch { return null; }
+  if (decoded.includes("/") || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(decoded)) return null;
+  return decoded;
+}
+
 /** Whether a typed budget is one the client (and the envelope schema behind it) will accept. */
 function budgetSecondsLegal(typed: string | undefined): boolean {
   if (typed === undefined || typed.trim() === "") return false;
@@ -1843,7 +1859,7 @@ export default function App({
       if (cancelled) return;
       try {
         const openedDigest = await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle);
-        if (openedDigest !== proposal.digest) throw new Error("the sealed proposal bytes do not match the recorded digest");
+        if (rawSha256(openedDigest) !== rawSha256(proposal.digest)) throw new Error("the sealed proposal bytes do not match the recorded digest");
         const parsed: unknown = JSON.parse(evidence.content);
         const envelope = parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
         const candidate = envelope?.proposal !== null && typeof envelope?.proposal === "object" ? envelope.proposal : envelope;
@@ -1856,8 +1872,9 @@ export default function App({
         for (const operation of operations) {
           if (operation === null || typeof operation !== "object") throw new Error("typed proposal operation is invalid");
           const value = operation as Record<string, unknown>;
-          if (value.op === "addNode" && (typeof value.id === "string" || typeof value.path === "string")) {
-            const id = String(value.id ?? value.path);
+          if (value.op === "addNode") {
+            const id = nodeIdFromDraftPath(value.path) ?? (typeof value.id === "string" ? value.id : null);
+            if (id === null) throw new Error("typed addNode path is invalid");
             nodeIds.push(id);
             const nodeValue = value.value !== null && typeof value.value === "object" ? value.value as Record<string, unknown> : null;
             const name = nodeValue !== null && typeof nodeValue.name === "string" ? nodeValue.name : null;

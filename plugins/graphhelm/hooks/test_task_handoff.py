@@ -192,7 +192,8 @@ class HandoffTests(unittest.TestCase):
                                 input=payload, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
-        self.assertEqual(replies[0]["result"]["serverInfo"]["version"], "0.1.10")
+        manifest = json.loads(SCRIPT.parent.parent.joinpath("plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(replies[0]["result"]["serverInfo"]["version"], manifest["version"])
         self.assertEqual([tool["name"] for tool in replies[1]["result"]["tools"]], ["offer", "receive", "status"])
         self.assertFalse(replies[2]["result"]["isError"])
         self.assertEqual(replies[2]["result"]["content"][0]["type"], "text")
@@ -208,11 +209,27 @@ class HandoffTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input=json.dumps(override) + "\n" + oversized.decode(),
                                 capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertTrue(replies[0]["result"]["isError"])
         self.assertEqual(replies[1]["error"]["code"], -32600)
         self.assertEqual(len(RuntimeHandler.requests), before)
+
+    def test_oversized_frame_cannot_execute_a_json_suffix_as_another_request(self):
+        env = os.environ.copy(); env.update(self.env)
+        env["GRAPHHELM_MCP_HOST"] = "codex"
+        env["GRAPHHELM_SESSION_ID"] = "receiver-1"
+        suffix = json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                             "params": {"name": "status", "arguments": {}}})
+        before = len(RuntimeHandler.requests)
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input="x" * (MODULE.MAX_MCP_MESSAGE + 1) + suffix + "\n",
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(len(RuntimeHandler.requests), before)
+        self.assertNotEqual(result.returncode, 0)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0]["error"]["code"], -32600)
 
 
 if __name__ == "__main__":

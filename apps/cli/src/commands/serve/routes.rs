@@ -3934,52 +3934,44 @@ pub(super) async fn development_compile_context(
 
     // Durable memory is an explicit opt-in input to the real context producer. Retrieval opens
     // replayed state and sealed Evidence; unsafe records simply contribute no item.
-    if let Some(memory) = payload.get("memory") {
-        if memory.get("enabled").and_then(serde_json::Value::as_bool) == Some(true) {
-            let workspace = memory
-                .get("workspaceId")
-                .and_then(serde_json::Value::as_str);
-            let project = memory.get("projectId").and_then(serde_json::Value::as_str);
-            if let (Some(workspace), Some(project)) = (workspace, project) {
-                if let (Ok(workspace_id), Ok(project_id)) =
-                    (WorkspaceId::parse(workspace), ProjectId::parse(project))
-                {
-                    let expected_scope = graphhelm_protocols::DevelopmentScope {
-                        workspace_id: workspace_id.clone(),
-                        project_id: project_id.clone(),
-                        subproject_id: None,
-                        execution_id: None,
-                    };
-                    let repository_scope = RepositoryScope::new(workspace_id, project_id, None);
-                    let stream = graphhelm_protocols::OpaqueId::parse("memory-stream")
-                        .expect("constant stream id");
-                    if let (Ok(store), Ok(opener)) = (
-                        event_store(&state.events),
-                        build_opener(state.sealing.as_deref()),
-                    ) {
-                        if let Ok(history) =
-                            store.read_replay_stream(&repository_scope, stream.as_str())
-                        {
-                            if let Ok(projection) = graphhelm_events::replay(
-                                &repository_scope,
-                                stream.as_str(),
-                                &history,
-                            ) {
-                                let items = graphhelm_runtime::retrieval::retrieve_durable_memory(
-                                    true,
-                                    &repository_scope,
-                                    &expected_scope,
-                                    &projection,
-                                    chrono::Utc::now().timestamp(),
-                                    &store,
-                                    opener.as_ref(),
-                                )
-                                .await;
-                                require.extend(items.into_iter().map(|item| item.content));
-                            }
-                        }
-                    }
-                }
+    if let Some(memory) = payload.get("memory")
+        && memory.get("enabled").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        let workspace = memory
+            .get("workspaceId")
+            .and_then(serde_json::Value::as_str);
+        let project = memory.get("projectId").and_then(serde_json::Value::as_str);
+        if let (Some(workspace), Some(project)) = (workspace, project)
+            && let (Ok(workspace_id), Ok(project_id)) =
+                (WorkspaceId::parse(workspace), ProjectId::parse(project))
+        {
+            let expected_scope = graphhelm_protocols::DevelopmentScope {
+                workspace_id: workspace_id.clone(),
+                project_id: project_id.clone(),
+                subproject_id: None,
+                execution_id: None,
+            };
+            let repository_scope = RepositoryScope::new(workspace_id, project_id, None);
+            let stream =
+                graphhelm_protocols::OpaqueId::parse("memory-stream").expect("constant stream id");
+            if let (Ok(store), Ok(opener)) = (
+                event_store(&state.events),
+                build_opener(state.sealing.as_deref()),
+            ) && let Ok(history) = store.read_replay_stream(&repository_scope, stream.as_str())
+                && let Ok(projection) =
+                    graphhelm_events::replay(&repository_scope, stream.as_str(), &history)
+            {
+                let items = graphhelm_runtime::retrieval::retrieve_durable_memory(
+                    true,
+                    &repository_scope,
+                    &expected_scope,
+                    &projection,
+                    chrono::Utc::now().timestamp(),
+                    &store,
+                    opener.as_ref(),
+                )
+                .await;
+                require.extend(items.into_iter().map(|item| item.content));
             }
         }
     }

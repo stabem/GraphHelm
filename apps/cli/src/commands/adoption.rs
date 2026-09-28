@@ -26,13 +26,15 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             crate::args::Harness::Codex,
         ],
     }) {
-        Ok(description) => description.public_description(),
+        Ok(description) => description,
         Err(_) => {
             return refused(graphhelm_protocols::adoption::AdoptionError {
                 reason: graphhelm_protocols::adoption::AdoptionReason::InvalidConfiguration,
             });
         }
     };
+    let registration = provisioning.claude_registration();
+    let provisioning = provisioning.public_description();
     let result = (|| {
         use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
         let inventory = graphhelm_host_adoption::inventory(&args.project, &args.home)?;
@@ -41,9 +43,12 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             if let Some(out) = &args.out {
                 graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
             }
-            return Ok(
-                serde_json::json!({"inventory": inventory, "plan": plan, "provisioning": provisioning}),
-            );
+            return Ok(serde_json::json!({
+                "inventory": inventory,
+                "plan": plan,
+                "provisioning": provisioning,
+                "suggestedResolutions": suggestions(&inventory),
+            }));
         }
         // A resolved plan carries the reviewed after-bytes. They go to the private file only;
         // without --out there is nowhere safe to put them, so the run is refused before it reads
@@ -51,11 +56,12 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
         let out = args.out.as_deref().ok_or(AdoptionError {
             reason: AdoptionReason::InvalidConfiguration,
         })?;
-        let resolutions = args
-            .resolve
-            .iter()
-            .map(|text| parse_resolution(text))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut resolutions = Vec::new();
+        for text in &args.resolve {
+            if let Some(resolution) = parse_resolution(text, args, &registration)? {
+                resolutions.push(resolution);
+            }
+        }
         let plan = graphhelm_host_adoption::resolve(&inventory, &resolutions)?;
         graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
         let digest = plan["digest"].clone();
@@ -88,10 +94,138 @@ fn pretty(
     Ok(bytes)
 }
 
-/// `<item>=keep` or `<item>=replace:<file>`. The file is read with the same bound as a plan.
+/// The instruction items `graphhelm-block` may target, and the MCP items `register-mcp` may.
+/// `resolve` and `apply` enforce their own operable lists again; these lists only decide which
+/// file the CLI reads to build the reviewed bytes.
+const BLOCK_ITEMS: [&str; 6] = [
+    "project/AGENTS.md",
+    "project/CLAUDE.md",
+    "project/.claude/CLAUDE.md",
+    "project/CLAUDE.local.md",
+    "home/AGENTS.md",
+    "home/.claude/CLAUDE.md",
+];
+const MCP_ITEMS: [&str; 2] = ["home/.claude.json", "project/.mcp.json"];
+
+/// The marked block `graphhelm-block` keeps in an instruction file (#1323). The markers are what a
+/// second run finds; everything outside them is the owner's and is carried over byte for byte. The
+/// text avoids the words `apply`'s instruction guard treats as security lines, so a later revision
+/// of the block can never be refused for dropping one of its own lines.
+const BLOCK_BEGIN: &str = "<!-- graphhelm:begin -->";
+const BLOCK_END: &str = "<!-- graphhelm:end -->";
+const BLOCK_BODY: &str = "## GraphHelm and Keel
+
+Maintained by `graphhelm setup` (`--resolve <item>=graphhelm-block`). Edit outside this block.
+
+- For multi-step work use GraphHelm. Prefer the `mcp__graphhelm__*` tools (`briefing`, `status`, `start`, `evidence`, `resume`); when that MCP server is not connected, use the `graphhelm` CLI.
+- Write code under Keel, proportionally: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
+- Start from the promise, search on purpose, add only the surface the promise needs, and prove it with the smallest adequate observer.
+- Journey-Proven Development: work is done when an observer proves the user-visible promise. With no observer, report `OBSERVER_MISSING` instead of claiming success.
+- A project's own AGENTS.md or CLAUDE.md takes precedence over this block.";
+
+/// Inserts or refreshes the marked block. Idempotent: the output of a run is a fixed point. Line
+/// endings follow the file (CRLF when the file already uses it). A begin marker with no end marker
+/// after it is refused (`None`) rather than guessed at.
+fn upsert_block(before: &str) -> Option<String> {
+    let newline = if before.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let block = format!("{BLOCK_BEGIN}\n{BLOCK_BODY}\n{BLOCK_END}").replace('\n', newline);
+    match before.find(BLOCK_BEGIN) {
+        Some(start) => {
+            let end = start + before[start..].find(BLOCK_END)? + BLOCK_END.len();
+            Some(format!("{}{block}{}", &before[..start], &before[end..]))
+        }
+        None if before.is_empty() => Some(format!("{block}{newline}")),
+        None => {
+            let separator = if before.ends_with(newline) {
+                newline.to_owned()
+            } else {
+                format!("{newline}{newline}")
+            };
+            Some(format!("{before}{separator}{block}{newline}"))
+        }
+    }
+}
+
+/// Sets `mcpServers.graphhelm` to `entry` and leaves every other key's value as it was. `None`
+/// when the file already carries exactly this entry: there is nothing to register.
+fn merge_registration(
+    before: &[u8],
+    entry: &serde_json::Value,
+) -> Result<Option<Vec<u8>>, graphhelm_protocols::adoption::AdoptionError> {
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    let invalid = || AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    };
+    let bytes = before.strip_prefix(b"\xef\xbb\xbf").unwrap_or(before);
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let servers = document
+        .as_object_mut()
+        .ok_or_else(invalid)?
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(invalid)?;
+    if servers.get("graphhelm") == Some(entry) {
+        return Ok(None);
+    }
+    servers.insert("graphhelm".to_owned(), entry.clone());
+    let mut after = serde_json::to_vec_pretty(&document).map_err(|_| invalid())?;
+    after.push(b'\n');
+    Ok(Some(after))
+}
+
+/// What `--dry-run` proposes on this machine: the user-scope MCP registration and the GraphHelm +
+/// Keel block in each user instruction file that exists. Suggestions only; nothing is resolved
+/// until the owner passes them back as `--resolve`.
+fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
+    let present = |id: &str| {
+        inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
+            hosts.iter().any(|host| {
+                host["items"].as_array().is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|item| item["id"] == id && item["status"] != "absent")
+                })
+            })
+        })
+    };
+    let mut out = Vec::new();
+    if present("home/.claude.json") {
+        out.push("home/.claude.json=register-mcp".to_owned());
+    }
+    for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {
+        if present(id) {
+            out.push(format!("{id}=graphhelm-block"));
+        }
+    }
+    out
+}
+
+/// The file an item id names: `home/<path>` under `--home`, `project/<path>` under `--project`.
+fn item_path(item: &str, args: &AdoptionSetupArgs) -> Option<std::path::PathBuf> {
+    if let Some(path) = item.strip_prefix("home/") {
+        return Some(args.home.join(path));
+    }
+    item.strip_prefix("project/")
+        .map(|path| args.project.join(path))
+}
+
+/// `<item>=keep`, `<item>=replace:<file>`, `<item>=graphhelm-block` or `<item>=register-mcp`.
+/// Every file is read with the same bound as a plan. The two generated decisions build the
+/// reviewed after-bytes from the item's current bytes, so they travel the same digest, `--out`,
+/// `--plan` and `--accept` path as a hand-written replacement, and a source that moves before
+/// `--apply` is refused as stale. `None`: the MCP item already carries this exact registration,
+/// so there is nothing to decide; a block that is already current becomes `keep`.
 fn parse_resolution(
     text: &str,
-) -> Result<graphhelm_host_adoption::Resolution, graphhelm_protocols::adoption::AdoptionError> {
+    args: &AdoptionSetupArgs,
+    registration: &serde_json::Value,
+) -> Result<Option<graphhelm_host_adoption::Resolution>, graphhelm_protocols::adoption::AdoptionError>
+{
     use graphhelm_policy::adoption::Decision;
     use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
     let invalid = || AdoptionError {
@@ -101,22 +235,45 @@ fn parse_resolution(
     if item.is_empty() || item.len() > 4096 {
         return Err(invalid());
     }
-    if decision == "keep" {
-        return Ok(graphhelm_host_adoption::Resolution {
-            item: item.to_owned(),
-            decision: Decision::Keep,
-            after: None,
-        });
-    }
-    let file = decision.strip_prefix("replace:").ok_or_else(invalid)?;
-    if file.is_empty() {
-        return Err(invalid());
-    }
-    Ok(graphhelm_host_adoption::Resolution {
+    let resolution = |decision, after| graphhelm_host_adoption::Resolution {
         item: item.to_owned(),
-        decision: Decision::Replace,
-        after: Some(read_bytes(std::path::Path::new(file))?),
-    })
+        decision,
+        after,
+    };
+    match decision {
+        "keep" => Ok(Some(resolution(Decision::Keep, None))),
+        "graphhelm-block" => {
+            if !BLOCK_ITEMS.contains(&item) {
+                return Err(invalid());
+            }
+            let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
+            let text = std::str::from_utf8(&before).map_err(|_| invalid())?;
+            let after = upsert_block(text).ok_or_else(invalid)?;
+            Ok(Some(if after.as_bytes() == before.as_slice() {
+                resolution(Decision::Keep, None)
+            } else {
+                resolution(Decision::Replace, Some(after.into_bytes()))
+            }))
+        }
+        "register-mcp" => {
+            if !MCP_ITEMS.contains(&item) {
+                return Err(invalid());
+            }
+            let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
+            Ok(merge_registration(&before, registration)?
+                .map(|after| resolution(Decision::Replace, Some(after))))
+        }
+        _ => {
+            let file = decision.strip_prefix("replace:").ok_or_else(invalid)?;
+            if file.is_empty() {
+                return Err(invalid());
+            }
+            Ok(Some(resolution(
+                Decision::Replace,
+                Some(read_bytes(std::path::Path::new(file))?),
+            )))
+        }
+    }
 }
 
 fn read_bytes(
@@ -260,7 +417,9 @@ fn preview(plan: &serde_json::Value) -> serde_json::Value {
                         ],
                     );
                     view["afterBytes"] = json!(row["after"].as_str().map(str::len));
-                    if row["root"] == "project" && row["path"] == ".mcp.json" {
+                    if (row["root"] == "project" && row["path"] == ".mcp.json")
+                        || (row["root"] == "home" && row["path"] == ".claude.json")
+                    {
                         view["registration"] = registration(&row["after"]);
                     }
                     view
@@ -474,6 +633,30 @@ pub(super) fn restore(args: &crate::args::AdoptionRestoreArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    /// #1323: a stale block (an older body between the markers) is replaced in place, the owner's
+    /// text on both sides survives, the result is a fixed point, and a begin marker with no end
+    /// marker is refused instead of truncating the file.
+    #[test]
+    fn the_user_block_refreshes_in_place_and_refuses_an_unterminated_marker() {
+        let stale = format!(
+            "top\n{}\nold body\n{}\nbottom\n",
+            super::BLOCK_BEGIN,
+            super::BLOCK_END
+        );
+        let fresh = super::upsert_block(&stale).unwrap();
+        assert!(fresh.starts_with("top\n<!-- graphhelm:begin -->\n## GraphHelm and Keel\n"));
+        assert!(
+            fresh.ends_with("<!-- graphhelm:end -->\nbottom\n"),
+            "{fresh}"
+        );
+        assert!(!fresh.contains("old body"));
+        assert_eq!(super::upsert_block(&fresh).unwrap(), fresh);
+        let appended = super::upsert_block("no newline at end").unwrap();
+        assert!(appended.starts_with("no newline at end\n\n<!-- graphhelm:begin -->"));
+        assert_eq!(super::upsert_block(&appended).unwrap(), appended);
+        assert!(super::upsert_block(&format!("a\n{}\nno end\n", super::BLOCK_BEGIN)).is_none());
+    }
 
     /// The rendered face of `--plan` (a terminal, no `--json`) cannot be reached from a piped test
     /// process, so it is held here: the preview built from a plan whose `after` carries a sentinel

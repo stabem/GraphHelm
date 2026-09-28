@@ -178,6 +178,15 @@ impl Provisioning {
         }
         json!({"root": RUNTIME_DIRECTORY, "bind": self.bind.to_string(), "writes": writes})
     }
+
+    /// The `mcpServers.graphhelm` entry `init` writes into `.mcp.json`, for `setup` to register
+    /// the same server at another scope (#1323). Pure: nothing is provisioned or written here.
+    pub(super) fn claude_registration(&self) -> Value {
+        json!({
+            "command": command_for_registration(),
+            "args": mcp_arguments(&format!("http://{}", self.bind), &secret_file::token_path(&self.events)),
+        })
+    }
 }
 
 pub(super) fn describe(args: &InitArgs) -> Result<Provisioning, Failure> {

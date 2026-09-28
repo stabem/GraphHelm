@@ -7,7 +7,7 @@ the log for a person who is watching the Studio and is not at this terminal.
 
 ## Setup
 
-1. Run the Public Runtime API locally: `graphhelm serve --events <dir> --bind 127.0.0.1:8080`.
+1. Run the Public Runtime API locally: `graphhelm serve --events <dir> --bind 127.0.0.1:8791`.
    The server writes its bearer token beside the events directory (`<dir>.token`).
 2. Point `GRAPHHELM_TOKEN_FILE` at that token file (or edit `.mcp.json`'s `--token-file`
    argument directly). The token value never travels via argv or chat.

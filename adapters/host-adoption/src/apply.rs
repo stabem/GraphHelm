@@ -555,11 +555,15 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
         storage::relative_ok(path)?;
         // Settings-shaped files are checked structurally by `protect_settings`: only the
         // GraphHelm-owned part may change. `.mcp.json` is the project MCP registration
-        // `init` merges; here it is journaled and restorable like the other settings.
+        // `init` merges; `~/.claude.json` is the user-scope one `setup` registers (#1323). Both
+        // are journaled and restorable like the other settings.
         let host_settings = matches!(
             (root, path),
             ("project", ".claude/settings.local.json" | ".mcp.json")
-                | ("home", ".claude/settings.json" | ".codex/config.toml")
+                | (
+                    "home",
+                    ".claude/settings.json" | ".codex/config.toml" | ".claude.json"
+                )
         );
         // Instruction files the hosts read (surfaces.rs) and backup/restore snapshot. Rules,
         // agents and commands trees are not backup surfaces, so they cannot be restored and
@@ -634,7 +638,8 @@ fn preflight(plan: &Value, accepted: &str) -> Result<Vec<Operation>, AdoptionErr
     Ok(result)
 }
 fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<(), AdoptionError> {
-    if operation["path"] == ".mcp.json" {
+    // `~/.claude.json` is Claude Code's user-scope MCP registration: the same one-entry guard.
+    if operation["path"] == ".mcp.json" || operation["path"] == ".claude.json" {
         return protect_mcp_registration(before, after);
     }
     if operation["path"] == ".codex/config.toml" {

@@ -589,3 +589,50 @@ fn a_plan_with_no_operation_and_no_package_has_nothing_to_apply() {
     );
     assert_eq!(std::fs::read_dir(s.path()).unwrap().count(), 0);
 }
+
+/// #1323: `~/.claude.json` (Claude Code's user-scope MCP registration) is accepted only under the
+/// same one-entry guard as `.mcp.json`: a change to anything but `mcpServers.graphhelm` is refused
+/// before any write, and the registration itself applies.
+#[test]
+fn the_user_claude_json_may_change_only_the_graphhelm_entry() {
+    for (after, accepted) in [
+        (
+            mcp_document(json!({"command":"other"}), Some(init_registration()), 1),
+            false,
+        ),
+        (mcp_document(mine(), None, 2), false),
+        (mcp_document(mine(), Some(init_registration()), 1), true),
+    ] {
+        let p = tempfile::tempdir().unwrap();
+        let h = tempfile::tempdir().unwrap();
+        let s = private_state();
+        write(h.path(), ".claude.json", &mcp_original());
+        let value = surface_plan(
+            p.path(),
+            h.path(),
+            "home",
+            ".claude.json",
+            &mcp_original(),
+            &after,
+        );
+        let result = graphhelm_host_adoption::apply(
+            p.path(),
+            h.path(),
+            s.path(),
+            &value,
+            value["digest"].as_str().unwrap(),
+        );
+        let now = std::fs::read(h.path().join(".claude.json")).unwrap();
+        if accepted {
+            result.unwrap();
+            assert_eq!(now, after.as_bytes());
+        } else {
+            assert_eq!(
+                result.unwrap_err().reason,
+                AdoptionReason::ReviewRequired,
+                "{after}"
+            );
+            assert_eq!(now, mcp_original());
+        }
+    }
+}

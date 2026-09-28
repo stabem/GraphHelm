@@ -439,7 +439,7 @@ function Said({
   );
 }
 
-function Thread({
+export function Thread({
   events,
   executionId,
   openEvidence,
@@ -547,6 +547,9 @@ function Thread({
                             <>
                               <p className="turn-text">{said}</p>
                               {entry.kind === "graph_authoring_snapshot_stored" && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(entry.payload)}</code></details>}
+                              {executionId !== undefined && openEvidence !== undefined && entry.evidenceRefs.map((evidenceId) => (
+                                <Said key={evidenceId} executionId={executionId} evidenceId={evidenceId} open={openEvidence} eager={false} />
+                              ))}
                             </>
                           )}
                         </li>
@@ -659,7 +662,7 @@ function Thread({
                     executionId={executionId}
                     evidenceId={evidenceId}
                     open={openEvidence}
-                    eager={eager.has(event.sequence) && (event.kind !== "node_outcome_recorded"
+                    eager={event.kind !== "graph_authoring_snapshot_stored" && eager.has(event.sequence) && (event.kind !== "node_outcome_recorded"
                       || evidenceId.endsWith("-reply") || evidenceId.endsWith("-stdout"))}
                   />
                 ))}

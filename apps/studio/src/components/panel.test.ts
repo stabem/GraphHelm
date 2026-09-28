@@ -1,7 +1,8 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import React from "react";
 
-import { awaitingReply, describe as describeEvent, groupTurns, pinnedToLatest, resetPanelCaches, useEnvelopes } from "./panel";
+import { awaitingReply, describe as describeEvent, groupTurns, pinnedToLatest, resetPanelCaches, Thread, useEnvelopes } from "./panel";
 import type { EvidenceContent, RuntimeEvent } from "../runtime/types";
 
 function event(sequence: number, kind: string, payload: Record<string, unknown> = {}): RuntimeEvent {
@@ -24,6 +25,16 @@ it("summarizes authoring snapshots instead of exposing their payload by default"
   }));
   expect(summary).toMatch(/sealed authoring snapshot/i);
   expect(summary).not.toContain("sha256:safe");
+});
+
+it("keeps authoring evidence closed until the reader opens it", async () => {
+  const eventRecord = event(8, "graph_authoring_snapshot_stored", { executionId: "run", graphVersion: 3, graphHash: "sha256:safe" });
+  eventRecord.evidenceRefs = ["sealed-authoring"];
+  const open = vi.fn(async () => ({ evidenceId: "sealed-authoring", content: "FULL SERIALIZED GRAPH", contentSha256: "raw", mediaType: "application/json", sensitivity: "confidential" as const }));
+  render(React.createElement(Thread, { events: [eventRecord], executionId: "run", openEvidence: open }));
+  expect(screen.queryByText("FULL SERIALIZED GRAPH")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("show what was said"));
+  expect(await screen.findByText("FULL SERIALIZED GRAPH")).toBeVisible();
 });
 
 it("shows the newest sealed report while an older evidence read is still pending", async () => {

@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use graphhelm_events::EvidenceRead;
+use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::{ResumeError, recovery_plan, resume_preconditions};
 use graphhelm_governor::recover_verified_authoring_snapshot;
-use graphhelm_graph::GraphVersion;
+use graphhelm_graph::{GraphVersion, raw_content_sha256};
 use graphhelm_protocols::{
     EventKind, ExecutionResumed, NewEvent, NodeOutcome, NodeState, OpaqueId, PersistedActor,
     Sensitivity,
@@ -130,6 +130,38 @@ pub(crate) fn execute_from_snapshot(
             ));
         }
     };
+    for slot in active.content_slots() {
+        let sealed = match store
+            .sealed_evidence(&scope, slot.evidence_id())
+            .map_err(|error| repository_failure(&error))?
+        {
+            EvidenceRead::Available(value) => value,
+            EvidenceRead::Unavailable(_) => {
+                return Err(execution_state(
+                    "the active graph has unavailable content; resume is refused",
+                    "/graph/content",
+                ));
+            }
+        };
+        let plaintext = block_on_local(opener.open(scope.clone(), &sealed)).map_err(|_| {
+            execution_state(
+                "the active graph content failed authentication; resume is refused",
+                "/graph/content",
+            )
+        })?;
+        let digest = plaintext.expose(raw_content_sha256).map_err(|_| {
+            execution_state(
+                "the active graph content is invalid; resume is refused",
+                "/graph/content",
+            )
+        })?;
+        if digest != *slot.content_sha256() {
+            return Err(execution_state(
+                "the active graph content does not match its digest; resume is refused",
+                "/graph/content",
+            ));
+        }
+    }
     let record = block_on_local(recover_verified_authoring_snapshot(
         &opener, scope, active, &snapshot,
     ))

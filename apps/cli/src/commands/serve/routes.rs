@@ -1838,13 +1838,24 @@ pub(super) async fn start(
                 let version =
                     load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
                 if let Some(sealing) = drive_state.sealing.as_ref() {
-                    execution::start::persist_governed_genesis(
-                        &version,
-                        &drive_state.events,
-                        Some(drive_execution_id.as_str()),
-                        &sealing.directory,
-                        &sealing.key_id,
-                    )
+                    let events = drive_state.events.clone();
+                    let execution = drive_execution_id.clone();
+                    let directory = sealing.directory.clone();
+                    let key_id = sealing.key_id.clone();
+                    let version_for_genesis = version.clone();
+                    tokio::task::spawn_blocking(move || {
+                        execution::start::persist_governed_genesis(
+                            &version_for_genesis,
+                            &events,
+                            Some(execution.as_str()),
+                            &directory,
+                            &key_id,
+                        )
+                    })
+                    .await
+                    .map_err(|_| {
+                        MutationError::Command(driver_failure("the genesis worker stopped"))
+                    })?
                     .map_err(|error| MutationError::Command(driver_failure(&error)))?;
                 }
                 // #90: a held start is the publish half and NO drive half, whichever drive this
@@ -2193,22 +2204,29 @@ pub(super) async fn approve(
         APPROVE_COMMAND,
         identity,
         ExecutorWiring::from_state(&state),
-        |owner, _key| {
+        |owner, key| {
             Box::pin(async move {
-                Ok(execution::approve::execute_governed(
-                    &events,
-                    Some(drive_execution_id.as_str()),
-                    &node,
-                    execution::approve::GovernedApproval {
-                        keyring: &sealing.directory,
-                        key_id: &sealing.key_id,
-                        assigned_actor: actor_id.as_deref(),
-                        proposal_digest: Some(&proposal_digest),
-                        draft_id: Some(&draft_id),
-                        assignments: assignments.as_ref(),
-                        approving_actor: owner,
-                    },
-                )?)
+                Ok(tokio::task::spawn_blocking(move || {
+                    execution::approve::execute_governed(
+                        &events,
+                        Some(drive_execution_id.as_str()),
+                        &node,
+                        execution::approve::GovernedApproval {
+                            keyring: &sealing.directory,
+                            key_id: &sealing.key_id,
+                            assigned_actor: actor_id.as_deref(),
+                            proposal_digest: Some(&proposal_digest),
+                            draft_id: Some(&draft_id),
+                            assignments: assignments.as_ref(),
+                            decision_key: Some(key),
+                            approving_actor: owner,
+                        },
+                    )
+                })
+                .await
+                .map_err(|_| {
+                    execution::execution_state("the governed approval worker stopped", "/approval")
+                })??)
             })
         },
     )
@@ -2688,13 +2706,22 @@ pub(super) async fn resume(
                             "snapshot resume requires the server sealing keyring",
                         )));
                     };
-                    return Ok(execution::resume::execute_from_snapshot(
-                        &drive_state.events,
-                        fixtures.as_deref(),
-                        Some(drive_execution_id.as_str()),
-                        Some(&sealing.directory),
-                        Some(&sealing.key_id),
-                    )?);
+                    let events = drive_state.events.clone();
+                    let fixtures = fixtures.clone();
+                    let execution = drive_execution_id.clone();
+                    let directory = sealing.directory.clone();
+                    let key_id = sealing.key_id.clone();
+                    return Ok(tokio::task::spawn_blocking(move || {
+                        execution::resume::execute_from_snapshot(
+                            &events,
+                            fixtures.as_deref(),
+                            Some(execution.as_str()),
+                            Some(directory.as_path()),
+                            Some(key_id.as_str()),
+                        )
+                    })
+                    .await
+                    .map_err(|_| driver_failure("the snapshot resume worker stopped"))??);
                 }
                 let version =
                     load_and_publish(source.as_ref().expect("source present"), RESUME_COMMAND)

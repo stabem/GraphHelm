@@ -48,6 +48,8 @@ pub struct ExecutionDraftAcceptance {
     pub mode: ExecutionMode,
     pub proposal_sha256: graphhelm_protocols::RawSha256,
     pub assignments: BTreeMap<OpaqueId, PersistedActor>,
+    /// The HTTP mutation key, when the caller needs retry recognition at the API boundary.
+    pub decision_key: Option<OpaqueId>,
 }
 
 impl std::fmt::Debug for ApplyResult {
@@ -138,7 +140,7 @@ pub fn apply_draft_with_acceptance<'a>(
             services.stream_id.as_str(),
             &proposed_key,
         )? {
-            return recover_committed_apply(base, draft, services, events);
+            return recover_committed_apply(base, draft, services, events, acceptance);
         }
         let expected_sequence = next_sequence(services)?;
         if let Some(acceptance) = acceptance {
@@ -427,10 +429,20 @@ pub fn apply_draft_with_acceptance<'a>(
                     vec![],
                 )?);
                 pending.push(new_event(
-                    governor_event_key(
-                        &request_identity,
-                        format!("approval:{}", node_id.as_str()).as_bytes(),
-                    )?,
+                    if acceptance.assignments.keys().next() == Some(node_id) {
+                        acceptance
+                            .decision_key
+                            .clone()
+                            .unwrap_or(governor_event_key(
+                                &request_identity,
+                                format!("approval:{}", node_id.as_str()).as_bytes(),
+                            )?)
+                    } else {
+                        governor_event_key(
+                            &request_identity,
+                            format!("approval:{}", node_id.as_str()).as_bytes(),
+                        )?
+                    },
                     &actor,
                     EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
                         execution_id: execution_id.clone(),
@@ -757,6 +769,7 @@ fn validate_committed_outcome_grammar(
     services: &ApplyServices<'_>,
     request_identity: &WireHash,
     events: &[EventEnvelope],
+    acceptance: Option<&ExecutionDraftAcceptance>,
 ) -> Result<CommittedOutcome, ApplyError> {
     let actor = persisted_actor(&services.actor)?;
     let expected_proposed = proposed(draft, &actor, request_identity)?;
@@ -966,10 +979,17 @@ fn validate_committed_outcome_grammar(
                                 || payload.executor.is_some()
                                 || payload.reason.is_some()
                                 || event.idempotency_key
-                                    != governor_event_key(
-                                        request_identity,
-                                        format!("approval:{}", payload.node_id.as_str()).as_bytes(),
-                                    )?
+                                    != acceptance
+                                        .and_then(|value| {
+                                            (value.assignments.keys().next()
+                                                == Some(&payload.node_id))
+                                                .then(|| value.decision_key.clone())
+                                                .flatten()
+                                        })
+                                        .unwrap_or(governor_event_key(
+                                            request_identity,
+                                            format!("approval:{}", payload.node_id.as_str()).as_bytes(),
+                                        )?)
                                 || !assigned.contains_key(&payload.node_id)
                                 || !outcomes.insert(payload.node_id.clone())
                             {
@@ -1025,9 +1045,16 @@ fn recover_committed_apply(
     draft: &GraphDraft,
     services: &ApplyServices<'_>,
     events: Vec<EventEnvelope>,
+    acceptance: Option<&ExecutionDraftAcceptance>,
 ) -> Result<ApplyResult, ApplyError> {
     let request_identity = governor_request_identity(base, draft, services)?;
-    let outcome = validate_committed_outcome_grammar(draft, services, &request_identity, &events)?;
+    let outcome = validate_committed_outcome_grammar(
+        draft,
+        services,
+        &request_identity,
+        &events,
+        acceptance,
+    )?;
     if let CommittedTerminal::Rejected(rejection) = &outcome.terminal {
         return Err(recover_committed_rejection(
             base,

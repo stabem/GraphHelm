@@ -530,6 +530,7 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
         mode: ExecutionMode::Supervised,
         proposal_sha256: digest,
         assignments,
+        decision_key: None,
     };
     let ids = Ids::default();
     let services = ApplyServices {

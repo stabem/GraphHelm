@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
-            "timeout": 5
+            "timeout": 3
           }
         ]
       }

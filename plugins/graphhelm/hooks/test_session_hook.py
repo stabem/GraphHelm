@@ -121,6 +121,15 @@ class SessionHookTests(unittest.TestCase):
             (SCRIPT.parent / "codex-hooks.json").read_bytes(),
             (companion / "hooks" / "codex-hooks.json").read_bytes(),
         )
+        # Preserve the full host budgets: a smaller declaration can kill the command
+        # before its bounded HTTP acknowledgement, even when the script is unchanged.
+        codex_hooks = json.loads((companion / "hooks" / "codex-hooks.json").read_text())
+        for phase, budget in (("SessionStart", 5), ("SessionEnd", 3)):
+            self.assertEqual(
+                [handler["timeout"] for matcher in codex_hooks["hooks"][phase]
+                 for handler in matcher["hooks"]],
+                [budget],
+            )
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):

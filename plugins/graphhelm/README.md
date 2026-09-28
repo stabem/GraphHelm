@@ -163,7 +163,8 @@ The server exposes `offer`, `receive`, and `status` through standard newline-del
 JSON-RPC. Host, session, execution, Runtime URL, and token path come only from the server
 environment. Tool arguments can name the recipient or offer, but cannot replace that binding.
 Requests are bounded and unknown fields fail closed. A tool failure returns MCP `isError: true`
-and an unobserved result. This local transport proves adapter behavior only; native host trust and
+and an unobserved result. An oversized or unterminated frame closes the transport after a sanitized
+error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and
 activation still need a separate fresh-session observation.
 
 ### Setup inspection

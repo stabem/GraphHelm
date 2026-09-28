@@ -465,7 +465,9 @@ def _mcp_stdio() -> int:
         request_id = None
         if len(raw) > MAX_MCP_MESSAGE or not raw.endswith(b"\n"):
             print(json.dumps(_mcp_error(None, -32600, "invalid request"), separators=(",", ":")), flush=True)
-            continue
+            # This read may be only a prefix of one physical frame. Its remaining bytes
+            # must never be interpreted as a second request with Runtime side effects.
+            return 1
         try:
             request_value = json.loads(raw)
             if not isinstance(request_value, dict) or request_value.get("jsonrpc") != "2.0":
@@ -480,7 +482,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.10"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.11"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})

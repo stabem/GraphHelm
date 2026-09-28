@@ -406,7 +406,7 @@ describe("opening", () => {
     ] });
     const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
     const client = stubClient({
-      getStatus: vi.fn(async () => ({ ...STATUS, attention: "can_sleep", attentionReasons: [] })),
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "paused", attention: "can_sleep", attentionReasons: [] })),
       getEvents: vi.fn(async () => ({
         head: 4,
         events: [
@@ -419,6 +419,11 @@ describe("opening", () => {
     await open(client);
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-wire");
     expect(await screen.findByText(/Proposed nodes · 2/)).toBeVisible();
+    expect(screen.getByText(/paused · Needs you/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "demo-deploy" }));
+    expect(await screen.findByRole("heading", { name: "This run needs you" })).toBeVisible();
+    expect(screen.getByText(/waiting for owner review/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
     expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Review pending proposal");
     expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("owner review");

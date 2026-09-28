@@ -1920,6 +1920,9 @@ export default function App({
     setSayFocusNonce((nonce) => nonce + 1);
   };
   const pendingOwnerReview = durableProposals.length > 0;
+  const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
+  const effectiveVerdict = effectiveAttention === undefined ? null : verdictOf(effectiveAttention);
+  const effectiveStatus = pendingOwnerReview && status !== null ? { ...status, attention: "needs_you" as const } : status;
   const focusPendingProposal = () => {
     setGovernedDraftId((current) => current || durableProposals[0]?.draftId || "");
     setRunActionsOpen(true);
@@ -2137,7 +2140,7 @@ export default function App({
   return (
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
-        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions }]}
+        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
         selected={selected}
         connected={connected}
         stale={stale}
@@ -2225,7 +2228,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
+            {effectiveVerdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
           </div>
 
           <div className="strip-card right">
@@ -2500,7 +2503,7 @@ export default function App({
                 </label>
               )}
               <RunPanel
-                status={status}
+                status={effectiveStatus!}
                 events={eventList}
                 unverifiedResults={unverifiedResults}
                 onClose={() => {
@@ -2532,6 +2535,7 @@ export default function App({
                 needsDirection={needsDirection}
                 retryFailureNodes={[...retryFailures.keys()]}
                 nodeNames={Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : []))}
+                proposalPending={pendingOwnerReview}
               />
             </aside>
             )}

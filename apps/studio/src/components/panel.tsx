@@ -1375,6 +1375,7 @@ export function RunPanel({
   needsDirection = false,
   retryFailureNodes = [],
   nodeNames = {},
+  proposalPending = false,
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1408,6 +1409,8 @@ export function RunPanel({
   retryFailureNodes?: string[];
   /** Human declared node names, with wire ids as the honest fallback. */
   nodeNames?: Record<string, string>;
+  /** A durable proposal is a local owner-review debt, even when Runtime attention is calm. */
+  proposalPending?: boolean;
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1416,6 +1419,7 @@ export function RunPanel({
   // What the run is owed, in words, derived from the same reasons the block below itemizes. The
   // wire state ("running") under a headline that says "needs you" answered the wrong question.
   const debts: string[] = [];
+  if (proposalPending) debts.push("owner review");
   for (const reason of status.attentionReasons) {
     const kind = typeof reason.kind === "string" ? reason.kind : "";
     if (kind === "waiting_input_node" && !debts.includes(needsDirection ? "your direction" : "your answer")) debts.push(needsDirection ? "your direction" : "your answer");

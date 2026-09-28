@@ -84,7 +84,7 @@ def token_from_file(path: str) -> str:
     return token
 
 
-def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None) -> dict:
+def request(url: str, token: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: float = 1.0) -> dict:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
     request_headers = {"Authorization": f"Bearer {token}"}
     if data is not None:
@@ -96,7 +96,9 @@ def request(url: str, token: str, method: str, body: dict | None = None, headers
         def redirect_request(self, *_):
             return None
 
-    with urllib.request.build_opener(NoRedirect).open(req, timeout=1.0) as response:
+    # This is socket inactivity, not a wall-time guarantee. The host hook timeout
+    # bounds the whole process; SessionEnd allows one slower durable acknowledgement.
+    with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
         raw = response.read(MAX_REPLY + 1)
     if len(raw) > MAX_REPLY:
         raise ValueError("Runtime reply too large")
@@ -346,7 +348,7 @@ def _end_impl(payload: dict, host: str) -> None:
     signal_id = delivery.get("signalId")
     if not isinstance(signal, dict) or not isinstance(signal_id, str):
         raise ValueError("invalid delivery state")
-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id})
+    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
     data = reply.get("data")
     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
         raise ValueError("signal acknowledgment did not match")

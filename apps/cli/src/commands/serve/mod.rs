@@ -1842,6 +1842,29 @@ fn reply_with_current_status(
     wiring: ExecutorWiring,
     original_decision_sequence: u64,
 ) -> Response {
+    let signal_id = if command == "execution.signal" {
+        match signal_id_at_sequence(events, execution, original_decision_sequence) {
+            Ok(Some(signal_id)) => Some(signal_id),
+            Ok(None) => {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::domain(
+                        command,
+                        vec![Diagnostic::error(
+                            IDEMPOTENCY_REPLY_CODE,
+                            "the recognized signal retry has no matching durable signal record",
+                            "/data/signalId",
+                            SOURCE,
+                        )],
+                    )
+                    .output,
+                );
+            }
+            Err(failure) => return respond_failure(command, failure),
+        }
+    } else {
+        None
+    };
     match execution::status::execute(events, Some(execution)) {
         Ok(value) => reply_with_status_value(
             events,
@@ -1850,6 +1873,7 @@ fn reply_with_current_status(
             wiring,
             value,
             original_decision_sequence,
+            signal_id.as_deref(),
         ),
         Err(failure) => respond_failure(command, failure),
     }
@@ -1862,8 +1886,11 @@ fn reply_with_status_value(
     wiring: ExecutorWiring,
     mut value: serde_json::Value,
     original_decision_sequence: u64,
+    signal_id: Option<&str>,
 ) -> Response {
-    if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
+    if let Err(diagnostic) =
+        annotate_recognized_retry(&mut value, original_decision_sequence, signal_id)
+    {
         return respond(
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::domain(command, vec![diagnostic]).output,
@@ -1874,9 +1901,30 @@ fn reply_with_status_value(
     respond(StatusCode::OK, output)
 }
 
+fn signal_id_at_sequence(
+    events: &Path,
+    execution: &str,
+    sequence: u64,
+) -> Result<Option<String>, execution::Failure> {
+    let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
+    let (_, _, history) = execution::resolve_stream(&store, Some(execution))?;
+    Ok(history.into_iter().find_map(|event| {
+        (event.sequence == sequence)
+            .then_some(event.kind)
+            .and_then(|kind| {
+                if let EventKind::SignalRecorded(signal) = kind {
+                    Some(signal.signal_id.to_string())
+                } else {
+                    None
+                }
+            })
+    }))
+}
+
 fn annotate_recognized_retry(
     status: &mut serde_json::Value,
     original_decision_sequence: u64,
+    signal_id: Option<&str>,
 ) -> Result<(), Diagnostic> {
     let serde_json::Value::Object(data) = status else {
         return Err(Diagnostic::error(
@@ -1893,6 +1941,9 @@ fn annotate_recognized_retry(
             "originalDecisionSequence": original_decision_sequence,
         }),
     );
+    if let Some(signal_id) = signal_id {
+        data.insert("signalId".to_owned(), serde_json::json!(signal_id));
+    }
     Ok(())
 }
 
@@ -2840,6 +2891,7 @@ mod tests {
             ExecutorWiring::FIXTURE_ONLY,
             serde_json::json!("not-an-object"),
             17,
+            None,
         );
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)

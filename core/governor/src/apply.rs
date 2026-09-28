@@ -175,6 +175,26 @@ pub fn apply_draft_with_acceptance<'a>(
             if !proposal_is_recorded {
                 return Err(ApplyError::InvalidOperation);
             }
+            // Governed execution approval only accepts additive topology. Existing nodes may
+            // already have terminal outcomes; approving a patch or removal here would publish a
+            // new promise while leaving the old execution result attached to it.
+            let proposed_nodes: BTreeSet<&str> = draft
+                .operations
+                .iter()
+                .filter_map(|operation| match operation {
+                    DraftOperation::AddNode { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if draft.operations.iter().any(|operation| match operation {
+                DraftOperation::AddNode { .. } => false,
+                DraftOperation::AddEdge { edge } => !proposed_nodes.contains(edge.to.as_str()),
+                DraftOperation::RemoveNode { .. }
+                | DraftOperation::PatchNode { .. }
+                | DraftOperation::RemoveEdge { .. } => true,
+            }) {
+                return Err(ApplyError::InvalidOperation);
+            }
             for (node_id, actor) in &acceptance.assignments {
                 if actor.actor_type() != PersistedActorType::Agent
                     || !draft.operations.iter().any(|operation| {
@@ -184,14 +204,6 @@ pub fn apply_draft_with_acceptance<'a>(
                     return Err(ApplyError::InvalidOperation);
                 }
             }
-            let proposed_nodes: BTreeSet<&str> = draft
-                .operations
-                .iter()
-                .filter_map(|operation| match operation {
-                    DraftOperation::AddNode { id, .. } => Some(id.as_str()),
-                    _ => None,
-                })
-                .collect();
             if proposed_nodes.len() != acceptance.assignments.len()
                 || proposed_nodes.iter().any(|node_id| {
                     !acceptance

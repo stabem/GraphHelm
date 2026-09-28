@@ -22,7 +22,7 @@ use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EvidenceId, OpaqueId, PersistedActor, PersistedActorType,
+    Actor, ActorId, ActorType, Diagnostic, EvidenceId, OpaqueId, PersistedActor, PersistedActorType,
 };
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{
@@ -47,7 +47,7 @@ use super::{
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
-use crate::commands::{event_store, execution, owner, publish_loaded, topology};
+use crate::commands::{event_store, execution, publish_loaded, topology};
 use crate::output::Outcome;
 
 const LIST_COMMAND: &str = "execution.list";
@@ -1715,7 +1715,11 @@ fn graph_source(
 }
 
 #[allow(clippy::result_large_err)] // see `graph_source`
-fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<GraphVersion, Response> {
+fn load_and_publish(
+    source: &GraphSource,
+    command: &'static str,
+    actor: &PersistedActor,
+) -> Result<GraphVersion, Response> {
     let to_response = |diagnostics| {
         respond(
             StatusCode::BAD_REQUEST,
@@ -1747,7 +1751,13 @@ fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<Graph
             Outcome::domain(command, diagnostics).output,
         ));
     }
-    publish_loaded(&loaded, owner("owner-local")).map_err(|error| {
+    let actor_type = match actor.actor_type() {
+        PersistedActorType::Owner => ActorType::Owner,
+        PersistedActorType::Human => ActorType::Human,
+        PersistedActorType::Agent => ActorType::Agent,
+        PersistedActorType::System => ActorType::System,
+    };
+    publish_loaded(&loaded, Actor::new(actor_type, actor.id().as_str())).map_err(|error| {
         respond(
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::internal(command, error).output,
@@ -1837,8 +1847,8 @@ pub(super) async fn start(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, START_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
                 if let Some(sealing) = drive_state.sealing.as_ref() {
                     let events = drive_state.events.clone();
                     let execution = drive_execution_id.clone();
@@ -2765,7 +2775,8 @@ pub(super) async fn resume(
                     .await
                     .map_err(|_| driver_failure("the snapshot resume worker stopped"))??
                 } else if let Some(source) = source.as_ref() {
-                    load_and_publish(source, RESUME_COMMAND).map_err(MutationError::Prepared)?
+                    load_and_publish(source, RESUME_COMMAND, &actor)
+                        .map_err(MutationError::Prepared)?
                 } else {
                     return Err(MutationError::Command(driver_failure(
                         "resume source disappeared",
@@ -3023,8 +3034,8 @@ pub(super) async fn claim(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, CLAIM_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, CLAIM_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
                 let attestation =
                     execution::claim::attestation(asserter.as_deref(), &mode, &actor)?;
                 Ok(execution::claim::execute(
@@ -3140,8 +3151,8 @@ pub(super) async fn clear(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, CLEAR_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, CLEAR_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the clearance is the last

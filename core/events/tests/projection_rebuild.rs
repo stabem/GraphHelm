@@ -925,7 +925,10 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
     //
     // If a variant ever needs to be pinned again, add it here WITH the reason. Declared debt is a
     // legitimate state; undeclared debt is what this test exists to make impossible.
-    const UNCOVERED_PIN: &[&str] = &[];
+    // These governed-journey events are folded by the execution projection, but their
+    // generation fixtures require a complete sealed graph and assignment batch. Keep the gap
+    // explicit until the persistence fixture can exercise that batch without inventing evidence.
+    const UNCOVERED_PIN: &[&str] = &["graph_authoring_snapshot_stored", "node_assigned"];
     let pinned: std::collections::BTreeSet<&str> = UNCOVERED_PIN.iter().copied().collect();
     let actually_uncovered: std::collections::BTreeSet<&str> =
         non_publication.difference(&covered).copied().collect();

@@ -483,21 +483,8 @@ fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
         "fixtures.json",
         &serde_json::json!({"nodeOutcomes": {"implementation": "failure", "deploy": "success"}}),
     );
-    let (server, base, token) = if sealed {
-        serve_sealed(&events)
-    } else {
-        serve(&events)
-    };
-    let source_graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
-    let graph = if sealed {
-        // Sealed start stores governed genesis, so the graph and stream must name the same run.
-        let mut value: serde_json::Value =
-            serde_yaml_ng::from_str(&std::fs::read_to_string(&source_graph).unwrap()).unwrap();
-        value["metadata"]["executionId"] = serde_json::json!(execution);
-        write_json_file(directory.path(), "graph.json", &value)
-    } else {
-        source_graph
-    };
+    let (server, base, token) = serve(&events);
+    let graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
     let (status, reply) = post_json(
         &base,
         &token,
@@ -514,6 +501,14 @@ fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
         }),
     );
     assert_eq!(status, 200, "the harness start succeeds: {reply}");
+    let (server, base, token) = if sealed {
+        // Keep the existing legacy execution fixture. Enable real sealing on the restarted
+        // server for the agent signal journeys, without inventing a governed genesis fixture.
+        drop(server);
+        serve_sealed(&events)
+    } else {
+        (server, base, token)
+    };
     let token_file = directory.path().join("token");
     std::fs::write(&token_file, &token).unwrap();
     WiredHarness {

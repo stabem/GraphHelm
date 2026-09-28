@@ -2,6 +2,7 @@
 
 use axum::http::StatusCode;
 use graphhelm_protocols::{DevelopmentRefusalCode, Diagnostic};
+use std::io::Read;
 use std::path::Path;
 
 use crate::output::Outcome;
@@ -273,10 +274,18 @@ pub fn run_dream_shadow(
     reject: bool,
     events: Option<&Path>,
 ) -> Outcome {
-    let bytes = match std::fs::read(input) {
-        Ok(bytes) => bytes,
+    let file = match std::fs::File::open(input) {
+        Ok(file) => file,
         Err(_) => return dream_refusal("input_empty", "shadow input could not be read"),
     };
+    let mut bytes = Vec::new();
+    if file
+        .take((graphhelm_protocols::MAX_DREAM_INPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return dream_refusal("input_empty", "shadow input could not be read");
+    }
     if bytes.is_empty() {
         return dream_refusal("input_empty", "shadow input is empty");
     }

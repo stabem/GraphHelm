@@ -69,6 +69,48 @@ fn dream_shadow_records_advisory_code_task_or_discard() {
     assert_eq!(json(&discarded.stdout)["data"]["outcome"], "discarded");
 }
 
+#[test]
+fn dream_shadow_refuses_oversized_or_malformed_digest_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let oversized = directory.path().join("oversized.json");
+    std::fs::write(
+        &oversized,
+        format!(
+            "{{\"evidenceSha256\":[\"{}\"],\"padding\":\"{}\"}}",
+            "0".repeat(64),
+            "x".repeat(graphhelm_protocols::MAX_DREAM_INPUT_BYTES)
+        ),
+    )
+    .unwrap();
+    let refused = command()
+        .args(["development", "dream-shadow", "--input"])
+        .arg(&oversized)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert_eq!(
+        json(&refused.stdout)["diagnostics"][0]["code"],
+        "input_too_large"
+    );
+
+    let malformed = directory.path().join("malformed.json");
+    std::fs::write(
+        &malformed,
+        r#"{"evidenceSha256":["not-a-sha256"],"findingSha256":"not-a-sha256"}"#,
+    )
+    .unwrap();
+    let refused = command()
+        .args(["development", "dream-shadow", "--input"])
+        .arg(&malformed)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert_eq!(
+        json(&refused.stdout)["diagnostics"][0]["code"],
+        "missing_evidence"
+    );
+}
+
 fn json(output: &[u8]) -> Value {
     serde_json::from_slice(output).unwrap()
 }

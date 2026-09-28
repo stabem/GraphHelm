@@ -235,6 +235,12 @@ pub trait BoundedSourceSearch: Send + Sync {
             provenance: SourceSearchProvenance::default(),
         })
     }
+
+    /// The immutable content identity used by this search, when the provider can prove one.
+    /// Live providers intentionally return `None`; callers must not invent an identity for them.
+    fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
+        None
+    }
 }
 
 /// Where the candidate paths came from. This says nothing about the bytes later read by the
@@ -396,6 +402,12 @@ pub trait BoundedSourceReader: Send + Sync {
         relative_path: &str,
         max_bytes: u64,
     ) -> Result<SourceExcerpt, SourceReadError>;
+
+    /// The immutable content identity behind this reader, when the provider can prove one.
+    /// Live providers intentionally return `None`.
+    fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
+        None
+    }
 }
 
 /// What [`BoundedSourceReader::read_prefix`] returns: the bytes actually read and the length

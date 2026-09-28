@@ -92,6 +92,7 @@ struct FakeSearch {
 struct ProvenanceSearch {
     paths: Vec<String>,
     provenance: SourceSearchProvenance,
+    snapshot_digest: Option<graphhelm_protocols::RawSha256>,
 }
 
 impl BoundedSourceSearch for ProvenanceSearch {
@@ -112,6 +113,10 @@ impl BoundedSourceSearch for ProvenanceSearch {
             paths: self.paths.clone(),
             provenance: self.provenance,
         })
+    }
+
+    fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
+        self.snapshot_digest.clone()
     }
 }
 
@@ -145,6 +150,7 @@ impl BoundedSourceSearch for FakeSearch {
 struct FakeReader {
     files: BTreeMap<String, Vec<u8>>,
     reads: Mutex<Vec<(String, u64)>>,
+    snapshot_digest: Option<graphhelm_protocols::RawSha256>,
 }
 
 impl FakeReader {
@@ -155,7 +161,13 @@ impl FakeReader {
                 .map(|(path, bytes)| ((*path).to_owned(), bytes.to_vec()))
                 .collect(),
             reads: Mutex::new(Vec::new()),
+            snapshot_digest: None,
         }
+    }
+
+    fn with_snapshot_digest(mut self, digest: &str) -> Self {
+        self.snapshot_digest = Some(graphhelm_protocols::RawSha256::parse(digest).unwrap());
+        self
     }
 }
 
@@ -181,6 +193,10 @@ impl BoundedSourceReader for FakeReader {
             bytes: bytes[..take].to_vec(),
             file_len: bytes.len() as u64,
         })
+    }
+
+    fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
+        self.snapshot_digest.clone()
     }
 }
 
@@ -1295,6 +1311,7 @@ fn search_provenance_is_recorded_at_the_compile_boundary() {
             origin: SourceSearchOrigin::Hybrid,
             reason: SourceSearchReason::SnapshotLiveFallback,
         },
+        snapshot_digest: None,
     };
     let reader = FakeReader::with(&[("src/alpha.rs", b"CONTENT-MARKER loopback\n")]);
     let compiled = retrieve_and_compile(
@@ -1313,6 +1330,106 @@ fn search_provenance_is_recorded_at_the_compile_boundary() {
     assert_eq!(record["searchOrigin"], "hybrid");
     assert_eq!(record["searchReason"], "snapshot_live_fallback");
     assert!(!record.to_string().contains("CONTENT-MARKER"));
+}
+
+#[test]
+fn matching_source_identity_reaches_the_sealed_summary() {
+    let digest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let search = ProvenanceSearch {
+        paths: vec!["src/alpha.rs".to_owned()],
+        provenance: SourceSearchProvenance {
+            origin: SourceSearchOrigin::Snapshot,
+            reason: SourceSearchReason::ImmutableSnapshot,
+        },
+        snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(digest).unwrap()),
+    };
+    let reader =
+        FakeReader::with(&[("src/alpha.rs", b"same generation\n")]).with_snapshot_digest(digest);
+    let compiled = retrieve_and_compile(
+        &search,
+        &reader,
+        &["alpha".to_owned()],
+        "same-generation",
+        32 * 1024,
+    );
+    assert_eq!(
+        compiled
+            .summary
+            .source_snapshot_digest
+            .as_ref()
+            .map(|d| d.as_str()),
+        Some(digest)
+    );
+    let record = serde_json::to_value(compiled.summary.provenance_record()).unwrap();
+    assert_eq!(record["sourceSnapshotDigest"], digest);
+    assert_record_validates(&compiled.summary);
+}
+
+#[test]
+fn crossed_valid_source_identities_refuse_before_the_first_candidate_read() {
+    let search_digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let reader_digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let search = ProvenanceSearch {
+        paths: vec!["src/alpha.rs".to_owned()],
+        provenance: SourceSearchProvenance {
+            origin: SourceSearchOrigin::Snapshot,
+            reason: SourceSearchReason::ImmutableSnapshot,
+        },
+        snapshot_digest: Some(graphhelm_protocols::RawSha256::parse(search_digest).unwrap()),
+    };
+    let reader = FakeReader::with(&[("src/alpha.rs", b"must never be read\n")])
+        .with_snapshot_digest(reader_digest);
+    let compiled = retrieve_and_compile(
+        &search,
+        &reader,
+        &["alpha".to_owned()],
+        "crossed-generation",
+        32 * 1024,
+    );
+    assert_eq!(
+        compiled.summary.fallback,
+        Some(ContextFallback::SearchUnavailable)
+    );
+    assert!(compiled.summary.sources.is_empty());
+    assert!(compiled.text.is_empty());
+    assert!(reader.reads.lock().unwrap().is_empty());
+
+    let reader = FakeReader::with(&[("src/alpha.rs", b"must also never be read\n")]);
+    let compiled = retrieve_and_compile(
+        &search,
+        &reader,
+        &["alpha".to_owned()],
+        "one-sided-generation",
+        32 * 1024,
+    );
+    assert_eq!(
+        compiled.summary.fallback,
+        Some(ContextFallback::SearchUnavailable)
+    );
+    assert!(reader.reads.lock().unwrap().is_empty());
+
+    let search = ProvenanceSearch {
+        paths: vec!["src/alpha.rs".to_owned()],
+        provenance: SourceSearchProvenance {
+            origin: SourceSearchOrigin::Live,
+            reason: SourceSearchReason::LiveWorkspace,
+        },
+        snapshot_digest: None,
+    };
+    let reader = FakeReader::with(&[("src/alpha.rs", b"must also never be read\n")])
+        .with_snapshot_digest(reader_digest);
+    let compiled = retrieve_and_compile(
+        &search,
+        &reader,
+        &["alpha".to_owned()],
+        "inverse-one-sided-generation",
+        32 * 1024,
+    );
+    assert_eq!(
+        compiled.summary.fallback,
+        Some(ContextFallback::SearchUnavailable)
+    );
+    assert!(reader.reads.lock().unwrap().is_empty());
 }
 
 fn provenance_schema() -> serde_json::Value {

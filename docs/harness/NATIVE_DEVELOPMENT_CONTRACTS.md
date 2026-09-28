@@ -69,6 +69,19 @@ failure. Reopen it if the coupling starts costing something the count reconcilia
 The journey runs `declare_scope → bind_snapshots → retrieve → capture_gate → { evidence_with_capture
 → admit_memory | evidence_without_capture } → certify`.
 
+### Context source identity (#68)
+
+Keel-backed context retrieval exposes the validated SHA-256 digest of its immutable source
+snapshot through both the search and reader ports. The Runtime compares those identities before
+opening a candidate. A one-sided identity declaration, or two different identities, uses the
+existing unavailable-context fallback and performs no candidate reads, so a capsule cannot mix
+paths from one generation with bytes from another.
+
+When both ports agree, the sealed `context-provenance` record may carry `sourceSnapshotDigest`.
+The field is optional for backward-compatible decoding and is absent for live providers. It binds
+the selected bytes only; it does not claim that the snapshot is the latest workspace, semantic
+validity, project reuse authority, or token savings.
+
 The two capture branches exist because the acceptance criteria require **distinct** boundaries, and
 they refuse for different reasons: the disabled branch prohibits `memory.capture` outright, the
 enabled branch must pass the admission screens. `onUnknown` is `fail` rather than a route, because

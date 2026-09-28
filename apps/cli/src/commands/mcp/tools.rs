@@ -1965,7 +1965,7 @@ mod envelope_tests {
     fn wake_waits_refusal_goes_through_the_example_wrapper() {
         let api = ApiClient::new(
             "http://127.0.0.1:1".to_owned(),
-            Zeroizing::new("tok".to_owned()),
+            super::super::client::TokenSource::Fixed(Zeroizing::new("tok".to_owned())),
             "a".into(),
             "agent".into(),
             None,

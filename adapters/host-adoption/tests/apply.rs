@@ -469,6 +469,35 @@ fn mcp_registration_other_than_the_init_shape_is_refused() {
     }
 }
 
+/// #1325: the user-scope form swaps `--token-file` for the valueless `--discover`. Accepted once,
+/// in any position; refused twice, with a value glued on, or beside `--token-file`.
+#[test]
+fn mcp_registration_accepts_one_discover_flag_in_place_of_the_token_file() {
+    let args = |args: Value| json!({"command": graphhelm_program(), "args": args});
+    let url = "http://127.0.0.1:8791";
+    for accepted in [
+        json!(["mcp", "--url", url, "--discover", "--actor", "agent-chat"]),
+        json!(["mcp", "--discover", "--url", url, "--actor", "agent-chat"]),
+    ] {
+        assert!(
+            graphhelm_host_adoption::is_graphhelm_registration(&args(accepted.clone())),
+            "accepted: {accepted}"
+        );
+    }
+    for refused in [
+        json!(["mcp", "--url", url, "--discover", "--discover"]),
+        json!(["mcp", "--url", url, "--discover", "--token-file", "/p/t"]),
+        json!(["mcp", "--url", url, "--discover=1"]),
+        json!(["mcp", "--url", url, "--discover", "x"]),
+    ] {
+        assert!(
+            !graphhelm_host_adoption::is_graphhelm_registration(&args(refused.clone())),
+            "refused: {refused}"
+        );
+        assert_mcp_refused(&mcp_document(mine(), Some(args(refused)), 1));
+    }
+}
+
 /// #1208 (follow-up to #1288's review): `--url` is the address the MCP bridge dials with the
 /// token. `init` writes `http://{bind}` with `bind` a loopback socket address (`parse_bind`), so
 /// only a loopback Runtime URL is accepted: `http`/`https`, host a loopback IP or `localhost`, no

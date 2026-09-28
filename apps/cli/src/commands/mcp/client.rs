@@ -82,9 +82,32 @@ pub(crate) fn derive_key(nonce: &str, rpc_id: &serde_json::Value) -> String {
 /// The API client: base URL already admitted as loopback, token held zeroizing and reachable
 /// only by the request builder — never by argv, never by any output path. Requests reuse the
 /// gateway's transport (redirects hard-off per ADR-025; per-call timeout).
+/// Where the bearer token comes from (#1325).
+pub(crate) enum TokenSource {
+    /// `--token-file` or `GRAPHHELM_API_TOKEN`: one token for the process's life.
+    Fixed(Zeroizing<String>),
+    /// `--discover`: the token file named by the discovery record of the Runtime serving `port`,
+    /// believed only once that Runtime's `/health` reports the record's instance. Cached, and
+    /// resolved again after a 401 or a transport failure, so the process follows a Runtime swap
+    /// on the same port without a restart.
+    Discover {
+        port: u16,
+        cache: std::sync::Mutex<Option<Zeroizing<String>>>,
+    },
+}
+
+impl TokenSource {
+    pub(crate) fn discover(port: u16) -> Self {
+        Self::Discover {
+            port,
+            cache: std::sync::Mutex::new(None),
+        }
+    }
+}
+
 pub(crate) struct ApiClient {
     pub(crate) base_url: String,
-    token: Zeroizing<String>,
+    token: TokenSource,
     pub(crate) actor: String,
     pub(crate) actor_type: String,
     model: Option<String>,
@@ -101,7 +124,7 @@ pub(crate) struct ApiClient {
 impl ApiClient {
     pub(crate) fn new(
         base_url: String,
-        token: Zeroizing<String>,
+        token: TokenSource,
         actor: String,
         actor_type: String,
         model: Option<String>,
@@ -156,10 +179,100 @@ impl ApiClient {
         idempotency_key: Option<&str>,
         if_match: Option<u64>,
     ) -> Result<(u16, serde_json::Value), String> {
+        let token = self.current_token()?;
+        let result = self.request_with(&token, method, path, body, idempotency_key, if_match);
+        let TokenSource::Discover { cache, .. } = &self.token else {
+            return result;
+        };
+        match &result {
+            // A 401 means the request was refused before it did anything, so asking the record
+            // again and retrying once is safe: the Runtime on the port may have been swapped.
+            Ok((401, _)) => {
+                *cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                let fresh = self.current_token()?;
+                if fresh.as_str() == token.as_str() {
+                    return result;
+                }
+                self.request_with(&fresh, method, path, body, idempotency_key, if_match)
+            }
+            // A transport failure may have landed; never retried here, only re-resolved next time.
+            Err(_) => {
+                *cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                result
+            }
+            Ok(_) => result,
+        }
+    }
+
+    /// The token for the next request: the fixed one, or the discovered one (cached).
+    fn current_token(&self) -> Result<Zeroizing<String>, String> {
+        match &self.token {
+            TokenSource::Fixed(token) => Ok(token.clone()),
+            TokenSource::Discover { port, cache } => {
+                let mut cache = cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(token) = cache.as_ref() {
+                    return Ok(token.clone());
+                }
+                let token = self.discover(*port)?;
+                *cache = Some(token.clone());
+                Ok(token)
+            }
+        }
+    }
+
+    /// Reads the port's discovery record, confirms the live Runtime's `/health` instance matches
+    /// it, and reads the token file it names. Every refusal says what to do; none carries the
+    /// token.
+    fn discover(&self, port: u16) -> Result<Zeroizing<String>, String> {
+        use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
+        let fail = |reason: &str| format!("runtime discovery (--discover): {reason}");
+        let dir = crate::commands::runtime_record::registry_dir()
+            .ok_or_else(|| fail("no home directory and no GRAPHHELM_RUNTIME_DIR"))?;
+        let record = crate::commands::runtime_record::read(&dir, port).map_err(|e| fail(&e))?;
+        let health = TransportRequest {
+            method: "GET",
+            url: super::url::join(&self.base_url, "/health")?,
+            headers: Vec::new(),
+            body: Vec::new(),
+            timeout: REQUEST_TIMEOUT,
+        };
+        let response = self.transport.execute(&health).map_err(|_| {
+            fail(&format!(
+                "no Runtime answers on port {port}; start `graphhelm serve --bind 127.0.0.1:{port}` for the project you want"
+            ))
+        })?;
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).unwrap_or(serde_json::Value::Null);
+        if body["data"]["instance"].as_str() != Some(record.instance.as_str()) {
+            return Err(fail(&format!(
+                "the Runtime on port {port} is not the one that published its discovery record (the record is stale, or that Runtime was started by an older build); restart `graphhelm serve --bind 127.0.0.1:{port}`"
+            )));
+        }
+        let token =
+            crate::commands::secret_file::read_existing(&record.token_file, "discovered token")
+                .map_err(|e| fail(e.message()))?;
+        Ok(Zeroizing::new(token))
+    }
+
+    fn request_with(
+        &self,
+        token: &Zeroizing<String>,
+        method: &'static str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        idempotency_key: Option<&str>,
+        if_match: Option<u64>,
+    ) -> Result<(u16, serde_json::Value), String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
         let mut headers = vec![(
             "Authorization".to_owned(),
-            format!("Bearer {}", self.token.as_str()),
+            format!("Bearer {}", token.as_str()),
         )];
         if let Some(key) = idempotency_key {
             headers.push(("Idempotency-Key".to_owned(), key.to_owned()));
@@ -244,8 +357,8 @@ mod tests {
         "http://127.0.0.1:1".to_owned()
     }
 
-    fn token() -> Zeroizing<String> {
-        Zeroizing::new("tok".to_owned())
+    fn token() -> TokenSource {
+        TokenSource::Fixed(Zeroizing::new("tok".to_owned()))
     }
 
     #[test]

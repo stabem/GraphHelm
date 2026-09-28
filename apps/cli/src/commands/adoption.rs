@@ -33,7 +33,11 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             });
         }
     };
-    let registration = provisioning.claude_registration();
+    // #1325: the project entry names that project's token; the user entry discovers the Runtime.
+    let registration = Registrations {
+        project: provisioning.claude_registration(),
+        user: provisioning.user_registration(),
+    };
     let provisioning = provisioning.public_description();
     let result = (|| {
         use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
@@ -220,10 +224,17 @@ fn item_path(item: &str, args: &AdoptionSetupArgs) -> Option<std::path::PathBuf>
 /// `--plan` and `--accept` path as a hand-written replacement, and a source that moves before
 /// `--apply` is refused as stale. `None`: the MCP item already carries this exact registration,
 /// so there is nothing to decide; a block that is already current becomes `keep`.
+/// The two `register-mcp` entries: `project/.mcp.json` pins that project's token file, and
+/// `home/.claude.json` (one entry for every project) uses `mcp --discover` (#1325).
+struct Registrations {
+    project: serde_json::Value,
+    user: serde_json::Value,
+}
+
 fn parse_resolution(
     text: &str,
     args: &AdoptionSetupArgs,
-    registration: &serde_json::Value,
+    registrations: &Registrations,
 ) -> Result<Option<graphhelm_host_adoption::Resolution>, graphhelm_protocols::adoption::AdoptionError>
 {
     use graphhelm_policy::adoption::Decision;
@@ -259,6 +270,11 @@ fn parse_resolution(
             if !MCP_ITEMS.contains(&item) {
                 return Err(invalid());
             }
+            let registration = if item.starts_with("home/") {
+                &registrations.user
+            } else {
+                &registrations.project
+            };
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             Ok(merge_registration(&before, registration)?
                 .map(|after| resolution(Decision::Replace, Some(after))))

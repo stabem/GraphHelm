@@ -44,21 +44,34 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
     if let Err(reason) = url::validate_base(&args.url) {
         return Err(refuse(&reason, "/url"));
     }
-    let token = match &args.token_file {
-        Some(path) => std::fs::read_to_string(path)
-            .map_err(|_| refuse("--token-file does not name a readable file", "/tokenFile"))?,
-        None => std::env::var("GRAPHHELM_API_TOKEN").map_err(|_| {
+    let token = if args.discover {
+        // #1325: the port the discovery record is keyed by. Resolved lazily, per tool call, so the
+        // bridge starts even when no Runtime is up yet and follows a Runtime swap on the port.
+        let port = url::port_of(&args.url).ok_or_else(|| {
             refuse(
-                "no token: supply --token-file <path> or the GRAPHHELM_API_TOKEN \
-                 environment variable (the token value never travels via argv)",
-                "/tokenFile",
+                "--discover needs --url to name an explicit port (http://127.0.0.1:PORT)",
+                "/url",
             )
-        })?,
+        })?;
+        client::TokenSource::discover(port)
+    } else {
+        let token = match &args.token_file {
+            Some(path) => std::fs::read_to_string(path)
+                .map_err(|_| refuse("--token-file does not name a readable file", "/tokenFile"))?,
+            None => std::env::var("GRAPHHELM_API_TOKEN").map_err(|_| {
+                refuse(
+                    "no token: supply --token-file <path>, the GRAPHHELM_API_TOKEN \
+                     environment variable, or --discover (the token value never travels via argv)",
+                    "/tokenFile",
+                )
+            })?,
+        };
+        let token = Zeroizing::new(token.trim().to_owned());
+        if token.is_empty() {
+            return Err(refuse("the token is empty", "/tokenFile"));
+        }
+        client::TokenSource::Fixed(token)
     };
-    let token = Zeroizing::new(token.trim().to_owned());
-    if token.is_empty() {
-        return Err(refuse("the token is empty", "/tokenFile"));
-    }
     let (actor, actor_from_env) = match &args.actor {
         Some(name) => (name.clone(), false),
         None => (

@@ -124,6 +124,42 @@ pub(crate) fn query_value(value: &str) -> String {
     out
 }
 
+/// The explicit port of an admitted base URL (`http://127.0.0.1:8791` -> 8791), or `None` when the
+/// authority names none. `--discover` keys the Runtime discovery record by it (#1325); a default
+/// port is refused rather than guessed, since `serve` has no default bind.
+pub(crate) fn port_of(base: &str) -> Option<u16> {
+    let rest = base.split_once("://")?.1;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let port = match authority.rsplit_once("]:") {
+        Some((_, port)) => port,
+        None if authority.starts_with('[') => return None,
+        None => authority.rsplit_once(':')?.1,
+    };
+    port.parse().ok().filter(|port| *port != 0)
+}
+
+#[cfg(test)]
+mod port_tests {
+    #[test]
+    fn port_of_reads_only_an_explicit_nonzero_port() {
+        assert_eq!(super::port_of("http://127.0.0.1:8791"), Some(8791));
+        assert_eq!(super::port_of("http://127.0.0.1:8791/"), Some(8791));
+        assert_eq!(super::port_of("http://[::1]:9"), Some(9));
+        assert_eq!(super::port_of("http://localhost:3000"), Some(3000));
+        for none in [
+            "http://127.0.0.1",
+            "http://[::1]",
+            "http://127.0.0.1:0",
+            "http://h:x",
+        ] {
+            assert_eq!(super::port_of(none), None, "{none}");
+        }
+    }
+}
+
 /// Admit or refuse a configured base URL, before any request is composed from it.
 ///
 /// Separate from `join` so the CLI can refuse **once at startup**, next to the loopback check,

@@ -384,8 +384,17 @@ pub struct McpArgs {
     /// File whose first line is the bearer token. Alternative: `GRAPHHELM_API_TOKEN`. The
     /// flag wins; both absent is a refusal naming the two options. The token value itself
     /// NEVER travels via argv.
-    #[arg(long = "token-file")]
+    #[arg(long = "token-file", conflicts_with = "discover")]
     pub token_file: Option<PathBuf>,
+    /// Take the token from whichever Runtime is serving `--url`'s port (#1325), instead of one
+    /// project's `--token-file`. `serve` on a fixed port publishes a discovery record under
+    /// `~/.graphhelm/runtime/` (or `GRAPHHELM_RUNTIME_DIR`) naming its token FILE; the record is
+    /// believed only when that Runtime's `/health` reports the record's instance id, and is read
+    /// again after a 401, so one user-scope registration follows a project switch on the same
+    /// port. No live record is a refusal on each tool call, never a fallback.
+    /// `GRAPHHELM_API_TOKEN` is ignored in this mode.
+    #[arg(long)]
+    pub discover: bool,
     /// The actor every mutation is attributed to (the serve layer's actor id rules).
     /// OPTIONAL because one `.mcp.json` is shared by every session in a repository, so a
     /// literal here makes every session the same actor (#1058). Falls back to

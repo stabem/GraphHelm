@@ -15,6 +15,7 @@ mod mcp;
 mod quality;
 pub(crate) mod remediation;
 mod replay;
+mod runtime_record;
 mod schema;
 mod secret_file;
 mod serve;

@@ -1,0 +1,268 @@
+//! #1325: one `graphhelm mcp --discover` process follows whichever Runtime serves its port.
+//!
+//! Two event stores, two tokens, one fixed loopback port. Runtime A serves first, is killed, and
+//! Runtime B takes the same port. The SAME bridge process keeps answering, because it reads the
+//! discovery record B published and confirms B's `/health` instance before sending B's token. The
+//! control: a bridge pinned to A's `--token-file` is refused by B, so the two stores really do hold
+//! different tokens. A stale record (nothing on the port, or a record another process did not
+//! write) is refused with a diagnostic that names the remedy, and no token ever reaches output.
+
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
+
+struct Killed(Child);
+impl Drop for Killed {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn health(port: u16) -> Option<serde_json::Value> {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    write!(
+        stream,
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut text).ok()?;
+    let body = text.split("\r\n\r\n").nth(1)?;
+    serde_json::from_str(body).ok()
+}
+
+/// Starts `serve` on `port` against `events`, publishing into `registry`, and waits until the
+/// record names the instance `/health` reports.
+fn serve(events: &Path, port: u16, registry: &Path) -> Killed {
+    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
+        .arg(format!("127.0.0.1:{port}"))
+        .env("GRAPHHELM_RUNTIME_DIR", registry)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let guard = Killed(child);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let record = std::fs::read(registry.join(format!("{port}.json")))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        if let (Some(record), Some(health)) = (record, health(port))
+            && record["instance"] == health["data"]["instance"]
+            && record["events"]
+                .as_str()
+                .is_some_and(|e| e.ends_with(events.file_name().unwrap().to_str().unwrap()))
+        {
+            return guard;
+        }
+        assert!(Instant::now() < deadline, "serve never published on {port}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn stop(mut runtime: Killed, port: u16) {
+    let _ = runtime.0.kill();
+    let _ = runtime.0.wait();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        assert!(Instant::now() < deadline, "port {port} never freed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+struct Bridge {
+    _child: Killed,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    transcript: String,
+    next: u64,
+}
+
+impl Bridge {
+    fn start(port: u16, registry: &Path, token_args: &[&str]) -> Self {
+        let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["mcp", "--url"])
+            .arg(format!("http://127.0.0.1:{port}"))
+            .args(token_args)
+            .args(["--actor", "discovery-test"])
+            .env("GRAPHHELM_RUNTIME_DIR", registry)
+            .env_remove("GRAPHHELM_API_TOKEN")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut bridge = Self {
+            _child: Killed(child),
+            stdin,
+            stdout,
+            transcript: String::new(),
+            next: 1,
+        };
+        bridge.call(
+            "initialize",
+            serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
+        );
+        writeln!(
+            bridge.stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        )
+        .unwrap();
+        bridge
+    }
+
+    fn call(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+        let id = self.next;
+        self.next += 1;
+        writeln!(
+            self.stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+        )
+        .unwrap();
+        self.stdin.flush().unwrap();
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        self.transcript.push_str(&line);
+        serde_json::from_str(&line).unwrap_or_else(|_| panic!("not JSON-RPC: {line}"))
+    }
+
+    /// The `list` tool: an authenticated read, so a wrong token is a 401 and a right one is not.
+    fn list(&mut self) -> String {
+        let reply = self.call(
+            "tools/call",
+            serde_json::json!({"name": "list", "arguments": {}}),
+        );
+        reply.to_string()
+    }
+}
+
+fn authorized(reply: &str) -> bool {
+    !reply.contains("GHCLI007")
+        && !reply.contains("\"isError\":true")
+        && !reply.contains("discovery")
+}
+
+#[test]
+fn one_discovering_bridge_follows_a_runtime_swap_on_the_same_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let events_a = dir.path().join("a").join("events");
+    let events_b = dir.path().join("b").join("events");
+    std::fs::create_dir_all(events_a.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(events_b.parent().unwrap()).unwrap();
+    let port = free_port();
+
+    let runtime_a = serve(&events_a, port, &registry);
+    let mut bridge = Bridge::start(port, &registry, &["--discover"]);
+    let first = bridge.list();
+    assert!(
+        authorized(&first),
+        "A must answer the discovering bridge: {first}"
+    );
+
+    stop(runtime_a, port);
+    let runtime_b = serve(&events_b, port, &registry);
+    let token_a = std::fs::read_to_string(dir.path().join("a").join("events.token")).unwrap();
+    let token_b = std::fs::read_to_string(dir.path().join("b").join("events.token")).unwrap();
+    assert_ne!(token_a, token_b, "two stores, two tokens");
+
+    // The same process, after the swap: the cached token A draws B's 401, the record is read
+    // again, B's instance is confirmed, and the one retry carries token B.
+    let second = bridge.list();
+    assert!(
+        authorized(&second),
+        "B must answer the SAME bridge: {second}"
+    );
+
+    // Control: a bridge pinned to A's token file is refused by B.
+    let token_file_a = dir.path().join("a").join("events.token");
+    let mut pinned = Bridge::start(
+        port,
+        &registry,
+        &["--token-file", token_file_a.to_str().unwrap()],
+    );
+    let refused = pinned.list();
+    assert!(
+        refused.contains("GHCLI007"),
+        "the pinned control must be unauthorized: {refused}"
+    );
+
+    // A record the live Runtime did not write is not believed.
+    let record_path = registry.join(format!("{port}.json"));
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    let real = record.clone();
+    record["instance"] = serde_json::json!("0".repeat(32));
+    std::fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let mut forged = Bridge::start(port, &registry, &["--discover"]);
+    let stale = forged.list();
+    assert!(stale.contains("not the one that published"), "{stale}");
+    std::fs::write(&record_path, serde_json::to_vec(&real).unwrap()).unwrap();
+
+    // Nothing on the port: fail closed, naming the remedy.
+    stop(runtime_b, port);
+    let mut orphan = Bridge::start(port, &registry, &["--discover"]);
+    let down = orphan.list();
+    assert!(down.contains("no Runtime answers"), "{down}");
+
+    for transcript in [&bridge.transcript, &forged.transcript, &orphan.transcript] {
+        assert!(!transcript.contains(token_a.trim()) && !transcript.contains(token_b.trim()));
+    }
+}
+
+#[test]
+fn an_ephemeral_port_publishes_no_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events"])
+        .arg(dir.path().join("events"))
+        .args(["--bind", "127.0.0.1:0"])
+        .env("GRAPHHELM_RUNTIME_DIR", &registry)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut guard = Killed(child);
+    let mut line = String::new();
+    BufReader::new(guard.0.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert!(line.contains("serve.started"), "{line}");
+    assert!(!registry.exists(), "port 0 must not publish");
+}
+
+#[test]
+fn discover_and_token_file_together_are_refused() {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "mcp",
+            "--url",
+            "http://127.0.0.1:1",
+            "--discover",
+            "--token-file",
+            "x",
+            "--actor",
+            "a",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}

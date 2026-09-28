@@ -437,6 +437,17 @@ use the graphhelm MCP tool list
 
 Expected: one row, `demo`, with its attention verdict — the same answer the Studio shows.
 
+**One registration for every project (Claude Code, user scope).** `graphhelm setup --resolve
+home/.claude.json=register-mcp` writes `graphhelm mcp --url http://127.0.0.1:8791 --discover
+--actor agent-chat` into `~/.claude.json`. It names no project's token. A `serve` on a fixed port
+publishes a discovery record at `~/.graphhelm/runtime/<port>.json` (or under
+`GRAPHHELM_RUNTIME_DIR`) that names its token file and a random instance id. `mcp --discover`
+reads that record, checks that the Runtime's `/health` reports the same instance, and only then
+reads the token file. After a 401 it reads the record again, so switching the Runtime on 8791 to
+another project needs no new registration. With no live Runtime on the port, each tool call is
+refused with a message naming the `serve` command to run. A Runtime started by an older build
+publishes no record: restart it. `--bind 127.0.0.1:0` publishes nothing.
+
 **Codex** — `init` wrote `<project>/.graphhelm/codex.config.toml` and does not touch your home
 directory. Append its contents to `~/.codex/config.toml` yourself:
 

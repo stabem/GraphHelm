@@ -459,7 +459,16 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         operation["registration"]["args"][2],
         "http://127.0.0.1:8791"
     );
-    assert_eq!(operation["registration"]["args"][6], "agent-chat");
+    // #1325: the user-scope entry names no project's token file; it discovers the live Runtime.
+    assert_eq!(operation["registration"]["args"][3], "--discover");
+    assert_eq!(operation["registration"]["args"][5], "agent-chat");
+    assert!(
+        !operation["registration"]["args"]
+            .as_array()
+            .unwrap()
+            .contains(&"--token-file".into()),
+        "{operation}"
+    );
 
     let (ok, applied) = json(
         setup(p.path(), h.path())
@@ -483,8 +492,10 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         graphhelm_host_adoption::is_graphhelm_registration(entry),
         "{entry}"
     );
-    let token = std::path::Path::new(entry["args"][4].as_str().unwrap());
-    assert!(token.is_absolute() && token.starts_with(std::path::absolute(p.path()).unwrap()));
+    // #1325: one user-scope entry serves every project, so it names no project's token file.
+    let args = entry["args"].as_array().unwrap();
+    assert!(args.contains(&"--discover".into()), "{entry}");
+    assert!(!args.contains(&"--token-file".into()), "{entry}");
 
     let user =
         String::from_utf8(std::fs::read(h.path().join(".claude/CLAUDE.md")).unwrap()).unwrap();

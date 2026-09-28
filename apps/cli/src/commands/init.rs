@@ -187,6 +187,23 @@ impl Provisioning {
             "args": mcp_arguments(&format!("http://{}", self.bind), &secret_file::token_path(&self.events)),
         })
     }
+
+    /// The USER-scope entry (`~/.claude.json`, #1325): one registration for every project, so it
+    /// names no project's token file. `mcp --discover` takes the token of whichever Runtime is
+    /// serving the bind's port, from the discovery record that Runtime published.
+    pub(super) fn user_registration(&self) -> Value {
+        json!({
+            "command": command_for_registration(),
+            "args": [
+                "mcp",
+                "--url",
+                format!("http://{}", self.bind),
+                "--discover",
+                "--actor",
+                MCP_ACTOR,
+            ],
+        })
+    }
 }
 
 pub(super) fn describe(args: &InitArgs) -> Result<Provisioning, Failure> {

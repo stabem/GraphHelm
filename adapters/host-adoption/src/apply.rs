@@ -715,7 +715,8 @@ fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionE
 /// after-bytes, so only the shape `graphhelm init` writes is accepted: exactly `command` and
 /// `args`; `command` an absolute path to a `graphhelm` binary (`graphhelm.exe` on Windows);
 /// `args` = `mcp` followed only by the `--url`, `--token-file` and `--actor` pairs, each at most
-/// once and each value non-empty, `--url` a loopback Runtime URL ([`is_loopback_runtime_url`]).
+/// once and each value non-empty, `--url` a loopback Runtime URL ([`is_loopback_runtime_url`]),
+/// plus at most one valueless `--discover` in place of `--token-file` (#1325).
 /// Anything else (an interpreter, `env`, another subcommand, an
 /// unknown flag) needs a review the redacted preview cannot give. Public so the `--plan` preview
 /// shows a registration only when this same check accepts it (#1208).
@@ -747,11 +748,23 @@ pub fn is_graphhelm_registration(entry: &Value) -> bool {
     else {
         return false;
     };
-    let Some((&"mcp", pairs)) = args.split_first() else {
+    let Some((&"mcp", rest)) = args.split_first() else {
         return false;
     };
+    // #1325: `--discover` is the one valueless flag, at most once, and never beside
+    // `--token-file` (the bridge refuses that pair too): the token then comes from the discovery
+    // record of whichever Runtime serves `--url`'s port.
+    let discover = rest.iter().filter(|arg| **arg == "--discover").count();
+    let pairs: Vec<&str> = rest
+        .iter()
+        .copied()
+        .filter(|arg| *arg != "--discover")
+        .collect();
+    if discover > 1 || (discover == 1 && pairs.contains(&"--token-file")) {
+        return false;
+    }
     let mut seen = std::collections::BTreeSet::new();
-    pairs.len() % 2 == 0
+    pairs.len().is_multiple_of(2)
         && pairs.chunks(2).all(|pair| {
             matches!(pair[0], "--url" | "--token-file" | "--actor")
                 && seen.insert(pair[0])

@@ -142,6 +142,12 @@ fn create_secret_file(path: &Path) -> std::io::Result<()> {
     file.sync_all()
 }
 
+/// Reads an existing secret file under the same validation, never creating one: the MCP bridge's
+/// discovery path (#1325) reads the token a Runtime's record names, and must not mint a new one.
+pub(crate) fn read_existing(path: &Path, what: &str) -> Result<String, SecretFileError> {
+    read_validated(path, what)
+}
+
 /// The read-side safety checks, narrowed from `events/config.rs`'s `read_bounded` to what a
 /// fixed 64-character hex secret needs.
 fn read_validated(path: &Path, what: &str) -> Result<String, SecretFileError> {

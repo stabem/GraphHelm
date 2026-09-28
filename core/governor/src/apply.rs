@@ -1,11 +1,15 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use graphhelm_events::{EventRepository, EventRepositoryError, PreparedAppend, RepositoryFuture};
+use graphhelm_execution::{TransitionRequest, apply_transition};
 use graphhelm_graph::{GraphError, GraphVersion, preflight_execution_graph, raw_content_sha256};
 use graphhelm_policy::evaluate_transition;
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, Clock, DiagnosticComponent, DiagnosticDomainPath, DraftApplied,
-    DraftProposed, DraftRejected, EventEnvelope, EventKind, GhostNodeProposed,
-    GraphAuthoringSnapshotStored, GraphDraft, GraphVersionPublished, GraphVersionRef, IdGenerator,
-    ManualOverride, ObligationStatus, OpaqueId, PersistedActor, PersistedActorType,
+    DraftOperation, DraftProposed, DraftRejected, EventEnvelope, EventKind, ExecutionMode,
+    GhostNodeProposed, GraphAuthoringSnapshotStored, GraphDraft, GraphVersionPublished,
+    GraphVersionRef, IdGenerator, ManualOverride, MutationAccepted, NodeAssigned, NodeOutcome,
+    NodeOutcomeRecorded, NodeState, ObligationStatus, OpaqueId, PersistedActor, PersistedActorType,
     PersistedDiagnostic, PersistedGraphVersionRef, PersistedObligationStatus, PolicyObligation,
     PolicyObligationEvaluated, PolicyReport, PolicyWaiver, PolicyWaiverCreated, RepositoryScope,
     SafeCode, Sensitivity, Severity, WireHash,
@@ -35,6 +39,15 @@ pub struct ApplyResult {
     pub waivers: Vec<PolicyWaiver>,
     pub events: Vec<EventEnvelope>,
     pub policy_report: PolicyReport,
+}
+
+/// Owner acceptance facts that must be committed with the governed successor publication.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionDraftAcceptance {
+    pub draft_id: OpaqueId,
+    pub mode: ExecutionMode,
+    pub proposal_sha256: graphhelm_protocols::RawSha256,
+    pub assignments: BTreeMap<OpaqueId, PersistedActor>,
 }
 
 impl std::fmt::Debug for ApplyResult {
@@ -103,6 +116,15 @@ pub fn apply_draft<'a>(
     draft: &'a GraphDraft,
     services: &'a ApplyServices<'a>,
 ) -> RepositoryFuture<'a, Result<ApplyResult, ApplyError>> {
+    apply_draft_with_acceptance(base, draft, services, None)
+}
+
+pub fn apply_draft_with_acceptance<'a>(
+    base: &'a GraphVersion,
+    draft: &'a GraphDraft,
+    services: &'a ApplyServices<'a>,
+    acceptance: Option<&'a ExecutionDraftAcceptance>,
+) -> RepositoryFuture<'a, Result<ApplyResult, ApplyError>> {
     Box::pin(async move {
         // This gate intentionally precedes repository reads, candidate apply and Evidence sealing.
         base.number()
@@ -119,6 +141,47 @@ pub fn apply_draft<'a>(
             return recover_committed_apply(base, draft, services, events);
         }
         let expected_sequence = next_sequence(services)?;
+        if let Some(acceptance) = acceptance {
+            let history = services
+                .event_repository
+                .read_replay_stream(&services.scope, services.stream_id.as_str())?;
+            let projection =
+                graphhelm_events::replay(&services.scope, services.stream_id.as_str(), &history)
+                    .map_err(|_| ApplyError::Governor(GovernorError::InvalidProjection))?;
+            if projection.mode != Some(acceptance.mode) {
+                return Err(ApplyError::InvalidOperation);
+            }
+            if acceptance.draft_id.as_str() != draft.id {
+                return Err(ApplyError::InvalidOperation);
+            }
+            let digest = raw_content_sha256(
+                &serde_json::to_vec(draft).map_err(|_| ApplyError::InvalidOperation)?,
+            )
+            .map_err(|_| ApplyError::InvalidOperation)?;
+            if digest != acceptance.proposal_sha256 {
+                return Err(ApplyError::InvalidOperation);
+            }
+            let proposal_is_recorded = history.iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::DraftProposed(payload)
+                        if payload.draft_id.as_str() == draft.id
+                            && payload.proposal_sha256.as_ref() == Some(&acceptance.proposal_sha256)
+                )
+            });
+            if !proposal_is_recorded {
+                return Err(ApplyError::InvalidOperation);
+            }
+            for (node_id, actor) in &acceptance.assignments {
+                if actor.actor_type() != PersistedActorType::Agent
+                    || !draft.operations.iter().any(|operation| {
+                        matches!(operation, graphhelm_protocols::DraftOperation::AddNode { id, .. } if id == node_id.as_str())
+                    })
+                {
+                    return Err(ApplyError::InvalidOperation);
+                }
+            }
+        }
         let base_safe_hash = safe_semantic_hash_for(&services.scope, &base.to_record())?;
         let Some(active) = services
             .event_repository
@@ -300,7 +363,7 @@ pub fn apply_draft<'a>(
                 execution_id: OpaqueId::parse(&candidate_execution_id)
                     .map_err(|_| ApplyError::InvalidOperation)?,
                 graph_version: version.number(),
-                graph_hash: WireHash::parse(version.content_hash().as_str())
+                graph_hash: WireHash::parse(preparation.version.semantic_hash().as_str())
                     .map_err(|_| ApplyError::InvalidOperation)?,
             }),
             vec![preparation.authoring_snapshot.reference().clone()],
@@ -319,6 +382,60 @@ pub fn apply_draft<'a>(
                     preparation.evidence_refs.clone(),
                 )?);
             }
+        }
+        if let Some(acceptance) = acceptance {
+            let execution_id = OpaqueId::parse(&candidate_execution_id)
+                .map_err(|_| ApplyError::InvalidOperation)?;
+            for (node_id, assigned_actor) in &acceptance.assignments {
+                let next_state = apply_transition(&TransitionRequest {
+                    current: NodeState::Ghost,
+                    outcome: NodeOutcome::Approved,
+                    attempts: 0,
+                    identical_outcomes: 0,
+                })
+                .map_err(|_| ApplyError::InvalidOperation)?;
+                pending.push(new_event(
+                    governor_event_key(
+                        &request_identity,
+                        format!("assignment:{}", node_id.as_str()).as_bytes(),
+                    )?,
+                    &actor,
+                    EventKind::NodeAssigned(NodeAssigned {
+                        execution_id: execution_id.clone(),
+                        node_id: node_id.clone(),
+                        assigned_actor: assigned_actor.clone(),
+                        proposal_sha256: acceptance.proposal_sha256.clone(),
+                    }),
+                    vec![],
+                )?);
+                pending.push(new_event(
+                    governor_event_key(
+                        &request_identity,
+                        format!("approval:{}", node_id.as_str()).as_bytes(),
+                    )?,
+                    &actor,
+                    EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+                        execution_id: execution_id.clone(),
+                        node_id: node_id.clone(),
+                        outcome: NodeOutcome::Approved,
+                        next_state,
+                        executor: None,
+                        reason: None,
+                    }),
+                    vec![],
+                )?);
+            }
+            pending.push(new_event(
+                governor_event_key(&request_identity, b"accepted")?,
+                &actor,
+                EventKind::MutationAccepted(MutationAccepted {
+                    execution_id,
+                    draft_id: opaque(&draft.id)?,
+                    mode: acceptance.mode,
+                    graph_version: version.number(),
+                }),
+                vec![],
+            )?);
         }
         pending.push(new_event(
             governor_event_key(&request_identity, b"applied")?,
@@ -785,13 +902,80 @@ fn validate_committed_outcome_grammar(
                 }
                 _ => return invalid_committed_outcome(),
             };
-            for (index, ghost) in ghosts.iter().skip(ghost_offset).enumerate() {
+            let ghosts = ghosts.iter().skip(ghost_offset);
+            let mut atomic = Vec::new();
+            for (index, ghost) in ghosts.enumerate() {
                 let EventKind::GhostNodeProposed(payload) = &ghost.kind else {
-                    return invalid_committed_outcome();
+                    atomic.push(ghost);
+                    continue;
                 };
                 if ghost.idempotency_key
                     != governor_event_key(request_identity, format!("ghost:{index}").as_bytes())?
                     || payload.draft_id.as_str() != draft.id
+                {
+                    return invalid_committed_outcome();
+                }
+            }
+            if !atomic.is_empty() {
+                let digest = raw_content_sha256(
+                    &serde_json::to_vec(draft).map_err(|_| ApplyError::InvalidOperation)?,
+                )
+                .map_err(|_| ApplyError::InvalidOperation)?;
+                let mut assigned = BTreeMap::new();
+                let mut outcomes = BTreeSet::new();
+                for event in &atomic {
+                    match &event.kind {
+                        EventKind::NodeAssigned(payload) => {
+                            if payload.proposal_sha256 != digest
+                                || event.idempotency_key
+                                    != governor_event_key(
+                                        request_identity,
+                                        format!("assignment:{}", payload.node_id.as_str()).as_bytes(),
+                                    )?
+                                || payload.assigned_actor.actor_type()
+                                    != PersistedActorType::Agent
+                                || !draft.operations.iter().any(|operation| {
+                                    matches!(operation, DraftOperation::AddNode { id, .. } if id == payload.node_id.as_str())
+                                })
+                                || assigned.insert(payload.node_id.clone(), payload.assigned_actor.clone()).is_some()
+                            {
+                                return invalid_committed_outcome();
+                            }
+                        }
+                        EventKind::NodeOutcomeRecorded(payload) => {
+                            if payload.outcome != NodeOutcome::Approved
+                                || payload.next_state != NodeState::Ready
+                                || payload.executor.is_some()
+                                || payload.reason.is_some()
+                                || event.idempotency_key
+                                    != governor_event_key(
+                                        request_identity,
+                                        format!("approval:{}", payload.node_id.as_str()).as_bytes(),
+                                    )?
+                                || !assigned.contains_key(&payload.node_id)
+                                || !outcomes.insert(payload.node_id.clone())
+                            {
+                                return invalid_committed_outcome();
+                            }
+                        }
+                        EventKind::MutationAccepted(payload) => {
+                            if payload.draft_id.as_str() != draft.id
+                                || payload.graph_version != applied_payload.graph_version
+                                || event.idempotency_key
+                                    != governor_event_key(request_identity, b"accepted")?
+                            {
+                                return invalid_committed_outcome();
+                            }
+                        }
+                        _ => return invalid_committed_outcome(),
+                    }
+                }
+                if assigned.len() != outcomes.len()
+                    || atomic
+                        .iter()
+                        .filter(|event| matches!(event.kind, EventKind::MutationAccepted(_)))
+                        .count()
+                        != 1
                 {
                     return invalid_committed_outcome();
                 }

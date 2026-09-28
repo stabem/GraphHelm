@@ -754,6 +754,18 @@ pub enum ExecutionCommand {
         execution: Option<String>,
         #[arg(long)]
         node: String,
+        /// Sealed keyring used to recover the exact proposal and authoring snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        /// Key id inside `keyring`.
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
+        /// Agent actor id to assign after the owner approval is committed.
+        #[arg(long = "actor-id")]
+        actor_id: Option<String>,
+        /// Full sha256 digest of the sealed proposal under review.
+        #[arg(long = "proposal-digest")]
+        proposal_digest: Option<String>,
     },
     /// Assigns an approved ghost node to an agent by its authenticated actor id.
     Assign {

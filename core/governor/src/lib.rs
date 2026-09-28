@@ -8,7 +8,10 @@ mod materialize;
 mod memory;
 mod publish;
 
-pub use apply::{ApplyError, ApplyResult, ApplyServices, apply_draft};
+pub use apply::{
+    ApplyError, ApplyResult, ApplyServices, ExecutionDraftAcceptance, apply_draft,
+    apply_draft_with_acceptance,
+};
 pub use candidate::{DraftAnalysis, analyze_draft};
 pub use externalize::{
     GovernorError, GraphExternalizer, ProjectionPreparation, SealingGraphExternalizer,

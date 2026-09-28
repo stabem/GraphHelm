@@ -25,10 +25,10 @@ use graphhelm_governor::{
 use graphhelm_graph::{GraphVersion, raw_content_sha256};
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, ArtifactId, Clock, DraftOperation, DraftRejected, EventEnvelope,
-    EventKind, EvidenceId, ExecutionId, GraphDraft, GraphImported, GraphSourceKind,
-    GraphVersionPublished, GraphVersionRecord, IdGenerator, NewEvent, OpaqueId, PersistedActor,
-    PersistedActorType, PersistedGraphVersion, PersistedGraphVersionRef, ProjectId, RawSha256,
-    RepositoryScope, SafeCode, SemanticHash, Sensitivity, WorkspaceId,
+    EventKind, EvidenceId, ExecutionId, ExecutionMode, ExecutionStarted, GraphDraft, GraphImported,
+    GraphSourceKind, GraphVersionPublished, GraphVersionRecord, IdGenerator, NewEvent, NodeState,
+    OpaqueId, PersistedActor, PersistedActorType, PersistedGraphVersion, PersistedGraphVersionRef,
+    ProjectId, RawSha256, RepositoryScope, SafeCode, SemanticHash, Sensitivity, WorkspaceId,
 };
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -446,6 +446,147 @@ fn valid_draft_atomically_publishes_safe_projection_and_evidence() {
         assert!(!durable.contains(plaintext));
     }
     assert!(!format!("{result:?}").contains("Archive evidence"));
+}
+
+#[test]
+fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
+    let base = base();
+    let directory = TestDirectory::new();
+    let repository =
+        LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
+            .unwrap();
+    let externalizer = SealingGraphExternalizer::new(EvidenceProtector::new(FixedKeyProvider));
+    let proposed = draft(&base);
+    let digest = raw_content_sha256(&serde_json::to_vec(&proposed).unwrap()).unwrap();
+    seed_base(&repository, &base, &externalizer);
+    let execution = OpaqueId::parse("execution-draft").unwrap();
+    let scope = scope(&base);
+    repository
+        .append_atomic(
+            &PreparedAppend::new(
+                scope.clone(),
+                execution.clone(),
+                repository
+                    .next_sequence(&scope, execution.as_str())
+                    .unwrap(),
+                vec![
+                    NewEvent::new(
+                        OpaqueId::parse("execution-started").unwrap(),
+                        PersistedActor::new(
+                            PersistedActorType::System,
+                            ActorId::parse("system-local").unwrap(),
+                        ),
+                        Sensitivity::Internal,
+                        EventKind::ExecutionStarted(ExecutionStarted {
+                            execution_id: OpaqueId::parse(&base.graph().metadata.execution_id)
+                                .unwrap(),
+                            graph_version: base.number(),
+                            graph_hash: graphhelm_protocols::WireHash::parse(
+                                base.content_hash().as_str(),
+                            )
+                            .unwrap(),
+                            mode: ExecutionMode::Supervised,
+                        }),
+                        vec![],
+                        vec![],
+                    ),
+                    NewEvent::new(
+                        OpaqueId::parse("proposal-1").unwrap(),
+                        PersistedActor::new(
+                            PersistedActorType::Agent,
+                            ActorId::parse("agent-reviewer").unwrap(),
+                        ),
+                        Sensitivity::Internal,
+                        EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+                            draft_id: OpaqueId::parse(&proposed.id).unwrap(),
+                            expected_version: proposed.expected_version,
+                            expected_hash: graphhelm_protocols::WireHash::parse(
+                                proposed.expected_hash.as_str(),
+                            )
+                            .unwrap(),
+                            operation_count: proposed.operations.len() as u16,
+                            proposal_sha256: Some(digest.clone()),
+                        }),
+                        vec![],
+                        vec![],
+                    ),
+                ],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut assignments = std::collections::BTreeMap::new();
+    assignments.insert(
+        OpaqueId::parse("archive").unwrap(),
+        PersistedActor::new(
+            PersistedActorType::Agent,
+            ActorId::parse("agent-reviewer").unwrap(),
+        ),
+    );
+    let acceptance = graphhelm_governor::ExecutionDraftAcceptance {
+        draft_id: OpaqueId::parse(&proposed.id).unwrap(),
+        mode: ExecutionMode::Supervised,
+        proposal_sha256: digest,
+        assignments,
+    };
+    let ids = Ids::default();
+    let services = ApplyServices {
+        event_repository: &repository,
+        scope,
+        stream_id: execution,
+        actor: Actor::new(ActorType::Owner, "owner-local"),
+        clock: &FixedClock,
+        ids: &ids,
+        externalizer: &externalizer,
+    };
+    let result = block_on(graphhelm_governor::apply_draft_with_acceptance(
+        &base,
+        &proposed,
+        &services,
+        Some(&acceptance),
+    ))
+    .unwrap();
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NodeAssigned(_)))
+    );
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NodeOutcomeRecorded(_)))
+    );
+    let replayed = repository
+        .read_replay_stream(&services.scope, services.stream_id.as_str())
+        .unwrap();
+    for end in 1..=replayed.len() {
+        if let Err(error) = graphhelm_events::replay(
+            &services.scope,
+            services.stream_id.as_str(),
+            &replayed[..end],
+        ) {
+            panic!(
+                "accepted replay failed at {end}: {error:?} kind={:?}",
+                replayed[end - 1].kind
+            );
+        }
+    }
+    let projection =
+        graphhelm_events::replay(&services.scope, services.stream_id.as_str(), &replayed);
+    let projection = projection.unwrap_or_else(|error| panic!("accepted replay failed: {error:?}"));
+    assert_eq!(
+        projection.node_states.get("archive"),
+        Some(&NodeState::Ready)
+    );
+    assert_eq!(
+        projection.node_assignments["archive"].id().as_str(),
+        "agent-reviewer"
+    );
+    assert_eq!(projection.accepted_mutations, 1);
 }
 
 #[test]

@@ -1127,6 +1127,13 @@ export function NodePanel({
           <strong>{clock(node.lastEventAt)}</strong>
         </div>
       </div>
+      {node.proposal && (
+        <section className="node-result-summary" aria-label="Governed proposal">
+          <strong>{node.proposal.status === "rejected" ? `Proposal rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `Proposal unavailable · ${node.proposal.reason ?? "reason unavailable"}` : `Proposal ${node.proposal.status}`}</strong>
+          <span>Draft {node.proposal.draftId}{node.proposal.digest ? ` · ${node.proposal.digest}` : " · digest unavailable"}</span>
+          <span>{node.assignedActor ? `Responsible actor: ${node.assignedActor.type} · ${node.assignedActor.id}` : node.proposal.status === "rejected" ? "Next action: review the recorded reason before proposing again." : node.proposal.status === "unavailable" ? "Next action: request the typed proposal descriptor again." : "Next action: assign an actor and approve the governed draft."}</span>
+        </section>
+      )}
       {result && (
         <section className="node-result-summary" aria-label="Node result">
           <strong>{result.verification}</strong>

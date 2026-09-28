@@ -75,6 +75,33 @@ describe("connections recorded with the run", () => {
   });
 });
 
+describe("published governed topology", () => {
+  /** Observable contract: the board uses the immutable published version only when its identity
+   * matches the run. This catches the plausible defect of drawing edges from a caller file or a
+   * later unrelated graph version. The existing tests cover declaration snapshots and manual
+   * files, but not a published graph version event. */
+  it("accepts the matching published version and rejects a wrong identity", () => {
+    const published = event(4, "graph_version_published", {
+      version: {
+        number: 13,
+        semanticHash: RUN_HASH,
+        topology: {
+          executionId: "demo",
+          entrypoints: ["implementation"],
+          nodes: { implementation: {}, deploy: {} },
+          edges: [{ id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" }],
+        },
+      },
+    });
+    const verified = topologyFromJournal([STARTED, ROSTER, published]);
+    expect(verified?.match).toBe("matched");
+    expect(verified?.edges.map((edge) => edge.id)).toEqual(["implementation_to_deploy"]);
+
+    const wrong = { ...published, payload: { version: { ...(published.payload as { version: object }).version, semanticHash: OTHER_HASH } } };
+    expect(topologyFromJournal([STARTED, ROSTER, wrong])?.match).toBe("unverified");
+  });
+});
+
 function topology(hash: string): GraphTopology {
   return {
     graphId: "exec_override_graph_v13",

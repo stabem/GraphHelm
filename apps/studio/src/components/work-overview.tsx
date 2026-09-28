@@ -287,6 +287,8 @@ export function WorkOverview({
                       {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
                         <q className="work-node-objective" title={objective}>{objective}</q>
                       )}
+                      {node.proposal && <span className="work-node-latest"><span>Governance</span><strong>{node.proposal.status === "rejected" ? `Proposal rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `Proposal unavailable · ${node.proposal.reason ?? "reason unavailable"}` : `Proposal ${node.proposal.status}`}</strong><small>{node.proposal.status === "rejected" ? "Next action: review the recorded reason before proposing again." : node.proposal.status === "unavailable" ? "Next action: request the typed proposal descriptor again." : node.assignedActor ? `Responsible actor · ${node.assignedActor.id}` : "Next action: assign an actor and approve the governed draft."}</small></span>}
+                      {node.assignedActor && <span className="work-node-latest"><span>Responsible actor</span><strong>{node.assignedActor.id}</strong><small>{node.assignedActor.type} · assignment is separate from the Runtime recorder</small></span>}
                       {latest ? (
                         <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorType === "system" ? "Recorded by Runtime" : latest.actorId ? `Recorded by ${latest.actorId}` : "Recorder unknown"} · {ago(latest.occurredAt)}</small></span>
                       ) : <span className="work-node-latest"><span>Latest event</span><strong className="work-muted">Awaiting first event</strong></span>}

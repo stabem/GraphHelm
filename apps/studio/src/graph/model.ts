@@ -88,6 +88,15 @@ export interface GraphNode {
   declaredRole?: string | null;
   /** The latest outcome's producer, separate from the actor that appended the event. */
   actualExecutor?: { kind: string; routeId: string | null } | null;
+  /** The actor responsible for a governed proposal, recorded separately from the event recorder. */
+  assignedActor?: { type: string; id: string } | null;
+  /** The governed proposal that created this node, when the journal carries one. */
+  proposal?: {
+    draftId: string;
+    digest: string | null;
+    status: "proposed" | "accepted" | "rejected" | "unavailable";
+    reason: string | null;
+  } | null;
   state: NodeStateName;
   /** What kind of attempt evidence the latest successful outcome sealed. This identifies the
    * producer's output, not an acceptance verdict or a named agent. Older streams may have none. */
@@ -232,6 +241,8 @@ export function buildGraphModel(
   verified?: VerifiedTopology | null,
 ): GraphModel {
   const nodes = new Map<string, GraphNode>();
+  const proposals = new Map<string, { digest: string | null; status: "proposed" | "accepted" | "rejected" | "unavailable"; reason: string | null }>();
+  const proposalNodes = new Map<string, string>();
   let rosterDeclared = false;
 
   const ensure = (id: string): GraphNode => {
@@ -242,6 +253,8 @@ export function buildGraphModel(
       declaredName: null,
       declaredRole: null,
       actualExecutor: null,
+      assignedActor: null,
+      proposal: null,
       state: "unknown",
       resultSource: null,
       verificationEventSequence: null,
@@ -255,6 +268,51 @@ export function buildGraphModel(
   };
 
   for (const event of events) {
+    if (event.kind === "execution_started") continue;
+    if (event.kind === "draft_proposed") {
+      const payload = event.payload;
+      if (payload !== null && typeof payload === "object") {
+        const value = payload as Record<string, unknown>;
+        const draftId = typeof value.draftId === "string" ? value.draftId : null;
+        if (draftId !== null) {
+          proposals.set(draftId, {
+            digest: typeof value.proposalSha256 === "string" ? value.proposalSha256 : null,
+            status: "proposed",
+            reason: null,
+          });
+        }
+      }
+      continue;
+    }
+    if (event.kind === "draft_rejected") {
+      const payload = event.payload;
+      if (payload !== null && typeof payload === "object") {
+        const value = payload as Record<string, unknown>;
+        const draftId = typeof value.draftId === "string" ? value.draftId : null;
+        if (draftId !== null) {
+          const previous = proposals.get(draftId) ?? { digest: null, status: "rejected" as const, reason: null };
+          proposals.set(draftId, {
+            ...previous,
+            status: "rejected",
+            reason: typeof value.reasonCode === "string" ? value.reasonCode : "proposal_rejected",
+          });
+        }
+      }
+      continue;
+    }
+    if (event.kind === "draft_applied" || event.kind === "mutation_accepted") {
+      const payload = event.payload;
+      if (payload !== null && typeof payload === "object") {
+        const value = payload as Record<string, unknown>;
+        const draftId = typeof value.draftId === "string" ? value.draftId : null;
+        if (draftId !== null) {
+          const previous = proposals.get(draftId);
+          if (previous) proposals.set(draftId, { ...previous, status: "accepted", reason: null });
+        }
+      }
+      continue;
+    }
+    if (event.kind === "graph_version_published") continue;
     if (event.kind === "execution_form_declared") {
       const payload = event.payload;
       const declared =
@@ -286,6 +344,51 @@ export function buildGraphModel(
     const id = nodeIdOf(event);
     if (id === null) continue;
     const node = ensure(id);
+    if (event.kind === "ghost_node_proposed") {
+      const payload = event.payload;
+      if (payload !== null && typeof payload === "object") {
+        const value = payload as Record<string, unknown>;
+        const draftId = typeof value.draftId === "string" ? value.draftId : null;
+        if (draftId !== null) {
+          proposalNodes.set(id, draftId);
+          const proposal = proposals.get(draftId) ?? { digest: null, status: "unavailable" as const, reason: "proposal descriptor unavailable" };
+          node.proposal = { draftId, ...proposal };
+        }
+      }
+      node.state = "ghost";
+      node.touches += 1;
+      if (event.occurredAt !== null) node.lastEventAt = event.occurredAt;
+      node.history.push({
+        sequence: event.sequence, kind: event.kind, nextState: "ghost", outcome: "proposed",
+        occurredAt: event.occurredAt, actorId: event.actorId, actorType: event.actorType,
+        evidence: event.evidenceRefs.length,
+      });
+      continue;
+    }
+    if (event.kind === "node_assigned") {
+      const payload = event.payload;
+      if (payload !== null && typeof payload === "object") {
+        const value = payload as Record<string, unknown>;
+        const assigned = value.assignedActor;
+        const digest = typeof value.proposalSha256 === "string" ? value.proposalSha256 : null;
+        const draftId = proposalNodes.get(id);
+        const proposal = draftId === undefined ? null : proposals.get(draftId);
+        if (assigned !== null && typeof assigned === "object" && proposal !== null && proposal !== undefined && proposal.digest === digest) {
+          const actor = assigned as Record<string, unknown>;
+          if (typeof actor.id === "string" && typeof actor.type === "string") {
+            node.assignedActor = { id: actor.id, type: actor.type };
+          }
+        }
+      }
+      node.touches += 1;
+      if (event.occurredAt !== null) node.lastEventAt = event.occurredAt;
+      node.history.push({
+        sequence: event.sequence, kind: event.kind, nextState: null, outcome: "assigned",
+        occurredAt: event.occurredAt, actorId: event.actorId, actorType: event.actorType,
+        evidence: event.evidenceRefs.length,
+      });
+      continue;
+    }
     const nextState = stringField(event, "nextState");
     const outcome = stringField(event, "outcome");
     const rawReason = event.kind === "node_outcome_recorded" ? stringField(event, "reason") : null;
@@ -361,6 +464,14 @@ export function buildGraphModel(
       actorType: event.actorType,
       evidence: event.evidenceRefs.length,
     });
+  }
+
+  // Proposal status can be decided by a later governance event. Reattach the final state after
+  // the fold so a card never shows an old "proposed" label beside a recorded rejection/acceptance.
+  for (const [nodeId, draftId] of proposalNodes) {
+    const node = nodes.get(nodeId);
+    const proposal = proposals.get(draftId);
+    if (node !== undefined && proposal !== undefined) node.proposal = { draftId, ...proposal };
   }
 
   const proven = verified?.match === "matched";

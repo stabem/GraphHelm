@@ -36,6 +36,8 @@ export interface VerifiedTopology {
  * roster before treating the declaration as a diagram; old or partial journals have no edges. */
 export function topologyFromJournal(events: RuntimeEvent[]): VerifiedTopology | null {
   const started = events.find((event) => event.kind === "execution_started");
+  const published = publishedTopologyFromJournal(events, started);
+  if (published !== null) return published;
   const form = events.find((event) => event.kind === "execution_form_declared");
   if (!started || !form || !form.payload || typeof form.payload !== "object") return null;
   const declaration = form.payload as { executionId?: unknown; nodeIds?: unknown; topology?: unknown };
@@ -78,6 +80,65 @@ export function topologyFromJournal(events: RuntimeEvent[]): VerifiedTopology | 
     entrypoints: valid ? entrypoints : [],
     source: "journal",
   };
+}
+
+/**
+ * Reads topology only from the immutable graph version that was published for this execution.
+ * A graph file supplied by the caller is never used for this path. The version must carry the
+ * execution identity and the exact semantic hash recorded at start; a later published version is
+ * accepted only when the journal also records its governed mutation.
+ */
+function publishedTopologyFromJournal(
+  events: RuntimeEvent[],
+  started: RuntimeEvent | undefined,
+): VerifiedTopology | null {
+  if (started === undefined || started.payload === null || typeof started.payload !== "object") return null;
+  const start = started.payload as Record<string, unknown>;
+  const executionId = typeof start.executionId === "string" ? start.executionId : null;
+  const graphHash = typeof start.graphHash === "string" ? start.graphHash : null;
+  const graphVersion = typeof start.graphVersion === "number" ? start.graphVersion : null;
+  if (executionId === null || graphHash === null || graphVersion === null) return null;
+  const acceptedVersions = new Set<number>();
+  for (const event of events) {
+    if (event.kind !== "mutation_accepted" && event.kind !== "draft_applied") continue;
+    if (event.payload === null || typeof event.payload !== "object") continue;
+    const payload = event.payload as Record<string, unknown>;
+    if (payload.executionId === executionId && typeof payload.graphVersion === "number") acceptedVersions.add(payload.graphVersion);
+  }
+  let sawPublishedVersion = false;
+  for (const event of [...events].reverse()) {
+    if (event.kind !== "graph_version_published" || event.payload === null || typeof event.payload !== "object") continue;
+    const version = (event.payload as Record<string, unknown>).version;
+    if (version === null || typeof version !== "object") continue;
+    const published = version as Record<string, unknown>;
+    const number = published.number;
+    const semanticHash = published.semanticHash;
+    const topology = published.topology;
+    if (typeof number !== "number" || (number !== graphVersion && !acceptedVersions.has(number)) || topology === null || typeof topology !== "object") continue;
+    const shape = topology as Record<string, unknown>;
+    if (shape.executionId !== executionId) continue;
+    sawPublishedVersion = true;
+    if (semanticHash !== graphHash) continue;
+    const nodes = shape.nodes;
+    const rawEdges = shape.edges;
+    const entrypoints = sanitiseIds(shape.entrypoints);
+    const edges = sanitiseEdges(rawEdges as GraphTopology["edges"]);
+    if (nodes === null || typeof nodes !== "object" || Array.isArray(nodes) || !Array.isArray(rawEdges) || edges.length !== rawEdges.length || entrypoints.length !== (Array.isArray(shape.entrypoints) ? shape.entrypoints.length : -1)) continue;
+    const nodeIds = new Set(Object.keys(nodes as Record<string, unknown>));
+    if (nodeIds.size === 0 || entrypoints.some((id) => !nodeIds.has(id)) || edges.some((edge) => !nodeIds.has(edge.from) || !nodeIds.has(edge.to))) continue;
+    return {
+      match: "matched",
+      recordedHash: graphHash,
+      fileHash: graphHash,
+      file: "published graph version",
+      edges,
+      entrypoints,
+      source: "journal",
+    };
+  }
+  return sawPublishedVersion
+    ? { match: "unverified", recordedHash: graphHash, fileHash: "", file: "published graph version", edges: [], entrypoints: [], source: "journal" }
+    : null;
 }
 
 /**

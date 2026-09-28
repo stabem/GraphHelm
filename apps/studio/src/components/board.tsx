@@ -1478,6 +1478,8 @@ function NodeBlock({
             ? `Failed after retries · ${readable(last.reason)}`
             : nodeResult(node)?.short ?? (node.touches === 0 ? "Awaiting first work update" : last?.outcome ? readable(last.outcome) : readable(node.state))}
         </span>
+        {node.proposal && <span className="node-story-status">Governed proposal · {node.proposal.status === "rejected" ? `rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `unavailable · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status}</span>}
+        {node.assignedActor && <span className="node-story-status">Assigned to {node.assignedActor.type} · {node.assignedActor.id}</span>}
         {node.touches > 0 && <span className="node-facts">
           {node.actualExecutor ? <span><small>Executed by</small><strong>{nodeResult(node)?.executor ?? (node.actualExecutor.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor.kind)}</strong></span> : null}
           <span><small>Recorded by</small><strong>{last?.actorType === "system" ? "Runtime" : latestActor ?? "Not reported"}</strong></span>

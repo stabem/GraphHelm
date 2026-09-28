@@ -456,6 +456,10 @@ impl Attention {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttentionReason {
+    /// A governed draft was proposed and sealed, but has not reached either terminal
+    /// outcome. The draft id is the operator's actionable identity; it is deliberately
+    /// not represented as a node because a draft may contain many operations.
+    PendingDraft { draft_id: String },
     /// `Blocked` + `last_outcome == Interrupted`: the 04f triage rule, now with one home.
     UntriagedInterruption { node: String },
     /// `Blocked` for any other cause (retries exhausted, a gate refusal).
@@ -660,6 +664,22 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
     reasons.append(&mut failed);
     reasons.append(&mut waiting_input);
     reasons.append(&mut silent);
+
+    // A proposal is actionable only when its sealed digest is present. Legacy proposal
+    // events without a digest remain unresolved history, but cannot safely be surfaced as
+    // approval work: inventing a digest would make the owner approve bytes nobody can verify.
+    // Rejection and application are independent terminal outcomes per draft; one terminal
+    // draft must never clear a different pending draft.
+    for draft_id in &projection.proposed_drafts {
+        let sealed = projection.proposed_draft_sha256.contains_key(draft_id);
+        let rejected = projection.rejected_drafts.iter().any(|id| id == draft_id);
+        let applied = projection.applied_drafts.iter().any(|id| id == draft_id);
+        if sealed && !rejected && !applied {
+            reasons.push(AttentionReason::PendingDraft {
+                draft_id: draft_id.clone(),
+            });
+        }
+    }
 
     // CAPTURED HERE, BEFORE ANYTHING ELSE IS PUSHED, and the wedge below is decided against THIS
     // rather than against `reasons` as a whole (#119, second pass by ISSUES 3).

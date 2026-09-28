@@ -2094,7 +2094,11 @@ pub(super) async fn approve(
         .and_then(serde_json::Value::as_str);
     let actor_id = payload.get("actorId").and_then(serde_json::Value::as_str);
     let draft_id = payload.get("draftId").and_then(serde_json::Value::as_str);
-    let governed = proposal_digest.is_some() || actor_id.is_some() || draft_id.is_some();
+    let assignment_values = payload.get("assignments");
+    let governed = proposal_digest.is_some()
+        || actor_id.is_some()
+        || draft_id.is_some()
+        || assignment_values.is_some();
     if !governed {
         let events = state.events.clone();
         let execution = execution_id.clone();
@@ -2125,13 +2129,37 @@ pub(super) async fn approve(
             "/proposalDigest",
         );
     };
-    let Some(actor_id) = actor_id else {
+    let assignments = match assignment_values {
+        Some(serde_json::Value::Object(values)) => {
+            let mut parsed = std::collections::BTreeMap::new();
+            for (node_id, value) in values {
+                let Some(actor) = value.as_str() else {
+                    return bad_request(
+                        APPROVE_COMMAND,
+                        "assignment values must be actor ids",
+                        "/assignments",
+                    );
+                };
+                parsed.insert(node_id.clone(), actor.to_owned());
+            }
+            Some(parsed)
+        }
+        Some(_) => {
+            return bad_request(
+                APPROVE_COMMAND,
+                "\"assignments\" must be an object",
+                "/assignments",
+            );
+        }
+        None => None,
+    };
+    if actor_id.is_none() && assignments.is_none() {
         return bad_request(
             APPROVE_COMMAND,
-            "governed approval requires \"actorId\"",
+            "governed approval requires \"actorId\" or \"assignments\"",
             "/actorId",
         );
-    };
+    }
     let Some(draft_id) = draft_id else {
         return bad_request(
             APPROVE_COMMAND,
@@ -2147,7 +2175,7 @@ pub(super) async fn approve(
         );
     };
     let proposal_digest = proposal_digest.to_owned();
-    let actor_id = actor_id.to_owned();
+    let actor_id = actor_id.map(str::to_owned);
     let draft_id = draft_id.to_owned();
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
@@ -2167,9 +2195,10 @@ pub(super) async fn approve(
                     execution::approve::GovernedApproval {
                         keyring: &sealing.directory,
                         key_id: &sealing.key_id,
-                        assigned_actor: Some(&actor_id),
+                        assigned_actor: actor_id.as_deref(),
                         proposal_digest: Some(&proposal_digest),
                         draft_id: Some(&draft_id),
+                        assignments: assignments.as_ref(),
                         approving_actor: owner,
                     },
                 )?)

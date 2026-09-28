@@ -26,6 +26,7 @@ pub(crate) struct GovernedApproval<'a> {
     pub assigned_actor: Option<&'a str>,
     pub proposal_digest: Option<&'a str>,
     pub draft_id: Option<&'a str>,
+    pub assignments: Option<&'a BTreeMap<String, String>>,
     pub approving_actor: PersistedActor,
 }
 
@@ -62,6 +63,7 @@ pub fn run(
                     assigned_actor,
                     proposal_digest,
                     draft_id,
+                    assignments: None,
                     approving_actor: owner_actor(),
                 },
             ),
@@ -255,20 +257,44 @@ pub(crate) fn execute_governed(
     let ids = UuidIds;
     let clock = SystemClock;
     let externalizer = SealingGraphExternalizer::new(opener);
-    let assigned_actor = request.assigned_actor.ok_or_else(|| {
-        execution_state(
-            "actor-id is required so the approved node has an authenticated owner",
-            "/actorId",
-        )
-    })?;
-    let assigned_id = graphhelm_protocols::ActorId::parse(assigned_actor)
-        .map_err(|_| execution_state("the assigned actor identifier is invalid", "/actorId"))?;
     let mut assignments = BTreeMap::new();
-    assignments.insert(
-        OpaqueId::parse(node)
-            .map_err(|_| execution_state("the node identifier is invalid", "/node"))?,
-        PersistedActor::new(graphhelm_protocols::PersistedActorType::Agent, assigned_id),
-    );
+    if let Some(requested) = request.assignments {
+        for (node_id, actor_id) in requested {
+            let node_id = OpaqueId::parse(node_id).map_err(|_| {
+                execution_state("the assigned node identifier is invalid", "/assignments")
+            })?;
+            let actor_id = graphhelm_protocols::ActorId::parse(actor_id).map_err(|_| {
+                execution_state("the assigned actor identifier is invalid", "/assignments")
+            })?;
+            assignments.insert(
+                node_id,
+                PersistedActor::new(graphhelm_protocols::PersistedActorType::Agent, actor_id),
+            );
+        }
+        if !assignments.contains_key(
+            &OpaqueId::parse(node)
+                .map_err(|_| execution_state("the node identifier is invalid", "/node"))?,
+        ) {
+            return Err(execution_state(
+                "assignments must include the requested node",
+                "/assignments",
+            ));
+        }
+    } else {
+        let assigned_actor = request.assigned_actor.ok_or_else(|| {
+            execution_state(
+                "actor-id is required so the approved node has an authenticated owner",
+                "/actorId",
+            )
+        })?;
+        let assigned_id = graphhelm_protocols::ActorId::parse(assigned_actor)
+            .map_err(|_| execution_state("the assigned actor identifier is invalid", "/actorId"))?;
+        assignments.insert(
+            OpaqueId::parse(node)
+                .map_err(|_| execution_state("the node identifier is not valid", "/node"))?,
+            PersistedActor::new(graphhelm_protocols::PersistedActorType::Agent, assigned_id),
+        );
+    }
     let acceptance = ExecutionDraftAcceptance {
         draft_id: OpaqueId::parse(&draft.id)
             .map_err(|_| execution_state("the proposal identifier is invalid", "/proposal"))?,

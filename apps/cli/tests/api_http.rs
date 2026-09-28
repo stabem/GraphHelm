@@ -2299,7 +2299,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             "source": {"type": "node", "id": "z-step"},
             "type": "node_delivery",
             "severity": "high",
-            "description": "delivery from the assigned implementation node",
+            "description": serde_json::json!({"version": 1, "projectId": "a".repeat(64), "summary": "Reviewed governed delivery", "reason": "Record the assigned node result", "documents": [{"path": "docs/review.md", "title": "Review", "kind": "business_rule", "action": "created", "ruleIds": ["governed"]}]}).to_string(),
             "evidence": ["exec_feature"],
             "emittedAt": "2026-08-13T00:00:00Z"
         }

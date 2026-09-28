@@ -9858,6 +9858,7 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
             ("Idempotency-Key", "memory-71-publish"),
             ("X-GraphHelm-Actor", "memory-owner"),
             ("X-GraphHelm-Actor-Type", "owner"),
+            ("If-Match", "0"),
         ],
         &scope,
     );
@@ -9870,6 +9871,7 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
             ("Idempotency-Key", "memory-71-publish"),
             ("X-GraphHelm-Actor", "memory-owner"),
             ("X-GraphHelm-Actor-Type", "owner"),
+            ("If-Match", "0"),
         ],
         &scope,
     );
@@ -9911,6 +9913,35 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
         context["data"]["durableMemoryDigest"], expected,
         "{context}"
     );
+    let (explicit_status, explicit) = post_json(
+        &format!("{base}/v1/development/context"),
+        &token,
+        &[],
+        &serde_json::json!({"budget": 4096, "require": [content]}),
+    );
+    assert_eq!(explicit_status, 200, "{explicit}");
+    let (empty_status, empty) = post_json(
+        &format!("{base}/v1/development/context"),
+        &token,
+        &[],
+        &serde_json::json!({"budget": 4096}),
+    );
+    assert_eq!(empty_status, 200, "{empty}");
+    assert_eq!(context["data"]["digest"], explicit["data"]["digest"]);
+    assert_ne!(context["data"]["digest"], empty["data"]["digest"]);
+    let (stale_status, stale) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-stale"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+            ("If-Match", "0"),
+        ],
+        &scope,
+    );
+    assert_eq!(stale_status, 409, "{stale}");
+    assert_eq!(stale["data"]["currentHead"], 2);
     let (second_status, second) = post_json(
         &format!("{base}/v1/development/memory"),
         &token,
@@ -9918,6 +9949,7 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
             ("Idempotency-Key", "memory-71-publish-second"),
             ("X-GraphHelm-Actor", "memory-owner"),
             ("X-GraphHelm-Actor-Type", "owner"),
+            ("If-Match", "2"),
         ],
         &scope,
     );

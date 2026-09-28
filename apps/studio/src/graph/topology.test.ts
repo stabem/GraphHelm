@@ -100,6 +100,32 @@ describe("published governed topology", () => {
     const wrong = { ...published, payload: { version: { ...(published.payload as { version: object }).version, semanticHash: OTHER_HASH } } };
     expect(topologyFromJournal([STARTED, ROSTER, wrong])?.match).toBe("unverified");
   });
+
+  /** Observable contract: a governed successor may have a new semantic hash, but only its exact
+   * immutable predecessor chain is trusted. This catches the plausible defect of freezing the
+   * initial hash forever or accepting a forged successor with an unrelated predecessor. */
+  it("follows a changed governed version through its predecessor identity", () => {
+    const initial = event(3, "graph_version_published", {
+      version: {
+        number: 13, semanticHash: RUN_HASH, predecessor: null,
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {}, deploy: {} }, edges: [] },
+      },
+    });
+    const successorHash = "sha256:bb9b0715df457c2a1a364c1ab5ddee2c88bc390742c078fe6725b4b823e8a9bb";
+    const accepted = event(4, "mutation_accepted", { executionId: "demo", graphVersion: 14 });
+    const successor = event(5, "graph_version_published", {
+      version: {
+        number: 14, semanticHash: successorHash,
+        predecessor: { number: 13, semanticHash: RUN_HASH },
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {}, deploy: {}, verify: {} }, edges: [{ id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" }] },
+      },
+    });
+    expect(topologyFromJournal([STARTED, ROSTER, initial, accepted, successor])?.edges).toEqual([
+      { id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" },
+    ]);
+    const forged = { ...successor, payload: { version: { ...(successor.payload as { version: Record<string, unknown> }).version, predecessor: { number: 13, semanticHash: OTHER_HASH } } } };
+    expect(topologyFromJournal([STARTED, ROSTER, initial, accepted, forged])?.match).toBe("unverified");
+  });
 });
 
 function topology(hash: string): GraphTopology {

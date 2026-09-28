@@ -2807,3 +2807,35 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   font-size: 11px;
   opacity: 0.8;
 }
+
+/* Governed proposals are reviewed as a small form: the owner chooses each responsible actor,
+   then reads the sealed typed steps before the atomic approval button becomes usable. */
+.action-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.action-choice select {
+  min-height: 34px;
+  width: 100%;
+}
+
+.proposal-review {
+  display: grid;
+  gap: 8px;
+  margin: 10px 13px 0;
+  padding: 12px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.proposal-review strong { color: var(--text); }
+.proposal-review code { font-family: var(--mono); overflow-wrap: anywhere; }

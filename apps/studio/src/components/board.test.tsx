@@ -87,9 +87,11 @@ describe("the run capsule", () => {
     );
     const capsule = screen.getByLabelText("This run's progress");
     expect(capsule).toHaveTextContent("demo-deploy");
-    expect(capsule).toHaveTextContent("2 of 3 nodes done");
+    // The succeeded node has no typed acceptance evidence, so it remains review needed and does
+    // not inflate the run's done count.
+    expect(capsule).toHaveTextContent("1 of 3 nodes done");
     const bar = capsule.querySelector(".run-progress i") as HTMLElement;
-    expect(bar.style.width).toBe("67%");
+    expect(bar.style.width).toBe("33%");
   });
 
   it("carries the run's last activity, straight off the log's newest instant", () => {

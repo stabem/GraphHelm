@@ -1813,6 +1813,54 @@ export default function App({
     if (cancelIllegal) setConfirmCancel(false);
   }, [cancelIllegal]);
 
+  const proposalReviewNode = (() => {
+    const candidates = model.nodes.filter((candidate) => candidate.state === "ghost" && candidate.proposal?.status === "proposed" && candidate.proposal.digest !== null);
+    return focusedNode !== null && candidates.some((candidate) => candidate.id === focusedNode)
+      ? candidates.find((candidate) => candidate.id === focusedNode) ?? null
+      : candidates[0] ?? null;
+  })();
+  const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], reason: null });
+  useEffect(() => {
+    const proposal = proposalReviewNode?.proposal;
+    if (proposal === undefined || proposal === null || proposal.evidenceId === null) {
+      setProposalReview({ draftId: proposal?.draftId ?? "", state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor is unavailable." });
+      return;
+    }
+    let cancelled = false;
+    setProposalReview({ draftId: proposal.draftId, state: "loading", steps: [], edges: [], reason: null });
+    void openEvidence(selected, proposal.evidenceId).then(async (evidence) => {
+      if (cancelled) return;
+      try {
+        const parsed: unknown = JSON.parse(evidence.content);
+        const envelope = parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+        const candidate = envelope?.proposal !== null && typeof envelope?.proposal === "object" ? envelope.proposal : envelope;
+        const draft = candidate !== null && typeof candidate === "object" ? candidate as Record<string, unknown> : null;
+        const operations = draft?.id === proposal.draftId && Array.isArray(draft.operations) ? draft.operations : null;
+        if (operations === null || operations.length === 0 || operations.length > 64) throw new Error("typed proposal operations are unavailable");
+        const openedDigest = await digestOf(new TextEncoder().encode(JSON.stringify(draft)).buffer, globalThis.crypto.subtle);
+        if (openedDigest !== proposal.digest) throw new Error("the opened proposal digest does not match the recorded proposal");
+        const steps: string[] = [];
+        const edges: string[] = [];
+        for (const operation of operations) {
+          if (operation === null || typeof operation !== "object") throw new Error("typed proposal operation is invalid");
+          const value = operation as Record<string, unknown>;
+          if (value.op === "addNode" && (typeof value.id === "string" || typeof value.path === "string")) steps.push(String(value.id ?? value.path));
+          else if (value.op === "addEdge" && (value.edge !== null && typeof value.edge === "object" || value.value !== null && typeof value.value === "object")) {
+            const edge = (value.edge ?? value.value) as Record<string, unknown>;
+            if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} → ${edge.to}`);
+          } else if (typeof value.op === "string") steps.push(value.op);
+        }
+        if (steps.length === 0 && edges.length === 0) throw new Error("typed proposal has no reviewable operations");
+        setProposalReview({ draftId: proposal.draftId, state: "ready", steps, edges, reason: null });
+      } catch (reason) {
+        setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: reason instanceof Error ? reason.message : "The typed proposal descriptor is invalid." });
+      }
+    }).catch(() => {
+      if (!cancelled) setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor could not be opened." });
+    });
+    return () => { cancelled = true; };
+  }, [proposalReviewNode?.proposal?.draftId, proposalReviewNode?.proposal?.evidenceId, selected, openEvidence]);
+
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
   }
@@ -1917,44 +1965,6 @@ export default function App({
     }
     return { node: selectedNode, draftId: proposal.draftId, proposalDigest: proposal.digest, assignments };
   })();
-  const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], reason: null });
-  useEffect(() => {
-    const proposal = governedApprovalNode?.proposal;
-    if (proposal === undefined || proposal === null || proposal.evidenceId === null) {
-      setProposalReview({ draftId: proposal?.draftId ?? "", state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor is unavailable." });
-      return;
-    }
-    let cancelled = false;
-    setProposalReview({ draftId: proposal.draftId, state: "loading", steps: [], edges: [], reason: null });
-    void openEvidence(selected, proposal.evidenceId).then((evidence) => {
-      if (cancelled) return;
-      try {
-        const parsed: unknown = JSON.parse(evidence.content);
-        const envelope = parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
-        const draft = envelope?.proposal !== null && typeof envelope?.proposal === "object" ? envelope.proposal as Record<string, unknown> : null;
-        const operations = draft?.id === proposal.draftId && Array.isArray(draft.operations) ? draft.operations : null;
-        if (operations === null || operations.length === 0 || operations.length > 64) throw new Error("typed proposal operations are unavailable");
-        const steps: string[] = [];
-        const edges: string[] = [];
-        for (const operation of operations) {
-          if (operation === null || typeof operation !== "object") throw new Error("typed proposal operation is invalid");
-          const value = operation as Record<string, unknown>;
-          if (value.op === "addNode" && typeof value.id === "string") steps.push(value.id);
-          else if (value.op === "addEdge" && value.edge !== null && typeof value.edge === "object") {
-            const edge = value.edge as Record<string, unknown>;
-            if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} → ${edge.to}`);
-          } else if (typeof value.op === "string") steps.push(value.op);
-        }
-        if (steps.length === 0 && edges.length === 0) throw new Error("typed proposal has no reviewable operations");
-        setProposalReview({ draftId: proposal.draftId, state: "ready", steps, edges, reason: null });
-      } catch (reason) {
-        setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: reason instanceof Error ? reason.message : "The typed proposal descriptor is invalid." });
-      }
-    }).catch(() => {
-      if (!cancelled) setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], reason: "The sealed typed proposal descriptor could not be opened." });
-    });
-    return () => { cancelled = true; };
-  }, [governedApprovalNode?.proposal?.draftId, governedApprovalNode?.proposal?.evidenceId, selected, openEvidence]);
   const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
   /** A running retry failure must be paused before its owner can allow another attempt. */
   const approvalNeedsPause = status?.status === "running" && approveTarget !== "";

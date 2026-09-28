@@ -105,6 +105,32 @@ function publishedTopologyFromJournal(
     const payload = event.payload as Record<string, unknown>;
     if (payload.executionId === executionId && typeof payload.graphVersion === "number") acceptedVersions.add(payload.graphVersion);
   }
+  const versions = new Map<number, { hash: string; predecessor: { number: number; hash: string } | null; topology: Record<string, unknown> }>();
+  for (const event of events) {
+    if (event.kind !== "graph_version_published" || event.payload === null || typeof event.payload !== "object") continue;
+    const version = (event.payload as Record<string, unknown>).version;
+    if (version === null || typeof version !== "object") continue;
+    const value = version as Record<string, unknown>;
+    if (typeof value.number !== "number" || typeof value.semanticHash !== "string" || value.topology === null || typeof value.topology !== "object") continue;
+    const rawPredecessor = value.predecessor;
+    const predecessor = rawPredecessor !== null && typeof rawPredecessor === "object"
+      ? (() => {
+          const ref = rawPredecessor as Record<string, unknown>;
+          return typeof ref.number === "number" && typeof ref.semanticHash === "string" ? { number: ref.number, hash: ref.semanticHash } : null;
+        })()
+      : null;
+    const topology = value.topology as Record<string, unknown>;
+    if (topology.executionId === executionId) versions.set(value.number, { hash: value.semanticHash, predecessor, topology });
+  }
+  const validChain = (number: number, seen = new Set<number>()): boolean => {
+    if (seen.has(number)) return false;
+    const version = versions.get(number);
+    if (version === undefined) return false;
+    if (number === graphVersion) return version.hash === graphHash;
+    if (!acceptedVersions.has(number) || version.predecessor === null) return false;
+    const predecessor = versions.get(version.predecessor.number);
+    return predecessor !== undefined && predecessor.hash === version.predecessor.hash && validChain(version.predecessor.number, new Set([...seen, number]));
+  };
   let sawPublishedVersion = false;
   for (const event of [...events].reverse()) {
     if (event.kind !== "graph_version_published" || event.payload === null || typeof event.payload !== "object") continue;
@@ -118,18 +144,27 @@ function publishedTopologyFromJournal(
     const shape = topology as Record<string, unknown>;
     if (shape.executionId !== executionId) continue;
     sawPublishedVersion = true;
-    if (semanticHash !== graphHash) continue;
+    // The newest publication for this execution is authoritative. Do not fall back to an older
+    // valid version when that publication has a forged hash or predecessor: that would display a
+    // stale topology while hiding the integrity failure in the current journal.
+    if (semanticHash !== versions.get(number)?.hash || !validChain(number)) {
+      return { match: "unverified", recordedHash: graphHash, fileHash: "", file: "published graph version", edges: [], entrypoints: [], source: "journal" };
+    }
     const nodes = shape.nodes;
     const rawEdges = shape.edges;
     const entrypoints = sanitiseIds(shape.entrypoints);
     const edges = sanitiseEdges(rawEdges as GraphTopology["edges"]);
-    if (nodes === null || typeof nodes !== "object" || Array.isArray(nodes) || !Array.isArray(rawEdges) || edges.length !== rawEdges.length || entrypoints.length !== (Array.isArray(shape.entrypoints) ? shape.entrypoints.length : -1)) continue;
+    if (nodes === null || typeof nodes !== "object" || Array.isArray(nodes) || !Array.isArray(rawEdges) || edges.length !== rawEdges.length || entrypoints.length !== (Array.isArray(shape.entrypoints) ? shape.entrypoints.length : -1)) {
+      return { match: "unverified", recordedHash: graphHash, fileHash: "", file: "published graph version", edges: [], entrypoints: [], source: "journal" };
+    }
     const nodeIds = new Set(Object.keys(nodes as Record<string, unknown>));
-    if (nodeIds.size === 0 || entrypoints.some((id) => !nodeIds.has(id)) || edges.some((edge) => !nodeIds.has(edge.from) || !nodeIds.has(edge.to))) continue;
+    if (nodeIds.size === 0 || entrypoints.some((id) => !nodeIds.has(id)) || edges.some((edge) => !nodeIds.has(edge.from) || !nodeIds.has(edge.to))) {
+      return { match: "unverified", recordedHash: graphHash, fileHash: "", file: "published graph version", edges: [], entrypoints: [], source: "journal" };
+    }
     return {
       match: "matched",
       recordedHash: graphHash,
-      fileHash: graphHash,
+      fileHash: String(semanticHash),
       file: "published graph version",
       edges,
       entrypoints,

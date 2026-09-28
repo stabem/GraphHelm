@@ -2225,6 +2225,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         .unwrap_or_else(|| {
             panic!("the HTTP start must record execution_started graph hash: {start_events}")
         });
+
     let draft = serde_json::json!({
         "id": "draft-http-two-node",
         "expectedVersion": 1,
@@ -2233,7 +2234,8 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             {"op": "addNode", "path": "/spec/nodes/a-step", "value": {"type": "agent", "name": "A step", "objective": "Review A", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review A", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://ImplementationResult@1", "outputSchema": "schema://ReviewBundle@1", "instructions": "Review A", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
             {"op": "addNode", "path": "/spec/nodes/z-step", "value": {"type": "agent", "name": "Z step", "objective": "Review Z", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review Z", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://ReviewBundle@1", "outputSchema": "schema://ReviewReport@1", "instructions": "Review Z", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
             {"op": "addEdge", "value": {"id": "implementation-to-a-step", "from": "implement", "to": "a-step", "type": "data"}},
-            {"op": "addEdge", "value": {"id": "a-step-to-z-step", "from": "a-step", "to": "z-step", "type": "data"}}
+            {"op": "addEdge", "value": {"id": "a-step-to-z-step", "from": "a-step", "to": "z-step", "type": "data"}},
+            {"op": "addEdge", "value": {"id": "z-step-to-docs", "from": "z-step", "to": "docs", "type": "evidence"}}
         ]
     });
     let signal = serde_json::json!({

@@ -178,6 +178,42 @@ class HandoffTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPT), "status", "--host", "codex"], env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_mcp_stdio_lists_closed_tools_and_reaches_real_status_adapter(self):
+        env = os.environ.copy(); env.update(self.env)
+        env["GRAPHHELM_MCP_HOST"] = "codex"
+        env["GRAPHHELM_SESSION_ID"] = "receiver-1"
+        payload = "\n".join([
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+            json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                        "params": {"name": "status", "arguments": {}}}),
+        ]) + "\n"
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input=payload, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(replies[0]["result"]["serverInfo"]["version"], "0.1.10")
+        self.assertEqual([tool["name"] for tool in replies[1]["result"]["tools"]], ["offer", "receive", "status"])
+        self.assertFalse(replies[2]["result"]["isError"])
+        self.assertEqual(replies[2]["result"]["content"][0]["type"], "text")
+
+    def test_mcp_rejects_identity_override_and_oversized_request_before_runtime_io(self):
+        env = os.environ.copy(); env.update(self.env)
+        env["GRAPHHELM_MCP_HOST"] = "codex"
+        env["GRAPHHELM_SESSION_ID"] = "receiver-1"
+        before = len(RuntimeHandler.requests)
+        override = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": "status", "arguments": {"host": "claude"}}}
+        oversized = b'{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}' + b" " * (MODULE.MAX_MCP_MESSAGE + 1) + b"\n"
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input=json.dumps(override) + "\n" + oversized.decode(),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertTrue(replies[0]["result"]["isError"])
+        self.assertEqual(replies[1]["error"]["code"], -32600)
+        self.assertEqual(len(RuntimeHandler.requests), before)
+
 
 if __name__ == "__main__":
     unittest.main()

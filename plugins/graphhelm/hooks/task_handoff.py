@@ -22,10 +22,12 @@ MAX_PAGE_SIZE = 256
 MAX_OFFERS = 128
 MAX_BRIEFING = 32 * 1024
 MAX_DESCRIPTION = 8 * 1024
+MAX_MCP_MESSAGE = 32 * 1024
 HANDOFF_TIMEOUT = 5.0
 PROTOCOL = "graphhelm-task-handoff-v1"
 OFFER_KIND = "task_handoff_offer"
 RECEIPT_KIND = "task_handoff_received"
+MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 def _host(value: str) -> str:
@@ -315,6 +317,8 @@ def receive(host: str, session: str, offer_id: str) -> dict:
 
 def status(host: str, session: str, offer_id: str | None) -> dict:
     host = _host(host); session = _session(session)
+    if offer_id is not None:
+        offer_id = _id(offer_id, "offer id")
     execution, token_file, url, origin, _ = _binding()
     token = token_from_file(token_file)
     events = _events(url, token, execution)
@@ -379,7 +383,129 @@ def status(host: str, session: str, offer_id: str | None) -> dict:
             "offers": offers, "truncated": truncated, "activation": "unobserved"}
 
 
+def _mcp_tools() -> list[dict]:
+    """Return the deliberately small, closed MCP surface for this adapter."""
+    identity = {"type": "object", "additionalProperties": False}
+    return [
+        {"name": "offer", "description": "Record an explicit sealed handoff offer.",
+         "inputSchema": {**identity, "properties": {
+             "recipientHost": {"type": "string", "maxLength": 64},
+             "recipientSessionId": {"type": "string", "maxLength": 128},
+             "handoffId": {"type": "string", "maxLength": 128},
+         }, "required": ["recipientHost", "recipientSessionId"]}},
+        {"name": "receive", "description": "Read and record one sealed handoff offer.",
+         "inputSchema": {**identity, "properties": {
+             "offerId": {"type": "string", "maxLength": 128},
+         }, "required": ["offerId"]}},
+        {"name": "status", "description": "List sealed handoffs addressed to this adapter.",
+         "inputSchema": {**identity, "properties": {
+             "offerId": {"type": "string", "maxLength": 128},
+         }}},
+    ]
+
+
+def _mcp_error(request_id, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def _mcp_result(request_id, result: dict) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _mcp_tool_call(name: object, arguments: object, host: str, session: str) -> dict:
+    try:
+        if not isinstance(name, str) or name not in {"offer", "receive", "status"}:
+            raise ValueError("unknown handoff tool")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise ValueError("tool arguments must be an object")
+        allowed = {
+            "offer": {"recipientHost", "recipientSessionId", "handoffId"},
+            "receive": {"offerId"}, "status": {"offerId"},
+        }[name]
+        if set(arguments) - allowed:
+            raise ValueError("tool arguments contain an unsupported field")
+        if name == "offer":
+            if "recipientHost" not in arguments or "recipientSessionId" not in arguments:
+                raise ValueError("offer requires recipient host and session")
+            value = offer(host, session, arguments["recipientHost"], arguments["recipientSessionId"],
+                          arguments.get("handoffId", "default"))
+        elif name == "receive":
+            if "offerId" not in arguments:
+                raise ValueError("receive requires offer id")
+            value = receive(host, session, arguments["offerId"])
+        else:
+            value = status(host, session, arguments.get("offerId"))
+        return {"content": [{"type": "text", "text": json.dumps(value, separators=(",", ":"))}],
+                "isError": False}
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, RecursionError):
+        return {"content": [{"type": "text", "text": "handoff tool failed; result is unobserved"}],
+                "isError": True}
+    except Exception:
+        return {"content": [{"type": "text", "text": "handoff tool failed; result is unobserved"}],
+                "isError": True}
+
+
+def _mcp_stdio() -> int:
+    """Serve newline-delimited MCP JSON-RPC with credentials held by this process."""
+    host = os.environ.get("GRAPHHELM_MCP_HOST")
+    session = os.environ.get("GRAPHHELM_SESSION_ID")
+    try:
+        host = _host(host)
+        session = _id(session, "session identity")
+        _binding()  # Validate all fixed Runtime configuration without making a request.
+    except (TypeError, ValueError, OSError):
+        print("graphhelm-task-handoff: invalid MCP server configuration", file=sys.stderr)
+        return 1
+    while True:
+        raw = sys.stdin.buffer.readline(MAX_MCP_MESSAGE + 1)
+        if not raw:
+            break
+        request_id = None
+        if len(raw) > MAX_MCP_MESSAGE or not raw.endswith(b"\n"):
+            print(json.dumps(_mcp_error(None, -32600, "invalid request"), separators=(",", ":")), flush=True)
+            continue
+        try:
+            request_value = json.loads(raw)
+            if not isinstance(request_value, dict) or request_value.get("jsonrpc") != "2.0":
+                raise ValueError
+            request_id = request_value.get("id")
+            method = request_value.get("method")
+            if not isinstance(method, str):
+                raise ValueError
+            if "id" not in request_value:
+                if method == "notifications/initialized":
+                    continue
+                continue
+            if method == "initialize":
+                result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.10"}}
+                response = _mcp_result(request_id, result)
+            elif method == "ping":
+                response = _mcp_result(request_id, {})
+            elif method == "tools/list":
+                response = _mcp_result(request_id, {"tools": _mcp_tools()})
+            elif method == "tools/call":
+                params = request_value.get("params")
+                if not isinstance(params, dict):
+                    raise ValueError("tools/call params must be an object")
+                if set(params) - {"name", "arguments"}:
+                    raise ValueError("tools/call params contain an unsupported field")
+                response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+            else:
+                response = _mcp_error(request_id, -32601, "method not found")
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError):
+            response = _mcp_error(request_id, -32602, "invalid request")
+        except Exception:
+            response = _mcp_error(request_id, -32603, "internal error")
+        print(json.dumps(response, separators=(",", ":")), flush=True)
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "--mcp-stdio":
+        return _mcp_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=("offer", "receive", "status"))
     parser.add_argument("--host", required=True, type=_host)

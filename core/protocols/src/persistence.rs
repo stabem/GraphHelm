@@ -255,6 +255,18 @@ pub struct MemoryEvidenceEnvelope {
     pub content_digest: RawSha256,
     pub expires_at_unix: i64,
     pub independently_validated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_semantic_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator_signal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_graph_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_evidence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_content_sha256: Option<String>,
 }
 
 impl EvidenceReference {

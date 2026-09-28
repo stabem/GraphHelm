@@ -205,9 +205,8 @@ pub fn context_refusal(code: DevelopmentRefusalCode, message: String) -> Outcome
 
 /// Propose content for governed memory and report the admission verdict, over the CLI surface.
 ///
-/// **Existence-slice, not the full feature**, matching its siblings: the content and the scope are
-/// fixed because there is no input argument yet, and adding one is behavioral-parity work rather
-/// than the existence-parity this command exists to give the three adapters something to agree on.
+/// The caller supplies content and scope; this command performs admission only. Durable
+/// publication requires the authenticated HTTP flow and its separately recorded validation receipt.
 ///
 /// **It returns the VERDICT and no identifier, and that is a measurement rather than a choice.**
 /// Nothing persists a `MemoryCandidate` or a `MemoryRecord` -- both exist only in `core/governor`,
@@ -273,8 +272,7 @@ pub fn run_memory_propose(content: &str, workspace_id: &str, project_id: &str) -
 /// Report a context-accounting receipt, over the CLI surface.
 ///
 /// **Existence-slice, not the full feature**, matching its siblings: there is no execution to
-/// account for yet, because there is no input argument yet -- wiring one to a real execution's
-/// measured costs is behavioral-parity work.
+/// account for yet; production measurement requires a real execution accounting receipt.
 ///
 /// **The one field is marked `unavailable`, not `measured(0, ...)`, and that is the whole point
 /// of `CostField`'s three-state design (`core/runtime/src/context_accounting.rs`).** Nothing

@@ -2,9 +2,11 @@
 //!
 //! Under construction by TDD. Only what a currently-failing test demanded exists here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use graphhelm_events::{EvidenceOpener, EvidenceRead, EvidenceRepository, ExecutionProjection};
+use graphhelm_events::{
+    EventRepository, EvidenceOpener, EvidenceRead, EvidenceRepository, ExecutionProjection,
+};
 use graphhelm_protocols::{
     ArtifactBinding, CoverageState, DeclaredLimits, DevelopmentEnvelope, DevelopmentKind,
     DevelopmentRefusalCode, RETRIEVAL_COVERAGE_RECEIPT_API_VERSION,
@@ -15,7 +17,7 @@ use graphhelm_protocols::{
     SnapshotBinding, WireHash, canonical_json, development_api_version_major,
 };
 use graphhelm_protocols::{
-    DevelopmentScope, MemoryEvidenceEnvelope, PersistedMemoryPublicationState,
+    DevelopmentScope, ExecutionId, MemoryEvidenceEnvelope, PersistedMemoryPublicationState,
     PersistedMemorySemanticState, RepositoryScope,
 };
 use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition};
@@ -60,15 +62,68 @@ pub struct DurableMemoryItem {
     pub content: String,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct MemorySourceIdentity {
+    graph_version: u64,
+    semantic_hash: String,
+    snapshot_evidence_id: String,
+    snapshot_content_sha256: String,
+}
+
+async fn current_memory_source(
+    scope: &RepositoryScope,
+    execution_id: &str,
+    events: &dyn EventRepository,
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> Option<MemorySourceIdentity> {
+    let execution_id = ExecutionId::parse(execution_id).ok()?;
+    let source_scope = RepositoryScope::new(
+        scope.workspace_id().clone(),
+        scope.project_id().clone(),
+        Some(execution_id.clone()),
+    );
+    let history = events
+        .read_replay_stream(&source_scope, execution_id.as_str())
+        .ok()?;
+    let projection =
+        graphhelm_events::replay(&source_scope, execution_id.as_str(), &history).ok()?;
+    let graph = projection.current_graph.as_ref()?;
+    let reference = projection.authoring_snapshots.get(&graph.number())?;
+    let EvidenceRead::Available(sealed) = evidence
+        .get_sealed(source_scope.clone(), reference.evidence_id().clone())
+        .await
+        .ok()?
+    else {
+        return None;
+    };
+    if sealed.reference() != reference {
+        return None;
+    }
+    let plaintext = opener.open(source_scope, &sealed).await.ok()?;
+    let digest = plaintext.expose(|bytes| hex::encode(sha2::Sha256::digest(bytes)));
+    if digest != reference.content_sha256().as_str() {
+        return None;
+    }
+    Some(MemorySourceIdentity {
+        graph_version: graph.number(),
+        semantic_hash: graph.semantic_hash().as_str().to_owned(),
+        snapshot_evidence_id: reference.evidence_id().as_str().to_owned(),
+        snapshot_content_sha256: digest,
+    })
+}
+
 /// Retrieve durable memory after restart/replay. Every rejection is fail-closed and omitted from
 /// context: disabled callers pass `None`, while stale, expired, unpublished, withdrawn, semantic
 /// non-validated, missing, or digest-invalid records never become items.
+#[allow(clippy::too_many_arguments)]
 pub async fn retrieve_durable_memory(
     enabled: bool,
     scope: &RepositoryScope,
     expected_scope: &DevelopmentScope,
     projection: &ExecutionProjection,
     now_unix: i64,
+    events: &dyn EventRepository,
     evidence: &dyn EvidenceRepository,
     opener: &dyn EvidenceOpener,
 ) -> Vec<DurableMemoryItem> {
@@ -76,6 +131,8 @@ pub async fn retrieve_durable_memory(
         return Vec::new();
     }
     let mut items = Vec::new();
+    let mut item_sources = BTreeMap::<String, String>::new();
+    let mut sources = BTreeMap::<String, Option<MemorySourceIdentity>>::new();
     for (record_id, record) in &projection.memory_records {
         if record.publication != Some(PersistedMemoryPublicationState::Published)
             || record.semantic != Some(PersistedMemorySemanticState::Validated)
@@ -91,21 +148,51 @@ pub async fn retrieve_durable_memory(
         else {
             continue;
         };
+        if sealed.reference() != reference {
+            continue;
+        }
         let Ok(plain) = opener.open(scope.clone(), &sealed).await else {
             continue;
         };
-        let envelope =
-            plain.expose(|bytes| serde_json::from_slice::<MemoryEvidenceEnvelope>(bytes).ok());
+        let (envelope, envelope_digest) = plain.expose(|bytes| {
+            (
+                serde_json::from_slice::<MemoryEvidenceEnvelope>(bytes).ok(),
+                hex::encode(sha2::Sha256::digest(bytes)),
+            )
+        });
         let Some(envelope) = envelope else { continue };
         if !envelope.independently_validated
             || &envelope.scope != expected_scope
             || envelope.expires_at_unix <= now_unix
+            || envelope.source_execution_id.is_none()
+            || envelope.source_semantic_hash.is_none()
+            || envelope.validator_signal_id.is_none()
         {
             continue;
         }
         let digest = hex::encode(sha2::Sha256::digest(envelope.content.as_bytes()));
         if digest != envelope.content_digest.as_str()
-            || sealed.reference().content_sha256().as_str() != envelope.content_digest.as_str()
+            || sealed.reference().content_sha256().as_str() != envelope_digest
+        {
+            continue;
+        }
+        let Some(source_execution_id) = envelope.source_execution_id.as_ref() else {
+            continue;
+        };
+        if !sources.contains_key(source_execution_id) {
+            let source =
+                current_memory_source(scope, source_execution_id, events, evidence, opener).await;
+            sources.insert(source_execution_id.clone(), source);
+        }
+        let Some(Some(source)) = sources.get(source_execution_id) else {
+            continue;
+        };
+        if envelope.source_graph_version != Some(source.graph_version)
+            || envelope.source_semantic_hash.as_deref() != Some(source.semantic_hash.as_str())
+            || envelope.source_snapshot_evidence_id.as_deref()
+                != Some(source.snapshot_evidence_id.as_str())
+            || envelope.source_snapshot_content_sha256.as_deref()
+                != Some(source.snapshot_content_sha256.as_str())
         {
             continue;
         }
@@ -113,7 +200,25 @@ pub async fn retrieve_durable_memory(
             record_id: record_id.clone(),
             content: envelope.content,
         });
+        item_sources.insert(record_id.clone(), source_execution_id.clone());
     }
+    // Recheck after all asynchronous reads. Cache one identity per source, then refuse the
+    // affected items if that source moved during retrieval. This observes freshness at the last
+    // read; it does not lock the graph or claim that future edits cannot invalidate the capsule.
+    let mut stale_sources = BTreeSet::new();
+    for (execution_id, observed) in sources {
+        if observed.is_some()
+            && current_memory_source(scope, &execution_id, events, evidence, opener).await
+                != observed
+        {
+            stale_sources.insert(execution_id);
+        }
+    }
+    items.retain(|item| {
+        item_sources
+            .get(&item.record_id)
+            .is_some_and(|execution_id| !stale_sources.contains(execution_id))
+    });
     items
 }
 

@@ -16,7 +16,7 @@ use graphhelm_protocols::{
     MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, MemoryEvidenceEnvelope,
     OpaqueId, PersistedActor, PersistedMemoryPublicationState,
     PersistedMemoryPublicationTransition, PersistedMemorySemanticState,
-    PersistedSupersessionReason, RawSha256, RepositoryScope,
+    PersistedSupersessionReason, RawSha256, RepositoryScope, WireHash,
 };
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -795,6 +795,7 @@ pub struct MemoryPublicationTransitionRequest {
     expected_next_sequence: u64,
     idempotency_key: OpaqueId,
     actor: PersistedActor,
+    validation: Option<(OpaqueId, OpaqueId, RawSha256, WireHash)>,
 }
 
 /// Build the atomic append that publishes an independently validated memory candidate.
@@ -843,7 +844,7 @@ pub fn prepare_durable_memory_publication(
             field: MemoryField::Evidence,
         });
     }
-    let append = MemoryPublicationTransitionAppend::new(
+    let mut append = MemoryPublicationTransitionAppend::new(
         request.scope,
         request.stream_id,
         request.expected_next_sequence,
@@ -855,6 +856,16 @@ pub fn prepare_durable_memory_publication(
     )
     .with_evidence(reference.clone())
     .with_sealed_evidence(evidence);
+    if let Some((validator_signal_id, source_execution_id, content_digest, source_semantic_hash)) =
+        request.validation
+    {
+        append = append.with_validation(
+            validator_signal_id,
+            source_execution_id,
+            content_digest,
+            source_semantic_hash,
+        );
+    }
     prepare_memory_publication_transition(append).map_err(|_| MemoryRefusal {
         code: MemoryRefusalCode::ResealFailed,
         field: MemoryField::Evidence,
@@ -868,6 +879,51 @@ pub fn durable_memory_evidence_bytes(
     expires_at_unix: i64,
     independently_validated: bool,
 ) -> Result<Vec<u8>, MemoryRefusal> {
+    durable_memory_evidence_bytes_bound(
+        candidate,
+        expires_at_unix,
+        independently_validated,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Serialize durable memory with the trusted source and validator receipt identities bound in the
+/// sealed envelope. The legacy helper above remains for fixtures that intentionally exercise the
+/// unbound wire shape.
+pub fn durable_memory_evidence_bytes_bound(
+    candidate: &MemoryCandidate,
+    expires_at_unix: i64,
+    independently_validated: bool,
+    source_execution_id: Option<&str>,
+    source_semantic_hash: Option<&str>,
+    validator_signal_id: Option<&str>,
+) -> Result<Vec<u8>, MemoryRefusal> {
+    durable_memory_evidence_bytes_bound_full(
+        candidate,
+        expires_at_unix,
+        independently_validated,
+        source_execution_id,
+        source_semantic_hash,
+        validator_signal_id,
+        None,
+        None,
+        None,
+    )
+}
+
+pub fn durable_memory_evidence_bytes_bound_full(
+    candidate: &MemoryCandidate,
+    expires_at_unix: i64,
+    independently_validated: bool,
+    source_execution_id: Option<&str>,
+    source_semantic_hash: Option<&str>,
+    validator_signal_id: Option<&str>,
+    source_graph_version: Option<u64>,
+    source_snapshot_evidence_id: Option<&str>,
+    source_snapshot_content_sha256: Option<&str>,
+) -> Result<Vec<u8>, MemoryRefusal> {
     let digest = hex::encode(Sha256::digest(candidate.content().as_bytes()));
     let digest = RawSha256::parse(digest).map_err(|_| MemoryRefusal {
         code: MemoryRefusalCode::ResealFailed,
@@ -879,6 +935,12 @@ pub fn durable_memory_evidence_bytes(
         content_digest: digest,
         expires_at_unix,
         independently_validated,
+        source_execution_id: source_execution_id.map(str::to_owned),
+        source_semantic_hash: source_semantic_hash.map(str::to_owned),
+        validator_signal_id: validator_signal_id.map(str::to_owned),
+        source_graph_version,
+        source_snapshot_evidence_id: source_snapshot_evidence_id.map(str::to_owned),
+        source_snapshot_content_sha256: source_snapshot_content_sha256.map(str::to_owned),
     })
     .map_err(|_| MemoryRefusal {
         code: MemoryRefusalCode::ResealFailed,
@@ -917,7 +979,25 @@ impl MemoryPublicationTransitionRequest {
             expected_next_sequence,
             idempotency_key,
             actor,
+            validation: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_validation_fact(
+        mut self,
+        validator_signal_id: OpaqueId,
+        source_execution_id: OpaqueId,
+        content_digest: RawSha256,
+        source_semantic_hash: WireHash,
+    ) -> Self {
+        self.validation = Some((
+            validator_signal_id,
+            source_execution_id,
+            content_digest,
+            source_semantic_hash,
+        ));
+        self
     }
 }
 

@@ -107,7 +107,7 @@ pub trait GraphExternalizer: Send + Sync {
 /// authoring graph. The opener authenticates the scope and ciphertext, the content digest binds
 /// the bytes to the stored reference, and the graph/hash comparison binds the recovered record to
 /// the complete active persisted version. A missing or stale snapshot therefore fails closed.
-pub fn recover_verified_authoring_snapshot<'a, O: EvidenceOpener>(
+pub fn recover_verified_authoring_snapshot<'a, O: EvidenceOpener + ?Sized>(
     opener: &'a O,
     scope: RepositoryScope,
     active: &'a PersistedGraphVersion,

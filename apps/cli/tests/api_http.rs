@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sha2::Digest as _;
 
 #[cfg(windows)]
 use std::os::windows::io::{AsHandle, AsRawHandle};
@@ -9557,4 +9558,250 @@ fn the_written_key_reaches_neither_the_reply_nor_the_read_audit() {
         !recorded.contains(HTTP_KEY_SENTINEL),
         "the credential value reached the read audit: {recorded}"
     );
+}
+
+/// Issue #71's complete offline journey: caller content is screened and sealed, the server is
+/// restarted, replay rebuilds the publication state, and the real compile-context producer
+/// reports the digest of the retrieved content. Expiry and self-validation refusals are observed
+/// at the HTTP boundary before the successful record is written.
+#[test]
+fn durable_memory_publishes_replays_and_enters_production_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let passphrase = "0101010101010101010101010101010101010101010101010101010101010101";
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keyring,
+        "memory-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let server_args = [
+        "--keyring",
+        keyring.to_str().unwrap(),
+        "--key-id",
+        "memory-key",
+    ];
+    let source_graph = root().join("examples/graphs/software-feature.yaml");
+    let source_fixtures = all_success_fixtures(directory.path());
+    let source_execution = "exec_feature";
+    let validator_credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let validator_binding = format!(
+        "GRAPHHELM_AGENT_CREDENTIALS={validator_credential}=memory-reviewer|project-local|{source_execution}"
+    );
+    let env = [
+        ("GRAPHHELM_EVENTS_KEY", passphrase),
+        (
+            "GRAPHHELM_AGENT_CREDENTIALS",
+            validator_binding.split_once('=').unwrap().1,
+        ),
+    ];
+    let (guard, base, token) = serve_with_env(&events, &server_args, &env);
+    let (start_status, start_reply) = post_json(
+        &format!("{base}/v1/executions/{source_execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-source-start"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": source_graph.to_str().unwrap(),
+            "fixtures": source_fixtures.to_str().unwrap(),
+            "mode": "supervised",
+            "held": true,
+        }),
+    );
+    assert_eq!(start_status, 200, "{start_reply}");
+    let started = last_event_of_kind(&base, &token, source_execution, "execution_started");
+    let workspace = started["scope"]["workspaceId"].as_str().unwrap();
+    let project = started["scope"]["projectId"].as_str().unwrap();
+    let snapshot_event = last_event_of_kind(
+        &base,
+        &token,
+        source_execution,
+        "graph_authoring_snapshot_stored",
+    );
+    let snapshot_reference = &snapshot_event["evidenceRefs"][0];
+    let graph_event =
+        last_event_of_kind(&base, &token, source_execution, "graph_version_published");
+    let source_graph_hash = graph_event["kind"]["data"]["version"]["semanticHash"]
+        .as_str()
+        .unwrap();
+    let source_graph_version = snapshot_event["kind"]["data"]["graphVersion"]
+        .as_u64()
+        .unwrap();
+    let content = "durable caller memory survives restart";
+    let content_digest = hex::encode(sha2::Sha256::digest(content.as_bytes()));
+    let validator_signal_id = "memory-validator-signal";
+    let validator_signal = serde_json::json!({
+        "id": validator_signal_id,
+        "source": {"type": "node", "id": "implementation"},
+        "type": "no_progress",
+        "severity": "high",
+        "description": serde_json::json!({
+            "kind": "memory_candidate_validated",
+            "decision": "accepted",
+            "workspaceId": workspace,
+            "projectId": project,
+            "contentDigest": content_digest,
+            "sourceSemanticHash": source_graph_hash,
+            "sourceGraphVersion": source_graph_version,
+            "sourceSnapshotEvidenceId": snapshot_reference["evidenceId"],
+            "sourceSnapshotContentSha256": snapshot_reference["contentSha256"],
+        }).to_string(),
+        "evidence": ["memory-candidate"],
+        "emittedAt": "2026-08-13T00:00:00Z"
+    });
+    let (signal_status, signal_reply) = post_json(
+        &format!("{base}/v1/executions/{source_execution}/signal"),
+        validator_credential,
+        &[
+            ("Idempotency-Key", "memory-validator-signal-key"),
+            ("X-GraphHelm-Actor", "memory-reviewer"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({"signal": validator_signal}),
+    );
+    assert_eq!(signal_status, 200, "{signal_reply}");
+    let mut owner_signal = validator_signal.clone();
+    owner_signal["id"] = serde_json::json!("memory-owner-signal");
+    let (owner_signal_status, owner_signal_reply) = post_json(
+        &format!("{base}/v1/executions/{source_execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-owner-signal-key"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({"signal": owner_signal}),
+    );
+    assert_eq!(owner_signal_status, 200, "{owner_signal_reply}");
+    let scope = serde_json::json!({
+        "optIn": true,
+        "content": content,
+        "workspaceId": workspace,
+        "projectId": project,
+        "sourceExecutionId": source_execution,
+        "validatorSignalId": validator_signal_id,
+        "expiresAtUnix": chrono::Utc::now().timestamp() + 3_600,
+    });
+    let (alias_status, alias_reply) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-owner-alias"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "optIn": true,
+            "content": content,
+            "workspaceId": workspace,
+            "projectId": project,
+            "sourceExecutionId": source_execution,
+            "validatorSignalId": "memory-owner-signal",
+            "expiresAtUnix": chrono::Utc::now().timestamp() + 3_600,
+        }),
+    );
+    assert_eq!(alias_status, 409, "{alias_reply}");
+    let (status, refused) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-self"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "optIn": true,
+            "content": "must refuse self validation",
+            "workspaceId": workspace,
+            "projectId": project,
+            "sourceExecutionId": source_execution,
+            "validatorSignalId": "missing-validator-signal",
+            "expiresAtUnix": chrono::Utc::now().timestamp() + 3_600,
+        }),
+    );
+    assert_eq!(status, 409, "{refused}");
+
+    let (status, expired) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-expired"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "optIn": true,
+            "content": "must refuse expired memory",
+            "workspaceId": workspace,
+            "projectId": project,
+            "sourceExecutionId": source_execution,
+            "validatorSignalId": validator_signal_id,
+            "expiresAtUnix": 0,
+        }),
+    );
+    assert_eq!(status, 400, "{expired}");
+
+    let (status, published) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-publish"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &scope,
+    );
+    assert_eq!(status, 200, "{published}");
+    assert_eq!(published["data"]["publication"], "published");
+    let (retry_status, retry) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-publish"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &scope,
+    );
+    assert_eq!(retry_status, 200, "{retry}");
+    assert_eq!(retry["data"]["recordId"], published["data"]["recordId"]);
+    drop(guard);
+
+    let (_restarted, base, token) = serve_with_env(&events, &server_args, &env);
+    let (status, context) = post_json(
+        &format!("{base}/v1/development/context"),
+        &token,
+        &[],
+        &serde_json::json!({
+            "budget": 4096,
+            "memory": {
+                "enabled": true,
+                "workspaceId": workspace,
+                "projectId": project,
+            },
+        }),
+    );
+    assert_eq!(status, 200, "{context}");
+    let expected = content_digest;
+    assert_eq!(
+        context["data"]["durableMemoryDigest"], expected,
+        "{context}"
+    );
+    let (second_status, second) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-publish-second"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &scope,
+    );
+    assert_eq!(second_status, 200, "{second}");
+    assert_ne!(second["data"]["recordId"], published["data"]["recordId"]);
 }

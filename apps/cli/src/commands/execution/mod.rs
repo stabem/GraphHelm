@@ -332,7 +332,7 @@ pub(super) fn load_claim_evidence(path: &Path) -> Result<Vec<ClaimEvidence>, Fai
 }
 
 /// `resolve_stream` plus the replay every caller immediately needs from it.
-pub(super) fn load_projection(
+pub(crate) fn load_projection(
     store: &LocalEventRepository,
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, ExecutionProjection), Failure> {

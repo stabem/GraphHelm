@@ -23,8 +23,8 @@ use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    Actor, ActorId, ActorType, Diagnostic, EvidenceId, OpaqueId, PersistedActor, PersistedActorType,
-    ProjectId, RepositoryScope, Sensitivity, WorkspaceId,
+    Actor, ActorId, ActorType, Diagnostic, EventKind, EvidenceId, OpaqueId, PersistedActor,
+    PersistedActorType, ProjectId, RepositoryScope, Sensitivity, WorkspaceId,
 };
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{
@@ -2080,6 +2080,8 @@ pub(super) async fn signal(
     let sealing = state.sealing.clone();
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
+    let scoped_agent_authenticated = identity.actor.actor_type() == PersistedActorType::Agent
+        && verify_agent_credential(&state, &headers, &identity.actor);
 
     run_idempotent_mutation(
         &state.events,
@@ -2102,7 +2104,7 @@ pub(super) async fn signal(
                 // one `sealing` is `None`, the seal never runs, and the panic never fires. That
                 // is why the defect outlived every earlier signal test: they all ran unsealed.
                 let recorded = tokio::task::spawn_blocking(move || {
-                    execution::signal::execute(
+                    execution::signal::execute_authenticated(
                         &events,
                         Some(drive_execution_id.as_str()),
                         &signal_bytes,
@@ -2110,6 +2112,7 @@ pub(super) async fn signal(
                         actor,
                         key,
                         sealing.as_deref(),
+                        scoped_agent_authenticated,
                     )
                 })
                 .await
@@ -3995,7 +3998,7 @@ pub(super) async fn development_memory_status() -> Response {
 
 fn memory_failure(message: &str) -> Response {
     respond(
-        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::CONFLICT,
         Outcome::internal("development.memory-propose", message).output,
     )
 }
@@ -4048,10 +4051,16 @@ pub(super) async fn development_memory_propose(
         Ok(value) => value,
         Err(_) => return bad_request(COMMAND, "projectId is invalid", "/projectId"),
     };
-    let expires_at = payload
+    let Some(expires_at) = payload
         .get("expiresAtUnix")
         .and_then(serde_json::Value::as_i64)
-        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 86_400);
+    else {
+        return bad_request(
+            COMMAND,
+            "expiresAtUnix is required for durable memory",
+            "/expiresAtUnix",
+        );
+    };
     if graphhelm_governor::validate_memory_expiry(chrono::Utc::now().timestamp(), expires_at)
         .is_err()
     {
@@ -4061,16 +4070,26 @@ pub(super) async fn development_memory_propose(
             "/expiresAtUnix",
         );
     }
-    let validators = payload
-        .get("validators")
-        .and_then(serde_json::Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let Some(source_execution_id) = payload
+        .get("sourceExecutionId")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return bad_request(
+            COMMAND,
+            "sourceExecutionId is required",
+            "/sourceExecutionId",
+        );
+    };
+    let Some(validator_signal_id) = payload
+        .get("validatorSignalId")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return bad_request(
+            COMMAND,
+            "validatorSignalId is required",
+            "/validatorSignalId",
+        );
+    };
     let scope = graphhelm_protocols::DevelopmentScope {
         workspace_id,
         project_id,
@@ -4095,34 +4114,241 @@ pub(super) async fn development_memory_propose(
             );
         }
     };
-    if let Err(refusal) = graphhelm_governor::validate_candidate(&candidate, &validators) {
-        return respond(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Outcome::success(
-                COMMAND,
-                serde_json::json!({"admitted": false, "refusedWith": refusal.code().wire_name()}),
-            )
-            .output,
-        );
-    }
-    let evidence_bytes =
-        match graphhelm_governor::durable_memory_evidence_bytes(&candidate, expires_at, true) {
-            Ok(bytes) => bytes,
-            Err(_) => return memory_failure("memory evidence could not be prepared"),
-        };
     let digest = hex::encode(sha2::Sha256::digest(candidate.content().as_bytes()));
-    let short_digest = &digest[..16];
+    let source_execution_id = match graphhelm_protocols::OpaqueId::parse(source_execution_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                COMMAND,
+                "sourceExecutionId is invalid",
+                "/sourceExecutionId",
+            );
+        }
+    };
+    let validator_signal_id = match graphhelm_protocols::OpaqueId::parse(validator_signal_id) {
+        Ok(value) => value,
+        Err(_) => {
+            return bad_request(
+                COMMAND,
+                "validatorSignalId is invalid",
+                "/validatorSignalId",
+            );
+        }
+    };
+    let source_store = match event_store(&state.events) {
+        Ok(store) => store,
+        Err(_) => return memory_failure("source execution is unavailable"),
+    };
+    let (source_scope, source_stream, source_projection) =
+        match execution::load_projection(&source_store, Some(source_execution_id.as_str())) {
+            Ok(value) => value,
+            Err(_) => return memory_failure("source execution cannot be replayed"),
+        };
+    if source_scope.workspace_id() != &scope.workspace_id
+        || source_scope.project_id() != &scope.project_id
+    {
+        return memory_failure("source execution scope does not match memory scope");
+    }
+    let source_history = match source_store.read_replay_stream(&source_scope, &source_stream) {
+        Ok(history) => history,
+        Err(_) => return memory_failure("validator signal history is unavailable"),
+    };
+    let Some(signal_event) = source_history.iter().find(|event| {
+        matches!(&event.kind, EventKind::SignalRecorded(signal) if signal.signal_id == validator_signal_id)
+    }) else {
+        return memory_failure("validator signal is missing");
+    };
+    if signal_event.actor.id() == identity.actor.id()
+        || signal_event.actor.actor_type() != PersistedActorType::Agent
+        || !matches!(&signal_event.kind, EventKind::SignalRecorded(signal) if signal.scoped_agent_authenticated == Some(true))
+        || signal_event.evidence_refs.len() != 1
+    {
+        return memory_failure("validator signal is not independently authenticated");
+    }
+    if signal_event.scope.workspace_id() != &scope.workspace_id
+        || signal_event.scope.project_id() != &scope.project_id
+    {
+        return memory_failure("validator signal scope does not match memory scope");
+    }
+    let Some(graph) = source_projection.current_graph.as_ref() else {
+        return memory_failure("source graph snapshot is missing");
+    };
+    let Some(snapshot_reference) = source_projection.authoring_snapshots.get(&graph.number())
+    else {
+        return memory_failure("source authoring snapshot is missing");
+    };
+    let Some(reference) = signal_event.evidence_refs.first() else {
+        return memory_failure("validator Evidence is missing");
+    };
+    let Some(sealing) = state.sealing.as_deref() else {
+        return memory_failure("validator Evidence cannot be opened");
+    };
+    let opener = match build_opener(Some(sealing)) {
+        Ok(opener) => opener,
+        Err(_) => return memory_failure("validator Evidence cannot be opened"),
+    };
+    let sealed = match source_store.sealed_evidence(&source_scope, reference.evidence_id()) {
+        Ok(EvidenceRead::Available(value)) => value,
+        _ => return memory_failure("validator Evidence is missing"),
+    };
+    let snapshot_sealed =
+        match source_store.sealed_evidence(&source_scope, snapshot_reference.evidence_id()) {
+            Ok(EvidenceRead::Available(value)) => value,
+            _ => return memory_failure("source authoring snapshot is unavailable"),
+        };
+    if graphhelm_governor::recover_verified_authoring_snapshot(
+        &*opener,
+        source_scope.clone(),
+        graph,
+        &snapshot_sealed,
+    )
+    .await
+    .is_err()
+    {
+        return memory_failure("source authoring snapshot failed integrity checks");
+    }
+    let plaintext = match opener.open(source_scope.clone(), &sealed).await {
+        Ok(value) => value,
+        Err(_) => return memory_failure("validator Evidence cannot be opened"),
+    };
+    let (receipt, receipt_digest) = plaintext.expose(|bytes| {
+        (
+            serde_json::from_slice::<serde_json::Value>(bytes).ok(),
+            hex::encode(sha2::Sha256::digest(bytes)),
+        )
+    });
+    if sealed.reference().content_sha256().as_str() != receipt_digest {
+        return memory_failure("validator Evidence digest is invalid");
+    }
+    let Some(receipt) = receipt else {
+        return memory_failure("validator receipt is invalid");
+    };
+    let Some(description) = receipt.get("description") else {
+        return memory_failure("validator receipt is not typed");
+    };
+    let description = if let Some(description) = description.as_str() {
+        match serde_json::from_str::<serde_json::Value>(description) {
+            Ok(value) => value,
+            Err(_) => return memory_failure("validator receipt description is invalid"),
+        }
+    } else {
+        description.clone()
+    };
+    let event_hash_matches = matches!(
+        &signal_event.kind,
+        EventKind::SignalRecorded(record) if record.envelope_sha256.as_str() == receipt_digest
+    );
+    let valid_receipt = description.get("kind").and_then(serde_json::Value::as_str)
+        == Some("memory_candidate_validated")
+        && description
+            .get("decision")
+            .and_then(serde_json::Value::as_str)
+            == Some("accepted")
+        && description
+            .get("workspaceId")
+            .and_then(serde_json::Value::as_str)
+            == Some(scope.workspace_id.as_str())
+        && description
+            .get("projectId")
+            .and_then(serde_json::Value::as_str)
+            == Some(scope.project_id.as_str())
+        && description
+            .get("contentDigest")
+            .and_then(serde_json::Value::as_str)
+            == Some(digest.as_str())
+        && description
+            .get("sourceSemanticHash")
+            .and_then(serde_json::Value::as_str)
+            == Some(graph.semantic_hash().as_str())
+        && description
+            .get("sourceGraphVersion")
+            .and_then(serde_json::Value::as_u64)
+            == Some(graph.number())
+        && description
+            .get("sourceSnapshotEvidenceId")
+            .and_then(serde_json::Value::as_str)
+            == Some(snapshot_reference.evidence_id().as_str())
+        && description
+            .get("sourceSnapshotContentSha256")
+            .and_then(serde_json::Value::as_str)
+            == Some(snapshot_reference.content_sha256().as_str())
+        && event_hash_matches;
+    if !valid_receipt {
+        return memory_failure("validator receipt does not bind this candidate");
+    }
+    let validator_name = signal_event.actor.id().to_owned();
+    let validator_refs = vec![validator_name.as_str()];
+    let evidence_bytes = match graphhelm_governor::durable_memory_evidence_bytes_bound_full(
+        &candidate,
+        expires_at,
+        true,
+        Some(source_execution_id.as_str()),
+        Some(graph.semantic_hash().as_str()),
+        Some(validator_signal_id.as_str()),
+        Some(graph.number()),
+        Some(snapshot_reference.evidence_id().as_str()),
+        Some(snapshot_reference.content_sha256().as_str()),
+    ) {
+        Ok(bytes) => bytes,
+        Err(_) => return memory_failure("memory evidence could not be prepared"),
+    };
+    // The idempotency identity includes every signed/bound input. Content alone is insufficient:
+    // two legitimate keys may publish the same text with different validation/source intent.
+    let intent = serde_json::json!({
+        "actor": identity.actor.id(),
+        "idempotencyKey": identity.keys[0].full.as_str(),
+        "workspaceId": scope.workspace_id.as_str(),
+        "projectId": scope.project_id.as_str(),
+        "contentDigest": digest,
+        "expiresAtUnix": expires_at,
+        "sourceExecutionId": source_execution_id.as_str(),
+        "validatorSignalId": validator_signal_id.as_str(),
+        "sourceGraphVersion": graph.number(),
+        "sourceSemanticHash": graph.semantic_hash().as_str(),
+        "sourceSnapshotEvidenceId": snapshot_reference.evidence_id().as_str(),
+        "sourceSnapshotContentSha256": snapshot_reference.content_sha256().as_str(),
+    });
+    let intent_digest = hex::encode(sha2::Sha256::digest(
+        serde_json::to_vec(&intent).expect("memory intent is serializable"),
+    ));
     let evidence_id =
-        EvidenceId::parse(format!("memory-evidence-{short_digest}")).expect("bounded evidence id");
-    let record_id = graphhelm_protocols::OpaqueId::parse(format!("memory-record-{short_digest}"))
+        EvidenceId::parse(format!("memory-evidence-{intent_digest}")).expect("bounded evidence id");
+    let record_id = graphhelm_protocols::OpaqueId::parse(format!("memory-record-{intent_digest}"))
         .expect("bounded record id");
     let repo_scope =
         RepositoryScope::new(scope.workspace_id.clone(), scope.project_id.clone(), None);
+    let stream_id =
+        graphhelm_protocols::OpaqueId::parse("memory-stream").expect("constant stream id");
+    let events = match event_store(&state.events) {
+        Ok(events) => events,
+        Err(error) => return memory_failure(&format!("memory store unavailable: {error}")),
+    };
+    let history = match events.read_replay_stream(&repo_scope, stream_id.as_str()) {
+        Ok(history) => history,
+        Err(_) => return memory_failure("memory stream history is unavailable"),
+    };
+    if let Some(existing) = history
+        .iter()
+        .find(|event| event.idempotency_key.as_str() == identity.keys[0].full.as_str())
+    {
+        let same_record = existing.scope == repo_scope
+            && matches!(
+                &existing.kind,
+                EventKind::MemoryPublicationTransitioned(payload)
+                    if payload.record_id.as_str() == record_id.as_str()
+            );
+        if same_record {
+            return respond(StatusCode::OK, Outcome::success(COMMAND, serde_json::json!({
+                "admitted": true, "recordId": record_id, "publication": "published", "evidenceId": evidence_id,
+            })).output);
+        }
+        return memory_failure("memory idempotency key was reused for different content or scope");
+    }
     let input = match EvidenceInput::new(
         evidence_id.to_string(),
         "application/json",
         Sensitivity::Internal,
-        "memory",
+        "standard",
         SecretBytes::new(evidence_bytes),
     ) {
         Ok(input) => input,
@@ -4136,19 +4362,13 @@ pub(super) async fn development_memory_propose(
         Ok(value) => value,
         Err(_) => return memory_failure("memory evidence could not be sealed"),
     };
-    let stream_id =
-        graphhelm_protocols::OpaqueId::parse("memory-stream").expect("constant stream id");
-    let events = match event_store(&state.events) {
-        Ok(events) => events,
-        Err(error) => return memory_failure(&format!("memory store unavailable: {error}")),
-    };
     let expected = match events.next_sequence(&repo_scope, stream_id.as_str()) {
         Ok(value) => value,
         Err(_) => return memory_failure("memory stream head is unavailable"),
     };
     let record = graphhelm_governor::MemoryRecord::new(record_id.clone()).bind_durable(
         scope,
-        digest,
+        digest.clone(),
         sealed.reference().clone(),
         expires_at,
     );
@@ -4158,11 +4378,17 @@ pub(super) async fn development_memory_propose(
         expected,
         identity.keys[0].full.clone(),
         identity.actor.clone(),
+    )
+    .with_validation_fact(
+        validator_signal_id.clone(),
+        source_execution_id.clone(),
+        graphhelm_protocols::RawSha256::parse(digest.clone()).expect("sha256 digest"),
+        graph.semantic_hash().clone(),
     );
     let prepared = match graphhelm_governor::prepare_durable_memory_publication(
         graphhelm_governor::CaptureOptIn::Enabled,
         &candidate,
-        &validators,
+        &validator_refs,
         request,
         &record,
         sealed,
@@ -4179,7 +4405,7 @@ pub(super) async fn development_memory_propose(
         Ok(_) => respond(StatusCode::OK, Outcome::success(COMMAND, serde_json::json!({
             "admitted": true, "recordId": record_id, "publication": "published", "evidenceId": evidence_id,
         })).output),
-        Err(_) => memory_failure("memory publication was not committed"),
+        Err(error) => memory_failure(&format!("memory publication was not committed: {error}")),
     }
 }
 
@@ -4234,6 +4460,7 @@ pub(super) async fn development_compile_context(
         })
         .unwrap_or_default();
 
+    let mut durable_memory_digest = None;
     // Durable memory is an explicit opt-in input to the real context producer. Retrieval opens
     // replayed state and sealed Evidence; unsafe records simply contribute no item.
     if let Some(memory) = payload.get("memory")
@@ -4270,19 +4497,32 @@ pub(super) async fn development_compile_context(
                     &projection,
                     chrono::Utc::now().timestamp(),
                     &store,
+                    &store,
                     opener.as_ref(),
                 )
                 .await;
-                require.extend(items.into_iter().map(|item| item.content));
+                let retrieved = items
+                    .into_iter()
+                    .map(|item| item.content)
+                    .collect::<Vec<_>>();
+                if !retrieved.is_empty() {
+                    let joined = retrieved.join("\n");
+                    durable_memory_digest =
+                        Some(hex::encode(sha2::Sha256::digest(joined.as_bytes())));
+                }
+                require.extend(retrieved);
             }
         }
     }
 
     match crate::commands::development::compile_context_decision(budget, &require) {
-        Ok(digest) => respond_outcome(Outcome::success(
-            "development.compile-context",
-            serde_json::json!({"digest": digest}),
-        )),
+        Ok(digest) => {
+            let mut data = serde_json::json!({"digest": digest});
+            if let Some(memory_digest) = durable_memory_digest {
+                data["durableMemoryDigest"] = serde_json::Value::String(memory_digest);
+            }
+            respond_outcome(Outcome::success("development.compile-context", data))
+        }
         Err((code, message)) => respond(
             crate::commands::development::development_refusal_http_status(code),
             crate::commands::development::context_refusal(code, message).output,

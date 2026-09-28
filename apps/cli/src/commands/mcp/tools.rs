@@ -339,9 +339,18 @@ fn memory_propose_schema() -> serde_json::Value {
             "projectId": {"type": "string", "minLength": 1, "maxLength": 128},
             "optIn": {"type": "boolean"},
             "expiresAtUnix": {"type": "integer"},
-            "validators": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}}
+            "sourceExecutionId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "validatorSignalId": {"type": "string", "minLength": 1, "maxLength": 128}
         }),
-        &["content", "workspaceId", "projectId", "optIn", "validators"],
+        &[
+            "content",
+            "workspaceId",
+            "projectId",
+            "optIn",
+            "expiresAtUnix",
+            "sourceExecutionId",
+            "validatorSignalId",
+        ],
     )
 }
 

@@ -10,6 +10,8 @@ Durable memory is an explicit project opt-in. A caller supplies a `MemoryCandida
 complete observation and its `DevelopmentScope`. The governor screens the candidate before it
 constructs a record, asks a provider, logs content, seals evidence, or appends an event. Screening
 checks opt-in, exact scope, captured origin, credential-shaped content, and a bounded expiry.
+`expiresAtUnix` is required at the public boundary; the server never invents a time that would
+change between retries.
 
 An admitted candidate becomes a `MemoryPublication` with a stable record id, exact scope, content
 digest, expiry, and one sealed Evidence reference. The plaintext observation is stored only in
@@ -27,6 +29,33 @@ The contract is deterministic and provider-free. It adds no model, council, paid
 capture switch. Existing publication and supersession events remain separate semantic and
 publication axes. Frozen release schemas are unchanged; the new typed contract is represented by
 existing event and Evidence envelopes and validated before replay.
+
+### Validation receipt and source binding
+
+The durable publication request carries references only: `sourceExecutionId` and
+`validatorSignalId`. Caller supplied validator names, digests, and scopes are never treated as
+validation. The Runtime loads the started source execution through the existing execution loader,
+derives its trusted project and graph snapshot identity, then loads the referenced `SignalRecorded`
+event from that execution stream. The event actor must differ from the publishing actor, and its
+sealed Evidence must be available and authenticated.
+
+The sealed signal description is typed JSON with `kind: "memory_candidate_validated"`,
+`decision: "accepted"`, the exact `DevelopmentScope`, candidate content digest, and trusted source
+graph or authoring snapshot identity. The publication adapter verifies every field against the
+candidate and current source projection before constructing the atomic append. Missing event,
+missing Evidence, forged reference, self actor, scope mismatch, digest mismatch, or changed source
+identity refuses publication. The validation fact is projected on its own semantic axis; generic
+publication Evidence never upgrades semantic state.
+
+Retrieval repeats the source loader and identity comparison after replay. It excludes records when
+the source execution, trusted graph, or authoring snapshot is missing or changed. This contract
+claims snapshot identity freshness only; it does not claim Git HEAD freshness.
+
+The idempotency identity covers the authenticated actor, idempotency key, candidate digest, scope,
+expiry, validator and source references, graph version, and authoring snapshot identity. Retries
+with the same complete intent return the committed result without resealing. Reusing a key for any
+different intent is a conflict, and different legitimate keys receive distinct record and Evidence
+identifiers even when their plaintext content is identical.
 
 ## Keel card
 

@@ -196,6 +196,7 @@ pub enum EventKind {
     GraphValidationFailed(GraphValidationFailed),
     MemoryAdmissionRefused(MemoryAdmissionRefused),
     MemoryPublicationTransitioned(MemoryPublicationTransitioned),
+    MemoryValidationRecorded(MemoryValidationRecorded),
     MemoryRecordSuperseded(MemoryRecordSuperseded),
     GraphVersionPublished(Box<GraphVersionPublished>),
     GraphAuthoringSnapshotStored(GraphAuthoringSnapshotStored),
@@ -420,6 +421,7 @@ wire_names! {
     GraphValidationFailed => "graph_validation_failed",
     MemoryAdmissionRefused => "memory_admission_refused",
     MemoryPublicationTransitioned => "memory_publication_transitioned",
+    MemoryValidationRecorded => "memory_validation_recorded",
     MemoryRecordSuperseded => "memory_record_superseded",
     GraphVersionPublished => "graph_version_published",
     GraphAuthoringSnapshotStored => "graph_authoring_snapshot_stored",
@@ -475,6 +477,7 @@ impl EventKind {
             Self::IntegrityCheckpointCreated(_)
                 | Self::MemoryAdmissionRefused(_)
                 | Self::MemoryPublicationTransitioned(_)
+                | Self::MemoryValidationRecorded(_)
                 | Self::MemoryRecordSuperseded(_)
                 | Self::EvidenceErasureRequested(_)
                 | Self::EvidenceErasureCompleted(_)
@@ -560,6 +563,18 @@ pub struct MemoryPublicationTransitioned {
     pub record_id: OpaqueId,
     pub transition: PersistedMemoryPublicationTransition,
     pub resulting_state: PersistedMemoryPublicationState,
+}
+
+/// An independently authenticated validation fact. It moves only the semantic axis and never
+/// changes publication visibility.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryValidationRecorded {
+    pub record_id: OpaqueId,
+    pub validator_signal_id: OpaqueId,
+    pub source_execution_id: OpaqueId,
+    pub content_digest: RawSha256,
+    pub source_semantic_hash: WireHash,
 }
 
 /// Whether a memory record's content is still believed. Never touched by
@@ -987,6 +1002,10 @@ pub struct SignalRecorded {
     pub kind: String,
     pub severity: SignalSeverity,
     pub envelope_sha256: RawSha256,
+    /// Set by the Runtime transport after verifying the registered scoped agent credential.
+    /// Legacy and generic CLI signals carry no such fact; descriptions cannot set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoped_agent_authenticated: Option<bool>,
 }
 
 /// The Governor proposed an expansion. The node exists in state `Ghost` from this moment,

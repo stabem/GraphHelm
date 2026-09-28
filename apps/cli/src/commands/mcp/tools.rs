@@ -333,7 +333,7 @@ fn compile_context_schema() -> serde_json::Value {
 }
 
 fn memory_propose_schema() -> serde_json::Value {
-    object_schema(
+    mutating_schema(
         serde_json::json!({
             "content": {"type": "string", "minLength": 1, "maxLength": 65536},
             "workspaceId": {"type": "string", "minLength": 1, "maxLength": 128},

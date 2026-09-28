@@ -1,5 +1,7 @@
 # Claude Code instructions
 
+**Installing GraphHelm for a user?** Follow [`INSTALL.md`](INSTALL.md) top to bottom and run every verify step; a partial install (plugin without MCP, MCP without Runtime) is not done.
+
 This repository's instructions live in [`AGENTS.md`](AGENTS.md). Read it before doing any work here.
 
 Code here is written under **Keel**, the repository's development model (`AGENTS.md`, section

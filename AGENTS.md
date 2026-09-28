@@ -1,5 +1,7 @@
 # GraphHelm Repository Instructions
 
+**Installing GraphHelm for a user?** Follow [`INSTALL.md`](INSTALL.md) top to bottom and run every verify step; a partial install (plugin without MCP, MCP without Runtime) is not done.
+
 ## Scope and authority
 
 These instructions apply to the entire repository. GraphHelm is an open-source agent operating system and control plane. The local Studio is the control plane; the Runtime and project data live on infrastructure controlled by the user.

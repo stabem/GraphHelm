@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/session_hook.py\" end --host claude",
-            "timeout": 3
+            "timeout": 5
           }
         ]
       }

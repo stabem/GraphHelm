@@ -108,7 +108,11 @@ class SessionHookTests(unittest.TestCase):
             (companion / ".codex-plugin" / "plugin.json").read_text()
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
-        self.assertEqual(companion_manifest["version"], "0.1.5")
+        main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
+        self.assertEqual(companion_manifest["version"], main_manifest["version"])
+        for host in (".claude-plugin", ".codex-plugin"):
+            legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())
+            self.assertEqual(legacy["version"], main_manifest["version"])
         self.assertEqual(
             SCRIPT.read_bytes(),
             (companion / "hooks" / "session_hook.py").read_bytes(),
@@ -117,7 +121,6 @@ class SessionHookTests(unittest.TestCase):
             (SCRIPT.parent / "codex-hooks.json").read_bytes(),
             (companion / "hooks" / "codex-hooks.json").read_bytes(),
         )
-        main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):
@@ -238,6 +241,37 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(sent[0][3], sent[1][3])
         self.assertEqual(sent[0][2]["Idempotency-Key"], sent[1][2]["Idempotency-Key"])
         self.assertTrue(sent[0][2]["Idempotency-Key"].startswith("session-end-v"))
+
+    def test_end_accepts_slow_matching_ack_without_extra_posts(self):
+        # The previous one-second socket timeout lost a durable acknowledgement.
+        # Release a real HTTP response after that boundary; assert delivery, not timing.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        RuntimeHandler.post_started = threading.Event()
+        RuntimeHandler.post_release = threading.Event()
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "end", "--host", "codex"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=self.env,
+        )
+        process.stdin.write(json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}))
+        process.stdin.close()
+        process.stdin = None
+        release = threading.Timer(1.25, RuntimeHandler.post_release.set)
+        try:
+            self.assertTrue(RuntimeHandler.post_started.wait(timeout=3))
+            release.start()
+            stdout, stderr = process.communicate(timeout=6)
+        finally:
+            release.cancel()
+            RuntimeHandler.post_release.set()
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=6)
+        self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
+        state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
+        self.assertTrue(json.loads(state.read_text())["delivery"]["delivered"])
+        self.assertEqual(self.run_hook("end", host="codex").stderr, "")
+        self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
 
     def test_mismatched_ack_is_unobserved_and_remains_retryable(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

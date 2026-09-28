@@ -198,6 +198,7 @@ pub enum EventKind {
     MemoryPublicationTransitioned(MemoryPublicationTransitioned),
     MemoryRecordSuperseded(MemoryRecordSuperseded),
     GraphVersionPublished(Box<GraphVersionPublished>),
+    GraphAuthoringSnapshotStored(GraphAuthoringSnapshotStored),
     DraftProposed(DraftProposed),
     DraftRejected(DraftRejected),
     DraftApplied(DraftApplied),
@@ -421,6 +422,7 @@ wire_names! {
     MemoryPublicationTransitioned => "memory_publication_transitioned",
     MemoryRecordSuperseded => "memory_record_superseded",
     GraphVersionPublished => "graph_version_published",
+    GraphAuthoringSnapshotStored => "graph_authoring_snapshot_stored",
     DraftProposed => "draft_proposed",
     DraftRejected => "draft_rejected",
     DraftApplied => "draft_applied",
@@ -607,6 +609,15 @@ pub struct MemoryRecordSuperseded {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphVersionPublished {
     pub version: PersistedGraphVersion,
+}
+
+/// A sealed authoring predecessor bound to one execution and graph version.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphAuthoringSnapshotStored {
+    pub execution_id: OpaqueId,
+    pub graph_version: u64,
+    pub graph_hash: WireHash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

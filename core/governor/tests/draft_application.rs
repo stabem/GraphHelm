@@ -13,13 +13,14 @@ use std::{
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{
     ActiveVersion, AuthenticateRequest, AuthenticationTag, EventPage, EventRepository,
-    EventRepositoryError, EvidenceProtector, KeyError, KeyProvider, KeyProviderMetadata,
-    LocalEventRepository, LocalFailpoint, PreparedAppend, RepositoryFuture, RevocationReceipt,
-    RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest, WrappedKey,
+    EventRepositoryError, EvidenceOpener, EvidenceProtector, KeyError, KeyProvider,
+    KeyProviderMetadata, LocalEventRepository, LocalFailpoint, PreparedAppend, RepositoryFuture,
+    RevocationReceipt, RevokeKeyRequest, SecretBytes, VerifyAuthenticationRequest, WrapKeyRequest,
+    WrappedKey,
 };
 use graphhelm_governor::{
     ApplyServices, GovernorError, GraphExternalizer, ProjectionPreparation,
-    SealingGraphExternalizer, apply_draft,
+    SealingGraphExternalizer, apply_draft, recover_verified_authoring_snapshot,
 };
 use graphhelm_graph::{GraphVersion, raw_content_sha256};
 use graphhelm_protocols::{
@@ -425,6 +426,14 @@ fn valid_draft_atomically_publishes_safe_projection_and_evidence() {
         .unwrap()
         .unwrap();
     assert_eq!(active.number, 2);
+    let replay = repository
+        .read_replay_stream(&scope(&base), "execution-draft")
+        .unwrap();
+    assert!(
+        replay
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::GraphAuthoringSnapshotStored(_)))
+    );
     let published_sequence = result
         .events
         .iter()
@@ -437,6 +446,57 @@ fn valid_draft_atomically_publishes_safe_projection_and_evidence() {
         assert!(!durable.contains(plaintext));
     }
     assert!(!format!("{result:?}").contains("Archive evidence"));
+}
+
+#[test]
+fn authoring_snapshot_recovers_only_the_exact_persisted_version() {
+    let base = base();
+    let externalizer = SealingGraphExternalizer::new(EvidenceProtector::new(FixedKeyProvider));
+    let preparation = block_on(externalizer.prepare(scope(&base), &base.to_record())).unwrap();
+    let plaintext = serde_json::to_vec(&base.to_record()).unwrap();
+    struct SnapshotOpener(Vec<u8>);
+    impl EvidenceOpener for SnapshotOpener {
+        fn open<'a>(
+            &'a self,
+            _scope: RepositoryScope,
+            _evidence: &'a graphhelm_events::SealedEvidence,
+        ) -> RepositoryFuture<'a, Result<SecretBytes, graphhelm_events::EvidenceError>> {
+            let bytes = self.0.clone();
+            Box::pin(async move { Ok(SecretBytes::new(bytes)) })
+        }
+    }
+    let opener = SnapshotOpener(plaintext);
+
+    let recovered = block_on(recover_verified_authoring_snapshot(
+        &opener,
+        scope(&base),
+        preparation.version(),
+        &preparation.authoring_snapshot,
+    ))
+    .unwrap();
+    assert_eq!(recovered, base.to_record());
+
+    let mut wrong_active = preparation.version().clone();
+    wrong_active = PersistedGraphVersion::new(
+        wrong_active.number(),
+        wrong_active.predecessor().cloned(),
+        wrong_active.topology().clone(),
+        wrong_active.topology_hash().clone(),
+        graphhelm_protocols::WireHash::parse(format!("sha256:{}", "f".repeat(64))).unwrap(),
+        wrong_active.content_slots().to_vec(),
+        wrong_active.created_by().clone(),
+        wrong_active.created_at().clone(),
+    )
+    .unwrap();
+    assert!(
+        block_on(recover_verified_authoring_snapshot(
+            &opener,
+            scope(&base),
+            &wrong_active,
+            &preparation.authoring_snapshot,
+        ))
+        .is_err()
+    );
 }
 
 #[test]

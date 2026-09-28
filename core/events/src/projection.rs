@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
     AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind,
-    EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
-    MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedActor,
-    PersistedGraphVersion, PersistedMemoryPublicationState, PersistedMemorySemanticState,
-    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
-    WireHash, WorkspaceId,
+    EvidenceId, EvidenceReference, ExecutionFormDeclared, ExecutionId, ExecutionMode,
+    MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId,
+    PersistedActor, PersistedGraphVersion, PersistedMemoryPublicationState,
+    PersistedMemorySemanticState, PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope,
+    SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -401,6 +401,11 @@ const fn is_zero(value: &u64) -> bool {
 pub struct ExecutionProjection {
     pub stream_id: Option<String>,
     pub current_graph: Option<PersistedGraphVersion>,
+    /// Sealed authoring records keyed by the published version they describe. The reference is
+    /// retained so an approval can recover the exact authoring predecessor through the repository
+    /// instead of reconstructing it from the safe projection.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub authoring_snapshots: BTreeMap<u64, EvidenceReference>,
     /// The shape the operator DECLARED, which is a different and weaker claim than
     /// `current_graph`'s "this was sealed and published". A rule that needs the node set or a
     /// node's deadline can be answered from a declaration; a rule that needs sealed evidence
@@ -1445,6 +1450,32 @@ fn apply_projection_event(
                     .evidence_availability
                     .entry(scoped_evidence_key(&event.scope, slot.evidence_id()))
                     .or_insert(EvidenceAvailability::Available);
+            }
+        }
+        EventKind::GraphAuthoringSnapshotStored(payload) => {
+            if event.scope.execution_id().map(|id| id.as_str())
+                != Some(payload.execution_id.as_str())
+                || event.evidence_refs.len() != 1
+                || projection.current_graph.as_ref().is_none_or(|graph| {
+                    graph.number() != payload.graph_version
+                        || graph.semantic_hash().as_str() != payload.graph_hash.as_str()
+                })
+                || !event.evidence_refs[0]
+                    .evidence_id()
+                    .as_str()
+                    .starts_with(&format!(
+                        "graph-authoring-snapshot-{}-",
+                        payload.graph_version
+                    ))
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            if projection
+                .authoring_snapshots
+                .insert(payload.graph_version, event.evidence_refs[0].clone())
+                .is_some()
+            {
+                return Err(ReplayError::Corrupt);
             }
         }
         EventKind::DraftProposed(payload) => {

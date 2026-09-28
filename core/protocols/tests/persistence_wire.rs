@@ -142,6 +142,10 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             false,
         ),
         (
+            json!({"type":"graph_authoring_snapshot_stored","data":{"executionId":"execution-1","graphVersion":1,"graphHash":hash}}),
+            false,
+        ),
+        (
             json!({"type":"draft_proposed","data":{"draftId":"draft-1","expectedVersion":1,"expectedHash":hash,"operationCount":1}}),
             false,
         ),

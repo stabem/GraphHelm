@@ -12,6 +12,7 @@ pub use apply::{ApplyError, ApplyResult, ApplyServices, apply_draft};
 pub use candidate::{DraftAnalysis, analyze_draft};
 pub use externalize::{
     GovernorError, GraphExternalizer, ProjectionPreparation, SealingGraphExternalizer,
+    recover_verified_authoring_snapshot,
 };
 pub use inflight::{
     AdmittedSignal, GovernanceError, MutationDecision, RejectionReason, admit_signal,

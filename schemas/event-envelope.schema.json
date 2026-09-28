@@ -217,6 +217,16 @@
       "properties": {"version": {"$ref": "persisted-graph-version.schema.json"}},
       "additionalProperties": false
     },
+    "graphAuthoringSnapshotStored": {
+      "type": "object",
+      "required": ["executionId", "graphVersion", "graphHash"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "graphHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
     "draftProposed": {
       "type": "object",
       "required": ["draftId", "expectedVersion", "expectedHash", "operationCount"],
@@ -1034,6 +1044,15 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "graph_authoring_snapshot_stored"},
+            "data": {"$ref": "#/$defs/graphAuthoringSnapshotStored"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "draft_rejected"},
             "data": {"$ref": "#/$defs/draftRejected"}
           },
@@ -1409,6 +1428,7 @@
     {"properties": {"kind": {"properties": {"type": {"const": "memory_publication_transitioned"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_record_superseded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "graph_authoring_snapshot_stored"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_applied"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

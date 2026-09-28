@@ -3,11 +3,12 @@ use graphhelm_graph::{GraphError, GraphVersion, preflight_execution_graph, raw_c
 use graphhelm_policy::evaluate_transition;
 use graphhelm_protocols::{
     Actor, ActorId, ActorType, Clock, DiagnosticComponent, DiagnosticDomainPath, DraftApplied,
-    DraftProposed, DraftRejected, EventEnvelope, EventKind, GhostNodeProposed, GraphDraft,
-    GraphVersionPublished, GraphVersionRef, IdGenerator, ManualOverride, ObligationStatus,
-    OpaqueId, PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersionRef,
-    PersistedObligationStatus, PolicyObligation, PolicyObligationEvaluated, PolicyReport,
-    PolicyWaiver, PolicyWaiverCreated, RepositoryScope, SafeCode, Sensitivity, Severity, WireHash,
+    DraftProposed, DraftRejected, EventEnvelope, EventKind, GhostNodeProposed,
+    GraphAuthoringSnapshotStored, GraphDraft, GraphVersionPublished, GraphVersionRef, IdGenerator,
+    ManualOverride, ObligationStatus, OpaqueId, PersistedActor, PersistedActorType,
+    PersistedDiagnostic, PersistedGraphVersionRef, PersistedObligationStatus, PolicyObligation,
+    PolicyObligationEvaluated, PolicyReport, PolicyWaiver, PolicyWaiverCreated, RepositoryScope,
+    SafeCode, Sensitivity, Severity, WireHash,
 };
 use thiserror::Error;
 
@@ -292,6 +293,18 @@ pub fn apply_draft<'a>(
             })),
             preparation.evidence_refs.clone(),
         )?);
+        pending.push(new_event(
+            governor_event_key(&request_identity, b"authoring-snapshot")?,
+            &actor,
+            EventKind::GraphAuthoringSnapshotStored(GraphAuthoringSnapshotStored {
+                execution_id: OpaqueId::parse(&candidate_execution_id)
+                    .map_err(|_| ApplyError::InvalidOperation)?,
+                graph_version: version.number(),
+                graph_hash: WireHash::parse(version.content_hash().as_str())
+                    .map_err(|_| ApplyError::InvalidOperation)?,
+            }),
+            vec![preparation.authoring_snapshot.reference().clone()],
+        )?);
         for (index, operation) in draft.operations.iter().enumerate() {
             if let graphhelm_protocols::DraftOperation::AddNode { id, .. } = operation {
                 pending.push(new_event(
@@ -322,7 +335,11 @@ pub fn apply_draft<'a>(
             services.stream_id.clone(),
             expected_sequence,
             pending,
-            preparation.evidence,
+            {
+                let mut evidence = preparation.evidence;
+                evidence.push(preparation.authoring_snapshot);
+                evidence
+            },
             vec![],
         )?;
         let events = services.event_repository.append_atomic(&request)?;
@@ -646,6 +663,10 @@ fn validate_committed_outcome_grammar(
         return invalid_committed_outcome();
     }
     let mut obligations = Vec::new();
+    let legacy_proposal = matches!(
+        &first.kind,
+        EventKind::DraftProposed(payload) if payload.proposal_sha256.is_none()
+    );
     let mut ghost_index = 0usize;
     while let Some(event) = events.get(cursor) {
         let EventKind::PolicyObligationEvaluated(payload) = &event.kind else {
@@ -741,7 +762,30 @@ fn validate_committed_outcome_grammar(
             else {
                 return invalid_committed_outcome();
             };
-            for (index, ghost) in middle.iter().enumerate() {
+            let (ghost_offset, ghosts) = match middle.split_first() {
+                Some((snapshot, ghosts))
+                    if matches!(snapshot.kind, EventKind::GraphAuthoringSnapshotStored(_)) =>
+                {
+                    let EventKind::GraphAuthoringSnapshotStored(payload) = &snapshot.kind else {
+                        unreachable!()
+                    };
+                    if snapshot.idempotency_key
+                        != governor_event_key(request_identity, b"authoring-snapshot")?
+                        || payload.graph_version != applied_payload.graph_version
+                        || snapshot.evidence_refs.len() != 1
+                    {
+                        return invalid_committed_outcome();
+                    }
+                    (0, ghosts)
+                }
+                Some((first, _))
+                    if legacy_proposal && matches!(first.kind, EventKind::GhostNodeProposed(_)) =>
+                {
+                    (0, middle)
+                }
+                _ => return invalid_committed_outcome(),
+            };
+            for (index, ghost) in ghosts.iter().skip(ghost_offset).enumerate() {
                 let EventKind::GhostNodeProposed(payload) = &ghost.kind else {
                     return invalid_committed_outcome();
                 };

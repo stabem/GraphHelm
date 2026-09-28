@@ -64,6 +64,11 @@ pub fn run(
         Ok(version) => version,
         Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };
+    if let Err(error) =
+        validate_before_governed_genesis(&version, events, fixtures, mode, execution)
+    {
+        return finish(COMMAND, Err(error), |value| value).with_warnings(warnings);
+    }
     if let (Some(keyring), Some(key_id)) = (genesis.directory, genesis.key_id) {
         if let Err(error) = persist_governed_genesis(
             &version,
@@ -109,6 +114,36 @@ pub fn run(
         )
     };
     finish(COMMAND, started, |value| value).with_warnings(warnings)
+}
+
+/// Validate deterministic start preconditions before governed genesis writes its publication and
+/// sealed snapshot. The normal execution path repeats these checks while preparing the started
+/// event; this early pass keeps an invalid mode, fixture, or already-started stream from leaving
+/// a partial governed history behind. The append still owns concurrency conflicts.
+fn validate_before_governed_genesis(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    mode: &str,
+    execution: Option<&str>,
+) -> Result<(), Failure> {
+    parse_mode(mode)?;
+    let _ = load_fixtures(fixtures)?;
+    let stream_id = resolve_execution_id(version, execution)?;
+    let scope = super::addressable_scope(stream_id.as_str())?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let history = store
+        .read_replay_stream(&scope, stream_id.as_str())
+        .map_err(|error| repository_failure(&error))?;
+    let projection = graphhelm_events::replay(&scope, stream_id.as_str(), &history)
+        .map_err(|error| replay_failure(&error))?;
+    if projection.execution_id.is_some() {
+        return Err(execution_state(
+            "an execution has already started on this stream",
+            "/execution",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn persist_governed_genesis(

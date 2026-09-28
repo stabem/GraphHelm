@@ -1077,6 +1077,50 @@ fn governed_start_persists_genesis_snapshot_for_restart() {
     assert_eq!(resumed_data["status"], "running");
 }
 
+/// Governed genesis must validate the start request before publishing its graph and sealed
+/// snapshot. The invalid mode is the regression: before this preflight, the command could append
+/// genesis and only then discover the mode error in `execute_prepared`, leaving a journal with no
+/// `execution_started` event that looked like a valid run to the owner.
+#[test]
+fn governed_start_invalid_mode_leaves_the_journal_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = signal_keyring(directory.path());
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--mode",
+            "invalid-mode",
+            "--execution",
+            "exec_feature",
+            "--held",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    // Read the addressed stream directly. The CLI replay command intentionally requires
+    // explicit scope and stream selection, while this regression is about whether genesis
+    // wrote anything at all.
+    let history = open_store(&events)
+        .read_replay_stream(&scope_the_id_derives("exec_feature"), "exec_feature")
+        .unwrap();
+    assert!(
+        history.is_empty(),
+        "invalid governed start left events in the journal: {history:?}"
+    );
+}
+
 fn signal_envelope(id: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({
         "id": id,

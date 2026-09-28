@@ -1860,7 +1860,9 @@ export default function App({
             const id = String(value.id ?? value.path);
             nodeIds.push(id);
             const nodeValue = value.value !== null && typeof value.value === "object" ? value.value as Record<string, unknown> : null;
-            steps.push(nodeValue !== null && typeof nodeValue.name === "string" ? `${id} · ${nodeValue.name}` : id);
+            const name = nodeValue !== null && typeof nodeValue.name === "string" ? nodeValue.name : null;
+            const objective = nodeValue !== null && typeof nodeValue.objective === "string" ? nodeValue.objective : null;
+            steps.push([id, name, objective].filter((part): part is string => part !== null && part.length > 0).join(" · "));
           }
           else if (value.op === "addEdge" && (value.edge !== null && typeof value.edge === "object" || value.value !== null && typeof value.value === "object")) {
             const edge = (value.edge ?? value.value) as Record<string, unknown>;
@@ -2662,6 +2664,7 @@ export default function App({
                   {proposalReview.state === "loading" && <span>Opening the sealed typed proposal…</span>}
                   {proposalReview.state === "unavailable" && <span>{proposalReview.reason ?? "The typed proposal descriptor is unavailable."}</span>}
                   {proposalReview.state === "ready" && <>
+                    <span>Proposed nodes · {proposalReview.nodeIds.length} (shown separately from published work)</span>
                     <span>Proposed steps · {proposalReview.steps.join(", ") || "none"}</span>
                     <span>Proposed dependencies · {proposalReview.edges.join(", ") || "none"}</span>
                   </>}

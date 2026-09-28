@@ -73,9 +73,10 @@ identifiers even when their plaintext content is identical.
 ## Keel card
 
 - Paths: `core/governor/src/memory.rs`, `core/events/src/memory.rs`, `core/events/src/projection.rs`,
-  `core/events/src/repository.rs`, `core/protocols/src/event.rs`, `core/protocols/src/persistence.rs`,
-  `core/runtime/src/context.rs`, `core/runtime/src/retrieval.rs`, `core/runtime/src/ports.rs`, and
-  the issue-71 tests.
+  `core/protocols/src/event.rs`, `core/protocols/src/persistence.rs`,
+  `core/runtime/src/retrieval.rs`, `apps/cli/src/commands/serve/routes.rs`,
+  `apps/cli/src/commands/serve/mod.rs`, `apps/cli/src/commands/execution/signal.rs`,
+  `apps/cli/tests/api_http.rs`, and `core/governor/tests/memory.rs`.
 - Promise: an opt-in candidate is screened, independently validated, sealed, journaled atomically,
   replayed after restart, and retrieved only when scope, digest, lifecycle, expiry, and Evidence all
   validate.

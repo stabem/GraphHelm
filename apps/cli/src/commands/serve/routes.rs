@@ -4010,9 +4010,8 @@ fn memory_failure(message: &str) -> Response {
 /// parity probe refuses 405 as well as 404, so a family wired under the wrong verb fails there as
 /// loudly as one not wired at all.
 ///
-/// No identifier in the response: nothing persists a candidate, so an id would name something no
-/// later call could resolve -- see `crate::commands::development::run_memory_propose` for the
-/// measurement.
+/// An admitted request returns the committed record and sealed Evidence identifiers. Explicit
+/// opt-in, source-bound authenticated validation, and a configured keyring are required.
 pub(super) async fn development_memory_propose(
     State(state): State<ServeState>,
     headers: HeaderMap,

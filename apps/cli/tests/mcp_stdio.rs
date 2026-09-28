@@ -313,14 +313,63 @@ fn token_path(events: &Path) -> PathBuf {
 /// Spawns `graphhelm serve` on an ephemeral port and returns (guard, base URL, token) — the
 /// `api_http.rs` harness pattern, trimmed to what these tests need.
 fn serve(events: &Path) -> (ServerGuard, String, String) {
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    serve_with_keyring(events, None)
+}
+
+const FIXTURE_EVENTS_KEY: &str =
+    "0101010101010101010101010101010101010101010101010101010101010101";
+const FIXTURE_KEY_ID: &str = "mcp-fixture-key";
+
+/// Starts the real server with an offline fixture keyring. Agent callers then omit
+/// `evidenceOut`; the server seals their signal under this key instead of accepting a Runtime
+/// filesystem path chosen by the caller.
+fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
+    let keyring = events.parent().unwrap().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let init = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args([
-            "serve",
-            "--events",
-            events.to_str().unwrap(),
-            "--bind",
-            "127.0.0.1:0",
+            "gateway",
+            "keyring",
+            "init",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            FIXTURE_KEY_ID,
         ])
+        .env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "fixture keyring init failed: {}{}",
+        String::from_utf8_lossy(&init.stdout),
+        String::from_utf8_lossy(&init.stderr)
+    );
+    serve_with_keyring(events, Some((&keyring, FIXTURE_KEY_ID)))
+}
+
+fn serve_with_keyring(
+    events: &Path,
+    keyring: Option<(&Path, &str)>,
+) -> (ServerGuard, String, String) {
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command.args([
+        "serve",
+        "--events",
+        events.to_str().unwrap(),
+        "--bind",
+        "127.0.0.1:0",
+    ]);
+    if let Some((keyring, key_id)) = keyring {
+        command.args([
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            key_id,
+        ]);
+        command.env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY);
+    }
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -425,6 +474,14 @@ struct WiredHarness {
 }
 
 fn wired(execution: &str) -> WiredHarness {
+    wired_with_server(execution, false)
+}
+
+fn wired_sealed(execution: &str) -> WiredHarness {
+    wired_with_server(execution, true)
+}
+
+fn wired_with_server(execution: &str, sealed: bool) -> WiredHarness {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let fixtures = write_json_file(
@@ -432,7 +489,11 @@ fn wired(execution: &str) -> WiredHarness {
         "fixtures.json",
         &serde_json::json!({"nodeOutcomes": {"implementation": "failure", "deploy": "success"}}),
     );
-    let (server, base, token) = serve(&events);
+    let (server, base, token) = if sealed {
+        serve_sealed(&events)
+    } else {
+        serve(&events)
+    };
     let graph = root_dir().join("examples/graphs/manual-override-deploy.yaml");
     let (status, reply) = post_json(
         &base,
@@ -925,7 +986,7 @@ fn the_status_and_briefing_tools_refuse_an_unknown_execution_id() {
 
 #[test]
 fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
-    let harness = wired("exec-mcp-map");
+    let harness = wired_sealed("exec-mcp-map");
 
     // status: the tool's envelope data equals the CLI's status for the same execution.
     let session = harness.session(&[
@@ -953,7 +1014,6 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
             serde_json::json!({
                 "executionId": "exec-mcp-map",
                 "signal": signal_envelope_value("signal-mcp-1"),
-                "evidenceOut": harness.token_file.with_file_name("evidence.json").to_str().unwrap(),
             }),
         ),
     ]);
@@ -979,7 +1039,6 @@ fn each_tool_maps_to_exactly_one_api_request_and_returns_the_envelope() {
         ],
         &serde_json::json!({
             "signal": signal_envelope_value("signal-direct-1"),
-            "evidenceOut": harness.token_file.with_file_name("evidence2.json").to_str().unwrap(),
         }),
     );
     assert_eq!(status, 200);
@@ -1350,11 +1409,10 @@ fn the_mcp_and_the_api_report_identical_status_for_the_same_story() {
 
 #[test]
 fn a_retried_tool_call_reuses_the_key_and_a_divergent_reuse_travels_as_409() {
-    let harness = wired("exec-mcp-retry");
+    let harness = wired_sealed("exec-mcp-retry");
     let signal_args = serde_json::json!({
         "executionId": "exec-mcp-retry",
         "signal": signal_envelope_value("signal-retry-1"),
-        "evidenceOut": harness.events.with_file_name("retry-evidence.json").to_str().unwrap(),
     });
     let mut divergent_args = signal_args.clone();
     divergent_args["signal"]["description"] = serde_json::json!("a DIFFERENT body, same id");
@@ -1440,13 +1498,7 @@ fn poll_for_attributed_event(
 
 #[test]
 fn two_chat_sessions_coordinate_through_events_alone_and_resolve_a_race() {
-    let harness = wired("exec-mcp-choreo");
-    let evidence = harness
-        .events
-        .with_file_name("choreo-evidence.json")
-        .to_str()
-        .unwrap()
-        .to_owned();
+    let harness = wired_sealed("exec-mcp-choreo");
 
     // Scout signals — the only thing it does that builder could possibly learn from.
     let scout = harness.session_as(
@@ -1461,7 +1513,6 @@ fn two_chat_sessions_coordinate_through_events_alone_and_resolve_a_race() {
                 serde_json::json!({
                     "executionId": "exec-mcp-choreo",
                     "signal": signal_envelope_value("signal-choreo-1"),
-                    "evidenceOut": evidence,
                 }),
             ),
         ],

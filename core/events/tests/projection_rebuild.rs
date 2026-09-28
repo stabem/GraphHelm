@@ -18,9 +18,10 @@ use graphhelm_events::{
     VerifyRangeRequest, compute_event_hash,
 };
 use graphhelm_protocols::{
-    ActorId, Clock, EventKind, ExecutionId, IdGenerator, NewEvent, NodeState, NodeStateChanged,
-    OpaqueId, PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity,
-    SimulationCompleted, SimulationStarted, SimulationStatus, WireHash, WorkspaceId,
+    ActorId, Clock, EventKind, EvidenceReference, ExecutionId, IdGenerator, NewEvent, NodeState,
+    NodeStateChanged, OpaqueId, PersistedActor, PersistedActorType, PersistedGraphVersion,
+    ProjectId, RawSha256, RepositoryScope, Sensitivity, SimulationCompleted, SimulationStarted,
+    SimulationStatus, WireHash, WorkspaceId,
 };
 
 fn scope() -> RepositoryScope {
@@ -859,6 +860,12 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         ],
         vec![
             serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"draft_proposed","data":{"draftId":"draft-1","expectedVersion":3,"expectedHash":hash,"operationCount":1,"proposalSha256":raw}}),
+            serde_json::json!({"type":"ghost_node_proposed","data":{"executionId":"execution-1","nodeId":"ghost-a","draftId":"draft-1"}}),
+            serde_json::json!({"type":"node_assigned","data":{"executionId":"execution-1","nodeId":"ghost-a","assignedActor":{"type":"agent","id":"agent-1"},"proposalSha256":raw}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
             // `mode` must EQUAL the projection's, not merely be a legal mode: the arm compares
             // them. The prelude starts supervised, so this says supervised. The house's wire
             // example says autopilot, which is correct there and Corrupt here -- the same trap as
@@ -890,6 +897,72 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             serde_json::json!({"type":"agent_presence_declared","data":{"actorId":"agent-planner","actorType":"agent","model":"claude-opus-5","effort":"high"}}),
         ],
     ];
+    // The authoring snapshot arm is reached only after a valid publication. Reuse the checked-in
+    // persisted-graph fixture and its typed hash/evidence machinery; no decrypted evidence is
+    // needed because the projection observes only the envelope references and their identities.
+    let mut graph_json: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../conformance/schemas/valid/persisted-graph-version.json"
+    ))
+    .unwrap();
+    graph_json["number"] = serde_json::json!(1);
+    graph_json["predecessor"] = serde_json::Value::Null;
+    graph_json["topology"]["executionId"] = serde_json::json!("execution-1");
+    let provisional: PersistedGraphVersion = serde_json::from_value(graph_json.clone()).unwrap();
+    let hashes =
+        graphhelm_graph::persisted_hashes(provisional.topology(), provisional.content_slots())
+            .unwrap();
+    graph_json["topologyHash"] = serde_json::json!(hashes.topology_hash().as_str());
+    graph_json["semanticHash"] = serde_json::json!(hashes.semantic_hash().as_str());
+    let version: PersistedGraphVersion = serde_json::from_value(graph_json).unwrap();
+    let mut version_json = serde_json::to_value(&version).unwrap();
+    for (slot_json, slot) in version_json["contentSlots"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(version.content_slots())
+    {
+        slot_json["evidenceId"] = serde_json::json!(
+            graphhelm_graph::derive_publication_evidence_id(
+                &scope(),
+                version.number(),
+                version.semantic_hash(),
+                slot,
+            )
+            .unwrap()
+            .as_str()
+        );
+    }
+    let version: PersistedGraphVersion = serde_json::from_value(version_json).unwrap();
+    let publication_refs: Vec<serde_json::Value> = version
+        .content_slots()
+        .iter()
+        .map(|slot| {
+            serde_json::to_value(EvidenceReference::new(
+                slot.evidence_id().clone(),
+                slot.content_sha256().clone(),
+                RawSha256::parse("c".repeat(64)).unwrap(),
+            ))
+            .unwrap()
+        })
+        .collect();
+    let authoring_ref = serde_json::to_value(EvidenceReference::new(
+        graphhelm_protocols::EvidenceId::parse("graph-authoring-snapshot-1-sealed").unwrap(),
+        RawSha256::parse("d".repeat(64)).unwrap(),
+        RawSha256::parse("e".repeat(64)).unwrap(),
+    ))
+    .unwrap();
+    let governed_events = vec![
+        (
+            serde_json::json!({"type":"graph_version_published","data":{"version":version}}),
+            serde_json::json!({"type":"owner","id":"owner-fixture"}),
+            publication_refs,
+        ),
+        (
+            serde_json::json!({"type":"graph_authoring_snapshot_stored","data":{"executionId":"execution-1","graphVersion":1,"graphHash":hashes.semantic_hash().as_str()}}),
+            serde_json::json!({"type":"system","id":"system-1"}),
+            vec![authoring_ref],
+        ),
+    ];
     let covered: std::collections::BTreeSet<&str> = variants
         .iter()
         .map(|(json, _)| json["type"].as_str().expect("fixture carries a type tag"))
@@ -898,6 +971,11 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
                 .iter()
                 .flatten()
                 .map(|json| json["type"].as_str().expect("fixture carries a type tag")),
+        )
+        .chain(
+            governed_events
+                .iter()
+                .map(|(json, _, _)| json["type"].as_str().expect("fixture carries a type tag")),
         )
         .collect();
     let non_publication: std::collections::BTreeSet<&str> = EventKind::EVERY_WIRE_NAME
@@ -908,7 +986,10 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
     // (1) Every fixture above names a real, current, non-publication variant — catches a typo'd
     // or retired "type" tag in this vec, which the diff in (2) alone would not distinguish from
     // a genuinely uncovered variant.
-    let covered_but_unreal: Vec<&&str> = covered.difference(&non_publication).collect();
+    let covered_but_unreal: Vec<&&str> = covered
+        .difference(&non_publication)
+        .filter(|name| **name != "graph_version_published")
+        .collect();
     assert!(
         covered_but_unreal.is_empty(),
         "fixture(s) above name a type tag EventKind does not currently produce: {covered_but_unreal:?}"
@@ -1034,6 +1115,32 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             panic!("the page for {covers} is not safe to apply: {error:?}")
         });
     }
+    let event_scope = scope();
+    let mut previous =
+        "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3".to_owned();
+    let mut envelopes = Vec::new();
+    for (index, (kind, actor, evidence_refs)) in governed_events.into_iter().enumerate() {
+        let sequence = index as u64 + 1;
+        let mut envelope: graphhelm_protocols::EventEnvelope = serde_json::from_value(serde_json::json!({
+            "schemaVersion":"1.0.0","eventId":format!("governed-event-{sequence}"),"scope":event_scope,"streamId":"stream-1","sequence":sequence,
+            "occurredAt":"2026-08-09T00:00:00Z","idempotencyKey":format!("governed-request-{sequence}"),"actor":actor,
+            "sensitivity":"internal","kind":kind,"evidenceRefs":evidence_refs,"artifactRefs":[],
+            "previousHash":previous,
+            "eventHash":format!("sha256:{}", "0".repeat(64))
+        })).unwrap();
+        envelope.event_hash = graphhelm_protocols::EventHash::parse(
+            compute_event_hash(&envelope, envelope.previous_hash.as_str()).unwrap(),
+        )
+        .unwrap();
+        previous = envelope.event_hash.as_str().to_owned();
+        envelopes.push(envelope);
+    }
+    let mut generation =
+        ProjectionGeneration::new(event_scope, "stream-1".into(), "execution".into(), 1, 1)
+            .unwrap();
+    generation.apply_page(&envelopes).unwrap_or_else(|error| {
+        panic!("the governed publication/snapshot page is not safe: {error:?}")
+    });
 }
 
 #[test]

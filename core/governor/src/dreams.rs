@@ -159,3 +159,68 @@ pub fn record_dream_shadow(
     ))?;
     repository.append_atomic(&prepared)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphhelm_protocols::{ProjectId, WorkspaceId};
+
+    fn request(scope: RepositoryScope) -> DreamShadowRequest {
+        DreamShadowRequest {
+            run_id: OpaqueId::parse("dream-run-test").unwrap(),
+            scope,
+            trigger: DreamTrigger::Manual,
+            category: DreamCategory::CodeFinding,
+            input_bytes: 1,
+            input_sha256: RawSha256::parse(&"0".repeat(64)).unwrap(),
+            evidence_sha256: vec![RawSha256::parse(&"1".repeat(64)).unwrap()],
+            planner_id: OpaqueId::parse("planner-test").unwrap(),
+            critic_id: OpaqueId::parse("critic-test").unwrap(),
+            critic_verdict: DreamCriticVerdict::Accepted,
+            write_critical: false,
+            finding_sha256: Some(RawSha256::parse(&"2".repeat(64)).unwrap()),
+            task_id: Some(OpaqueId::parse("task-test").unwrap()),
+        }
+    }
+
+    #[test]
+    fn refusal_guards_fail_closed_for_scope_critic_and_write_critical_inputs() {
+        // Contract: these boundary inputs always discard. Plausible defect: removing one guard
+        // would turn an out-of-scope, self-criticised, or write-critical request into an advisory
+        // task. The CLI journey covers file parsing; this beside-module observer covers governor
+        // validation branches directly.
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse("workspace-test").unwrap(),
+            ProjectId::parse("project-test").unwrap(),
+            None,
+        );
+        let cases = [
+            ("scope_mismatch", 0_u8),
+            ("critic_not_independent", 1),
+            ("write_critical", 2),
+        ];
+        for (expected, case) in cases {
+            let mut request = request(scope.clone());
+            match case {
+                0 => {
+                    request.scope = RepositoryScope::new(
+                        WorkspaceId::parse("workspace-test").unwrap(),
+                        ProjectId::parse("other-project").unwrap(),
+                        None,
+                    );
+                }
+                1 => request.critic_id = request.planner_id.clone(),
+                2 => request.write_critical = true,
+                _ => unreachable!(),
+            }
+            let result = evaluate_dream_shadow(&request, &scope);
+            assert_eq!(result.outcome, DreamOutcome::Discarded, "{expected}");
+            assert_eq!(
+                result.validation_code.map(DreamRefusalCode::wire_name),
+                Some(expected),
+                "{expected}"
+            );
+            assert!(result.task_request.is_none(), "{expected}");
+        }
+    }
+}

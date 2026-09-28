@@ -5,7 +5,7 @@ pub(super) mod ports;
 mod routes;
 mod wake;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -14,7 +14,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -110,6 +110,9 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     token: Arc<[u8]>,
+    /// Optional scoped agent credentials. They are separate from the owner bearer token and are
+    /// only accepted for agent authored proposal/evidence mutations.
+    agent_credentials: Arc<BTreeMap<String, ScopedAgentCredential>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
@@ -173,8 +176,10 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let (_, token) = secret_file::ensure_token(&args.events)
         .map_err(|error| serve_invalid(error.message(), "/token"))?;
     let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
+    let agent_credentials = load_agent_credentials()?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
+        agent_credentials: Arc::new(agent_credentials),
         project: args.project.as_deref().map(Arc::from),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
@@ -187,6 +192,97 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     let rt =
         runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
     rt.block_on(serve_forever(address, state, startup_warnings))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScopedAgentCredential {
+    actor: PersistedActor,
+    project: String,
+    execution: String,
+}
+
+fn load_agent_credentials() -> Result<BTreeMap<String, ScopedAgentCredential>, Failure> {
+    let mut result = BTreeMap::new();
+    let Some(raw) = std::env::var_os("GRAPHHELM_AGENT_CREDENTIALS") else {
+        return Ok(result);
+    };
+    for item in raw
+        .to_string_lossy()
+        .split(';')
+        .filter(|item| !item.is_empty())
+    {
+        let Some((credential, actor_id)) = item.split_once('=') else {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS must use credential=actor-id|project-id|execution-id entries separated by ';'",
+                "/agentCredentials",
+            ));
+        };
+        if credential.len() != 64
+            || !credential
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || result.contains_key(credential)
+        {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid or duplicate credential",
+                "/agentCredentials",
+            ));
+        }
+        let mut fields = actor_id.split('|');
+        let (Some(actor_id), Some(project), Some(execution), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid scope",
+                "/agentCredentials",
+            ));
+        };
+        if project.is_empty()
+            || project.len() > 128
+            || execution.is_empty()
+            || execution.len() > 128
+        {
+            return Err(serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid scope",
+                "/agentCredentials",
+            ));
+        }
+        let actor_id = ActorId::parse(actor_id).map_err(|_| {
+            serve_invalid(
+                "GRAPHHELM_AGENT_CREDENTIALS contains an invalid actor id",
+                "/agentCredentials",
+            )
+        })?;
+        result.insert(
+            credential.to_owned(),
+            ScopedAgentCredential {
+                actor: PersistedActor::new(PersistedActorType::Agent, actor_id),
+                project: project.to_owned(),
+                execution: execution.to_owned(),
+            },
+        );
+    }
+    Ok(result)
+}
+
+fn verify_agent_credential(
+    state: &ServeState,
+    headers: &HeaderMap,
+    actor: &PersistedActor,
+) -> bool {
+    let Some(credential) = headers
+        .get("x-graphhelm-agent-credential")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    state
+        .agent_credentials
+        .iter()
+        .any(|(expected_credential, expected)| {
+            constant_time_eq(credential.as_bytes(), expected_credential.as_bytes())
+                && expected.actor == *actor
+        })
 }
 
 // #583: there is deliberately NO default program allowlist here.
@@ -500,6 +596,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/documents/read", post(documents::read))
         .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))
+        .route("/v1/executions/{id}/assign", post(routes::assign))
         .route(
             "/v1/executions/{id}/amend-budget",
             post(routes::amend_budget),
@@ -608,11 +705,58 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let authorized =
-        presented.is_some_and(|token| constant_time_eq(token.as_bytes(), &state.token));
-    if authorized {
+    let Some(presented) = presented.map(str::to_owned) else {
+        return unauthorized_response();
+    };
+    if constant_time_eq(presented.as_bytes(), &state.token) {
         return next.run(request).await;
     }
+    // Agent credentials are bearer principals in their own right. They are never accepted as
+    // owner credentials, and the authenticated actor is copied into the request before any
+    // handler sees caller-controlled actor headers. This keeps legacy handlers safe until they
+    // all consume an explicit principal extractor.
+    let Some((_, scoped)) = state.agent_credentials.iter().find(|(credential, scoped)| {
+        constant_time_eq(presented.as_bytes(), credential.as_bytes())
+            && scoped.project == execution::PROJECT
+            && request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
+            && agent_route_allowed(&request)
+    }) else {
+        return unauthorized_response();
+    };
+    let mut request = request;
+    if let Ok(actor) = HeaderValue::from_str(scoped.actor.id().as_str()) {
+        request.headers_mut().insert("x-graphhelm-actor", actor);
+    }
+    request
+        .headers_mut()
+        .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+    request.headers_mut().insert(
+        "x-graphhelm-agent-credential",
+        HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
+    );
+    next.run(request).await
+}
+
+fn agent_route_allowed(request: &Request) -> bool {
+    let path = request.uri().path();
+    let method = request.method();
+    if method == axum::http::Method::GET {
+        let segments: Vec<_> = path.split('/').collect();
+        return segments.get(1) == Some(&"v1")
+            && segments.get(2) == Some(&"executions")
+            && (segments.len() == 4
+                || (segments.len() == 5
+                    && (segments[4] == "briefing" || segments[4] == "events")));
+    }
+    let segments: Vec<_> = path.split('/').collect();
+    method == axum::http::Method::POST
+        && segments.len() == 5
+        && segments.get(1) == Some(&"v1")
+        && segments.get(2) == Some(&"executions")
+        && segments.get(4) == Some(&"signal")
+}
+
+fn unauthorized_response() -> Response {
     respond(
         StatusCode::UNAUTHORIZED,
         Outcome::domain(

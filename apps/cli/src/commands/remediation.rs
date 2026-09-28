@@ -114,6 +114,7 @@ mod tests {
             events,
             execution,
             node,
+            ..
         } = execution.command
         else {
             panic!("{command} must parse as approve");

@@ -1102,6 +1102,125 @@ fn signal_keyring(directory: &Path) -> PathBuf {
     keyring
 }
 
+/// Contract: a governed start must persist the safe graph and its sealed authoring snapshot
+/// before the execution is visible. Defect caught: writing only `ExecutionStarted` leaves approve
+/// unable to recover the exact graph after a process restart. The replay command is a separate
+/// process, so this observes durable state rather than an in-memory return value.
+#[test]
+fn governed_start_persists_genesis_snapshot_for_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = signal_keyring(directory.path());
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--mode",
+            "supervised",
+            "--execution",
+            "exec_feature",
+            "--held",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let replay = command()
+        .args(["graph", "replay", "--events", events.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stdout)
+    );
+    let data = json(&replay.stdout)["data"].clone();
+    assert_eq!(data["authoringSnapshots"].as_object().unwrap().len(), 1);
+    assert_eq!(data["currentGraph"]["number"], 1);
+    assert_eq!(data["simulationStatus"], "paused");
+    let resumed = command()
+        .args([
+            "execution",
+            "resume",
+            "--events",
+            events.to_str().unwrap(),
+            "--execution",
+            "exec_feature",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stdout)
+    );
+    let resumed_data = json(&resumed.stdout)["data"].clone();
+    assert_eq!(resumed_data["executionId"], "exec_feature");
+    assert_eq!(resumed_data["status"], "running");
+}
+
+/// Governed genesis must validate the start request before publishing its graph and sealed
+/// snapshot. The invalid mode is the regression: before this preflight, the command could append
+/// genesis and only then discover the mode error in `execute_prepared`, leaving a journal with no
+/// `execution_started` event that looked like a valid run to the owner.
+#[test]
+fn governed_start_invalid_mode_leaves_the_journal_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = signal_keyring(directory.path());
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let output = command()
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--mode",
+            "invalid-mode",
+            "--execution",
+            "exec_feature",
+            "--held",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    // Read the addressed stream directly. The CLI replay command intentionally requires
+    // explicit scope and stream selection, while this regression is about whether genesis
+    // wrote anything at all.
+    let history = open_store(&events)
+        .read_replay_stream(&scope_the_id_derives("exec_feature"), "exec_feature")
+        .unwrap();
+    assert!(
+        history.is_empty(),
+        "invalid governed start left events in the journal: {history:?}"
+    );
+}
+
 fn signal_envelope(id: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({
         "id": id,

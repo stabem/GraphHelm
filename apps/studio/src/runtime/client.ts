@@ -227,6 +227,8 @@ export interface MutationOptions {
   /** Reused verbatim across retries of the SAME logical action. Minted per action when absent. */
   idempotencyKey?: string;
   actor?: Actor;
+  /** Exact proposal identity and assigned responsible actor for governed ghost approval. */
+  governed?: { draftId: string; proposalDigest: string; assignments: Record<string, string> };
 }
 
 interface RequestOptions {
@@ -1339,11 +1341,26 @@ export class RuntimeClient {
   /** `POST /v1/executions/{id}/approve` - readies a blocked or ghost node. */
   async approve(executionId: string, node: string, options: MutationOptions = {}): Promise<MutationEvidence> {
     const nodeId = checkedId(node, "node");
+    const body: Record<string, unknown> = { node: nodeId };
+    if (options.governed !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(options.governed.proposalDigest)) {
+        throw new RuntimeError("proposalDigest must be 64 lowercase hex characters.", 0, []);
+      }
+      body.draftId = checkedId(options.governed.draftId, "draftId");
+      body.proposalDigest = options.governed.proposalDigest;
+      const assignments = Object.fromEntries(Object.entries(options.governed.assignments).map(([nodeId, actorId]) => [
+        checkedId(nodeId, "assignment node"), checkedId(actorId, "assignment actor"),
+      ]));
+      if (Object.keys(assignments).length === 0) {
+        throw new RuntimeError("assignments must name at least one proposed node.", 0, []);
+      }
+      body.assignments = assignments;
+    }
     return this.#verifiedMutation(
       "approve",
       executionId,
       `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/approve`,
-      { node: nodeId },
+      body,
       nodeId,
       options,
     );
@@ -1359,7 +1376,7 @@ export class RuntimeClient {
    */
   async resume(
     executionId: string,
-    graphOrFile: string | Record<string, unknown>,
+    graphOrFile?: string | Record<string, unknown>,
     options: MutationOptions & { fixtures?: string } = {},
   ): Promise<MutationEvidence> {
     const body: Record<string, unknown> =
@@ -1370,7 +1387,9 @@ export class RuntimeClient {
             }
             return { file: graphOrFile };
           })()
-        : graphOrFile !== null && typeof graphOrFile === "object"
+        : graphOrFile === undefined
+          ? {}
+          : graphOrFile !== null && typeof graphOrFile === "object"
           ? { graph: graphOrFile }
           : (() => {
               throw new RuntimeError("graph must be an object.", 0, []);

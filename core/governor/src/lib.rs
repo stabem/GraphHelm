@@ -9,11 +9,15 @@ mod materialize;
 mod memory;
 mod publish;
 
-pub use apply::{ApplyError, ApplyResult, ApplyServices, apply_draft};
+pub use apply::{
+    ApplyError, ApplyResult, ApplyServices, ExecutionDraftAcceptance, apply_draft,
+    apply_draft_with_acceptance,
+};
 pub use candidate::{DraftAnalysis, analyze_draft};
 pub use dreams::{DreamRefusal, DreamShadowRequest, evaluate_dream_shadow, record_dream_shadow};
 pub use externalize::{
     GovernorError, GraphExternalizer, ProjectionPreparation, SealingGraphExternalizer,
+    recover_verified_authoring_snapshot,
 };
 pub use inflight::{
     AdmittedSignal, GovernanceError, MutationDecision, RejectionReason, admit_signal,
@@ -35,5 +39,5 @@ pub use memory::{
 };
 pub use publish::{
     PublicationPreparationObserver, PublicationPreparationServices, PublicationStage,
-    prepare_draft_publication, prepare_draft_publication_observed,
+    prepare_draft_publication, prepare_draft_publication_observed, prepare_genesis_publication,
 };

@@ -37,7 +37,7 @@ import {
 } from "./format";
 
 /** The one-line reading of an event, or `null` when nothing can be said plainly about it. */
-function describe(event: RuntimeEvent): string | null {
+export function describe(event: RuntimeEvent): string | null {
   const payload =
     event.payload !== null && typeof event.payload === "object"
       ? (event.payload as Record<string, unknown>)
@@ -73,6 +73,8 @@ function describe(event: RuntimeEvent): string | null {
       return mode === null ? "Changed the run's mode." : `Changed the run's mode to ${mode}.`;
     case "ghost_node_proposed":
       return node === null ? "Proposed a new node." : `Proposed ${node} as a new node.`;
+    case "graph_authoring_snapshot_stored":
+      return "Stored the sealed authoring snapshot used to verify this graph.";
     // Bookkeeping, said in words. These used to fall through to the raw-payload branch and a wake
     // lease rendered as `{"cursor":22,...}` between two human sentences (screenshot, 2026-08-30).
     // They stay in the thread - the log IS the thread - but in a voice, not a dump.
@@ -437,7 +439,7 @@ function Said({
   );
 }
 
-function Thread({
+export function Thread({
   events,
   executionId,
   openEvidence,
@@ -539,10 +541,16 @@ function Thread({
                           {said === null ? (
                             <>
                               <p className="turn-text">{readable(entry.kind)}</p>
-                              <code>{JSON.stringify(entry.payload)}</code>
+                              <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(entry.payload)}</code></details>
                             </>
                           ) : (
-                            <p className="turn-text">{said}</p>
+                            <>
+                              <p className="turn-text">{said}</p>
+                              {entry.kind === "graph_authoring_snapshot_stored" && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(entry.payload)}</code></details>}
+                              {executionId !== undefined && openEvidence !== undefined && entry.evidenceRefs.map((evidenceId) => (
+                                <Said key={evidenceId} executionId={executionId} evidenceId={evidenceId} open={openEvidence} eager={false} />
+                              ))}
+                            </>
                           )}
                         </li>
                       );
@@ -627,10 +635,13 @@ function Thread({
               {line === null ? (
                 <>
                   <p className="turn-text">{readable(event.kind)}</p>
-                  <code>{JSON.stringify(event.payload)}</code>
+                  <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>
                 </>
               ) : (
-                <p className="turn-text">{line}</p>
+                <>
+                  <p className="turn-text">{line}</p>
+                  {event.kind === "graph_authoring_snapshot_stored" && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>}
+                </>
               )}
               {/* A line that promises words ("Said:") and shows none is ambiguous between "the
                 * log holds nothing" and "the UI swallowed it". Elision is marked as elision. */}
@@ -651,7 +662,7 @@ function Thread({
                     executionId={executionId}
                     evidenceId={evidenceId}
                     open={openEvidence}
-                    eager={eager.has(event.sequence) && (event.kind !== "node_outcome_recorded"
+                    eager={event.kind !== "graph_authoring_snapshot_stored" && eager.has(event.sequence) && (event.kind !== "node_outcome_recorded"
                       || evidenceId.endsWith("-reply") || evidenceId.endsWith("-stdout"))}
                   />
                 ))}
@@ -1127,6 +1138,13 @@ export function NodePanel({
           <strong>{clock(node.lastEventAt)}</strong>
         </div>
       </div>
+      {node.proposal && (
+        <section className="node-result-summary" aria-label="Governed proposal">
+          <strong>{node.proposal.status === "rejected" ? `Proposal rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `Proposal unavailable · ${node.proposal.reason ?? "reason unavailable"}` : `Proposal ${node.proposal.status}`}</strong>
+          <span>Draft {node.proposal.draftId}{node.proposal.digest ? ` · ${node.proposal.digest}` : " · digest unavailable"}</span>
+          <span>{node.assignedActor ? `Responsible actor: ${node.assignedActor.type} · ${node.assignedActor.id}` : node.proposal.status === "rejected" ? "Next action: review the recorded reason before proposing again." : node.proposal.status === "unavailable" ? "Next action: request the typed proposal descriptor again." : "Next action: assign an actor and approve the governed draft."}</span>
+        </section>
+      )}
       {result && (
         <section className="node-result-summary" aria-label="Node result">
           <strong>{result.verification}</strong>
@@ -1356,6 +1374,8 @@ export function RunPanel({
   replyIssue = null,
   needsDirection = false,
   retryFailureNodes = [],
+  nodeNames = {},
+  proposalPending = false,
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
@@ -1387,6 +1407,10 @@ export function RunPanel({
   needsDirection?: boolean;
   /** Blocked nodes whose latest recorded outcome exhausted retryable attempts. */
   retryFailureNodes?: string[];
+  /** Human declared node names, with wire ids as the honest fallback. */
+  nodeNames?: Record<string, string>;
+  /** A durable proposal is a local owner-review debt, even when Runtime attention is calm. */
+  proposalPending?: boolean;
 }) {
   const verdict = verdictOf(status.attention);
   // A run that is over is not "running by itself" (#1077, the judge's MINOR): a calm verdict
@@ -1395,6 +1419,7 @@ export function RunPanel({
   // What the run is owed, in words, derived from the same reasons the block below itemizes. The
   // wire state ("running") under a headline that says "needs you" answered the wrong question.
   const debts: string[] = [];
+  if (proposalPending) debts.push("owner review");
   for (const reason of status.attentionReasons) {
     const kind = typeof reason.kind === "string" ? reason.kind : "";
     if (kind === "waiting_input_node" && !debts.includes(needsDirection ? "your direction" : "your answer")) debts.push(needsDirection ? "your direction" : "your answer");
@@ -1517,6 +1542,21 @@ export function RunPanel({
             : `nothing in the other ${LIFECYCLE_STATES.filter((state) => (status.nodeStateCounts[state] ?? 0) === 0).length} states`}
         </span>
       </div>
+      {Object.keys(status.nodeAssignments ?? {}).length > 0 && (
+        <section className="assignment-summary" aria-label="Node assignments">
+          <span className="lbl">Assigned work</span>
+          {Object.entries(status.nodeAssignments ?? {}).map(([node, actor]) => (
+            <div className="assignment-row" key={node}>
+              <strong>{nodeNames[node] ?? node}</strong>
+              {nodeNames[node] && <small>{node}</small>}
+              <span>{actor.type}: {actor.id}</span>
+              <span className={`assignment-state ${readable(status.nodeStates?.[node] ?? "ghost")}`}>
+                {readable(status.nodeStates?.[node] ?? "ghost")}
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
       {unverifiedResults > 0 && <p className="work-note" role="note">{unverifiedResults} node result{unverifiedResults === 1 ? "" : "s"} finished without a confirmed acceptance verdict. Open each node to inspect its evidence.</p>}
 
       <div className="thread-search">

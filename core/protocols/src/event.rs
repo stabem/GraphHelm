@@ -199,6 +199,7 @@ pub enum EventKind {
     MemoryRecordSuperseded(MemoryRecordSuperseded),
     DreamShadowRecorded(DreamShadowRecorded),
     GraphVersionPublished(Box<GraphVersionPublished>),
+    GraphAuthoringSnapshotStored(GraphAuthoringSnapshotStored),
     DraftProposed(DraftProposed),
     DraftRejected(DraftRejected),
     DraftApplied(DraftApplied),
@@ -215,6 +216,7 @@ pub enum EventKind {
     ExecutionCompleted(ExecutionCompleted),
     SignalRecorded(SignalRecorded),
     GhostNodeProposed(GhostNodeProposed),
+    NodeAssigned(NodeAssigned),
     MutationAccepted(MutationAccepted),
     ExecutionPaused(ExecutionPaused),
     ExecutionResumed(ExecutionResumed),
@@ -422,6 +424,7 @@ wire_names! {
     MemoryRecordSuperseded => "memory_record_superseded",
     DreamShadowRecorded => "dream_shadow_recorded",
     GraphVersionPublished => "graph_version_published",
+    GraphAuthoringSnapshotStored => "graph_authoring_snapshot_stored",
     DraftProposed => "draft_proposed",
     DraftRejected => "draft_rejected",
     DraftApplied => "draft_applied",
@@ -438,6 +441,7 @@ wire_names! {
     ExecutionCompleted => "execution_completed",
     SignalRecorded => "signal_recorded",
     GhostNodeProposed => "ghost_node_proposed",
+    NodeAssigned => "node_assigned",
     MutationAccepted => "mutation_accepted",
     ExecutionPaused => "execution_paused",
     ExecutionResumed => "execution_resumed",
@@ -610,6 +614,15 @@ pub struct GraphVersionPublished {
     pub version: PersistedGraphVersion,
 }
 
+/// A sealed authoring predecessor bound to one execution and graph version.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphAuthoringSnapshotStored {
+    pub execution_id: OpaqueId,
+    pub graph_version: u64,
+    pub graph_hash: WireHash,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DraftProposed {
@@ -617,6 +630,10 @@ pub struct DraftProposed {
     pub expected_version: u64,
     pub expected_hash: WireHash,
     pub operation_count: u16,
+    /// Digest of the sealed, recoverable proposal bytes referenced by the envelope. Optional only
+    /// for pre-#36 journals; new proposal producers must populate it before append.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_sha256: Option<RawSha256>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -984,6 +1001,19 @@ pub struct GhostNodeProposed {
     pub execution_id: OpaqueId,
     pub node_id: OpaqueId,
     pub draft_id: OpaqueId,
+}
+
+/// The owner assigned a proposed node to an authenticated actor. Assignment is a separate
+/// append-only fact from approval: a ghost remains unscheduled until the Governor accepts the
+/// stored proposal, and replay can therefore distinguish who approved a proposal from who was
+/// asked to perform its work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeAssigned {
+    pub execution_id: OpaqueId,
+    pub node_id: OpaqueId,
+    pub assigned_actor: PersistedActor,
+    pub proposal_sha256: RawSha256,
 }
 
 /// The Governor accepted a mutation, under the mode in force at acceptance (decision 5.5), and

@@ -33,6 +33,12 @@ const ROSTER = event(2, "execution_form_declared", {
   nodeIds: ["deploy", "implementation"],
 });
 
+function authoringSnapshot(graphHash: string, graphVersion = 13): RuntimeEvent {
+  return event(3, "graph_authoring_snapshot_stored", {
+    executionId: "demo", graphVersion, graphHash,
+  });
+}
+
 const SNAPSHOT = event(2, "execution_form_declared", {
   executionId: "demo",
   nodeIds: ["implementation", "deploy"],
@@ -72,6 +78,73 @@ describe("connections recorded with the run", () => {
       expect(verified?.edges).toEqual([]);
     }
     expect(topologyFromJournal([SNAPSHOT])).toBeNull();
+  });
+});
+
+describe("published governed topology", () => {
+  /** Observable contract: the board uses the immutable published version only when its identity
+   * matches the run. This catches the plausible defect of drawing edges from a caller file or a
+   * later unrelated graph version. The existing tests cover declaration snapshots and manual
+   * files, but not a published graph version event. */
+  it("accepts the matching published version and rejects a wrong identity", () => {
+    const published = event(4, "graph_version_published", {
+      version: {
+        number: 13,
+        semanticHash: RUN_HASH,
+        topology: {
+          executionId: "demo",
+          entrypoints: ["implementation"],
+          nodes: { implementation: {}, deploy: {} },
+          edges: [{ id: "implementation_to_deploy", from: "implementation", to: "deploy", type: "data" }],
+        },
+      },
+    });
+    const verified = topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), published]);
+    expect(verified?.match).toBe("matched");
+    expect(verified?.edges.map((edge) => edge.id)).toEqual(["implementation_to_deploy"]);
+
+    const wrong = { ...published, payload: { version: { ...(published.payload as { version: object }).version, semanticHash: OTHER_HASH } } };
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), wrong])?.match).toBe("unverified");
+  });
+
+  /** Observable contract: a governed successor may have a new semantic hash, but only its exact
+   * immutable predecessor chain is trusted. This catches the plausible defect of freezing the
+   * initial hash forever or accepting a forged successor with an unrelated predecessor. */
+  it("follows a changed governed version through its predecessor identity", () => {
+    const initial = event(3, "graph_version_published", {
+      version: {
+        number: 13, semanticHash: RUN_HASH, predecessor: null,
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {}, deploy: {} }, edges: [] },
+      },
+    });
+    const successorHash = "sha256:bb9b0715df457c2a1a364c1ab5ddee2c88bc390742c078fe6725b4b823e8a9bb";
+    const accepted = event(4, "mutation_accepted", { executionId: "demo", graphVersion: 14 });
+    const successor = event(5, "graph_version_published", {
+      version: {
+        number: 14, semanticHash: successorHash,
+        predecessor: { number: 13, semanticHash: RUN_HASH },
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {}, deploy: {}, verify: {} }, edges: [{ id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" }] },
+      },
+    });
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), initial, accepted, successor])?.edges).toEqual([
+      { id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" },
+    ]);
+    const forged = { ...successor, payload: { version: { ...(successor.payload as { version: Record<string, unknown> }).version, predecessor: { number: 13, semanticHash: OTHER_HASH } } } };
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), initial, accepted, forged])?.match).toBe("unverified");
+  });
+
+  /** Observable contract: the authoring hash recorded at start may differ from the safe published
+   * hash. This catches conflating the two domains and rejecting every real governed genesis. */
+  it("anchors governed genesis to its safe snapshot hash", () => {
+    const authoringHash = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const safeHash = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    const started = event(1, "execution_started", { executionId: "demo", graphHash: authoringHash, graphVersion: 13 });
+    const published = event(4, "graph_version_published", {
+      version: { number: 13, semanticHash: safeHash, predecessor: null,
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {} }, edges: [] } },
+    });
+    expect(topologyFromJournal([started, ROSTER, authoringSnapshot(safeHash), published])?.match).toBe("matched");
+    expect(topologyFromJournal([started, ROSTER, authoringSnapshot(authoringHash), published])?.match).toBe("unverified");
   });
 });
 

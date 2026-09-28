@@ -326,6 +326,53 @@ describe("the node thread", () => {
   });
 });
 
+describe("governed proposals", () => {
+  /**
+   * Observable contract: a typed ghost and its digest-matched assignment appear as one node with
+   * a responsible actor separate from the Runtime recorder. This catches the plausible defect of
+   * counting proposal text as work while losing the actor distinction. Existing lifecycle tests
+   * cover ordinary outcomes, but no test covered the governed event sequence.
+   */
+  it("shows a typed ghost proposal and its responsible actor", () => {
+    const events = [
+      event(1, "execution_started", { executionId: "run", graphHash: "sha256:run", graphVersion: 1 }),
+      event(2, "draft_proposed", { draftId: "draft-1", proposalSha256: "sha256:draft" }, "agent"),
+      event(3, "ghost_node_proposed", { executionId: "run", nodeId: "review", draftId: "draft-1" }, "system"),
+      event(4, "node_assigned", { executionId: "run", nodeId: "review", assignedActor: { type: "agent", id: "reviewer" }, proposalSha256: "sha256:draft" }, "system"),
+    ];
+    const node = buildGraphModel(events as never).nodes[0];
+    expect(node.state).toBe("ghost");
+    expect(node.proposal).toEqual({ draftId: "draft-1", digest: "sha256:draft", evidenceId: null, status: "proposed", reason: null });
+    expect(node.assignedActor).toEqual({ type: "agent", id: "reviewer" });
+    expect(node.history.at(-1)?.actorId).toBe("system-actor");
+  });
+
+  /** Observable contract: a rejected proposal is visible with a reason and remains one node. It
+   * catches the plausible defect of showing rejection as approval or silently dropping it. */
+  it("keeps a rejected proposal visible with its next action", () => {
+    const events = [
+      event(1, "draft_proposed", { draftId: "draft-1", proposalSha256: "sha256:draft" }),
+      event(2, "ghost_node_proposed", { nodeId: "review", draftId: "draft-1" }),
+      event(3, "draft_rejected", { draftId: "draft-1", reasonCode: "policy_unsatisfied" }),
+    ];
+    const model = buildGraphModel(events as never);
+    expect(model.nodes).toHaveLength(1);
+    expect(model.nodes[0].proposal).toMatchObject({ status: "rejected", reason: "policy_unsatisfied" });
+  });
+
+  /** Observable contract: an assignment with a different digest is ignored. It catches the
+   * plausible security and attribution defect of displaying a caller supplied actor for another
+   * proposal. Existing model tests do not exercise proposal identity binding. */
+  it("does not attach an assignment from a different proposal", () => {
+    const model = buildGraphModel([
+      event(1, "draft_proposed", { draftId: "draft-1", proposalSha256: "sha256:expected" }),
+      event(2, "ghost_node_proposed", { nodeId: "review", draftId: "draft-1" }),
+      event(3, "node_assigned", { nodeId: "review", assignedActor: { type: "agent", id: "spoofed" }, proposalSha256: "sha256:other" }),
+    ] as never);
+    expect(model.nodes[0].assignedActor).toBeNull();
+  });
+});
+
 describe("reading a voice and a mood", () => {
   it("associates node-sourced delivery signals without borrowing other sources", () => {
     const entries = [event(1, "signal_recorded", {sourceKind: "node", sourceId: "docs", kind: "node_delivery"}),

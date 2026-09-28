@@ -1208,7 +1208,7 @@ fn a_fresh_tool_run_records_a_miss_decision() {
 
 use graphhelm_execution::{ResumeError, resume_preconditions};
 use graphhelm_protocols::{
-    EdgeType, GraphBudgets, GraphEdge, GraphNode, GraphSpec, NodeState, Optionality,
+    DraftProposed, EdgeType, GraphBudgets, GraphEdge, GraphNode, GraphSpec, NodeState, Optionality,
 };
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 
@@ -2494,6 +2494,78 @@ fn an_ordinary_pause_stops_the_drive_before_it_dispatches_more_work() {
     );
 }
 
+/// A governed proposal arriving during an active drive is an owner-review boundary. It must park
+/// the execution before the current pass can dispatch another node or report completion. This is
+/// the regression for the native agent path: a proposal is appended while the first model call is
+/// still in flight, then that call is released and the driver must remain awaiting approval.
+#[test]
+fn a_mid_attempt_governed_proposal_parks_before_settlement() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            ("first", agent_graph_node("held")),
+            ("second", agent_graph_node("must await approval")),
+        ],
+        vec![],
+        1,
+    );
+    let model = Arc::new(HangsOnceModelPort::new());
+    let executor = Arc::new(port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let ids = Arc::new(SequenceIds::default());
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+
+    let runtime = multi_thread_runtime();
+    let projection = runtime.block_on(async {
+        let driver = tokio::spawn(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            protector.clone(),
+            ids,
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id.clone(),
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ));
+
+        while model.called.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        append_governed_proposal(directory.path(), &execution_id);
+        model.release();
+        driver.await.unwrap().unwrap()
+    });
+
+    assert_eq!(
+        model.called.load(Ordering::SeqCst),
+        1,
+        "a pending proposal must prevent dispatching the next node"
+    );
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Paused),
+        "the owner-review boundary must be visible in the durable projection"
+    );
+    assert_ne!(
+        projection.node_states.get("second"),
+        Some(&NodeState::Succeeded),
+        "the drive must not settle while a governed proposal awaits approval"
+    );
+}
+
 /// Appends `execution_paused` the way the ordinary pause route does: straight onto the stream,
 /// with no signal to anything. Retries on a sequence conflict because a live drive is appending
 /// too -- a conflict here is contention, not a verdict.
@@ -2529,6 +2601,55 @@ fn append_execution_paused(directory: &std::path::Path, execution_id: &OpaqueId)
         }
     }
     panic!("HARNESS-BROKE: execution_paused never landed, so the test never posed its question");
+}
+
+fn append_governed_proposal(directory: &std::path::Path, execution_id: &OpaqueId) {
+    let repository = LocalEventRepository::open(
+        directory,
+        Arc::new(FixedClock),
+        Arc::new(SequenceIds::default()),
+    )
+    .unwrap();
+    let scope = driver_scope();
+    for attempt in 0..64 {
+        let head = repository
+            .read_replay_stream(&scope, DRIVER_STREAM)
+            .unwrap()
+            .len() as u64;
+        let request = PreparedAppend::new(
+            scope.clone(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            head + 1,
+            vec![
+                plain_event(
+                    &format!("governed-proposal-{attempt}"),
+                    EventKind::DraftProposed(DraftProposed {
+                        draft_id: OpaqueId::parse("draft-mid-attempt").unwrap(),
+                        expected_version: 1,
+                        expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64)))
+                            .unwrap(),
+                        operation_count: 1,
+                        proposal_sha256: Some(digest32(b"mid-attempt-proposal")),
+                    }),
+                ),
+                plain_event(
+                    &format!("governed-proposal-node-{attempt}"),
+                    EventKind::GhostNodeProposed(graphhelm_protocols::GhostNodeProposed {
+                        execution_id: execution_id.clone(),
+                        node_id: OpaqueId::parse("ghost-mid-attempt").unwrap(),
+                        draft_id: OpaqueId::parse("draft-mid-attempt").unwrap(),
+                    }),
+                ),
+            ],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        if repository.append_atomic(&request).is_ok() {
+            return;
+        }
+    }
+    panic!("HARNESS-BROKE: governed proposal never landed");
 }
 
 /// No gate runs in this file, and that is a property worth stating rather than a gap: a

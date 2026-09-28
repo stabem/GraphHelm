@@ -1,16 +1,37 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
-use graphhelm_protocols::{NodeOutcome, NodeState, OpaqueId, PersistedActor};
+use graphhelm_events::{EvidenceOpener, EvidenceRead};
+use graphhelm_governor::{
+    ApplyServices, ExecutionDraftAcceptance, SealingGraphExternalizer, apply_draft_with_acceptance,
+    recover_verified_authoring_snapshot,
+};
+use graphhelm_graph::raw_content_sha256;
+use graphhelm_protocols::{
+    Actor, ActorType, DraftOperation, EventKind, GraphDraft, NodeOutcome, NodeState, OpaqueId,
+    PersistedActor,
+};
 
 use super::{
     Failure, RecordedOutcome, execution_state, finish, idempotency_key, load_projection,
     node_state_label, owner_actor, record_outcome_with_key, render, replay_projection,
     repository_failure,
 };
-use crate::commands::event_store;
+use crate::commands::{SystemClock, UuidIds, event_store};
 use crate::output::Outcome;
 
 const COMMAND: &str = "execution.approve";
+
+pub(crate) struct GovernedApproval<'a> {
+    pub keyring: &'a Path,
+    pub key_id: &'a str,
+    pub assigned_actor: Option<&'a str>,
+    pub proposal_digest: Option<&'a str>,
+    pub draft_id: Option<&'a str>,
+    pub assignments: Option<&'a BTreeMap<String, String>>,
+    pub decision_key: Option<OpaqueId>,
+    pub decision_node: Option<OpaqueId>,
+    pub approving_actor: PersistedActor,
+}
 
 /// The owner approves a `Ghost` or `Blocked` node, readying it — for a `Blocked` node with
 /// `last_outcome == Interrupted`, this *is* the triage act `resume_preconditions` waits for.
@@ -21,18 +42,339 @@ const COMMAND: &str = "execution.approve";
 ///
 /// Calls `execute` with the owner actor and a fresh per-invocation idempotency key, exactly as
 /// before Milestone 05a Task 3 — byte-identical CLI behaviour.
-pub fn run(events: &Path, execution: Option<&str>, node: &str) -> Outcome {
+#[allow(clippy::too_many_arguments)] // preserves the stable CLI dispatcher seam while adding exact governed review identity
+pub fn run(
+    events: &Path,
+    execution: Option<&str>,
+    node: &str,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
+    assigned_actor: Option<&str>,
+    proposal_digest: Option<&str>,
+    draft_id: Option<&str>,
+) -> Outcome {
     finish(
         COMMAND,
-        execute(
-            events,
-            execution,
-            node,
-            owner_actor(),
-            idempotency_key("node-outcome"),
-        ),
+        match (keyring, key_id) {
+            (Some(keyring), Some(key_id)) => execute_governed(
+                events,
+                execution,
+                node,
+                GovernedApproval {
+                    keyring,
+                    key_id,
+                    assigned_actor,
+                    proposal_digest,
+                    draft_id,
+                    assignments: None,
+                    decision_key: Some(idempotency_key("node-outcome")),
+                    decision_node: OpaqueId::parse(node).ok(),
+                    approving_actor: owner_actor(),
+                },
+            ),
+            (None, None) => execute(
+                events,
+                execution,
+                node,
+                owner_actor(),
+                idempotency_key("node-outcome"),
+            ),
+            _ => Err(execution_state(
+                "--keyring and --key-id must be supplied together",
+                "/keyring",
+            )),
+        },
         |value| value,
     )
+}
+
+/// Approves one exact sealed graph proposal and atomically records the owner decision, complete
+/// assignments, and the successor publication. Every input used to apply the draft comes from
+/// authenticated sealed evidence or the verified active snapshot.
+pub(crate) fn execute_governed(
+    events: &Path,
+    execution: Option<&str>,
+    node: &str,
+    request: GovernedApproval<'_>,
+) -> Result<serde_json::Value, Failure> {
+    let keyring = super::signal::SignalKeyring {
+        directory: request.keyring.to_owned(),
+        key_id: request.key_id.to_owned(),
+    };
+    let opener = super::signal::open_sealer(&keyring)?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let (scope, stream, projection) = load_projection(&store, execution)?;
+    if !matches!(
+        projection.mode,
+        Some(
+            graphhelm_protocols::ExecutionMode::Supervised
+                | graphhelm_protocols::ExecutionMode::Manual
+        )
+    ) {
+        return Err(execution_state(
+            "sealed graph proposals require a supervised or manual execution",
+            "/mode",
+        ));
+    }
+    let active = projection.current_graph.as_ref().ok_or_else(|| {
+        execution_state("the execution has no published graph snapshot", "/graph")
+    })?;
+    let snapshot_ref = projection
+        .authoring_snapshots
+        .get(&active.number())
+        .ok_or_else(|| execution_state("the authoring snapshot is unavailable", "/graph"))?;
+    let snapshot = match store
+        .sealed_evidence(&scope, snapshot_ref.evidence_id())
+        .map_err(|error| repository_failure(&error))?
+    {
+        EvidenceRead::Available(value) => value,
+        EvidenceRead::Unavailable(_) => {
+            return Err(execution_state(
+                "the authoring snapshot is unavailable",
+                "/graph",
+            ));
+        }
+    };
+    for slot in active.content_slots() {
+        match store
+            .sealed_evidence(&scope, slot.evidence_id())
+            .map_err(|error| repository_failure(&error))?
+        {
+            EvidenceRead::Available(value) => {
+                let plaintext =
+                    block_on_local(opener.open(scope.clone(), &value)).map_err(|_| {
+                        execution_state(
+                            "the active graph content failed authentication; approval is refused",
+                            "/graph/content",
+                        )
+                    })?;
+                let digest = plaintext.expose(raw_content_sha256).map_err(|_| {
+                    execution_state("the active graph content is invalid", "/graph/content")
+                })?;
+                if digest != *slot.content_sha256() {
+                    return Err(execution_state(
+                        "the active graph content does not match its digest; approval is refused",
+                        "/graph/content",
+                    ));
+                }
+            }
+            EvidenceRead::Unavailable(_) => {
+                return Err(execution_state(
+                    "the active graph has unavailable content; approval is refused",
+                    "/graph/content",
+                ));
+            }
+        }
+    }
+    let authoring = block_on_local(recover_verified_authoring_snapshot(
+        &opener,
+        scope.clone(),
+        active,
+        &snapshot,
+    ))
+    .map_err(|_| execution_state("the authoring snapshot failed integrity checks", "/graph"))?;
+
+    let history = store
+        .read_replay_stream(&scope, &stream)
+        .map_err(|error| repository_failure(&error))?;
+    let requested_digest = request
+        .proposal_digest
+        .map(|value| {
+            graphhelm_protocols::RawSha256::parse(value)
+                .map_err(|_| execution_state("the proposal digest is invalid", "/proposalDigest"))
+        })
+        .transpose()?
+        .ok_or_else(|| {
+            execution_state(
+                "proposal-digest is required for governed approval",
+                "/proposalDigest",
+            )
+        })?;
+    let requested_draft_id = request
+        .draft_id
+        .map(|value| {
+            OpaqueId::parse(value)
+                .map_err(|_| execution_state("the draft identifier is invalid", "/draftId"))
+        })
+        .transpose()?;
+    let requested_draft_id = requested_draft_id
+        .ok_or_else(|| execution_state("draft-id is required for governed approval", "/draftId"))?;
+    let mut candidates = Vec::new();
+    for event in history.iter().rev() {
+        let EventKind::DraftProposed(payload) = &event.kind else {
+            continue;
+        };
+        let Some(digest) = payload.proposal_sha256.as_ref() else {
+            continue;
+        };
+        let Some(reference) = event
+            .evidence_refs
+            .iter()
+            .find(|reference| reference.content_sha256() == digest)
+        else {
+            continue;
+        };
+        let sealed = match store
+            .sealed_evidence(&scope, reference.evidence_id())
+            .map_err(|error| repository_failure(&error))?
+        {
+            EvidenceRead::Available(value) => value,
+            EvidenceRead::Unavailable(_) => continue,
+        };
+        let plaintext = block_on_local(opener.open(scope.clone(), &sealed))
+            .map_err(|_| execution_state("the sealed proposal is unavailable", "/proposal"))?;
+        let envelope: serde_json::Value =
+            plaintext
+                .expose(|bytes| serde_json::from_slice(bytes))
+                .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?;
+        let draft = serde_json::from_value::<GraphDraft>(envelope.clone())
+            .or_else(|_| {
+                graphhelm_execution::TypedSignal::parse(&envelope)
+                    .map_err(|_| ())
+                    .and_then(|typed| typed.proposal().cloned().ok_or(()))
+            })
+            .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?;
+        let calculated = raw_content_sha256(
+            &serde_json::to_vec(&draft)
+                .map_err(|_| execution_state("the sealed proposal is invalid", "/proposal"))?,
+        )
+        .map_err(|_| execution_state("the proposal digest is invalid", "/proposal"))?;
+        if &calculated == digest
+            && draft.id == payload.draft_id.as_str()
+            && requested_draft_id.as_str() == draft.id
+            && requested_digest == *digest
+            && draft.operations.iter().any(
+                |operation| matches!(operation, DraftOperation::AddNode { id, .. } if id == node),
+            )
+        {
+            candidates.push(draft);
+        }
+    }
+    let draft = match candidates.as_slice() {
+        [draft] => draft,
+        [] => {
+            return Err(execution_state(
+                "no recoverable sealed proposal matches this node and digest",
+                "/proposal",
+            ));
+        }
+        _ => {
+            return Err(execution_state(
+                "multiple sealed proposals match this node; provide proposal-digest",
+                "/proposalDigest",
+            ));
+        }
+    };
+    let ids = UuidIds;
+    let clock = SystemClock;
+    let externalizer = SealingGraphExternalizer::new(opener);
+    let mut assignments = BTreeMap::new();
+    if let Some(requested) = request.assignments {
+        for (node_id, actor_id) in requested {
+            let node_id = OpaqueId::parse(node_id).map_err(|_| {
+                execution_state("the assigned node identifier is invalid", "/assignments")
+            })?;
+            let actor_id = graphhelm_protocols::ActorId::parse(actor_id).map_err(|_| {
+                execution_state("the assigned actor identifier is invalid", "/assignments")
+            })?;
+            assignments.insert(
+                node_id,
+                PersistedActor::new(graphhelm_protocols::PersistedActorType::Agent, actor_id),
+            );
+        }
+        if !assignments.contains_key(
+            &OpaqueId::parse(node)
+                .map_err(|_| execution_state("the node identifier is invalid", "/node"))?,
+        ) {
+            return Err(execution_state(
+                "assignments must include the requested node",
+                "/assignments",
+            ));
+        }
+    } else {
+        let assigned_actor = request.assigned_actor.ok_or_else(|| {
+            execution_state(
+                "actor-id is required so the approved node has an authenticated owner",
+                "/actorId",
+            )
+        })?;
+        let assigned_id = graphhelm_protocols::ActorId::parse(assigned_actor)
+            .map_err(|_| execution_state("the assigned actor identifier is invalid", "/actorId"))?;
+        assignments.insert(
+            OpaqueId::parse(node)
+                .map_err(|_| execution_state("the node identifier is not valid", "/node"))?,
+            PersistedActor::new(graphhelm_protocols::PersistedActorType::Agent, assigned_id),
+        );
+    }
+    let acceptance = ExecutionDraftAcceptance {
+        draft_id: OpaqueId::parse(&draft.id)
+            .map_err(|_| execution_state("the proposal identifier is invalid", "/proposal"))?,
+        mode: projection
+            .mode
+            .ok_or_else(|| execution_state("the execution has no mode", "/mode"))?,
+        proposal_sha256: requested_digest,
+        assignments,
+        decision_key: request.decision_key,
+        decision_node: request.decision_node,
+    };
+    let apply = block_on_local(apply_draft_with_acceptance(
+        &graphhelm_graph::GraphVersion::from_record(authoring)
+            .map_err(|_| execution_state("the authoring snapshot is invalid", "/graph"))?,
+        draft,
+        &ApplyServices {
+            event_repository: &store,
+            scope: scope.clone(),
+            stream_id: OpaqueId::parse(&stream)
+                .map_err(|_| execution_state("the execution stream is invalid", "/execution"))?,
+            actor: Actor::new(ActorType::Owner, request.approving_actor.id().as_str()),
+            clock: &clock,
+            ids: &ids,
+            externalizer: &externalizer,
+        },
+        Some(&acceptance),
+    ))
+    .map_err(|error| Failure {
+        code: error.code(),
+        message: error.to_string(),
+        pointer: "/proposal".to_owned(),
+    })?;
+    if !apply.events.iter().any(|event| {
+        matches!(&event.kind, EventKind::GhostNodeProposed(payload) if payload.node_id.as_str() == node)
+    }) {
+        return Err(execution_state(
+            "the Governor result did not contain the requested proposal and Ghost",
+            "/proposal",
+        ));
+    }
+    if !apply.events.iter().any(|event| {
+        matches!(&event.kind, EventKind::NodeAssigned(payload) if payload.node_id.as_str() == node)
+    }) || !apply.events.iter().any(|event| {
+        matches!(&event.kind, EventKind::NodeOutcomeRecorded(payload) if payload.node_id.as_str() == node && payload.next_state == NodeState::Ready)
+    }) {
+        return Err(execution_state(
+            "the Governor result did not contain the requested assignment and approval",
+            "/proposal",
+        ));
+    }
+    let final_projection = replay_projection(&store, &scope, &stream)?;
+    Ok(render(
+        &final_projection,
+        &graphhelm_execution::AttentionInputs::for_surface(
+            &final_projection,
+            BTreeMap::new(),
+            None,
+        ),
+        &super::Liveness::default(),
+        None,
+    ))
+}
+
+fn block_on_local<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the local approval runtime must be constructible")
+        .block_on(future)
 }
 
 /// Widened from private to `pub(crate)` (Milestone 05a Task 3), gaining `actor` and `key` as

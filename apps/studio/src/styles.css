@@ -2367,6 +2367,12 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
 .node-result-summary { display: grid; gap: 5px; margin: 12px; padding: 12px; border: 1px solid #484052; border-radius: 10px; background: #24202a; color: #c9c4d1; font: 12px/1.45 var(--sans); }
 .node-result-summary strong { color: #f0eaf7; font-size: 13px; }
+.assignment-summary { display: grid; gap: 8px; margin: 12px; padding: 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--raised); color: var(--dim); font: 12px/1.45 var(--sans); }
+.assignment-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.assignment-state { color: var(--dim); text-transform: capitalize; }
+.assignment-state.running { color: var(--live); }
+.assignment-state.completed { color: var(--signal); }
+.assignment-state.failed, .assignment-state.blocked { color: var(--danger); }
 .panel-head.verification-unchecked i { background: var(--signal); }
 .work-note p { margin: 8px 0 0; }
 .work-note ul { margin: 8px 0 0; padding-left: 18px; }
@@ -2805,4 +2811,52 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   font-family: var(--mono);
   font-size: 11px;
   opacity: 0.8;
+}
+
+/* Governed proposals are reviewed as a small form: the owner chooses each responsible actor,
+   then reads the sealed typed steps before the atomic approval button becomes usable. */
+.action-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.action-choice select {
+  min-height: 34px;
+  width: 100%;
+}
+
+.proposal-review {
+  display: grid;
+  gap: 8px;
+  margin: 10px 13px 0;
+  padding: 12px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.proposal-review strong { color: var(--text); }
+.proposal-review code { font-family: var(--mono); overflow-wrap: anywhere; }
+
+.turn-details {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.turn-details code {
+  display: block;
+  margin-top: 4px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--faint);
 }

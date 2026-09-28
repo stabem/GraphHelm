@@ -221,6 +221,8 @@ pub fn run(command: TopLevel) -> Outcome {
                 mode,
                 execution,
                 held,
+                keyring,
+                key_id,
             } => execution::start::run(
                 &file,
                 &events,
@@ -228,6 +230,10 @@ pub fn run(command: TopLevel) -> Outcome {
                 &mode,
                 execution.as_deref(),
                 held,
+                execution::start::GenesisKeyring {
+                    directory: keyring.as_deref(),
+                    key_id: key_id.as_deref(),
+                },
             ),
             ExecutionCommand::List {
                 events,
@@ -315,7 +321,27 @@ pub fn run(command: TopLevel) -> Outcome {
                 events,
                 execution,
                 node,
-            } => execution::approve::run(&events, execution.as_deref(), &node),
+                keyring,
+                key_id,
+                actor_id,
+                proposal_digest,
+                draft_id,
+            } => execution::approve::run(
+                &events,
+                execution.as_deref(),
+                &node,
+                keyring.as_deref(),
+                key_id.as_deref(),
+                actor_id.as_deref(),
+                proposal_digest.as_deref(),
+                draft_id.as_deref(),
+            ),
+            ExecutionCommand::Assign {
+                events,
+                execution,
+                node,
+                actor_id,
+            } => execution::assign::run(&events, execution.as_deref(), &node, &actor_id),
             ExecutionCommand::AmendBudget {
                 events,
                 execution,
@@ -333,7 +359,16 @@ pub fn run(command: TopLevel) -> Outcome {
                 events,
                 fixtures,
                 execution,
-            } => execution::resume::run(&file, &events, fixtures.as_deref(), execution.as_deref()),
+                keyring,
+                key_id,
+            } => execution::resume::run(
+                file.as_deref(),
+                &events,
+                fixtures.as_deref(),
+                execution.as_deref(),
+                keyring.as_deref(),
+                key_id.as_deref(),
+            ),
             ExecutionCommand::Cancel { events, execution } => {
                 execution::cancel::run(&events, execution.as_deref())
             }

@@ -945,6 +945,34 @@ pub async fn drive_to_quiescence_async(
 
         // Approve every untouched node — the legal Draft -> Ready route, as 04f does.
         let projection = reread_async(&store_open, &scope, &stream).await?;
+        let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
+            !projection
+                .applied_drafts
+                .iter()
+                .any(|applied| applied == draft_id)
+                && !projection
+                    .rejected_drafts
+                    .iter()
+                    .any(|rejected| rejected == draft_id)
+        });
+        if pending_proposal {
+            if projection.simulation_status != Some(SimulationStatus::Paused) {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "proposal-paused",
+                    None,
+                    WireEventKind::ExecutionPaused(ExecutionPaused {
+                        execution_id: execution_id.clone(),
+                    }),
+                )
+                .await?;
+            }
+            break None;
+        }
         for node in spec.nodes.keys() {
             let state = projection
                 .node_states
@@ -1312,6 +1340,19 @@ pub async fn drive_to_quiescence_async(
     // Quiescence: complete when every node is terminal, exactly as 04f's
     // complete_if_quiesced decides it.
     let projection = reread_async(&store_open, &scope, &stream).await?;
+    let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
+        !projection
+            .applied_drafts
+            .iter()
+            .any(|applied| applied == draft_id)
+            && !projection
+                .rejected_drafts
+                .iter()
+                .any(|rejected| rejected == draft_id)
+    });
+    if pending_proposal {
+        return Ok(projection);
+    }
     let already_terminal = matches!(
         projection.simulation_status,
         Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)

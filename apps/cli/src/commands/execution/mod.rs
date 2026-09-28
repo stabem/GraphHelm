@@ -1,5 +1,6 @@
 pub(super) mod amend;
 pub(super) mod approve;
+pub(super) mod assign;
 pub(super) mod briefing;
 pub(super) mod cancel;
 pub(super) mod claim;
@@ -507,6 +508,15 @@ pub(super) fn record_outcome_with_key(
         .get(node)
         .copied()
         .unwrap_or(NodeState::Draft);
+    if actor.actor_type() == PersistedActorType::Agent
+        && let Some(assigned) = projection.node_assignments.get(node)
+        && assigned != actor
+    {
+        return Err(execution_state(
+            "the agent is not assigned to this node",
+            "/actor",
+        ));
+    }
     let attempts = projection.node_attempts.get(node).copied().unwrap_or(0);
     let identical_outcomes = projection.identical_outcomes_for(node, outcome);
     let next_state = apply_transition(&TransitionRequest {
@@ -1009,6 +1019,18 @@ pub(in crate::commands) fn render_with_context(
         // map all along -- only the aggregate was rendered. Same labels as the counts, so the
         // two never disagree on vocabulary; kept OFF `execution list` rows (see list.rs).
         "nodeStates": node_states_map(&projection.node_states),
+        // Assignment is an event-backed fact. Keep it beside node states so the Studio can say
+        // who owns a proposed node without guessing from the recorder or executor route.
+        "nodeAssignments": projection
+            .node_assignments
+            .iter()
+            .map(|(node, actor)| (node.clone(), serde_json::to_value(actor).expect("actor is serializable")))
+            .collect::<BTreeMap<String, serde_json::Value>>(),
+        "proposalDigests": projection
+            .proposed_draft_sha256
+            .iter()
+            .map(|(draft, digest)| (draft.clone(), serde_json::Value::String(digest.to_string())))
+            .collect::<BTreeMap<String, serde_json::Value>>(),
         // #163: the scan history, ONE typed value shared by every door that calls render().
         "customs": serde_json::to_value(graphhelm_execution::customs_view(projection))
             .expect("a view built from already-serializable fold types serializes"),

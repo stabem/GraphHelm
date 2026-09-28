@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
     AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind,
-    EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
-    MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
-    PersistedMemoryPublicationState, PersistedMemorySemanticState, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
+    EvidenceId, EvidenceReference, ExecutionFormDeclared, ExecutionId, ExecutionMode,
+    MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId,
+    PersistedActor, PersistedGraphVersion, PersistedMemoryPublicationState,
+    PersistedMemorySemanticState, PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope,
+    SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -400,6 +401,11 @@ const fn is_zero(value: &u64) -> bool {
 pub struct ExecutionProjection {
     pub stream_id: Option<String>,
     pub current_graph: Option<PersistedGraphVersion>,
+    /// Sealed authoring records keyed by the published version they describe. The reference is
+    /// retained so an approval can recover the exact authoring predecessor through the repository
+    /// instead of reconstructing it from the safe projection.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub authoring_snapshots: BTreeMap<u64, EvidenceReference>,
     /// The shape the operator DECLARED, which is a different and weaker claim than
     /// `current_graph`'s "this was sealed and published". A rule that needs the node set or a
     /// node's deadline can be answered from a declaration; a rule that needs sealed evidence
@@ -428,10 +434,22 @@ pub struct ExecutionProjection {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub memory_records: BTreeMap<String, MemoryRecordProjection>,
     pub proposed_drafts: Vec<String>,
+    /// Digest of the sealed proposal bytes for new governed drafts. Absent means a legacy draft
+    /// event predating durable proposal sealing; callers must refuse approval without it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub proposed_draft_sha256: BTreeMap<String, graphhelm_protocols::RawSha256>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
     pub waivers: Vec<PolicyWaiver>,
     pub node_states: BTreeMap<String, NodeState>,
+    /// Authenticated actor assigned to each proposed node. This is a replay projection of the
+    /// append-only `node_assigned` event; it is never inferred from the event recorder.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_assignments: BTreeMap<String, PersistedActor>,
+    /// Draft identity for each ghost. Kept separately from `node_assignments` so an assignment
+    /// cannot be replayed against a different proposal digest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ghost_drafts: BTreeMap<String, String>,
     /// M11 #160: the OPEN wait per node, identified by the envelope sequence of the event that
     /// parked it.
     ///
@@ -1434,10 +1452,44 @@ fn apply_projection_event(
                     .or_insert(EvidenceAvailability::Available);
             }
         }
+        EventKind::GraphAuthoringSnapshotStored(payload) => {
+            if event.scope.execution_id().map(|id| id.as_str())
+                != Some(payload.execution_id.as_str())
+                || event.evidence_refs.len() != 1
+                || projection.current_graph.as_ref().is_none_or(|graph| {
+                    graph.number() != payload.graph_version
+                        || graph.semantic_hash().as_str() != payload.graph_hash.as_str()
+                })
+                || !event.evidence_refs[0]
+                    .evidence_id()
+                    .as_str()
+                    .starts_with(&format!(
+                        "graph-authoring-snapshot-{}-",
+                        payload.graph_version
+                    ))
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            if projection
+                .authoring_snapshots
+                .insert(payload.graph_version, event.evidence_refs[0].clone())
+                .is_some()
+            {
+                return Err(ReplayError::Corrupt);
+            }
+        }
         EventKind::DraftProposed(payload) => {
             projection
                 .proposed_drafts
                 .push(payload.draft_id.to_string());
+            if let Some(digest) = &payload.proposal_sha256
+                && projection
+                    .proposed_draft_sha256
+                    .insert(payload.draft_id.to_string(), digest.clone())
+                    .is_some()
+            {
+                return Err(ReplayError::Corrupt);
+            }
         }
         EventKind::DraftRejected(payload) => {
             projection
@@ -1840,6 +1892,31 @@ fn apply_projection_event(
                 return Err(ReplayError::LimitExceeded);
             }
             projection.node_states.insert(node, NodeState::Ghost);
+            projection
+                .ghost_drafts
+                .insert(payload.node_id.to_string(), payload.draft_id.to_string());
+        }
+        EventKind::NodeAssigned(payload) => {
+            if payload.assigned_actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent
+                || projection.execution_id.as_deref() != Some(payload.execution_id.as_str())
+                || !matches!(
+                    projection.node_states.get(payload.node_id.as_str()),
+                    Some(NodeState::Ghost)
+                )
+                || projection
+                    .node_assignments
+                    .contains_key(payload.node_id.as_str())
+                || projection
+                    .ghost_drafts
+                    .get(payload.node_id.as_str())
+                    .and_then(|draft| projection.proposed_draft_sha256.get(draft))
+                    != Some(&payload.proposal_sha256)
+            {
+                return Err(ReplayError::Corrupt);
+            }
+            projection
+                .node_assignments
+                .insert(payload.node_id.to_string(), payload.assigned_actor.clone());
         }
         EventKind::MutationAccepted(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str())

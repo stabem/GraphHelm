@@ -24,6 +24,18 @@
     "emittedAt": {"type": "string", "format": "date-time"},
     "to": {"type": "string", "minLength": 1},
     "replyTo": {"type": "string", "minLength": 1}
+    ,"proposal": {
+      "type": "object",
+      "required": ["id", "expectedVersion", "expectedHash", "operations"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expectedVersion": {"type": "integer", "minimum": 1},
+        "expectedHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "operations": {"type": "array", "minItems": 1, "maxItems": 1024, "items": {"type": "object"}},
+        "manualOverride": {"type": ["object", "null"]}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

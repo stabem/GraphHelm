@@ -1609,6 +1609,15 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             false,
         ),
         (
+            "graph_authoring_snapshot_stored",
+            json!({
+                "executionId": "execution-test",
+                "graphVersion": 1,
+                "graphHash": wire_hash()
+            }),
+            false,
+        ),
+        (
             "draft_proposed",
             json!({
                 "draftId": "draft-test",
@@ -1729,6 +1738,16 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
                 "executionId": "execution-test",
                 "nodeId": "ghost-test",
                 "draftId": "draft-test"
+            }),
+            false,
+        ),
+        (
+            "node_assigned",
+            json!({
+                "executionId": "execution-test",
+                "nodeId": "ghost-test",
+                "assignedActor": {"type": "agent", "id": "agent-test"},
+                "proposalSha256": raw_digest()
             }),
             false,
         ),

@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
 
-use graphhelm_events::{EvidenceInput, EvidenceProtector, EvidenceSealer, SecretBytes};
+use graphhelm_events::{
+    EvidenceInput, EvidenceProtector, EvidenceSealer, SealedEvidence, SecretBytes,
+};
+use graphhelm_graph::raw_content_sha256;
 use graphhelm_sealed_key_provider::SealedKeyProvider;
 
 use graphhelm_governor::{
     GovernanceError, MutationDecision, RejectionReason, admit_signal, decide_mutation,
 };
 use graphhelm_protocols::{
-    EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, SignalRecorded,
+    DraftProposed, EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, SignalRecorded,
 };
 
 use super::{
@@ -357,18 +360,113 @@ pub(crate) fn execute(
 
     let stream_id = OpaqueId::parse(&stream)
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
+    if admitted.proposal.is_some() && sealed.is_none() {
+        return Err(execution_state(
+            "a graph proposal requires sealed evidence; start the Runtime with --keyring and --key-id",
+            "/signal/proposal",
+        ));
+    }
     let evidence_refs = sealed
         .as_ref()
         .map(|item| vec![item.reference().clone()])
         .unwrap_or_default();
     let event = NewEvent::new(
         key,
-        actor,
+        actor.clone(),
         Sensitivity::Internal,
         EventKind::SignalRecorded(admitted.record.clone()),
-        evidence_refs,
+        evidence_refs.clone(),
         vec![],
     );
+    let mut pending = vec![event];
+    let mut proposal_sealed: Option<SealedEvidence> = None;
+    if let Some(draft) = admitted.proposal.as_ref() {
+        if !admitted.may_propose_mutation {
+            return Err(signal_invalid(
+                "an unrecognized signal cannot carry a graph proposal",
+                "/signal/proposal",
+            ));
+        }
+        let proposal_bytes = serde_json::to_vec(draft).map_err(|_| {
+            signal_invalid("the graph proposal is not serializable", "/signal/proposal")
+        })?;
+        let proposal_sha256 = raw_content_sha256(&proposal_bytes).map_err(|_| {
+            execution_state(
+                "the graph proposal digest could not be computed",
+                "/signal/proposal",
+            )
+        })?;
+        let protector = open_sealer(sealing.ok_or_else(|| {
+            execution_state(
+                "a graph proposal requires sealed evidence; start the Runtime with --keyring and --key-id",
+                "/signal/proposal",
+            )
+        })?)?;
+        let input = EvidenceInput::new(
+            format!("proposal-{}", proposal_sha256.as_str()),
+            "application/json",
+            Sensitivity::Confidential,
+            "standard",
+            SecretBytes::new(proposal_bytes),
+        )
+        .map_err(|_| execution_state("the graph proposal cannot be sealed", "/signal/proposal"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|_| execution_state("the sealing runtime could not start", "/keyring"))?;
+        proposal_sealed = Some(
+            runtime
+                .block_on(protector.seal(scope.clone(), input))
+                .map_err(|_| {
+                    execution_state("the graph proposal could not be sealed", "/signal/proposal")
+                })?,
+        );
+        let proposal_refs = vec![
+            proposal_sealed
+                .as_ref()
+                .expect("proposal evidence was assigned above")
+                .reference()
+                .clone(),
+        ];
+        let proposal_key = OpaqueId::parse(format!("proposal-{}", proposal_sha256.as_str()))
+            .map_err(|_| {
+                execution_state(
+                    "the graph proposal key is not wire-safe",
+                    "/signal/proposal",
+                )
+            })?;
+        pending.push(NewEvent::new(
+            proposal_key,
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::DraftProposed(DraftProposed {
+                draft_id: OpaqueId::parse(&draft.id).map_err(|_| {
+                    signal_invalid(
+                        "the graph proposal id is not wire-safe",
+                        "/signal/proposal/id",
+                    )
+                })?,
+                expected_version: draft.expected_version,
+                expected_hash: graphhelm_protocols::WireHash::parse(draft.expected_hash.as_str())
+                    .map_err(|_| {
+                    signal_invalid(
+                        "the graph proposal hash is invalid",
+                        "/signal/proposal/expectedHash",
+                    )
+                })?,
+                operation_count: u16::try_from(draft.operations.len()).map_err(|_| {
+                    signal_invalid(
+                        "the graph proposal has too many operations",
+                        "/signal/proposal/operations",
+                    )
+                })?,
+                proposal_sha256: Some(proposal_sha256.clone()),
+            }),
+            proposal_refs,
+            vec![],
+        ));
+        // Ghost nodes are published only by the Governor after owner approval. Recording them at
+        // proposal submission would make an agent signal mutate the operational graph directly.
+    }
     match sealed {
         Some(item) => {
             let next_sequence = store
@@ -378,8 +476,12 @@ pub(crate) fn execute(
                 scope.clone(),
                 stream_id.clone(),
                 next_sequence,
-                vec![event],
-                vec![item],
+                pending,
+                if let Some(proposal) = proposal_sealed {
+                    vec![item, proposal]
+                } else {
+                    vec![item]
+                },
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;
@@ -387,7 +489,11 @@ pub(crate) fn execute(
                 .append_atomic(&request)
                 .map_err(|error| repository_failure(&error))?;
         }
-        None => append_event(&store, &scope, &stream_id, event)?,
+        None => {
+            for event in pending {
+                append_event(&store, &scope, &stream_id, event)?;
+            }
+        }
     }
 
     // "Right now" per `decide_mutation`'s own contract means the projection folded to the append

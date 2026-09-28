@@ -42,7 +42,7 @@
       "id": "https://p50.dev/schemas/event-envelope.schema.json",
       "documentVersion": "1.1.0",
       "path": "schemas/event-envelope.schema.json",
-      "sha256": "sha256:d5481ef4c1df96080f7ac6347c808eb42c76d1b2427009e12590d2f3add93158"
+      "sha256": "sha256:a95fbe7d653a9d649a4664119e5eca6539283755c53bfb7084eb03efc84c3028"
     },
     "evidence-record": {
       "id": "https://p50.dev/schemas/evidence-record.schema.json",
@@ -72,7 +72,7 @@
       "id": "https://p50.dev/schemas/graph-signal.schema.json",
       "documentVersion": "1.1.0",
       "path": "schemas/graph-signal.schema.json",
-      "sha256": "sha256:fec294bbecb4b8661946ae779f2c31847988452c0c5e2840ca7473915e78c816"
+      "sha256": "sha256:12fa90d9455c15925ed4acbd4d11bfa9b7ae63015ceb75ba6556d6533f8745b5"
     },
     "node": {
       "id": "https://p50.dev/schemas/node.schema.json",

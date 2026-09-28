@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, path::Path};
 
 use graphhelm_events::PreparedAppend;
+use graphhelm_governor::{
+    PublicationPreparationServices, SealingGraphExternalizer, prepare_genesis_publication,
+};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
     DeclaredExecutor, DeclaredTopology, DeclaredTopologyEdge, EdgeType, EventKind,
@@ -13,11 +16,17 @@ use super::{
     Failure, PreparedDrive, argument, execution_state, finish, idempotency_key, load_fixtures,
     load_projection, render, replay_failure, repository_failure,
 };
-use crate::commands::{event_store, owner, publish_loaded};
+use crate::commands::{SystemClock, event_store, owner, publish_loaded};
+use crate::error_codes::GHCLI030_KEYRING_PAIR;
 use crate::output::Outcome;
 use graphhelm_simulation::FixtureExecutor;
 
 const COMMAND: &str = "execution.start";
+
+pub(crate) struct GenesisKeyring<'a> {
+    pub directory: Option<&'a Path>,
+    pub key_id: Option<&'a str>,
+}
 // Leave room for the event envelope below the Event Store's 1 MiB per-event ceiling.
 const MAX_FORM_BYTES_WITH_TOPOLOGY: usize = 768 * 1024;
 
@@ -35,6 +44,7 @@ pub fn run(
     mode: &str,
     execution: Option<&str>,
     held: bool,
+    genesis: GenesisKeyring<'_>,
 ) -> Outcome {
     let loaded = match graphhelm_schema::load_graph(file) {
         Ok(loaded) => loaded,
@@ -50,10 +60,46 @@ pub fn run(
     // one — a caller whose publish then failed already knew about the lint warnings, and the
     // reply must not look like it withheld something it already computed.
     let warnings = report.warnings;
-    let version = match publish_loaded(&loaded, owner("owner-local")) {
+    // Governed genesis is attributed to the same owner identity that the sealed publication
+    // append records. Plain starts retain their historical local publication actor; the governed
+    // path uses the explicit CLI owner so replay can verify the actor binding.
+    let publication_actor = if genesis.directory.is_some() && genesis.key_id.is_some() {
+        owner("owner-cli")
+    } else {
+        owner("owner-local")
+    };
+    let version = match publish_loaded(&loaded, publication_actor) {
         Ok(version) => version,
         Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };
+    if let Err(error) =
+        validate_before_governed_genesis(&version, events, fixtures, mode, execution)
+    {
+        return finish(COMMAND, Err(error), |value| value).with_warnings(warnings);
+    }
+    if let (Some(keyring), Some(key_id)) = (genesis.directory, genesis.key_id) {
+        if let Err(error) = persist_governed_genesis(
+            &version,
+            events,
+            execution,
+            keyring,
+            key_id,
+            super::owner_actor(),
+        ) {
+            return Outcome::internal(COMMAND, error).with_warnings(warnings);
+        }
+    } else if genesis.directory.is_some() || genesis.key_id.is_some() {
+        return Outcome::application(
+            COMMAND,
+            graphhelm_protocols::Diagnostic::error(
+                GHCLI030_KEYRING_PAIR,
+                "--keyring and --key-id must be supplied together for governed genesis",
+                "/keyring",
+                "cli",
+            ),
+        )
+        .with_warnings(warnings);
+    }
     let started = if held {
         execute_held(
             &version,
@@ -76,6 +122,128 @@ pub fn run(
         )
     };
     finish(COMMAND, started, |value| value).with_warnings(warnings)
+}
+
+/// Validate deterministic start preconditions before governed genesis writes its publication and
+/// sealed snapshot. The normal execution path repeats these checks while preparing the started
+/// event; this early pass keeps an invalid mode, fixture, or already-started stream from leaving
+/// a partial governed history behind. The append still owns concurrency conflicts.
+fn validate_before_governed_genesis(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    mode: &str,
+    execution: Option<&str>,
+) -> Result<(), Failure> {
+    parse_mode(mode)?;
+    let _ = load_fixtures(fixtures)?;
+    let stream_id = resolve_execution_id(version, execution)?;
+    let scope = super::addressable_scope(stream_id.as_str())?;
+    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let history = store
+        .read_replay_stream(&scope, stream_id.as_str())
+        .map_err(|error| repository_failure(&error))?;
+    let projection = graphhelm_events::replay(&scope, stream_id.as_str(), &history)
+        .map_err(|error| replay_failure(&error))?;
+    if projection.execution_id.is_some() {
+        return Err(execution_state(
+            "an execution has already started on this stream",
+            "/execution",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn persist_governed_genesis(
+    version: &GraphVersion,
+    events: &Path,
+    execution: Option<&str>,
+    keyring: &Path,
+    key_id: &str,
+    caller: PersistedActor,
+) -> Result<(), String> {
+    let sealing = super::signal::SignalKeyring {
+        directory: keyring.to_path_buf(),
+        key_id: key_id.to_owned(),
+    };
+    let sealer = super::signal::open_sealer(&sealing).map_err(|failure| failure.message)?;
+    let store = event_store(events).map_err(|error| error.to_string())?;
+    let stream = resolve_execution_id(version, execution)
+        .map_err(|_| "the graph execution id is not wire-safe".to_owned())?;
+    if stream.as_str() != version.graph().metadata.execution_id {
+        return Err(
+            "governed genesis requires --execution to match the graph execution id".to_owned(),
+        );
+    }
+    let scope = super::addressable_scope(stream.as_str()).map_err(|failure| failure.message)?;
+    let clock = SystemClock;
+    let preparation = block_on_local(prepare_genesis_publication(
+        version,
+        &PublicationPreparationServices {
+            scope: scope.clone(),
+            actor: owner(caller.id().as_str()),
+            clock: &clock,
+            externalizer: &SealingGraphExternalizer::new(sealer),
+        },
+    ))
+    .map_err(|error| error.to_string())?;
+    let actor = caller;
+    let snapshot = graphhelm_protocols::GraphAuthoringSnapshotStored {
+        execution_id: stream.clone(),
+        graph_version: version.number(),
+        graph_hash: WireHash::parse(preparation.version.semantic_hash().as_str())
+            .map_err(|_| "the persisted graph hash is not wire-safe".to_owned())?,
+    };
+    let request = PreparedAppend::new(
+        scope.clone(),
+        stream.clone(),
+        store
+            .next_sequence(&scope, stream.as_str())
+            .map_err(|error| error.to_string())?,
+        vec![
+            NewEvent::new(
+                OpaqueId::parse("genesis-published")
+                    .map_err(|_| "invalid genesis key".to_owned())?,
+                actor.clone(),
+                Sensitivity::Internal,
+                EventKind::GraphVersionPublished(Box::new(
+                    graphhelm_protocols::GraphVersionPublished {
+                        version: preparation.version.clone(),
+                    },
+                )),
+                preparation.evidence_refs.clone(),
+                vec![],
+            ),
+            NewEvent::new(
+                OpaqueId::parse("genesis-authoring-snapshot")
+                    .map_err(|_| "invalid snapshot key".to_owned())?,
+                actor,
+                Sensitivity::Internal,
+                EventKind::GraphAuthoringSnapshotStored(snapshot),
+                vec![preparation.authoring_snapshot.reference().clone()],
+                vec![],
+            ),
+        ],
+        preparation
+            .evidence
+            .into_iter()
+            .chain(std::iter::once(preparation.authoring_snapshot))
+            .collect(),
+        vec![],
+    )
+    .map_err(|error| error.to_string())?;
+    store
+        .append_atomic(&request)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn block_on_local<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("local runtime")
+        .block_on(future)
 }
 
 /// Widened from private to `pub(crate)` (Milestone 05a Task 4), gaining `actor` and `key` as

@@ -77,6 +77,11 @@ export interface ExecutionStatus {
   attention: Attention;
   attentionReasons: AttentionReason[];
   nodeStateCounts: Record<string, number>;
+  nodeStates?: Record<string, string>;
+  /** Event-backed ownership for governed proposal nodes. Missing means no assignment was recorded. */
+  nodeAssignments?: Record<string, { type: string; id: string }>;
+  /** Draft digests exposed for matching an approval to the sealed proposal it accepted. */
+  proposalDigests?: Record<string, string>;
   untriagedInterruptions: unknown[];
   silenceUnevaluated: unknown[];
   startedAt: string | null;

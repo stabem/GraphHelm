@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_events::{
-    EvidenceError, EvidenceInput, EvidenceSealer, RepositoryFuture, SealedEvidence, SecretBytes,
+    EvidenceError, EvidenceInput, EvidenceOpener, EvidenceSealer, RepositoryFuture, SealedEvidence,
+    SecretBytes,
 };
 use graphhelm_graph::{
     DurableContentError, GraphVersion, PersistenceHashes, canonical_content_bytes,
@@ -61,6 +62,8 @@ pub struct ProjectionPreparation {
     pub version: PersistedGraphVersion,
     pub evidence: Vec<SealedEvidence>,
     pub evidence_refs: Vec<EvidenceReference>,
+    /// Sealed authoring record used to recover the exact predecessor on a later approval.
+    pub authoring_snapshot: SealedEvidence,
 }
 
 impl ProjectionPreparation {
@@ -96,6 +99,51 @@ pub trait GraphExternalizer: Send + Sync {
         version: &'a GraphVersionRecord,
         predecessor: PersistedGraphVersionRef,
     ) -> RepositoryFuture<'a, Result<ProjectionPreparation, GovernorError>>;
+}
+
+/// Recover the exact authoring record that produced an active safe version.
+///
+/// Approval must use this boundary instead of treating the safe projection as an inverse of the
+/// authoring graph. The opener authenticates the scope and ciphertext, the content digest binds
+/// the bytes to the stored reference, and the graph/hash comparison binds the recovered record to
+/// the complete active persisted version. A missing or stale snapshot therefore fails closed.
+pub fn recover_verified_authoring_snapshot<'a, O: EvidenceOpener>(
+    opener: &'a O,
+    scope: RepositoryScope,
+    active: &'a PersistedGraphVersion,
+    evidence: &'a SealedEvidence,
+) -> RepositoryFuture<'a, Result<GraphVersionRecord, GovernorError>> {
+    Box::pin(async move {
+        let plaintext = opener
+            .open(scope.clone(), evidence)
+            .await
+            .map_err(|_| GovernorError::SealingFailed)?;
+        let record = plaintext.expose(|bytes| {
+            serde_json::from_slice::<GraphVersionRecord>(bytes)
+                .map_err(|_| GovernorError::InvalidAuthoring)
+        })?;
+        let version = GraphVersion::from_record(record.clone())
+            .map_err(|_| GovernorError::InvalidAuthoring)?;
+        let projected = projected_version_for(&scope, &record, active.predecessor().cloned())?;
+        if projected != *active || version.number() != active.number() {
+            return Err(GovernorError::InvalidProjection);
+        }
+        let expected_id = format!(
+            "graph-authoring-snapshot-{}-{}",
+            version.number(),
+            raw_content_sha256(
+                &serde_json::to_vec(&record).map_err(|_| GovernorError::InvalidAuthoring)?,
+            )
+            .map_err(|_| GovernorError::InvalidProjection)?
+            .as_str()
+            .get(..16)
+            .ok_or(GovernorError::InvalidAuthoring)?
+        );
+        if evidence.reference().evidence_id().as_str() != expected_id {
+            return Err(GovernorError::InvalidProjection);
+        }
+        Ok(record)
+    })
 }
 
 /// Deterministic externalizer backed by an adapter-neutral Evidence sealer.
@@ -186,10 +234,42 @@ fn externalize_with_sealer<'a, S: EvidenceSealer>(
             .collect::<Vec<_>>();
         validate_evidence_bijection(safe_version.content_slots(), &evidence_refs)
             .map_err(|_| GovernorError::InvalidProjection)?;
+        let snapshot_plaintext =
+            serde_json::to_vec(version).map_err(|_| GovernorError::InvalidAuthoring)?;
+        let snapshot_sha256 = raw_content_sha256(&snapshot_plaintext)
+            .map_err(|_| GovernorError::InvalidProjection)?;
+        let snapshot_id = EvidenceId::parse(format!(
+            "graph-authoring-snapshot-{}-{}",
+            version.graph.metadata.version,
+            &snapshot_sha256.as_str()[..16]
+        ))
+        .map_err(|_| GovernorError::InvalidProjection)?;
+        let snapshot_len = snapshot_plaintext.len();
+        let snapshot_input = EvidenceInput::new(
+            snapshot_id.as_str(),
+            "application/json",
+            Sensitivity::Internal,
+            "standard",
+            SecretBytes::new(snapshot_plaintext),
+        )
+        .map_err(map_evidence_error)?;
+        let authoring_snapshot = sealer
+            .seal(scope.clone(), snapshot_input)
+            .await
+            .map_err(map_evidence_error)?;
+        validate_sealed_evidence(
+            &authoring_snapshot,
+            &scope,
+            &snapshot_id,
+            Sensitivity::Internal,
+            snapshot_len,
+            &snapshot_sha256,
+        )?;
         Ok(ProjectionPreparation {
             version: safe_version,
             evidence,
             evidence_refs,
+            authoring_snapshot,
         })
     })
 }

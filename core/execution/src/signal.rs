@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use graphhelm_protocols::{SignalSeverity, SignalSourceKind};
+use graphhelm_protocols::{GraphDraft, SignalSeverity, SignalSourceKind};
 
 /// Signal kinds this milestone recognizes, from `HARNESS_SPEC.md` §19.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +87,10 @@ struct RawSignal {
     /// and the same present-means-non-empty rule.
     #[serde(default, deserialize_with = "present_nonempty")]
     reply_to: Option<String>,
+    /// A typed Governor proposal carried by this signal. It remains inert until the Governor
+    /// validates and publishes it; the signal parser never grants publication authority.
+    #[serde(default)]
+    proposal: Option<GraphDraft>,
 }
 
 /// A field that, WHEN PRESENT, must be a non-empty string - `null` and `""` are refused rather
@@ -186,6 +190,11 @@ impl TypedSignal {
     #[must_use]
     pub fn reply_to(&self) -> Option<&str> {
         self.raw.reply_to.as_deref()
+    }
+
+    #[must_use]
+    pub fn proposal(&self) -> Option<&GraphDraft> {
+        self.raw.proposal.as_ref()
     }
 
     /// Whether this signal may be turned into a draft by the Governor.

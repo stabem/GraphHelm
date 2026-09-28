@@ -17,7 +17,7 @@ use super::{
     load_projection, render, replay_failure, repository_failure,
 };
 use crate::commands::{SystemClock, event_store, owner, publish_loaded};
-use crate::error_codes::GHCLI019_KEYRING_PAIR;
+use crate::error_codes::GHCLI030_KEYRING_PAIR;
 use crate::output::Outcome;
 use graphhelm_simulation::FixtureExecutor;
 
@@ -79,7 +79,7 @@ pub fn run(
         return Outcome::application(
             COMMAND,
             graphhelm_protocols::Diagnostic::error(
-                GHCLI019_KEYRING_PAIR,
+                GHCLI030_KEYRING_PAIR,
                 "--keyring and --key-id must be supplied together for governed genesis",
                 "/keyring",
                 "cli",

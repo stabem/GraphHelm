@@ -30,7 +30,7 @@ pub use memory::{
     check_dependency_freshness, durable_memory_evidence_bytes, handoff_into_scope,
     prepare_durable_memory_publication, publication_steps, record_memory_admission_refusal,
     record_memory_publication_transition, record_memory_record_superseded, republish, supersede,
-    validate_candidate,
+    validate_candidate, validate_memory_expiry,
 };
 pub use publish::{
     PublicationPreparationObserver, PublicationPreparationServices, PublicationStage,

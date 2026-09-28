@@ -336,9 +336,16 @@ pub enum DevelopmentCommand {
         #[arg(long = "require")]
         require: Vec<String>,
     },
-    /// Propose content for governed memory and report the admission verdict (#220's admission,
-    /// exposed here).
-    MemoryPropose,
+    /// Propose caller-supplied content for governed memory and report the admission verdict.
+    MemoryPropose {
+        /// Observation to screen before any durable boundary.
+        #[arg(long, default_value = "a proposal with no input argument yet")]
+        content: String,
+        #[arg(long, default_value = "workspace-local")]
+        workspace_id: String,
+        #[arg(long, default_value = "project-local")]
+        project_id: String,
+    },
     /// Report a context-accounting receipt (#222/#273's accounting types, exposed here).
     Accounting,
 }

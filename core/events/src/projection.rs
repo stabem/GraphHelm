@@ -1352,6 +1352,12 @@ fn apply_projection_event(
             record.publication = Some(payload.resulting_state);
             record.last_transition_sequence = Some(event.sequence);
             record.evidence_refs = event.evidence_refs.clone();
+            // A publication carrying sealed Evidence is the durable validation boundary for the
+            // new producer. Legacy lifecycle events carry no Evidence and remain semantically
+            // unknown rather than being upgraded by replay.
+            if !record.evidence_refs.is_empty() {
+                record.semantic = Some(PersistedMemorySemanticState::Validated);
+            }
         }
         EventKind::MemoryRecordSuperseded(payload) => {
             let predecessor_id = payload.predecessor_id.to_string();

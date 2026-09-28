@@ -16,12 +16,16 @@ use graphhelm_architect::{
     RecordedJudgeModel,
 };
 use graphhelm_events::{
-    ClearanceOutcome, EventRepositoryError, EvidenceOpener, EvidenceRead, EvidenceSealer,
+    ClearanceOutcome, EventRepositoryError, EvidenceInput, EvidenceOpener, EvidenceRead,
+    EvidenceSealer, SecretBytes,
 };
 use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question};
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
+use graphhelm_protocols::{
+    ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType, ProjectId,
+    RepositoryScope, Sensitivity, WorkspaceId,
+};
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{
     AsyncNodeExecutor, ModelExecutor, PortExecutor, SplitExecutor, ToolExecutor,
@@ -30,6 +34,7 @@ use graphhelm_runtime::fixture::FixtureAsyncExecutor;
 use graphhelm_runtime::ports::ModelPort;
 use graphhelm_simulation::FixtureExecutor;
 use graphhelm_tool_broker::lease::{Capability, ToolLease};
+use sha2::Digest as _;
 
 use graphhelm_gateway::manifest::{ModelRoute, RouteManifest, Transport};
 use graphhelm_model_gateway::systemone::TYPESAFE_PROVIDER;
@@ -3686,6 +3691,13 @@ pub(super) async fn development_memory_status() -> Response {
     respond_outcome(crate::commands::development::run_memory_status())
 }
 
+fn memory_failure(message: &str) -> Response {
+    respond(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Outcome::internal("development.memory-propose", message).output,
+    )
+}
+
 /// `POST /v1/development/memory`: propose content for governed memory, answering with the
 /// admission verdict.
 ///
@@ -3696,8 +3708,177 @@ pub(super) async fn development_memory_status() -> Response {
 /// No identifier in the response: nothing persists a candidate, so an id would name something no
 /// later call could resolve -- see `crate::commands::development::run_memory_propose` for the
 /// measurement.
-pub(super) async fn development_memory_propose() -> Response {
-    respond_outcome(crate::commands::development::run_memory_propose())
+pub(super) async fn development_memory_propose(
+    State(state): State<ServeState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "development.memory-propose";
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(&headers, COMMAND, "memory", &payload, &["memory"])
+    {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let Some(true) = payload.get("optIn").and_then(serde_json::Value::as_bool) else {
+        return bad_request(COMMAND, "optIn must be true for durable memory", "/optIn");
+    };
+    let Some(content) = payload.get("content").and_then(serde_json::Value::as_str) else {
+        return bad_request(COMMAND, "content is required", "/content");
+    };
+    let Some(workspace) = payload
+        .get("workspaceId")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return bad_request(COMMAND, "workspaceId is required", "/workspaceId");
+    };
+    let Some(project) = payload.get("projectId").and_then(serde_json::Value::as_str) else {
+        return bad_request(COMMAND, "projectId is required", "/projectId");
+    };
+    let workspace_id = match WorkspaceId::parse(workspace) {
+        Ok(value) => value,
+        Err(_) => return bad_request(COMMAND, "workspaceId is invalid", "/workspaceId"),
+    };
+    let project_id = match ProjectId::parse(project) {
+        Ok(value) => value,
+        Err(_) => return bad_request(COMMAND, "projectId is invalid", "/projectId"),
+    };
+    let expires_at = payload
+        .get("expiresAtUnix")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 86_400);
+    if graphhelm_governor::validate_memory_expiry(chrono::Utc::now().timestamp(), expires_at)
+        .is_err()
+    {
+        return bad_request(
+            COMMAND,
+            "expiresAtUnix must be in the future",
+            "/expiresAtUnix",
+        );
+    }
+    let validators = payload
+        .get("validators")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let scope = graphhelm_protocols::DevelopmentScope {
+        workspace_id,
+        project_id,
+        subproject_id: None,
+        execution_id: None,
+    };
+    let mut touches = Vec::new();
+    let candidate = match graphhelm_governor::capture_memory(
+        graphhelm_governor::CaptureOptIn::Enabled,
+        &scope,
+        content,
+        &mut touches,
+    ) {
+        Ok(candidate) => candidate.produced_by(identity.actor.id().to_string()),
+        Err(refusal) => {
+            return respond(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Outcome::success(
+                    COMMAND,
+                    serde_json::json!({"admitted": false, "refusedWith": refusal.code().wire_name(), "touchedNothing": touches.is_empty()}),
+                ).output,
+            );
+        }
+    };
+    if let Err(refusal) = graphhelm_governor::validate_candidate(&candidate, &validators) {
+        return respond(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Outcome::success(
+                COMMAND,
+                serde_json::json!({"admitted": false, "refusedWith": refusal.code().wire_name()}),
+            )
+            .output,
+        );
+    }
+    let evidence_bytes =
+        match graphhelm_governor::durable_memory_evidence_bytes(&candidate, expires_at, true) {
+            Ok(bytes) => bytes,
+            Err(_) => return memory_failure("memory evidence could not be prepared"),
+        };
+    let digest = hex::encode(sha2::Sha256::digest(candidate.content().as_bytes()));
+    let short_digest = &digest[..16];
+    let evidence_id =
+        EvidenceId::parse(format!("memory-evidence-{short_digest}")).expect("bounded evidence id");
+    let record_id = graphhelm_protocols::OpaqueId::parse(format!("memory-record-{short_digest}"))
+        .expect("bounded record id");
+    let repo_scope =
+        RepositoryScope::new(scope.workspace_id.clone(), scope.project_id.clone(), None);
+    let input = match EvidenceInput::new(
+        evidence_id.to_string(),
+        "application/json",
+        Sensitivity::Internal,
+        "memory",
+        SecretBytes::new(evidence_bytes),
+    ) {
+        Ok(input) => input,
+        Err(_) => return memory_failure("memory evidence input is invalid"),
+    };
+    let sealer = match build_sealer(state.sealing.as_deref()) {
+        Ok(sealer) => sealer,
+        Err(_) => return memory_failure("durable memory requires a configured keyring"),
+    };
+    let sealed = match sealer.seal(repo_scope.clone(), input).await {
+        Ok(value) => value,
+        Err(_) => return memory_failure("memory evidence could not be sealed"),
+    };
+    let stream_id =
+        graphhelm_protocols::OpaqueId::parse("memory-stream").expect("constant stream id");
+    let events = match event_store(&state.events) {
+        Ok(events) => events,
+        Err(error) => return memory_failure(&format!("memory store unavailable: {error}")),
+    };
+    let expected = match events.next_sequence(&repo_scope, stream_id.as_str()) {
+        Ok(value) => value,
+        Err(_) => return memory_failure("memory stream head is unavailable"),
+    };
+    let record = graphhelm_governor::MemoryRecord::new(record_id.clone()).bind_durable(
+        scope,
+        digest,
+        sealed.reference().clone(),
+        expires_at,
+    );
+    let request = graphhelm_governor::MemoryPublicationTransitionRequest::new(
+        repo_scope,
+        stream_id,
+        expected,
+        identity.keys[0].full.clone(),
+        identity.actor.clone(),
+    );
+    let prepared = match graphhelm_governor::prepare_durable_memory_publication(
+        graphhelm_governor::CaptureOptIn::Enabled,
+        &candidate,
+        &validators,
+        request,
+        &record,
+        sealed,
+    ) {
+        Ok(value) => value,
+        Err(refusal) => {
+            return memory_failure(&format!(
+                "memory publication refused: {}",
+                refusal.code().wire_name()
+            ));
+        }
+    };
+    match events.append_atomic(&prepared) {
+        Ok(_) => respond(StatusCode::OK, Outcome::success(COMMAND, serde_json::json!({
+            "admitted": true, "recordId": record_id, "publication": "published", "evidenceId": evidence_id,
+        })).output),
+        Err(_) => memory_failure("memory publication was not committed"),
+    }
 }
 
 /// `POST /v1/development/present`: #219's owner-output renderer over HTTP. #223 existence-slice --
@@ -3722,7 +3903,10 @@ pub(super) async fn development_present() -> Response {
 /// An absent or empty body keeps its previous meaning rather than becoming a 400. The
 /// existence-parity guard posts `{}` here, and so does every caller written before #393; a change
 /// that turned those into failures would break a surface contract older than the budget.
-pub(super) async fn development_compile_context(body: Bytes) -> Response {
+pub(super) async fn development_compile_context(
+    State(state): State<ServeState>,
+    body: Bytes,
+) -> Response {
     let payload: serde_json::Value = if body.is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
@@ -3738,7 +3922,7 @@ pub(super) async fn development_compile_context(body: Bytes) -> Response {
         }
     };
     let budget = usize::try_from(payload["budget"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX);
-    let require: Vec<String> = payload["require"]
+    let mut require: Vec<String> = payload["require"]
         .as_array()
         .map(|items| {
             items
@@ -3747,6 +3931,58 @@ pub(super) async fn development_compile_context(body: Bytes) -> Response {
                 .collect()
         })
         .unwrap_or_default();
+
+    // Durable memory is an explicit opt-in input to the real context producer. Retrieval opens
+    // replayed state and sealed Evidence; unsafe records simply contribute no item.
+    if let Some(memory) = payload.get("memory") {
+        if memory.get("enabled").and_then(serde_json::Value::as_bool) == Some(true) {
+            let workspace = memory
+                .get("workspaceId")
+                .and_then(serde_json::Value::as_str);
+            let project = memory.get("projectId").and_then(serde_json::Value::as_str);
+            if let (Some(workspace), Some(project)) = (workspace, project) {
+                if let (Ok(workspace_id), Ok(project_id)) =
+                    (WorkspaceId::parse(workspace), ProjectId::parse(project))
+                {
+                    let expected_scope = graphhelm_protocols::DevelopmentScope {
+                        workspace_id: workspace_id.clone(),
+                        project_id: project_id.clone(),
+                        subproject_id: None,
+                        execution_id: None,
+                    };
+                    let repository_scope = RepositoryScope::new(workspace_id, project_id, None);
+                    let stream = graphhelm_protocols::OpaqueId::parse("memory-stream")
+                        .expect("constant stream id");
+                    if let (Ok(store), Ok(opener)) = (
+                        event_store(&state.events),
+                        build_opener(state.sealing.as_deref()),
+                    ) {
+                        if let Ok(history) =
+                            store.read_replay_stream(&repository_scope, stream.as_str())
+                        {
+                            if let Ok(projection) = graphhelm_events::replay(
+                                &repository_scope,
+                                stream.as_str(),
+                                &history,
+                            ) {
+                                let items = graphhelm_runtime::retrieval::retrieve_durable_memory(
+                                    true,
+                                    &repository_scope,
+                                    &expected_scope,
+                                    &projection,
+                                    chrono::Utc::now().timestamp(),
+                                    &store,
+                                    opener.as_ref(),
+                                )
+                                .await;
+                                require.extend(items.into_iter().map(|item| item.content));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     match crate::commands::development::compile_context_decision(budget, &require) {
         Ok(digest) => respond_outcome(Outcome::success(

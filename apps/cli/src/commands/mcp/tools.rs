@@ -332,9 +332,17 @@ fn compile_context_schema() -> serde_json::Value {
 }
 
 fn memory_propose_schema() -> serde_json::Value {
-    // No fields yet: the existence-slice proposes fixed content under a fixed scope. Content and
-    // scope become real arguments when behavioral parity wires this to caller input.
-    object_schema(serde_json::json!({}), &[])
+    object_schema(
+        serde_json::json!({
+            "content": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "workspaceId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "projectId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "optIn": {"type": "boolean"},
+            "expiresAtUnix": {"type": "integer"},
+            "validators": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 128}}
+        }),
+        &["content", "workspaceId", "projectId", "optIn", "validators"],
+    )
 }
 
 fn accounting_schema() -> serde_json::Value {
@@ -1672,7 +1680,7 @@ pub(crate) fn call(
         "memory_propose" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "development", "memory"]),
-            Some(&serde_json::json!({})),
+            Some(arguments),
             Some(&key),
             if_match,
         )),

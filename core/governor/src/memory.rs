@@ -886,6 +886,22 @@ pub fn durable_memory_evidence_bytes(
     })
 }
 
+/// Refuse an expiry that is already stale, unbounded, or beyond the repository's ten-year
+/// retention horizon. Callers validate this before sealing so an arbitrary timestamp never enters
+/// durable Evidence.
+pub fn validate_memory_expiry(now_unix: i64, expires_at_unix: i64) -> Result<(), MemoryRefusal> {
+    const MAX_RETENTION_SECONDS: i64 = 315_576_000;
+    if expires_at_unix <= now_unix
+        || expires_at_unix.saturating_sub(now_unix) > MAX_RETENTION_SECONDS
+    {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::TransitionNotAllowed,
+            field: MemoryField::State,
+        });
+    }
+    Ok(())
+}
+
 impl MemoryPublicationTransitionRequest {
     #[must_use]
     pub fn new(

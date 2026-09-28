@@ -218,12 +218,24 @@ pub fn context_refusal(code: DevelopmentRefusalCode, message: String) -> Outcome
 /// boundary touch and `admit_memory_candidate` screens scope, origin and content; an adapter that
 /// re-decided any of that would be a second authority on what memory is admissible.
 #[must_use]
-pub fn run_memory_propose() -> Outcome {
+pub fn run_memory_propose(content: &str, workspace_id: &str, project_id: &str) -> Outcome {
+    let (Ok(workspace_id), Ok(project_id)) = (
+        graphhelm_protocols::WorkspaceId::parse(workspace_id),
+        graphhelm_protocols::ProjectId::parse(project_id),
+    ) else {
+        return Outcome::domain(
+            "development.memory-propose",
+            vec![Diagnostic::error(
+                "memory_scope_invalid",
+                "workspaceId and projectId must be valid identifiers",
+                "/scope",
+                "development-cli",
+            )],
+        );
+    };
     let scope = graphhelm_protocols::DevelopmentScope {
-        workspace_id: graphhelm_protocols::WorkspaceId::parse("workspace-local")
-            .expect("a constant workspace id is valid"),
-        project_id: graphhelm_protocols::ProjectId::parse("project-local")
-            .expect("a constant project id is valid"),
+        workspace_id,
+        project_id,
         subproject_id: None,
         execution_id: None,
     };
@@ -236,7 +248,7 @@ pub fn run_memory_propose() -> Outcome {
     let verdict = match graphhelm_governor::capture_memory(
         graphhelm_governor::CaptureOptIn::Enabled,
         &scope,
-        "a proposal with no input argument yet",
+        content,
         &mut touches,
     ) {
         Ok(candidate) => match graphhelm_governor::admit_memory_candidate(&candidate, &scope) {

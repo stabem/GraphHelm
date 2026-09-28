@@ -1837,6 +1837,16 @@ pub(super) async fn start(
             Box::pin(async move {
                 let version =
                     load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
+                if let Some(sealing) = drive_state.sealing.as_ref() {
+                    execution::start::persist_governed_genesis(
+                        &version,
+                        &drive_state.events,
+                        Some(drive_execution_id.as_str()),
+                        &sealing.directory,
+                        &sealing.key_id,
+                    )
+                    .map_err(|error| MutationError::Command(driver_failure(&error)))?;
+                }
                 // #90: a held start is the publish half and NO drive half, whichever drive this
                 // graph would otherwise get - the same `execute_held` the CLI's `--held` calls.
                 if held {
@@ -2047,7 +2057,9 @@ pub(super) async fn signal(
     .await
 }
 
-/// `POST /v1/executions/{id}/approve`: body `{"node": "<name>"}`, mirroring the CLI's `--node`.
+/// `POST /v1/executions/{id}/approve`: body carries `node`, exact `proposalDigest`, and the
+/// authenticated assigned `actorId`. The server keyring is used; callers cannot choose a keyring
+/// path or substitute the sealed evidence.
 #[allow(clippy::result_large_err)] // see `start`'s doc comment
 pub(super) async fn approve(
     State(state): State<ServeState>,
@@ -2077,6 +2089,32 @@ pub(super) async fn approve(
         );
     };
     let node = node.to_owned();
+    let Some(proposal_digest) = payload
+        .get("proposalDigest")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "the request body must carry the exact \"proposalDigest\"",
+            "/proposalDigest",
+        );
+    };
+    let proposal_digest = proposal_digest.to_owned();
+    let Some(actor_id) = payload.get("actorId").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "the request body must carry the assigned \"actorId\"",
+            "/actorId",
+        );
+    };
+    let actor_id = actor_id.to_owned();
+    let Some(sealing) = state.sealing.clone() else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires the server sealing keyring",
+            "/keyring",
+        );
+    };
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
 
@@ -2086,14 +2124,16 @@ pub(super) async fn approve(
         APPROVE_COMMAND,
         identity,
         ExecutorWiring::from_state(&state),
-        |actor, key| {
+        |_actor, _key| {
             Box::pin(async move {
-                Ok(execution::approve::execute(
+                Ok(execution::approve::execute_governed(
                     &events,
                     Some(drive_execution_id.as_str()),
                     &node,
-                    actor,
-                    key,
+                    &sealing.directory,
+                    &sealing.key_id,
+                    Some(&actor_id),
+                    Some(&proposal_digest),
                 )?)
             })
         },
@@ -2542,9 +2582,13 @@ pub(super) async fn resume(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let source = match graph_source(&payload, RESUME_COMMAND) {
-        Ok(source) => source,
-        Err(response) => return response,
+    let source = if payload.get("file").is_some() {
+        match graph_source(&payload, RESUME_COMMAND) {
+            Ok(source) => Some(source),
+            Err(response) => return response,
+        }
+    } else {
+        None
     };
     let fixtures = payload
         .get("fixtures")
@@ -2564,8 +2608,23 @@ pub(super) async fn resume(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
+                if source.is_none() {
+                    let Some(sealing) = drive_state.sealing.as_ref() else {
+                        return Err(MutationError::Command(driver_failure(
+                            "snapshot resume requires the server sealing keyring",
+                        )));
+                    };
+                    return Ok(execution::resume::execute_from_snapshot(
+                        &drive_state.events,
+                        fixtures.as_deref(),
+                        Some(drive_execution_id.as_str()),
+                        Some(&sealing.directory),
+                        Some(&sealing.key_id),
+                    )?);
+                }
                 let version =
-                    load_and_publish(&source, RESUME_COMMAND).map_err(MutationError::Prepared)?;
+                    load_and_publish(source.as_ref().expect("source present"), RESUME_COMMAND)
+                        .map_err(MutationError::Prepared)?;
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the resume decision is the

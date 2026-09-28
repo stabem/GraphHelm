@@ -69,7 +69,7 @@ pub fn run(
 /// Approves a sealed graph proposal and immediately records the owner decision. Assignment is
 /// optional and is appended only after the approval has replayed successfully. Every input used to
 /// apply the draft comes from authenticated sealed evidence or the verified active snapshot.
-fn execute_governed(
+pub(crate) fn execute_governed(
     events: &Path,
     execution: Option<&str>,
     node: &str,

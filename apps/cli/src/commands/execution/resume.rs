@@ -39,7 +39,7 @@ pub fn run(
     if keyring.is_some() || key_id.is_some() {
         return finish(
             COMMAND,
-            run_from_snapshot(events, fixtures, execution, keyring, key_id),
+            execute_from_snapshot(events, fixtures, execution, keyring, key_id),
             |value| value,
         );
     }
@@ -87,7 +87,7 @@ pub fn run(
     .with_warnings(warnings)
 }
 
-fn run_from_snapshot(
+pub(crate) fn execute_from_snapshot(
     events: &Path,
     fixtures: Option<&Path>,
     execution: Option<&str>,

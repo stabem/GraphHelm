@@ -103,7 +103,7 @@ pub fn run(
     finish(COMMAND, started, |value| value).with_warnings(warnings)
 }
 
-fn persist_governed_genesis(
+pub(crate) fn persist_governed_genesis(
     version: &GraphVersion,
     events: &Path,
     execution: Option<&str>,

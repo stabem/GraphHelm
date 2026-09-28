@@ -2132,6 +2132,29 @@ describe("controls that act instead of excusing", () => {
     expect(graph.spec.nodes.start.objective).toBe(objective);
   });
 
+  it("resumes an accepted governed successor from its verified sealed snapshot", async () => {
+    const authoringHash = "sha256:" + "a".repeat(64);
+    const safeGenesis = "sha256:" + "b".repeat(64);
+    const safeSuccessor = "sha256:" + "c".repeat(64);
+    const version = (number: number, hash: string, predecessor: unknown = null) => ({ number, semanticHash: hash, predecessor, topology: { executionId: "demo-deploy", entrypoints: ["implementation"], nodes: { implementation: {} }, edges: [] } });
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })),
+      getEvents: vi.fn(async () => ({ head: 9, events: [
+        { sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: authoringHash, graphVersion: 1 }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k1", eventId: "e1", evidenceRefs: [] },
+        { sequence: 2, kind: "graph_authoring_snapshot_stored", payload: { executionId: "demo-deploy", graphVersion: 1, graphHash: safeGenesis }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k2", eventId: "e2", evidenceRefs: ["authoring-1"] },
+        { sequence: 3, kind: "graph_version_published", payload: { version: version(1, safeGenesis) }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k3", eventId: "e3", evidenceRefs: [] },
+        { sequence: 4, kind: "mutation_accepted", payload: { executionId: "demo-deploy", graphVersion: 2 }, occurredAt: null, actorId: "owner-local", actorType: "owner", idempotencyKey: "k4", eventId: "e4", evidenceRefs: [] },
+        { sequence: 5, kind: "graph_authoring_snapshot_stored", payload: { executionId: "demo-deploy", graphVersion: 2, graphHash: safeSuccessor }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k5", eventId: "e5", evidenceRefs: ["authoring-2"] },
+        { sequence: 6, kind: "graph_version_published", payload: { version: version(2, safeSuccessor, { number: 1, semanticHash: safeGenesis }) }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k6", eventId: "e6", evidenceRefs: [] },
+      ] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(client.resume).toHaveBeenCalled());
+    expect((client.resume.mock.calls[0] as unknown[])[1]).toBeUndefined();
+  });
+
   /** #1083 F2: the Studio's resume could not name a fixture, so a demonstration run's resumed
    * node had no outcome and parked `waiting_input` where the CLI's `--fixtures` decides it. The
    * API's existing `fixtures` field now rides the resume when the operator names a file. */

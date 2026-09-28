@@ -837,6 +837,16 @@ describe("verified mutations", () => {
     expect(post.body).toEqual({ graph });
   });
 
+  it("omits the source fields when resuming from the Runtime's sealed snapshot", async () => {
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.method === "POST", reply: ok({ headSequence: 13 }, "execution.resume") },
+      { match: () => true, reply: ok(statusData()) },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.resume("demo", undefined, { idempotencyKey: "k" });
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({});
+  });
+
   it("refuses an oversized path before it reaches the wire", async () => {
     const { fetchImpl, calls } = scriptedFetch([{ match: () => true, reply: ok(statusData()) }]);
     const client = new RuntimeClient("tok", { fetch: fetchImpl });

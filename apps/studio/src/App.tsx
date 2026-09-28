@@ -2013,6 +2013,21 @@ export default function App({
     (briefing?.objective ?? selectedSummary?.objective)?.trim().length !== 0
       ? draftGraph(selected, (briefing?.objective ?? selectedSummary?.objective) as string)
       : null;
+  const snapshotResumeAvailable = (() => {
+    if (graphFile.trim() !== "" || resumeGraph !== null || journalTopology?.match !== "matched") return false;
+    const published = eventList
+      .filter((event) => event.kind === "graph_version_published" && event.payload !== null && typeof event.payload === "object")
+      .map((event) => (event.payload as { version?: { number?: unknown; topology?: { executionId?: unknown } } }).version)
+      .filter((version): version is { number: number; topology?: { executionId?: unknown } } =>
+        version !== undefined && typeof version.number === "number" && version.topology?.executionId === selected)
+      .sort((left, right) => right.number - left.number);
+    const current = published[0];
+    return current !== undefined && eventList.some((event) => {
+      if (event.kind !== "graph_authoring_snapshot_stored" || event.evidenceRefs.length === 0 || event.payload === null || typeof event.payload !== "object") return false;
+      const payload = event.payload as Record<string, unknown>;
+      return payload.executionId === selected && payload.graphVersion === current.number;
+    });
+  })();
   /** The board a draft shows: the start node alone, with no history, because none exists. Built
    * here rather than through `buildGraphModel` - that reads events, and a draft has none, so
    * asking it would return an empty board and lose the one node the operator is about to fill. */
@@ -2748,7 +2763,7 @@ export default function App({
                     // A control that names its own missing ingredient goes and fetches it: with
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
-                    if (graphFile.trim().length === 0 && resumeGraph === null) {
+                    if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
                       const freeCanvas = [...document.querySelectorAll<HTMLButtonElement>("button")]
                         .find((button) => button.textContent?.trim() === "Free canvas");
                       freeCanvas?.click();
@@ -2756,7 +2771,7 @@ export default function App({
                       return;
                     }
                     void runMutation((client) =>
-                      client.resume(selected, resumeGraph ?? graphFile.trim(), {
+                      client.resume(selected, snapshotResumeAvailable ? undefined : resumeGraph ?? graphFile.trim(), {
                         actor: OPERATOR_ACTOR,
                         idempotencyKey: newIdempotencyKey(),
                         ...ifMatchRendered,

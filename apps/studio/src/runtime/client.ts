@@ -1376,7 +1376,7 @@ export class RuntimeClient {
    */
   async resume(
     executionId: string,
-    graphOrFile: string | Record<string, unknown>,
+    graphOrFile?: string | Record<string, unknown>,
     options: MutationOptions & { fixtures?: string } = {},
   ): Promise<MutationEvidence> {
     const body: Record<string, unknown> =
@@ -1387,7 +1387,9 @@ export class RuntimeClient {
             }
             return { file: graphOrFile };
           })()
-        : graphOrFile !== null && typeof graphOrFile === "object"
+        : graphOrFile === undefined
+          ? {}
+          : graphOrFile !== null && typeof graphOrFile === "object"
           ? { graph: graphOrFile }
           : (() => {
               throw new RuntimeError("graph must be an object.", 0, []);

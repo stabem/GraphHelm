@@ -925,7 +925,9 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
     //
     // If a variant ever needs to be pinned again, add it here WITH the reason. Declared debt is a
     // legitimate state; undeclared debt is what this test exists to make impossible.
-    const UNCOVERED_PIN: &[&str] = &[];
+    // Dreams shadow records use the generic project projection; a dedicated fixture belongs with
+    // the CLI journey because the event carries advisory metadata only.
+    const UNCOVERED_PIN: &[&str] = &["dream_shadow_recorded"];
     let pinned: std::collections::BTreeSet<&str> = UNCOVERED_PIN.iter().copied().collect();
     let actually_uncovered: std::collections::BTreeSet<&str> =
         non_publication.difference(&covered).copied().collect();

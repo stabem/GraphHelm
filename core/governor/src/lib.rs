@@ -2,6 +2,7 @@
 
 mod apply;
 mod candidate;
+mod dreams;
 mod externalize;
 mod inflight;
 mod materialize;
@@ -10,6 +11,7 @@ mod publish;
 
 pub use apply::{ApplyError, ApplyResult, ApplyServices, apply_draft};
 pub use candidate::{DraftAnalysis, analyze_draft};
+pub use dreams::{DreamRefusal, DreamShadowRequest, evaluate_dream_shadow, record_dream_shadow};
 pub use externalize::{
     GovernorError, GraphExternalizer, ProjectionPreparation, SealingGraphExternalizer,
 };

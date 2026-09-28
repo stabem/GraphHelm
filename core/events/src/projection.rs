@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, EventEnvelope, EventHash, EventKind,
-    EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode, MemoryAdmissionLocal,
-    MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId, PersistedGraphVersion,
-    PersistedMemoryPublicationState, PersistedMemorySemanticState, PersistedTimestamp,
-    PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus, WireHash, WorkspaceId,
+    AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, DreamShadowRecorded, EventEnvelope,
+    EventHash, EventKind, EvidenceId, ExecutionFormDeclared, ExecutionId, ExecutionMode,
+    MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome, NodeState, OpaqueId,
+    PersistedGraphVersion, PersistedMemoryPublicationState, PersistedMemorySemanticState,
+    PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope, SafeCode, SimulationStatus,
+    WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -427,6 +428,9 @@ pub struct ExecutionProjection {
     /// [`MemoryRecordProjection`] for why this is a keyed map rather than a count-and-last-receipt.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub memory_records: BTreeMap<String, MemoryRecordProjection>,
+    /// Advisory Dreams results keyed by immutable run identity.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dream_runs: BTreeMap<String, DreamShadowRecorded>,
     pub proposed_drafts: Vec<String>,
     pub rejected_drafts: Vec<String>,
     pub applied_drafts: Vec<String>,
@@ -1370,6 +1374,15 @@ fn apply_projection_event(
                 .entry(successor_id)
                 .or_default()
                 .supersedes = Some(payload.predecessor_id.clone());
+        }
+        EventKind::DreamShadowRecorded(payload) => {
+            let run_id = payload.run_id.to_string();
+            if !projection.dream_runs.contains_key(&run_id)
+                && projection.dream_runs.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.dream_runs.insert(run_id, payload.clone());
         }
         EventKind::ExecutionFormDeclared(payload) => {
             // A second declaration on one stream would give the shape two owners, which is the

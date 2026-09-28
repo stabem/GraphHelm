@@ -211,6 +211,38 @@
       },
       "additionalProperties": false
     },
+    "dreamTaskRequest": {
+      "type": "object",
+      "required": ["taskId", "dreamRunId", "scope", "findingSha256", "evidenceSha256", "origin"],
+      "properties": {
+        "taskId": {"$ref": "#/$defs/opaqueId"},
+        "dreamRunId": {"$ref": "#/$defs/opaqueId"},
+        "scope": {"$ref": "repository-scope.schema.json"},
+        "findingSha256": {"$ref": "#/$defs/rawSha256"},
+        "evidenceSha256": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/rawSha256"}},
+        "origin": {"const": "dream_generated"}
+      },
+      "additionalProperties": false
+    },
+    "dreamShadowRecorded": {
+      "type": "object",
+      "required": ["runId", "scope", "trigger", "category", "inputSha256", "evidenceSha256", "outcome", "plannerId", "criticId", "criticVerdict"],
+      "properties": {
+        "runId": {"$ref": "#/$defs/opaqueId"},
+        "scope": {"$ref": "repository-scope.schema.json"},
+        "trigger": {"enum": ["manual", "idle", "incident"]},
+        "category": {"enum": ["memory_expiry", "conflict_report", "retrieval_optimization", "code_finding"]},
+        "inputSha256": {"$ref": "#/$defs/rawSha256"},
+        "evidenceSha256": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/rawSha256"}},
+        "outcome": {"enum": ["advisory_proposal", "discarded"]},
+        "validationCode": {"enum": ["input_empty", "input_too_large", "missing_evidence", "write_critical", "scope_mismatch", "critic_not_independent", "critic_rejected", "task_mapping_missing"]},
+        "plannerId": {"$ref": "#/$defs/opaqueId"},
+        "criticId": {"$ref": "#/$defs/opaqueId"},
+        "criticVerdict": {"enum": ["accepted", "rejected"]},
+        "taskRequest": {"$ref": "#/$defs/dreamTaskRequest"}
+      },
+      "additionalProperties": false
+    },
     "versionPublished": {
       "type": "object",
       "required": ["version"],
@@ -986,6 +1018,15 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "dream_shadow_recorded"},
+            "data": {"$ref": "#/$defs/dreamShadowRecorded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "memory_publication_transitioned"},
             "data": {"$ref": "#/$defs/memoryPublicationTransitioned"}
           },
@@ -1387,6 +1428,7 @@
     {"properties": {"kind": {"properties": {"type": {"const": "memory_admission_refused"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_publication_transitioned"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_record_superseded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "dream_shadow_recorded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_proposed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "draft_rejected"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

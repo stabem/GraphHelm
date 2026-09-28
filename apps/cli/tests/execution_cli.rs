@@ -11,6 +11,64 @@ fn command() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
 }
 
+#[test]
+fn dream_shadow_records_advisory_code_task_or_discard() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("shadow.json");
+    let events = directory.path().join("events");
+    std::fs::write(
+        &input,
+        r#"{"evidenceSha256":["0000000000000000000000000000000000000000000000000000000000000000"],"findingSha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#,
+    )
+    .unwrap();
+    let accepted = command()
+        .args(["development", "dream-shadow", "--input"])
+        .arg(&input)
+        .args(["--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stdout)
+    );
+    let accepted = json(&accepted.stdout);
+    assert_eq!(
+        accepted["data"]["outcome"], "advisory_proposal",
+        "{accepted}"
+    );
+    assert_eq!(accepted["data"]["taskRequest"]["origin"], "dream_generated");
+    assert!(accepted["data"]["event"].is_object());
+    let replayed = command()
+        .args(["graph", "replay", "--events"])
+        .arg(&events)
+        .output()
+        .unwrap();
+    assert!(
+        replayed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replayed.stdout)
+    );
+    assert_eq!(
+        json(&replayed.stdout)["data"]["dreamRuns"]["dream-run"]["outcome"],
+        "advisory_proposal"
+    );
+
+    let discarded = command()
+        .args(["development", "dream-shadow", "--input"])
+        .arg(&input)
+        .arg("--reject")
+        .output()
+        .unwrap();
+    assert!(
+        discarded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&discarded.stdout)
+    );
+    assert_eq!(json(&discarded.stdout)["data"]["outcome"], "discarded");
+}
+
 fn json(output: &[u8]) -> Value {
     serde_json::from_slice(output).unwrap()
 }

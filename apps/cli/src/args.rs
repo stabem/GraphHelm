@@ -588,6 +588,11 @@ pub enum ExecutionCommand {
         /// reasoning #79 was closed on.
         #[arg(long)]
         held: bool,
+        /// Sealing keyring for a governed genesis snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
     },
     /// Lists the execution streams the event store holds: one summary row per stream, ordered
     /// by execution id, sliced by `--after` (exclusive) and `--limit`.
@@ -761,6 +766,32 @@ pub enum ExecutionCommand {
         execution: Option<String>,
         #[arg(long)]
         node: String,
+        /// Sealed keyring used to recover the exact proposal and authoring snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        /// Key id inside `keyring`.
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
+        /// Agent actor id to assign after the owner approval is committed.
+        #[arg(long = "actor-id")]
+        actor_id: Option<String>,
+        /// Full sha256 digest of the sealed proposal under review.
+        #[arg(long = "proposal-digest")]
+        proposal_digest: Option<String>,
+        /// Exact sealed draft identifier reviewed by the owner.
+        #[arg(long = "draft-id")]
+        draft_id: Option<String>,
+    },
+    /// Assigns an approved ghost node to an agent by its authenticated actor id.
+    Assign {
+        #[arg(long)]
+        events: PathBuf,
+        #[arg(long)]
+        execution: Option<String>,
+        #[arg(long)]
+        node: String,
+        #[arg(long = "actor-id")]
+        actor_id: String,
     },
     /// Declares how long one node may stay silent before it needs you, valid from now
     /// forward. Use it when `execution status` answers `unknown` for a node: the answer names
@@ -809,13 +840,18 @@ pub enum ExecutionCommand {
     /// execution started with — the driver has no other source of the spec to drive against.
     Resume {
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
         #[arg(long)]
         events: PathBuf,
         #[arg(long)]
         fixtures: Option<PathBuf>,
         #[arg(long)]
         execution: Option<String>,
+        /// Recover the graph from the authenticated persisted authoring snapshot.
+        #[arg(long)]
+        keyring: Option<PathBuf>,
+        #[arg(long = "key-id")]
+        key_id: Option<String>,
     },
     /// Evaluates the stream's customs stages and journals the result: one `sweep_performed`, plus
     /// one `overdue_exception` for every episode found lapsed, appended together.

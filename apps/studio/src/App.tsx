@@ -65,7 +65,7 @@ import {
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, TalkPanel, actorsInRoom, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { ProjectRail } from "./components/rail";
@@ -78,6 +78,22 @@ import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/fo
 import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
+
+function rawSha256(digest: string): string {
+  return digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
+}
+
+function nodeIdFromDraftPath(path: unknown): string | null {
+  if (typeof path !== "string" || !path.startsWith("/spec/nodes/") || path.length <= "/spec/nodes/".length) return null;
+  const encoded = path.slice("/spec/nodes/".length);
+  if (encoded.includes("/")) return null;
+  let decoded: string;
+  try {
+    decoded = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
+  } catch { return null; }
+  if (decoded.includes("/") || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(decoded)) return null;
+  return decoded;
+}
 
 /** Whether a typed budget is one the client (and the envelope schema behind it) will accept. */
 function budgetSecondsLegal(typed: string | undefined): boolean {
@@ -197,6 +213,7 @@ export default function App({
   }, [executions]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  const [governedActorByNode, setGovernedActorByNode] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
   const [replySuggestions, setReplySuggestions] = useState<ReplySuggestions | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
@@ -1676,9 +1693,10 @@ export default function App({
         lastAt: lastHeard.get(id) ?? null,
         presence: presence[id] ?? null,
       })),
-      ...actorsInRoom(eventList, personas)
-        // The operator is the person AT this screen, not a blob on it.
-        .filter((id) => id !== OPERATOR_ACTOR.id)
+      ...[...new Set(eventList
+        .filter((event) => event.actorType === "agent" && event.actorId !== null)
+        .map((event) => event.actorId as string))]
+        .filter((id) => !personas[id])
         .map((id) => ({ id, charter: null, lastAt: lastHeard.get(id) ?? null, presence: presence[id] ?? null })),
     ];
   }, [eventList, personas]);
@@ -1818,6 +1836,74 @@ export default function App({
     if (cancelIllegal) setConfirmCancel(false);
   }, [cancelIllegal]);
 
+  const closedDraftIds = new Set(eventList.flatMap((event) => {
+    if (event.kind !== "draft_rejected" && event.kind !== "draft_applied" && event.kind !== "mutation_accepted") return [];
+    const payload = event.payload;
+    if (payload === null || typeof payload !== "object") return [];
+    const draftId = (payload as Record<string, unknown>).draftId;
+    return typeof draftId === "string" ? [draftId] : [];
+  }));
+  const durableProposals = eventList.flatMap((event) => {
+    if (event.kind !== "draft_proposed" || event.payload === null || typeof event.payload !== "object") return [];
+    const value = event.payload as Record<string, unknown>;
+    const draftId = typeof value.draftId === "string" ? value.draftId : null;
+    const digest = typeof value.proposalSha256 === "string" ? value.proposalSha256 : null;
+    if (draftId === null || digest === null || closedDraftIds.has(draftId)) return [];
+    return [{ draftId, digest, evidenceId: event.evidenceRefs[0] ?? null }];
+  });
+  const [governedDraftId, setGovernedDraftId] = useState("");
+  const selectedDraftProposal = durableProposals.find((proposal) => proposal.draftId === governedDraftId) ?? null;
+  const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; nodeIds: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], nodeIds: [], reason: null });
+  useEffect(() => {
+    const proposal = selectedDraftProposal;
+    if (proposal === null || proposal.evidenceId === null) {
+      setProposalReview({ draftId: proposal?.draftId ?? "", state: "unavailable", steps: [], edges: [], nodeIds: [], reason: "Select a sealed typed proposal to review." });
+      return;
+    }
+    let cancelled = false;
+    setProposalReview({ draftId: proposal.draftId, state: "loading", steps: [], edges: [], nodeIds: [], reason: null });
+    void openEvidence(selected, proposal.evidenceId).then(async (evidence) => {
+      if (cancelled) return;
+      try {
+        const openedDigest = await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle);
+        if (rawSha256(openedDigest) !== rawSha256(proposal.digest)) throw new Error("the sealed proposal bytes do not match the recorded digest");
+        const parsed: unknown = JSON.parse(evidence.content);
+        const envelope = parsed !== null && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+        const candidate = envelope?.proposal !== null && typeof envelope?.proposal === "object" ? envelope.proposal : envelope;
+        const draft = candidate !== null && typeof candidate === "object" ? candidate as Record<string, unknown> : null;
+        const operations = draft?.id === proposal.draftId && Array.isArray(draft.operations) ? draft.operations : null;
+        if (operations === null || operations.length === 0 || operations.length > 64) throw new Error("typed proposal operations are unavailable");
+        const steps: string[] = [];
+        const edges: string[] = [];
+        const nodeIds: string[] = [];
+        for (const operation of operations) {
+          if (operation === null || typeof operation !== "object") throw new Error("typed proposal operation is invalid");
+          const value = operation as Record<string, unknown>;
+          if (value.op === "addNode") {
+            const id = nodeIdFromDraftPath(value.path) ?? (typeof value.id === "string" ? value.id : null);
+            if (id === null) throw new Error("typed addNode path is invalid");
+            nodeIds.push(id);
+            const nodeValue = value.value !== null && typeof value.value === "object" ? value.value as Record<string, unknown> : null;
+            const name = nodeValue !== null && typeof nodeValue.name === "string" ? nodeValue.name : null;
+            const objective = nodeValue !== null && typeof nodeValue.objective === "string" ? nodeValue.objective : null;
+            steps.push([id, name, objective].filter((part): part is string => part !== null && part.length > 0).join(" · "));
+          }
+          else if (value.op === "addEdge" && (value.edge !== null && typeof value.edge === "object" || value.value !== null && typeof value.value === "object")) {
+            const edge = (value.edge ?? value.value) as Record<string, unknown>;
+            if (typeof edge.from === "string" && typeof edge.to === "string") edges.push(`${edge.from} → ${edge.to}`);
+          } else if (typeof value.op === "string") steps.push(value.op);
+        }
+        if (steps.length === 0 && edges.length === 0) throw new Error("typed proposal has no reviewable operations");
+        setProposalReview({ draftId: proposal.draftId, state: "ready", steps, edges, nodeIds, reason: null });
+      } catch (reason) {
+        setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], nodeIds: [], reason: reason instanceof Error ? reason.message : "The typed proposal descriptor is invalid." });
+      }
+    }).catch(() => {
+      if (!cancelled) setProposalReview({ draftId: proposal.draftId, state: "unavailable", steps: [], edges: [], nodeIds: [], reason: "The sealed typed proposal descriptor could not be opened." });
+    });
+    return () => { cancelled = true; };
+  }, [selectedDraftProposal?.draftId, selectedDraftProposal?.evidenceId, selected, openEvidence]);
+
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
   }
@@ -1832,6 +1918,16 @@ export default function App({
     setSayAnswer(asker === null ? null : { asker, signalId: pendingQuestion!.signalId });
     setFocus({ kind: "run" });
     setSayFocusNonce((nonce) => nonce + 1);
+  };
+  const pendingOwnerReview = durableProposals.length > 0;
+  const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
+  const effectiveVerdict = effectiveAttention === undefined ? null : verdictOf(effectiveAttention);
+  const effectiveStatus = pendingOwnerReview && status !== null ? { ...status, attention: "needs_you" as const } : status;
+  const focusPendingProposal = () => {
+    setGovernedDraftId((current) => current || durableProposals[0]?.draftId || "");
+    setRunActionsOpen(true);
+    setTalkOpen(false);
+    setFocus({ kind: "run" });
   };
   /** What each dock verb may claim right now, and the reason for each it may not. */
   const legality = actionLegality(status);
@@ -1891,6 +1987,32 @@ export default function App({
       .filter((candidate): candidate is string => candidate !== null) ?? [];
   const approveTarget =
     focusedNode !== null && approvable.includes(focusedNode) ? focusedNode : (approvable[0] ?? "");
+  // A governed ghost must carry the exact proposal identity visible on its card. Do not fall back
+  // to the latest draft or the legacy node-only approval body when the digest or assignment is
+  // unavailable; that would approve a different proposal or hide the real blocker.
+  const governedApprovalNode = (() => {
+    const candidates = model.nodes.filter((candidate) => candidate.state === "ghost" && candidate.proposal?.status === "proposed");
+    return focusedNode !== null && candidates.some((candidate) => candidate.id === focusedNode)
+      ? candidates.find((candidate) => candidate.id === focusedNode) ?? null
+      : candidates[0] ?? null;
+  })();
+  const governedActorChoices = [...new Set([
+    ...eventList.filter((event) => event.actorType === "agent" && event.actorId !== null).map((event) => event.actorId as string),
+    ...model.nodes.flatMap((candidate) => candidate.assignedActor?.type === "agent" ? [candidate.assignedActor.id] : []),
+  ])].sort((left, right) => left.localeCompare(right));
+  const governedApproval = (() => {
+    const proposal = selectedDraftProposal;
+    if (proposal === null || proposalReview.state !== "ready" || proposalReview.nodeIds.length === 0) return null;
+    const assignments: Record<string, string> = {};
+    for (const nodeId of proposalReview.nodeIds) {
+      const candidate = model.nodes.find((node) => node.id === nodeId && node.proposal?.draftId === proposal.draftId);
+      const actor = governedActorByNode[nodeId] ?? candidate?.assignedActor?.id ?? governedActorChoices[0];
+      if (actor === undefined || actor.length === 0) return null;
+      assignments[nodeId] = actor;
+    }
+    const selectedNode = governedApprovalNode?.id ?? proposalReview.nodeIds[0];
+    return { node: { id: selectedNode }, draftId: proposal.draftId, proposalDigest: proposal.digest, assignments };
+  })();
   const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
   /** A running retry failure must be paused before its owner can allow another attempt. */
   const approvalNeedsPause = status?.status === "running" && approveTarget !== "";
@@ -1907,6 +2029,21 @@ export default function App({
     (briefing?.objective ?? selectedSummary?.objective)?.trim().length !== 0
       ? draftGraph(selected, (briefing?.objective ?? selectedSummary?.objective) as string)
       : null;
+  const snapshotResumeAvailable = (() => {
+    if (graphFile.trim() !== "" || resumeGraph !== null || journalTopology?.match !== "matched") return false;
+    const published = eventList
+      .filter((event) => event.kind === "graph_version_published" && event.payload !== null && typeof event.payload === "object")
+      .map((event) => (event.payload as { version?: { number?: unknown; topology?: { executionId?: unknown } } }).version)
+      .filter((version): version is { number: number; topology?: { executionId?: unknown } } =>
+        version !== undefined && typeof version.number === "number" && version.topology?.executionId === selected)
+      .sort((left, right) => right.number - left.number);
+    const current = published[0];
+    return current !== undefined && eventList.some((event) => {
+      if (event.kind !== "graph_authoring_snapshot_stored" || event.evidenceRefs.length === 0 || event.payload === null || typeof event.payload !== "object") return false;
+      const payload = event.payload as Record<string, unknown>;
+      return payload.executionId === selected && payload.graphVersion === current.number;
+    });
+  })();
   /** The board a draft shows: the start node alone, with no history, because none exists. Built
    * here rather than through `buildGraphModel` - that reads events, and a draft has none, so
    * asking it would return an empty board and lose the one node the operator is about to fill. */
@@ -2003,7 +2140,7 @@ export default function App({
   return (
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
-        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions }]}
+        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
         selected={selected}
         connected={connected}
         stale={stale}
@@ -2091,7 +2228,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {verdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : verdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{verdict.label}</>}</span>}
+            {effectiveVerdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
           </div>
 
           <div className="strip-card right">
@@ -2366,7 +2503,7 @@ export default function App({
                 </label>
               )}
               <RunPanel
-                status={status}
+                status={effectiveStatus!}
                 events={eventList}
                 unverifiedResults={unverifiedResults}
                 onClose={() => {
@@ -2397,6 +2534,8 @@ export default function App({
                 replyIssue={replyIssue}
                 needsDirection={needsDirection}
                 retryFailureNodes={[...retryFailures.keys()]}
+                nodeNames={Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : []))}
+                proposalPending={pendingOwnerReview}
               />
             </aside>
             )}
@@ -2478,14 +2617,17 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               activity={recentActivity}
-              attention={status.attention}
-              nextAction={waitingForInput && verdict?.key === "needs" ? {
+              attention={pendingOwnerReview ? "needs_you" : status.attention}
+              nextAction={pendingOwnerReview ? {
+                label: "Review pending proposal",
+                detail: "A sealed proposal is waiting for an owner review, assignment, and approval.",
+              } : waitingForInput && verdict?.key === "needs" ? {
                 label: needsDirection ? "Send direction" : `Answer ${pendingQuestion?.asker ?? "in the thread"}`,
                 detail: needsDirection
                   ? "This step is waiting. No specific question is visible yet; use a suggested message or write your own direction."
                   : pendingQuestion?.text ?? "Open the thread to read the question.",
               } : null}
-              onNextAction={focusRunReply}
+              onNextAction={pendingOwnerReview ? focusPendingProposal : focusRunReply}
               agentReports={agentReports}
               runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
@@ -2549,12 +2691,57 @@ export default function App({
                 </button>
               </span>
               </>)}
+              {durableProposals.length > 0 && (
+                <label className="action-choice">
+                  Draft to review
+                  <select value={governedDraftId} onChange={(event) => setGovernedDraftId(event.target.value)} disabled={busy}>
+                    <option value="">Select a sealed draft</option>
+                    {durableProposals.map((proposal) => <option value={proposal.draftId} key={proposal.draftId}>{proposal.draftId} · {proposal.digest}</option>)}
+                  </select>
+                </label>
+              )}
+              {selectedDraftProposal !== null && proposalReview.state === "ready" && proposalReview.nodeIds.map((nodeId) => (
+                  <label className="action-choice" key={`assignment-${nodeId}`}>
+                    Responsible actor for {nodeId}
+                    <select
+                      value={governedActorByNode[nodeId] ?? model.nodes.find((candidate) => candidate.id === nodeId)?.assignedActor?.id ?? governedActorChoices[0] ?? ""}
+                      onChange={(event) => setGovernedActorByNode((current) => ({ ...current, [nodeId]: event.target.value }))}
+                      disabled={busy || governedActorChoices.length === 0}
+                    >
+                      {governedActorChoices.length === 0
+                        ? <option value="">No observed agent is available</option>
+                        : governedActorChoices.map((actorId) => <option value={actorId} key={actorId}>{actorId}</option>)}
+                    </select>
+                  </label>
+                ))}
+              {selectedDraftProposal !== null && (
+                <section className="proposal-review" aria-label="Typed proposal review">
+                  <strong>Review draft {selectedDraftProposal.draftId}</strong>
+                  <span>Proposal digest · {selectedDraftProposal.digest}</span>
+                  {proposalReview.state === "loading" && <span>Opening the sealed typed proposal…</span>}
+                  {proposalReview.state === "unavailable" && <span>{proposalReview.reason ?? "The typed proposal descriptor is unavailable."}</span>}
+                  {proposalReview.state === "ready" && <>
+                    <span>Proposed nodes · {proposalReview.nodeIds.length} (shown separately from published work)</span>
+                    <span>Proposed steps · {proposalReview.steps.join(", ") || "none"}</span>
+                    <span>Proposed dependencies · {proposalReview.edges.join(", ") || "none"}</span>
+                  </>}
+                </section>
+              )}
               <button
                 type="button"
                 className="act"
                 onClick={() =>
                   void runMutation((client) =>
-                    approvalNeedsPause
+                    governedApproval !== null && proposalReview.state === "ready"
+                      ? client.approve(selected, governedApproval.node.id, {
+                          governed: { draftId: governedApproval.draftId, proposalDigest: governedApproval.proposalDigest, assignments: governedApproval.assignments },
+                          actor: OPERATOR_ACTOR,
+                          idempotencyKey: newIdempotencyKey(),
+                          ...ifMatchRendered,
+                        })
+                    : governedApproval !== null || durableProposals.length > 0
+                      ? Promise.reject(new Error("Review the sealed typed proposal before approving it."))
+                    : approvalNeedsPause
                       ? client.pause(selected, {
                           actor: OPERATOR_ACTOR,
                           idempotencyKey: newIdempotencyKey(),
@@ -2567,14 +2754,21 @@ export default function App({
                         }),
                   )
                 }
-                disabled={busy || approveTarget === ""}
+                disabled={busy || (approveTarget === "" && governedApproval === null) || durableProposals.length > 0 && governedApproval === null}
               >
-                {approveTarget === ""
+                {governedApproval !== null
+                  ? `approve proposal for ${governedApproval.node.id}`
+                  : durableProposals.length > 0
+                  ? "review selected proposal"
+                  : approveTarget === ""
                   ? "nothing to approve"
                   : approvalNeedsPause
                     ? `pause before ${retryTarget ? "allowing retry" : "approving"} ${approveTarget}`
                     : `${retryTarget ? "allow retry" : "approve"} ${approveTarget}`}
               </button>
+              {durableProposals.length > 0 && governedApproval === null && (
+                <p className="hint">Select a sealed draft, review its typed nodes and dependencies, then choose a responsible actor for each node.</p>
+              )}
               {approvalNeedsPause && (
                 <p className="hint">Pause the running task first. After it is paused, approve the node.</p>
               )}
@@ -2593,12 +2787,15 @@ export default function App({
                     // A control that names its own missing ingredient goes and fetches it: with
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
-                    if (graphFile.trim().length === 0 && resumeGraph === null) {
+                    if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
+                      const freeCanvas = [...document.querySelectorAll<HTMLButtonElement>("button")]
+                        .find((button) => button.textContent?.trim() === "Free canvas");
+                      freeCanvas?.click();
                       setFileFocusNonce((nonce) => nonce + 1);
                       return;
                     }
                     void runMutation((client) =>
-                      client.resume(selected, resumeGraph ?? graphFile.trim(), {
+                      client.resume(selected, snapshotResumeAvailable ? undefined : resumeGraph ?? graphFile.trim(), {
                         actor: OPERATOR_ACTOR,
                         idempotencyKey: newIdempotencyKey(),
                         ...ifMatchRendered,

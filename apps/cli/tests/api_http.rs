@@ -30,6 +30,18 @@ type SpawnObserver = Box<dyn FnOnce(&Child)>;
 mod support;
 use support::{RawResponse, parse_response, split_url};
 
+const SIGNAL_KEY_HEX: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
+fn create_signal_keyring(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        path,
+        "signal-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+}
+
 /// Owns the `graphhelm serve` child process and kills it on drop — `Drop::drop` still runs while
 /// a panicking assertion unwinds the test thread, so a failing test never leaks a listening
 /// server into the rest of the suite.
@@ -227,6 +239,17 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
 
 fn serve_with(events: &Path, extra: &[&str]) -> (ServerGuard, String, String) {
     serve_with_env(events, extra, &[])
+}
+
+/// Starts a test server with its own sealing keyring. Scoped agents cannot select a host
+/// filesystem path for evidence; these tests exercise their signal behavior through the server's
+/// sealed-evidence path instead.
+fn serve_sealed(events: &Path) -> (ServerGuard, String, String) {
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let keyring_text = keyring.to_str().unwrap();
+    let extra = ["--keyring", keyring_text, "--key-id", "signal-key"];
+    serve_with_env(events, &extra, &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)])
 }
 
 /// `serve_with` plus environment variables the child alone sees — the gateway passphrase a
@@ -2068,11 +2091,20 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-1", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
 
     let (status, reply) = post_json(
@@ -2090,14 +2122,297 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(reply["data"]["decision"], "requires_approval");
     assert_eq!(reply["data"]["mayProposeMutation"], true);
     assert_eq!(reply["data"]["signalId"], "signal-http-1");
-    assert!(
-        evidence_out.exists(),
-        "the admitted signal's evidence must still be externalized over the API path"
-    );
-
     let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert!(!event["evidenceRefs"].as_array().unwrap().is_empty());
     assert_eq!(event["actor"]["type"], "agent");
     assert_eq!(event["actor"]["id"], "agent-planner");
+}
+
+/// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an
+/// owner or another seat, and the same credential cannot cross its one execution binding. This
+/// observes the real HTTP middleware plus the durable event actor, rather than checking a parser
+/// result made from values supplied by the test itself.
+#[test]
+fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-scoped-agent";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, _owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let body = serde_json::json!({
+        "signal": signal_envelope("signal-http-scoped-agent", "no_progress"),
+    });
+    let url = format!("{base}/v1/executions/{execution}/signal");
+    let headers = [
+        ("Idempotency-Key", "scoped-agent-signal-1"),
+        ("X-GraphHelm-Actor", "owner-forged"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let forbidden_path = directory.path().join("scoped-evidence.json");
+    let before = head_sequence(&base, credential, execution);
+    let mut forbidden_body = body.clone();
+    forbidden_body["evidenceOut"] = serde_json::json!(forbidden_path);
+    let (denied_status, denied_reply) = post_json(&url, credential, &headers, &forbidden_body);
+    assert_eq!(denied_status, 400, "{denied_reply}");
+    assert_eq!(denied_reply["diagnostics"][0]["path"], "/evidenceOut");
+    assert_eq!(head_sequence(&base, credential, execution), before);
+    assert!(!forbidden_path.exists());
+    let (status, reply) = post_json(&url, credential, &headers, &body);
+    assert_eq!(status, 200, "{reply}");
+    let event = last_event_of_kind(&base, credential, execution, "signal_recorded");
+    assert_eq!(event["actor"]["type"], "agent");
+    assert_eq!(event["actor"]["id"], "agent-planner");
+
+    let before_owner_route = head_sequence(&base, credential, execution);
+    let (approve_status, approve_reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/approve"),
+        credential,
+        &[("Idempotency-Key", "scoped-agent-approve-1")],
+        &serde_json::json!({"node": "implementation"}),
+    );
+    assert_eq!(approve_status, 401, "{approve_reply}");
+    assert_eq!(
+        head_sequence(&base, credential, execution),
+        before_owner_route
+    );
+
+    let foreign = format!("{base}/v1/executions/exec-http-other/signal");
+    let (foreign_status, foreign_reply) = post_json(&foreign, credential, &headers, &body);
+    assert_eq!(foreign_status, 401, "{foreign_reply}");
+}
+
+/// Journey contract: a sealed two-node draft is approved over HTTP exactly once. A retry after
+/// the server is restarted returns the original success and appends no duplicate publication;
+/// changing the reviewed digest fails closed and leaves the head unchanged. This catches the
+/// plausible defect where the HTTP idempotency key is checked only in memory or where approval
+/// uses the caller's latest draft instead of the sealed reviewed digest.
+#[test]
+fn governed_http_approval_is_restart_safe_and_digest_bound() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let graph = root().join("examples/graphs/software-feature.yaml");
+    let credential = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let assigned_credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wrong_credential = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let binding = format!(
+        "{credential}=agent-planner|project-local|exec_feature;{assigned_credential}=agent-z|project-local|exec_feature;{wrong_credential}=agent-other|project-local|exec_feature"
+    );
+    let extra = [
+        "--keyring",
+        keyring.to_str().unwrap(),
+        "--key-id",
+        "signal-key",
+    ];
+    let (guard, base, owner_token) = serve_with_env(
+        &events,
+        &extra,
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let (start_status, start_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/start"),
+        &owner_token,
+        &[
+            ("Idempotency-Key", "governed-start-1"),
+            ("X-GraphHelm-Actor", "owner-observer"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "supervised",
+            "held": true
+        }),
+    );
+    assert_eq!(start_status, 200, "{start_reply}");
+    let start_events = get_json(
+        &format!("{base}/v1/executions/exec_feature/events?limit=100"),
+        Some(&owner_token),
+    );
+    let graph_hash = start_events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"]["type"] == "execution_started")
+        .and_then(|event| event["kind"]["data"]["graphHash"].as_str())
+        .unwrap_or_else(|| {
+            panic!("the HTTP start must record execution_started graph hash: {start_events}")
+        });
+
+    let held_status = get_json(
+        &format!("{base}/v1/executions/exec_feature"),
+        Some(&owner_token),
+    );
+    assert_eq!(held_status["data"]["status"], "paused", "{held_status}");
+
+    let draft = serde_json::json!({
+        "id": "draft-http-two-node",
+        "expectedVersion": 1,
+        "expectedHash": graph_hash,
+        "operations": [
+            {"op": "addNode", "path": "/spec/nodes/a-step", "value": {"type": "agent", "name": "A step", "objective": "Review A", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review A", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://ImplementationResult@1", "outputSchema": "schema://ReviewBundle@1", "instructions": "Review A", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
+            {"op": "addNode", "path": "/spec/nodes/z-step", "value": {"type": "agent", "name": "Z step", "objective": "Review Z", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review Z", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://ReviewBundle@1", "outputSchema": "schema://ReviewReport@1", "instructions": "Review Z", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
+            {"op": "addEdge", "value": {"id": "implementation-to-a-step", "from": "implement", "to": "a-step", "type": "data"}},
+            {"op": "addEdge", "value": {"id": "a-step-to-z-step", "from": "a-step", "to": "z-step", "type": "data"}},
+            {"op": "addEdge", "value": {"id": "z-step-to-docs", "from": "z-step", "to": "docs", "type": "evidence"}}
+        ]
+    });
+    let signal = serde_json::json!({
+        "id": "signal-http-governed",
+        "source": {"type": "node", "id": "implement"},
+        "type": "unexpected_dependency",
+        "severity": "high",
+        "description": "the reviewed graph needs approval",
+        "evidence": ["exec_feature"],
+        "emittedAt": "2026-08-13T00:00:00Z",
+        "proposal": draft
+    });
+    let (signal_status, signal_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        credential,
+        &[("Idempotency-Key", "governed-signal-1")],
+        &serde_json::json!({"signal": signal}),
+    );
+    assert_eq!(signal_status, 200, "{signal_reply}");
+    let tail = get_json(
+        &format!("{base}/v1/executions/exec_feature/events?limit=1000"),
+        Some(&owner_token),
+    );
+    let proposed = tail["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"]["type"] == "draft_proposed")
+        .unwrap_or_else(|| panic!("no sealed draft proposal in tail: {tail}"));
+    let proposal_digest = proposed["kind"]["data"]["proposalSha256"].as_str().unwrap();
+    let draft_id = proposed["kind"]["data"]["draftId"].as_str().unwrap();
+    let body = serde_json::json!({
+        "node": "z-step",
+        "proposalDigest": proposal_digest,
+        "draftId": draft_id,
+        "assignments": {"a-step": "agent-planner", "z-step": "agent-z"}
+    });
+    let headers = [
+        ("Idempotency-Key", "governed-approve-1"),
+        ("X-GraphHelm-Actor", "owner-local"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let (approve_status, approve_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &body,
+    );
+    assert_eq!(approve_status, 200, "{approve_reply}");
+    let head = head_sequence(&base, &owner_token, "exec_feature");
+
+    // Snapshot resume must use the authenticated successor snapshot. It must not send that
+    // recovered authoring record through the file-resume hash comparison, which compares the
+    // authoring hash with the published safe hash and rejects the valid successor.
+    let (snapshot_resume_status, snapshot_resume_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/resume"),
+        &owner_token,
+        &[("Idempotency-Key", "governed-resume-snapshot-1")],
+        &serde_json::json!({}),
+    );
+    assert_ne!(snapshot_resume_status, 409, "{snapshot_resume_reply}");
+    assert_ne!(
+        snapshot_resume_reply["diagnostics"][0]["path"], "/execution/graph",
+        "snapshot resume used the file hash seam: {snapshot_resume_reply}"
+    );
+
+    let delivery = serde_json::json!({
+        "signal": {
+            "id": "signal-http-delivery-denied",
+            "source": {"type": "node", "id": "z-step"},
+            "type": "node_delivery",
+            "severity": "high",
+            "description": serde_json::json!({"version": 1, "projectId": "a".repeat(64), "summary": "Reviewed governed delivery", "reason": "Record the assigned node result", "documents": [{"path": "docs/review.md", "title": "Review", "kind": "business_rule", "action": "created", "ruleIds": ["governed"]}]}).to_string(),
+            "evidence": ["exec_feature"],
+            "emittedAt": "2026-08-13T00:00:00Z"
+        }
+    });
+    let delivery_headers = [
+        ("Idempotency-Key", "delivery-wrong-agent"),
+        ("X-GraphHelm-Actor", "owner-forged"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let (wrong_status, wrong_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        wrong_credential,
+        &delivery_headers,
+        &delivery,
+    );
+    assert_eq!(wrong_status, 400, "{wrong_reply}");
+    assert_eq!(head_sequence(&base, &owner_token, "exec_feature"), head);
+
+    let (assigned_status, assigned_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/signal"),
+        assigned_credential,
+        &[("Idempotency-Key", "delivery-assigned-agent")],
+        &delivery,
+    );
+    assert_eq!(assigned_status, 200, "{assigned_reply}");
+    let delivered_head = head_sequence(&base, &owner_token, "exec_feature");
+    assert!(delivered_head > head);
+    drop(guard);
+
+    let (_guard, base, owner_token) = serve_with_env(
+        &events,
+        &extra,
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let (retry_status, retry_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &body,
+    );
+    assert_eq!(retry_status, 200, "{retry_reply}");
+    assert_eq!(
+        head_sequence(&base, &owner_token, "exec_feature"),
+        delivered_head
+    );
+
+    let mut changed = body.clone();
+    changed["proposalDigest"] = serde_json::json!(
+        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
+    let (mismatch_status, mismatch_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/approve"),
+        &owner_token,
+        &headers,
+        &changed,
+    );
+    assert_eq!(mismatch_status, 409, "{mismatch_reply}");
+    assert_eq!(
+        head_sequence(&base, &owner_token, "exec_feature"),
+        delivered_head
+    );
 }
 
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
@@ -2112,11 +2427,9 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let headers = [
         ("Idempotency-Key", "sig-cmd-retry-1"),
@@ -2154,7 +2467,6 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
     // decision sequence, not this newer head and not any caller-supplied sequence.
     let unrelated_body = serde_json::json!({
         "signal": signal_envelope("signal-http-unrelated", "unexpected_dependency"),
-        "evidenceOut": directory.path().join("unrelated-evidence.json").to_str().unwrap(),
     });
     let (unrelated_status, unrelated_reply) = post_json(
         &url,
@@ -2244,10 +2556,9 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry-actor-binding", "no_progress"),
-        "evidenceOut": directory.path().join("actor-evidence.json").to_str().unwrap(),
     });
     let url = format!("{base}/v1/executions/{execution}/signal");
     let (first_status, first_reply) = post_json(
@@ -2368,14 +2679,13 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
     // different event kind, avoiding a test-side copy of the digest algorithm that could drift.
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-retry-kind-binding", "no_progress"),
-        "evidenceOut": directory.path().join("kind-evidence.json").to_str().unwrap(),
     });
     let headers = [
         ("Idempotency-Key", "sig-cmd-retry-kind-binding"),
         ("X-GraphHelm-Actor", "agent-kind"),
         ("X-GraphHelm-Actor-Type", "agent"),
     ];
-    let (probe_guard, probe_base, probe_token) = serve(&probe_events);
+    let (probe_guard, probe_base, probe_token) = serve_sealed(&probe_events);
     let probe_url = format!("{probe_base}/v1/executions/{execution}/signal");
     let (probe_status, probe_reply) = post_json(&probe_url, &probe_token, &headers, &body);
     assert_eq!(probe_status, 200, "{probe_reply}");
@@ -2391,7 +2701,7 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
     drop(probe_guard);
 
     append_wrong_decision_kind(&target_events, execution, &derived_key, "agent-kind");
-    let (_target_guard, target_base, target_token) = serve(&target_events);
+    let (_target_guard, target_base, target_token) = serve_sealed(&target_events);
     let target_url = format!("{target_base}/v1/executions/{execution}/signal");
     // The raw event endpoint is the narrow observer for the question here: did the refused retry
     // append anything? It does not make this guard depend on any aggregate status projection.
@@ -2438,11 +2748,9 @@ fn missing_or_invalid_actor_headers_are_400_before_the_store_is_touched() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let (_guard, base, token) = serve_sealed(&events);
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-bad-headers", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let url = format!("{base}/v1/executions/{execution}/signal");
     let head_before = head_sequence(&base, &token, execution);
@@ -3429,13 +3737,11 @@ fn two_agents_share_information_only_through_the_api() {
         "the fixture must leave exactly one node blocked for agent-builder to approve: {start_data}"
     );
 
-    let (_guard, base, token) = serve(&events);
+    let (_guard, base, token) = serve_sealed(&events);
 
     // agent-scout signals — the only thing it does that agent-builder could possibly learn from.
-    let evidence_out = directory.path().join("scout-evidence.json");
     let signal_body = serde_json::json!({
         "signal": signal_envelope("signal-scout-1", "unexpected_dependency"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
     let (signal_status, signal_reply) = post_json(
         &format!("{base}/v1/executions/{execution}/signal"),
@@ -4721,8 +5027,8 @@ fn a_signal_on_a_fixture_only_parked_execution_still_names_the_mode_in_diagnosti
         &token,
         &[
             ("Idempotency-Key", "m248-signal-cmd"),
-            ("X-GraphHelm-Actor", "agent-planner"),
-            ("X-GraphHelm-Actor-Type", "agent"),
+            ("X-GraphHelm-Actor", "owner-planner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
         ],
         &serde_json::json!({
             "signal": signal_envelope("m248-signal-1", "no_progress"),
@@ -8064,7 +8370,6 @@ struct PresenceHarness {
     _guard: ServerGuard,
     base: String,
     token: String,
-    evidence_out: PathBuf,
     issued: std::cell::Cell<u32>,
 }
 
@@ -8074,14 +8379,12 @@ impl PresenceHarness {
         let events = directory.path().join("events");
         let fixtures = all_success_fixtures(directory.path());
         cli_start(&events, &fixtures, PRESENCE_EXECUTION);
-        let evidence_out = directory.path().join("presence-evidence.json");
-        let (guard, base, token) = serve(&events);
+        let (guard, base, token) = serve_sealed(&events);
         Self {
             _directory: directory,
             _guard: guard,
             base,
             token,
-            evidence_out,
             issued: std::cell::Cell::new(0),
         }
     }
@@ -8109,7 +8412,6 @@ impl PresenceHarness {
         headers.extend_from_slice(declaration);
         let body = serde_json::json!({
             "signal": signal_envelope(&format!("signal-presence-{nth}"), "no_progress"),
-            "evidenceOut": self.evidence_out.to_str().unwrap(),
         });
         post_json(
             &format!("{}/v1/executions/{PRESENCE_EXECUTION}/signal", self.base),

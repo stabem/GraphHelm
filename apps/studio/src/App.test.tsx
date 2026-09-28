@@ -20,6 +20,7 @@ import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
 import type { MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
+import { digestOf } from "./runtime/customs";
 
 const STATUS = {
   executionId: "demo-deploy",
@@ -397,6 +398,63 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 }
 
 describe("opening", () => {
+  it("reviews a raw-digest DraftProposed before any ghost event and submits plain AddNode ids", async () => {
+    const content = JSON.stringify({ id: "draft-wire", operations: [
+      { op: "addNode", path: "/spec/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },
+      { op: "addNode", path: "/spec/nodes/verify", value: { name: "Verify", objective: "Check the summary" } },
+      { op: "addEdge", value: { from: "summarize", to: "verify", type: "data" } },
+    ] });
+    const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "paused", attention: "can_sleep", attentionReasons: [] })),
+      getEvents: vi.fn(async () => ({
+        head: 4,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k2", eventId: "e2", evidenceRefs: [] },
+          { sequence: 3, kind: "draft_proposed", payload: { draftId: "draft-wire", expectedVersion: 1, expectedHash: "sha256:expected", proposalSha256: rawDigest, operationCount: 3 }, occurredAt: null, actorId: "agent-a", actorType: "agent", idempotencyKey: "k3", eventId: "e3", evidenceRefs: ["sealed-draft"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "sealed-draft", mediaType: "application/json", sensitivity: "confidential", contentSha256: rawDigest, content })),
+    });
+    await open(client);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-wire");
+    expect(await screen.findByText(/Proposed nodes · 2/)).toBeVisible();
+    expect(screen.getByText(/paused · Needs you/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "demo-deploy" }));
+    expect(await screen.findByRole("heading", { name: "This run needs you" })).toBeVisible();
+    expect(screen.getByText(/waiting for owner review/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Review pending proposal");
+    expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("owner review");
+    expect(screen.getByText(/Needs your attention · needs you/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
+    expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
+    const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
+    await waitFor(() => expect(approve).toBeEnabled());
+    await userEvent.click(approve);
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+    const [, node, options] = firstCall(client.approve as unknown as { mock: { calls: unknown[][] } });
+    expect(node).toBe("summarize");
+    expect(options).toEqual(expect.objectContaining({ governed: { draftId: "draft-wire", proposalDigest: rawDigest, assignments: { summarize: "agent-a", verify: "agent-a" } } }));
+  });
+
+  it("rejects the obsolete unscoped node pointer", async () => {
+    const content = JSON.stringify({ id: "draft-invalid-path", operations: [
+      { op: "addNode", path: "/nodes/summarize", value: { name: "Summarize" } },
+    ] });
+    const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 3, events: [
+        { sequence: 3, kind: "draft_proposed", payload: { draftId: "draft-invalid-path", proposalSha256: rawDigest }, occurredAt: null, actorId: "agent-a", actorType: "agent", idempotencyKey: "k3", eventId: "e3", evidenceRefs: ["sealed-invalid"] },
+      ] })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "sealed-invalid", mediaType: "application/json", sensitivity: "confidential", contentSha256: rawDigest, content })),
+    });
+    await open(client);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-invalid-path");
+    expect(await screen.findByText("typed addNode path is invalid")).toBeVisible();
+    expect(screen.getByRole("button", { name: "review selected proposal" })).toBeDisabled();
+  });
   it("opens the organized overview without applying saved canvas coordinates", async () => {
     render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"F:/github/GraphHelm"})} />);
     expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();
@@ -2054,6 +2112,17 @@ describe("controls that act instead of excusing", () => {
     await waitFor(() => expect(box).toHaveFocus());
   });
 
+  it("opens the Free canvas and focuses the graph field from the default overview", async () => {
+    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })) });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    await screen.findByRole("main", { name: "Work overview" });
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
+    expect(client.resume).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText(/graph file path on the runtime host/i)).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Free canvas" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("resumes a Studio-created run with its durable one-node graph when no file is named", async () => {
     const executionId = "run-0f250aef-8a0a-4777-84ca-01f08ea55796";
     const objective = "Recover the paused task";
@@ -2073,6 +2142,29 @@ describe("controls that act instead of excusing", () => {
     const graph = (client.resume.mock.calls[0] as unknown[])[1] as { metadata: { executionId: string }; spec: { nodes: { start: { objective: string } } } };
     expect(graph.metadata.executionId).toBe(executionId);
     expect(graph.spec.nodes.start.objective).toBe(objective);
+  });
+
+  it("resumes an accepted governed successor from its verified sealed snapshot", async () => {
+    const authoringHash = "sha256:" + "a".repeat(64);
+    const safeGenesis = "sha256:" + "b".repeat(64);
+    const safeSuccessor = "sha256:" + "c".repeat(64);
+    const version = (number: number, hash: string, predecessor: unknown = null) => ({ number, semanticHash: hash, predecessor, topology: { executionId: "demo-deploy", entrypoints: ["implementation"], nodes: { implementation: {} }, edges: [] } });
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })),
+      getEvents: vi.fn(async () => ({ head: 9, events: [
+        { sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: authoringHash, graphVersion: 1 }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k1", eventId: "e1", evidenceRefs: [] },
+        { sequence: 2, kind: "graph_authoring_snapshot_stored", payload: { executionId: "demo-deploy", graphVersion: 1, graphHash: safeGenesis }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k2", eventId: "e2", evidenceRefs: ["authoring-1"] },
+        { sequence: 3, kind: "graph_version_published", payload: { version: version(1, safeGenesis) }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k3", eventId: "e3", evidenceRefs: [] },
+        { sequence: 4, kind: "mutation_accepted", payload: { executionId: "demo-deploy", graphVersion: 2 }, occurredAt: null, actorId: "owner-local", actorType: "owner", idempotencyKey: "k4", eventId: "e4", evidenceRefs: [] },
+        { sequence: 5, kind: "graph_authoring_snapshot_stored", payload: { executionId: "demo-deploy", graphVersion: 2, graphHash: safeSuccessor }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k5", eventId: "e5", evidenceRefs: ["authoring-2"] },
+        { sequence: 6, kind: "graph_version_published", payload: { version: version(2, safeSuccessor, { number: 1, semanticHash: safeGenesis }) }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k6", eventId: "e6", evidenceRefs: [] },
+      ] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
+    await waitFor(() => expect(client.resume).toHaveBeenCalled());
+    expect((client.resume.mock.calls[0] as unknown[])[1]).toBeUndefined();
   });
 
   /** #1083 F2: the Studio's resume could not name a fixture, so a demonstration run's resumed

@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.9)
+## Session hooks (version 0.1.10)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -149,6 +149,23 @@ Each explicit handoff request allows up to five seconds of socket inactivity per
 the caller must still impose its own whole-process deadline. A timeout remains unobserved and is
 not retried automatically. `--handoff-id` distinguishes multiple offers between the same two
 sessions in one execution; repeating the same id replays the journal record after local state loss.
+
+The same adapter has an optional, explicitly configured stdio MCP mode. It is never registered by
+the plugin and makes no Runtime request while starting. Configure the trusted server process with
+`GRAPHHELM_MCP_HOST`, `GRAPHHELM_SESSION_ID`, `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_TOKEN_FILE`,
+and (when needed) `GRAPHHELM_RUNTIME_URL`, then run:
+
+```powershell
+python <installed-plugin>/hooks/task_handoff.py --mcp-stdio
+```
+
+The server exposes `offer`, `receive`, and `status` through standard newline-delimited MCP
+JSON-RPC. Host, session, execution, Runtime URL, and token path come only from the server
+environment. Tool arguments can name the recipient or offer, but cannot replace that binding.
+Requests are bounded and unknown fields fail closed. A tool failure returns MCP `isError: true`
+and an unobserved result. An oversized or unterminated frame closes the transport after a sanitized
+error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and
+activation still need a separate fresh-session observation.
 
 ### Setup inspection
 

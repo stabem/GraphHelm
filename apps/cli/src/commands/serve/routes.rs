@@ -23,8 +23,8 @@ use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question};
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
-    ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType, ProjectId,
-    RepositoryScope, Sensitivity, WorkspaceId,
+    Actor, ActorId, ActorType, Diagnostic, EvidenceId, OpaqueId, PersistedActor, PersistedActorType,
+    ProjectId, RepositoryScope, Sensitivity, WorkspaceId,
 };
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{
@@ -46,10 +46,11 @@ use super::ports::{
 use super::{
     ExecutorWiring, MutationError, PausedUnderCaller, ServeState, execution_paused_under,
     parse_mutation_headers, respond, respond_failure, run_idempotent_mutation,
+    verify_agent_credential,
 };
 use crate::commands::architect::{self, SynthesizeRequest};
 use crate::commands::execution::PreparedDrive;
-use crate::commands::{event_store, execution, owner, publish_loaded, topology};
+use crate::commands::{event_store, execution, publish_loaded, topology};
 use crate::output::Outcome;
 
 const LIST_COMMAND: &str = "execution.list";
@@ -61,6 +62,7 @@ const EVENTS_COMMAND: &str = "execution.events";
 const START_COMMAND: &str = "execution.start";
 const SIGNAL_COMMAND: &str = "execution.signal";
 const APPROVE_COMMAND: &str = "execution.approve";
+const ASSIGN_COMMAND: &str = "execution.assign";
 const AMEND_BUDGET_COMMAND: &str = "execution.amend_budget";
 const PAUSE_COMMAND: &str = "execution.pause";
 const RESUME_COMMAND: &str = "execution.resume";
@@ -1716,7 +1718,11 @@ fn graph_source(
 }
 
 #[allow(clippy::result_large_err)] // see `graph_source`
-fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<GraphVersion, Response> {
+fn load_and_publish(
+    source: &GraphSource,
+    command: &'static str,
+    actor: &PersistedActor,
+) -> Result<GraphVersion, Response> {
     let to_response = |diagnostics| {
         respond(
             StatusCode::BAD_REQUEST,
@@ -1748,7 +1754,13 @@ fn load_and_publish(source: &GraphSource, command: &'static str) -> Result<Graph
             Outcome::domain(command, diagnostics).output,
         ));
     }
-    publish_loaded(&loaded, owner("owner-local")).map_err(|error| {
+    let actor_type = match actor.actor_type() {
+        PersistedActorType::Owner => ActorType::Owner,
+        PersistedActorType::Human => ActorType::Human,
+        PersistedActorType::Agent => ActorType::Agent,
+        PersistedActorType::System => ActorType::System,
+    };
+    publish_loaded(&loaded, Actor::new(actor_type, actor.id().as_str())).map_err(|error| {
         respond(
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::internal(command, error).output,
@@ -1838,8 +1850,31 @@ pub(super) async fn start(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, START_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, START_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
+                if let Some(sealing) = drive_state.sealing.as_ref() {
+                    let events = drive_state.events.clone();
+                    let execution = drive_execution_id.clone();
+                    let directory = sealing.directory.clone();
+                    let key_id = sealing.key_id.clone();
+                    let version_for_genesis = version.clone();
+                    let genesis_actor = actor.clone();
+                    tokio::task::spawn_blocking(move || {
+                        execution::start::persist_governed_genesis(
+                            &version_for_genesis,
+                            &events,
+                            Some(execution.as_str()),
+                            &directory,
+                            &key_id,
+                            genesis_actor,
+                        )
+                    })
+                    .await
+                    .map_err(|_| {
+                        MutationError::Command(driver_failure("the genesis worker stopped"))
+                    })?
+                    .map_err(|error| MutationError::Command(driver_failure(&error)))?;
+                }
                 // #90: a held start is the publish half and NO drive half, whichever drive this
                 // graph would otherwise get - the same `execute_held` the CLI's `--held` calls.
                 if held {
@@ -1957,6 +1992,50 @@ pub(super) async fn signal(
             "/signal",
         );
     };
+    if signal_value.get("proposal").is_some()
+        && (identity.actor.actor_type() != PersistedActorType::Agent
+            || !verify_agent_credential(&state, &headers, &identity.actor))
+    {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "graph proposals require a registered scoped agent credential",
+            "/actor",
+        );
+    }
+    if identity.actor.actor_type() == PersistedActorType::Agent
+        && signal_value.get("type").and_then(serde_json::Value::as_str) == Some("node_delivery")
+    {
+        let Some(node) = signal_value
+            .pointer("/source/id")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "a scoped delivery must name its source node",
+                "/signal/source/id",
+            );
+        };
+        let Ok(store) = event_store(&state.events) else {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(SIGNAL_COMMAND, "the event store could not be opened").output,
+            );
+        };
+        let Ok((_, _, projection)) = execution::load_projection(&store, Some(&execution_id)) else {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "the execution could not be read",
+                "/execution",
+            );
+        };
+        if projection.node_assignments.get(node) != Some(&identity.actor) {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "the scoped agent is not assigned to this node",
+                "/signal/source/id",
+            );
+        }
+    }
     let signal_bytes = match serde_json::to_vec(signal_value) {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -1985,6 +2064,13 @@ pub(super) async fn signal(
             );
         }
     };
+    if identity.actor.actor_type() == PersistedActorType::Agent && evidence_out.is_some() {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "scoped agents cannot choose a Runtime filesystem evidence path",
+            "/evidenceOut",
+        );
+    }
     // Milestone 05d Task 9 STEP 5: flips the Task 6 declared discrepancy — when the server was
     // launched with a keyring (`state.sealing`), the signal route now seals through it, exactly
     // as the CLI's own `execution signal --keyring` does; absent a keyring, the API seam keeps
@@ -2040,7 +2126,9 @@ pub(super) async fn signal(
     .await
 }
 
-/// `POST /v1/executions/{id}/approve`: body `{"node": "<name>"}`, mirroring the CLI's `--node`.
+/// `POST /v1/executions/{id}/approve`: body carries `node`, exact `proposalDigest`, and the
+/// authenticated assigned `actorId`. The server keyring is used; callers cannot choose a keyring
+/// path or substitute the sealed evidence.
 #[allow(clippy::result_large_err)] // see `start`'s doc comment
 pub(super) async fn approve(
     State(state): State<ServeState>,
@@ -2070,6 +2158,94 @@ pub(super) async fn approve(
         );
     };
     let node = node.to_owned();
+    let proposal_digest = payload
+        .get("proposalDigest")
+        .and_then(serde_json::Value::as_str);
+    let actor_id = payload.get("actorId").and_then(serde_json::Value::as_str);
+    let draft_id = payload.get("draftId").and_then(serde_json::Value::as_str);
+    let assignment_values = payload.get("assignments");
+    let governed = proposal_digest.is_some()
+        || actor_id.is_some()
+        || draft_id.is_some()
+        || assignment_values.is_some();
+    if !governed {
+        let events = state.events.clone();
+        let execution = execution_id.clone();
+        return run_idempotent_mutation(
+            &state.events,
+            &execution_id,
+            APPROVE_COMMAND,
+            identity,
+            ExecutorWiring::from_state(&state),
+            move |actor, key| {
+                Box::pin(async move {
+                    Ok(execution::approve::execute(
+                        &events,
+                        Some(execution.as_str()),
+                        &node,
+                        actor,
+                        key,
+                    )?)
+                })
+            },
+        )
+        .await;
+    }
+    let Some(proposal_digest) = proposal_digest else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires \"proposalDigest\"",
+            "/proposalDigest",
+        );
+    };
+    let assignments = match assignment_values {
+        Some(serde_json::Value::Object(values)) => {
+            let mut parsed = std::collections::BTreeMap::new();
+            for (node_id, value) in values {
+                let Some(actor) = value.as_str() else {
+                    return bad_request(
+                        APPROVE_COMMAND,
+                        "assignment values must be actor ids",
+                        "/assignments",
+                    );
+                };
+                parsed.insert(node_id.clone(), actor.to_owned());
+            }
+            Some(parsed)
+        }
+        Some(_) => {
+            return bad_request(
+                APPROVE_COMMAND,
+                "\"assignments\" must be an object",
+                "/assignments",
+            );
+        }
+        None => None,
+    };
+    if actor_id.is_none() && assignments.is_none() {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires \"actorId\" or \"assignments\"",
+            "/actorId",
+        );
+    }
+    let Some(draft_id) = draft_id else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires \"draftId\"",
+            "/draftId",
+        );
+    };
+    let Some(sealing) = state.sealing.clone() else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires the server sealing keyring",
+            "/keyring",
+        );
+    };
+    let proposal_digest = proposal_digest.to_owned();
+    let actor_id = actor_id.map(str::to_owned);
+    let draft_id = draft_id.to_owned();
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
 
@@ -2079,12 +2255,97 @@ pub(super) async fn approve(
         APPROVE_COMMAND,
         identity,
         ExecutorWiring::from_state(&state),
-        |actor, key| {
+        |owner, key| {
             Box::pin(async move {
-                Ok(execution::approve::execute(
+                Ok(tokio::task::spawn_blocking(move || {
+                    execution::approve::execute_governed(
+                        &events,
+                        Some(drive_execution_id.as_str()),
+                        &node,
+                        execution::approve::GovernedApproval {
+                            keyring: &sealing.directory,
+                            key_id: &sealing.key_id,
+                            assigned_actor: actor_id.as_deref(),
+                            proposal_digest: Some(&proposal_digest),
+                            draft_id: Some(&draft_id),
+                            assignments: assignments.as_ref(),
+                            decision_key: Some(key),
+                            decision_node: Some(OpaqueId::parse(&node).map_err(|_| {
+                                execution::execution_state(
+                                    "the node identifier is invalid",
+                                    "/node",
+                                )
+                            })?),
+                            approving_actor: owner,
+                        },
+                    )
+                })
+                .await
+                .map_err(|_| {
+                    execution::execution_state("the governed approval worker stopped", "/approval")
+                })??)
+            })
+        },
+    )
+    .await
+}
+
+/// `POST /v1/executions/{id}/assign`: owner-only assignment of a ghost node to an agent.
+#[allow(clippy::result_large_err)]
+pub(super) async fn assign(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(ASSIGN_COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let identity = match parse_mutation_headers(
+        &headers,
+        ASSIGN_COMMAND,
+        &execution_id,
+        &payload,
+        &["outcome"],
+    ) {
+        Ok(identity) => identity,
+        Err(response) => return response,
+    };
+    if identity.actor.actor_type() != PersistedActorType::Owner {
+        return bad_request(ASSIGN_COMMAND, "only an owner may assign a node", "/actor");
+    }
+    let Some(node) = payload.get("node").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            ASSIGN_COMMAND,
+            "the request body must carry \"node\"",
+            "/node",
+        );
+    };
+    let Some(actor_id) = payload.get("actorId").and_then(serde_json::Value::as_str) else {
+        return bad_request(
+            ASSIGN_COMMAND,
+            "the request body must carry \"actorId\"",
+            "/actorId",
+        );
+    };
+    let events = state.events.clone();
+    let execution = execution_id.clone();
+    let node = node.to_owned();
+    let actor_id = actor_id.to_owned();
+    run_idempotent_mutation(
+        &state.events,
+        &execution_id,
+        ASSIGN_COMMAND,
+        identity,
+        ExecutorWiring::from_state(&state),
+        move |actor, key| {
+            Box::pin(async move {
+                Ok(execution::assign::execute(
                     &events,
-                    Some(drive_execution_id.as_str()),
+                    Some(execution.as_str()),
                     &node,
+                    &actor_id,
                     actor,
                     key,
                 )?)
@@ -2470,9 +2731,13 @@ pub(super) async fn resume(
         Ok(identity) => identity,
         Err(response) => return response,
     };
-    let source = match graph_source(&payload, RESUME_COMMAND) {
-        Ok(source) => source,
-        Err(response) => return response,
+    let source = if payload.get("file").is_some() {
+        match graph_source(&payload, RESUME_COMMAND) {
+            Ok(source) => Some(source),
+            Err(response) => return response,
+        }
+    } else {
+        None
     };
     let fixtures = payload
         .get("fixtures")
@@ -2492,8 +2757,34 @@ pub(super) async fn resume(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, RESUME_COMMAND).map_err(MutationError::Prepared)?;
+                let version = if source.is_none() {
+                    let Some(sealing) = drive_state.sealing.as_ref() else {
+                        return Err(MutationError::Command(driver_failure(
+                            "snapshot resume requires the server sealing keyring",
+                        )));
+                    };
+                    let events = drive_state.events.clone();
+                    let execution = drive_execution_id.clone();
+                    let directory = sealing.directory.clone();
+                    let key_id = sealing.key_id.clone();
+                    tokio::task::spawn_blocking(move || {
+                        execution::resume::recover_snapshot_version(
+                            &events,
+                            Some(execution.as_str()),
+                            Some(directory.as_path()),
+                            Some(key_id.as_str()),
+                        )
+                    })
+                    .await
+                    .map_err(|_| driver_failure("the snapshot resume worker stopped"))??
+                } else if let Some(source) = source.as_ref() {
+                    load_and_publish(source, RESUME_COMMAND, &actor)
+                        .map_err(MutationError::Prepared)?
+                } else {
+                    return Err(MutationError::Command(driver_failure(
+                        "resume source disappeared",
+                    )));
+                };
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the resume decision is the
@@ -2502,14 +2793,25 @@ pub(super) async fn resume(
                     let setup =
                         prepare_drive(&drive_state, RESUME_COMMAND, &drive_execution, &payload)
                             .await?;
-                    let prepared = execution::resume::execute_prepared(
-                        &version,
-                        &drive_state.events,
-                        fixtures.as_deref(),
-                        Some(drive_execution_id.as_str()),
-                        actor,
-                        key,
-                    )?;
+                    let prepared = if source.is_none() {
+                        execution::resume::execute_prepared_from_snapshot(
+                            &version,
+                            &drive_state.events,
+                            fixtures.as_deref(),
+                            Some(drive_execution_id.as_str()),
+                            actor,
+                            key,
+                        )?
+                    } else {
+                        execution::resume::execute_prepared(
+                            &version,
+                            &drive_state.events,
+                            fixtures.as_deref(),
+                            Some(drive_execution_id.as_str()),
+                            actor,
+                            key,
+                        )?
+                    };
                     if drive_state.runtime.is_some() {
                         // See `start`: a detached runtime drive survives the request that
                         // triggered it, while GET status remains the progress observer.
@@ -2746,8 +3048,8 @@ pub(super) async fn claim(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, CLAIM_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, CLAIM_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
                 let attestation =
                     execution::claim::attestation(asserter.as_deref(), &mode, &actor)?;
                 Ok(execution::claim::execute(
@@ -2863,8 +3165,8 @@ pub(super) async fn clear(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                let version =
-                    load_and_publish(&source, CLEAR_COMMAND).map_err(MutationError::Prepared)?;
+                let version = load_and_publish(&source, CLEAR_COMMAND, &actor)
+                    .map_err(MutationError::Prepared)?;
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the clearance is the last

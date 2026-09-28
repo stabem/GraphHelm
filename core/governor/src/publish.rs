@@ -149,6 +149,22 @@ pub(crate) fn prepare_published_version<'a>(
     })
 }
 
+/// Prepares the immutable genesis version and its sealed authoring snapshot for a new governed
+/// execution. The caller still owns the append; this function only performs deterministic
+/// validation and externalization.
+pub fn prepare_genesis_publication<'a>(
+    version: &'a GraphVersion,
+    services: &'a PublicationPreparationServices<'a>,
+) -> RepositoryFuture<'a, Result<ProjectionPreparation, GovernorError>> {
+    Box::pin(async move {
+        preflight_execution_graph(version.graph()).map_err(map_preflight_error)?;
+        services
+            .externalizer
+            .prepare(services.scope.clone(), &version.to_record())
+            .await
+    })
+}
+
 fn observe(observer: Option<&dyn PublicationPreparationObserver>, stage: PublicationStage) {
     if let Some(observer) = observer {
         observer.reached(stage);

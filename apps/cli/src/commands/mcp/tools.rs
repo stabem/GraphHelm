@@ -200,9 +200,10 @@ const TOOLS: [ToolSpec; 31] = [
     },
     ToolSpec {
         name: "memory_propose",
-        description: "Propose content for governed memory and report the admission verdict \
-                      (POST /v1/development/memory). Returns the verdict and no id: nothing \
-                      persists a candidate, so an id would name what cannot be fetched.",
+        description: "Publish opt-in durable memory through POST /v1/development/memory. \
+                      Requires content, exact workspace/project, expiry, sourceExecutionId and \
+                      a separately authenticated validatorSignalId. Returns committed record \
+                      and sealed Evidence ids; missing or mismatched validation is refused.",
         schema: memory_propose_schema,
     },
     ToolSpec {
@@ -332,9 +333,26 @@ fn compile_context_schema() -> serde_json::Value {
 }
 
 fn memory_propose_schema() -> serde_json::Value {
-    // No fields yet: the existence-slice proposes fixed content under a fixed scope. Content and
-    // scope become real arguments when behavioral parity wires this to caller input.
-    object_schema(serde_json::json!({}), &[])
+    mutating_schema(
+        serde_json::json!({
+            "content": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "workspaceId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "projectId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "optIn": {"type": "boolean"},
+            "expiresAtUnix": {"type": "integer"},
+            "sourceExecutionId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "validatorSignalId": {"type": "string", "minLength": 1, "maxLength": 128}
+        }),
+        &[
+            "content",
+            "workspaceId",
+            "projectId",
+            "optIn",
+            "expiresAtUnix",
+            "sourceExecutionId",
+            "validatorSignalId",
+        ],
+    )
 }
 
 fn accounting_schema() -> serde_json::Value {
@@ -1672,7 +1690,7 @@ pub(crate) fn call(
         "memory_propose" => Ok(api.request(
             "POST",
             &url::segment_path(&["v1", "development", "memory"]),
-            Some(&serde_json::json!({})),
+            Some(arguments),
             Some(&key),
             if_match,
         )),

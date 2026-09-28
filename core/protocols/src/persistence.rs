@@ -245,6 +245,30 @@ pub struct EvidenceReference {
     ciphertext_sha256: RawSha256,
 }
 
+/// Plaintext format sealed inside Evidence for one durable memory record. It is never carried in
+/// an event payload or projection; readers must open Evidence and validate every field before use.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryEvidenceEnvelope {
+    pub scope: crate::DevelopmentScope,
+    pub content: String,
+    pub content_digest: RawSha256,
+    pub expires_at_unix: i64,
+    pub independently_validated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_semantic_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validator_signal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_graph_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_evidence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot_content_sha256: Option<String>,
+}
+
 impl EvidenceReference {
     #[must_use]
     pub const fn new(

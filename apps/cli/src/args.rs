@@ -336,9 +336,17 @@ pub enum DevelopmentCommand {
         #[arg(long = "require")]
         require: Vec<String>,
     },
-    /// Propose content for governed memory and report the admission verdict (#220's admission,
-    /// exposed here).
-    MemoryPropose,
+    /// Propose caller-supplied content for governed memory and report the admission verdict.
+    MemoryPropose {
+        /// Observation to screen. Omission keeps the legacy admission-only probe; neither
+        /// this probe nor explicit CLI content publishes a durable memory record.
+        #[arg(long, default_value = "a proposal with no input argument yet")]
+        content: String,
+        #[arg(long, default_value = "workspace-local")]
+        workspace_id: String,
+        #[arg(long, default_value = "project-local")]
+        project_id: String,
+    },
     /// Run one explicit deterministic Dreams shadow and record its advisory result (#72).
     DreamShadow {
         /// Bounded JSON input describing the shadow snapshot.

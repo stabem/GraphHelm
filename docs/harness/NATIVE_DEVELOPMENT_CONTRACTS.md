@@ -89,9 +89,25 @@ an undetermined capture state is not the same thing as capture being off.
 
 ### Current memory-admission surface
 
-The current public slice exposes the same fixed-input operation through `graphhelm development memory-propose`, `POST /v1/development/memory`, and the MCP tool `memory_propose`. It reports an admission verdict but accepts no caller content or scope and returns no record identifier. The operation always evaluates the built-in safe proposal under an enabled local scope; it proves surface parity, not a general memory-ingestion workflow.
+`graphhelm development memory-propose` screens caller content and scope without persisting a record.
+Its no-argument form retains the legacy fixed-input admission probe and its JSON verdict. Explicit
+`--content`, `--workspace-id` and `--project-id` evaluate the supplied observation instead. An
+admission verdict alone is never proof of durable publication.
 
-The Governor also implements durable `memory_admission_refused` events for explicitly opted-in projects. Each event carries only a closed refusal code, a closed location, and the rejected byte count. It never carries rejected content or its digest. Disabled capture and incoherent opt-in return before repository access. A handoff into a scope without capture opt-in is refused as `handoff_target_not_opted_in`, distinct from `opt_in_absent` on the source project's own capture. This event path is a library contract; the fixed-input public operation does not currently trigger it or persist a `MemoryCandidate` or `MemoryRecord`.
+`POST /v1/development/memory` and MCP `memory_propose` expose durable opt-in publication. Both require
+content, exact scope, expiry, source execution and a separately recorded scoped-authenticated Agent
+validation signal. The sealed receipt binds candidate and current graph/snapshot identity. A
+successful atomic append returns record and Evidence identifiers. Retries recognize the complete
+committed intent before resealing; divergent intent or stale `If-Match` refuses publication. These
+typed inputs replace the old fixed-input HTTP/MCP probe; callers must use the published tool schema.
+
+Opt-in `POST /v1/development/context` retrieves eligible records into the existing context compiler.
+Disabled, expired, semantically invalid, withdrawn, stale or unavailable records are omitted.
+Source-content erasure cannot be undone by a retained snapshot. The capsule digest observes compiler
+input, not model delivery or adherence; source identity freshness is not Git HEAD freshness. See
+[RFC-0071](../rfcs/RFC-0071-DURABLE-MEMORY.md) for the trust and point-in-time freshness boundaries.
+
+The Governor also implements durable `memory_admission_refused` events for explicitly opted-in projects. Each event carries only a closed refusal code, a closed location, and the rejected byte count. It never carries rejected content or its digest. Disabled capture and incoherent opt-in return before repository access. A handoff into a scope without capture opt-in is refused as `handoff_target_not_opted_in`, distinct from `opt_in_absent` on the source project's own capture. This refusal-event path remains a library contract; public admission refusals do not persist rejected content or publish a memory record.
 
 Node completion contracts name `coverage_carried` and `observer_distinct_from_actor`. Those are two
 of the sabotages written as **requirements** rather than as attacks: the corpus attacks, the graph

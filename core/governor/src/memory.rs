@@ -7,16 +7,18 @@
 
 use graphhelm_events::{
     EventRepository, EventRepositoryError, MemoryAdmissionRefusalAppend,
-    MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,
-    prepare_memory_admission_refusal, prepare_memory_publication_transition,
+    MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend, PreparedAppend,
+    SealedEvidence, prepare_memory_admission_refusal, prepare_memory_publication_transition,
     prepare_memory_record_superseded,
 };
 use graphhelm_protocols::{
-    DevelopmentScope, EventEnvelope, MemoryAdmissionLocal,
-    MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, OpaqueId, PersistedActor,
-    PersistedMemoryPublicationState, PersistedMemoryPublicationTransition,
-    PersistedMemorySemanticState, PersistedSupersessionReason, RepositoryScope,
+    DevelopmentScope, EventEnvelope, EvidenceReference, MemoryAdmissionLocal,
+    MemoryAdmissionRefusalCode as PersistedMemoryAdmissionRefusalCode, MemoryEvidenceEnvelope,
+    OpaqueId, PersistedActor, PersistedMemoryPublicationState,
+    PersistedMemoryPublicationTransition, PersistedMemorySemanticState,
+    PersistedSupersessionReason, RawSha256, RepositoryScope, WireHash,
 };
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 /// One list generates the enum, its `every()` AND its wire spelling, so the three cannot disagree.
@@ -212,6 +214,18 @@ impl MemoryCandidate {
     #[must_use]
     pub fn scope(&self) -> &DevelopmentScope {
         &self.scope
+    }
+
+    /// The screened observation. Callers must not persist this value in journal metadata.
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// The producer identity used to reject self-validation.
+    #[must_use]
+    pub fn producer(&self) -> Option<&str> {
+        self.produced_by.as_deref()
     }
 }
 
@@ -599,6 +613,12 @@ pub struct MemoryRecord {
     publication: MemoryPublicationState,
     supersedes: Option<OpaqueId>,
     dependencies: Vec<(String, String)>,
+    /// Scope and Evidence binding are present only for durable records. Legacy lifecycle fixtures
+    /// keep these optional so replay never fabricates provenance.
+    scope: Option<DevelopmentScope>,
+    content_digest: Option<String>,
+    evidence: Option<EvidenceReference>,
+    expires_at_unix: Option<i64>,
 }
 
 impl MemoryRecord {
@@ -611,6 +631,10 @@ impl MemoryRecord {
             publication: MemoryPublicationState::Unpublished,
             supersedes: None,
             dependencies: Vec::new(),
+            scope: None,
+            content_digest: None,
+            evidence: None,
+            expires_at_unix: None,
         }
     }
 
@@ -628,6 +652,10 @@ impl MemoryRecord {
             publication,
             supersedes: None,
             dependencies: Vec::new(),
+            scope: None,
+            content_digest: None,
+            evidence: None,
+            expires_at_unix: None,
         }
     }
 
@@ -660,6 +688,42 @@ impl MemoryRecord {
     #[must_use]
     pub const fn supersedes(&self) -> Option<&OpaqueId> {
         self.supersedes.as_ref()
+    }
+
+    /// Bind a record to its exact scope, content digest, sealed Evidence, and expiry.
+    #[must_use]
+    pub fn bind_durable(
+        mut self,
+        scope: DevelopmentScope,
+        content_digest: impl Into<String>,
+        evidence: EvidenceReference,
+        expires_at_unix: i64,
+    ) -> Self {
+        self.scope = Some(scope);
+        self.content_digest = Some(content_digest.into());
+        self.evidence = Some(evidence);
+        self.expires_at_unix = Some(expires_at_unix);
+        self
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> Option<&DevelopmentScope> {
+        self.scope.as_ref()
+    }
+
+    #[must_use]
+    pub fn content_digest(&self) -> Option<&str> {
+        self.content_digest.as_deref()
+    }
+
+    #[must_use]
+    pub const fn evidence(&self) -> Option<&EvidenceReference> {
+        self.evidence.as_ref()
+    }
+
+    #[must_use]
+    pub const fn expires_at_unix(&self) -> Option<i64> {
+        self.expires_at_unix
     }
 }
 
@@ -731,6 +795,174 @@ pub struct MemoryPublicationTransitionRequest {
     expected_next_sequence: u64,
     idempotency_key: OpaqueId,
     actor: PersistedActor,
+    validation: Option<(OpaqueId, OpaqueId, RawSha256, WireHash)>,
+}
+
+/// Build the atomic append that publishes an independently validated memory candidate.
+///
+/// The candidate is screened before this function is called and the Evidence is already sealed.
+/// This function performs the remaining independent-validator and digest checks, then places the
+/// Evidence blob and its lifecycle event in one `PreparedAppend`. It never appends by itself.
+pub fn prepare_durable_memory_publication(
+    opt_in: CaptureOptIn,
+    candidate: &MemoryCandidate,
+    validators: &[&str],
+    request: MemoryPublicationTransitionRequest,
+    record: &MemoryRecord,
+    evidence: SealedEvidence,
+) -> Result<PreparedAppend, MemoryRefusal> {
+    if opt_in == CaptureOptIn::Disabled {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::OptInAbsent,
+            field: MemoryField::Origin,
+        });
+    }
+    admit_memory_candidate(candidate, candidate.scope())?;
+    validate_candidate(candidate, validators)?;
+    let digest = hex::encode(Sha256::digest(candidate.content().as_bytes()));
+    let Some(bound_digest) = record.content_digest() else {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::ResealFailed,
+            field: MemoryField::Evidence,
+        });
+    };
+    if bound_digest != digest || record.scope() != Some(candidate.scope()) {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::ScopeMismatch,
+            field: MemoryField::Evidence,
+        });
+    }
+    let Some(reference) = record.evidence() else {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::ResealFailed,
+            field: MemoryField::Evidence,
+        });
+    };
+    if reference != evidence.reference() || evidence.scope() != &request.scope {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::ResealFailed,
+            field: MemoryField::Evidence,
+        });
+    }
+    let mut append = MemoryPublicationTransitionAppend::new(
+        request.scope,
+        request.stream_id,
+        request.expected_next_sequence,
+        request.idempotency_key,
+        request.actor,
+        record.id().clone(),
+        PersistedMemoryPublicationTransition::Publish,
+        PersistedMemoryPublicationState::Published,
+    )
+    .with_evidence(reference.clone())
+    .with_sealed_evidence(evidence);
+    if let Some((validator_signal_id, source_execution_id, content_digest, source_semantic_hash)) =
+        request.validation
+    {
+        append = append.with_validation(
+            validator_signal_id,
+            source_execution_id,
+            content_digest,
+            source_semantic_hash,
+        );
+    }
+    prepare_memory_publication_transition(append).map_err(|_| MemoryRefusal {
+        code: MemoryRefusalCode::ResealFailed,
+        field: MemoryField::Evidence,
+    })
+}
+
+/// Serialize screened memory content into the sealed Evidence payload format. The returned bytes
+/// must be passed to `EvidenceInput`; they are never journal metadata.
+pub fn durable_memory_evidence_bytes(
+    candidate: &MemoryCandidate,
+    expires_at_unix: i64,
+    independently_validated: bool,
+) -> Result<Vec<u8>, MemoryRefusal> {
+    durable_memory_evidence_bytes_bound(
+        candidate,
+        expires_at_unix,
+        independently_validated,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Serialize durable memory with the trusted source and validator receipt identities bound in the
+/// sealed envelope. The legacy helper above remains for fixtures that intentionally exercise the
+/// unbound wire shape.
+pub fn durable_memory_evidence_bytes_bound(
+    candidate: &MemoryCandidate,
+    expires_at_unix: i64,
+    independently_validated: bool,
+    source_execution_id: Option<&str>,
+    source_semantic_hash: Option<&str>,
+    validator_signal_id: Option<&str>,
+) -> Result<Vec<u8>, MemoryRefusal> {
+    durable_memory_evidence_bytes_bound_full(
+        candidate,
+        expires_at_unix,
+        independently_validated,
+        source_execution_id,
+        source_semantic_hash,
+        validator_signal_id,
+        None,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn durable_memory_evidence_bytes_bound_full(
+    candidate: &MemoryCandidate,
+    expires_at_unix: i64,
+    independently_validated: bool,
+    source_execution_id: Option<&str>,
+    source_semantic_hash: Option<&str>,
+    validator_signal_id: Option<&str>,
+    source_graph_version: Option<u64>,
+    source_snapshot_evidence_id: Option<&str>,
+    source_snapshot_content_sha256: Option<&str>,
+) -> Result<Vec<u8>, MemoryRefusal> {
+    let digest = hex::encode(Sha256::digest(candidate.content().as_bytes()));
+    let digest = RawSha256::parse(digest).map_err(|_| MemoryRefusal {
+        code: MemoryRefusalCode::ResealFailed,
+        field: MemoryField::Evidence,
+    })?;
+    serde_json::to_vec(&MemoryEvidenceEnvelope {
+        scope: candidate.scope().clone(),
+        content: candidate.content().to_owned(),
+        content_digest: digest,
+        expires_at_unix,
+        independently_validated,
+        source_execution_id: source_execution_id.map(str::to_owned),
+        source_semantic_hash: source_semantic_hash.map(str::to_owned),
+        validator_signal_id: validator_signal_id.map(str::to_owned),
+        source_graph_version,
+        source_snapshot_evidence_id: source_snapshot_evidence_id.map(str::to_owned),
+        source_snapshot_content_sha256: source_snapshot_content_sha256.map(str::to_owned),
+    })
+    .map_err(|_| MemoryRefusal {
+        code: MemoryRefusalCode::ResealFailed,
+        field: MemoryField::Evidence,
+    })
+}
+
+/// Refuse an expiry that is already stale, unbounded, or beyond the repository's ten-year
+/// retention horizon. Callers validate this before sealing so an arbitrary timestamp never enters
+/// durable Evidence.
+pub fn validate_memory_expiry(now_unix: i64, expires_at_unix: i64) -> Result<(), MemoryRefusal> {
+    const MAX_RETENTION_SECONDS: i64 = 315_576_000;
+    if expires_at_unix <= now_unix
+        || expires_at_unix.saturating_sub(now_unix) > MAX_RETENTION_SECONDS
+    {
+        return Err(MemoryRefusal {
+            code: MemoryRefusalCode::TransitionNotAllowed,
+            field: MemoryField::State,
+        });
+    }
+    Ok(())
 }
 
 impl MemoryPublicationTransitionRequest {
@@ -748,7 +980,25 @@ impl MemoryPublicationTransitionRequest {
             expected_next_sequence,
             idempotency_key,
             actor,
+            validation: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_validation_fact(
+        mut self,
+        validator_signal_id: OpaqueId,
+        source_execution_id: OpaqueId,
+        content_digest: RawSha256,
+        source_semantic_hash: WireHash,
+    ) -> Self {
+        self.validation = Some((
+            validator_signal_id,
+            source_execution_id,
+            content_digest,
+            source_semantic_hash,
+        ));
+        self
     }
 }
 

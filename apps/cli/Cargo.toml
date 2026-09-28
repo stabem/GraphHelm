@@ -34,6 +34,8 @@ graphhelm-tool-broker = { path = "../../core/tool-broker" }
 graphhelm-quality = { path = "../../core/quality" }
 pathogens = { path = "../../tools/pathogens" }
 graphhelm-tool-host = { path = "../../adapters/tool-host" }
+hex.workspace = true
+sha2.workspace = true
 graphhelm-host-adoption = { path = "../../adapters/host-adoption" }
 graphhelm-simulation = { path = "../../core/simulation" }
 keel-contract-index = { path = "../../tools/keel-contract-index" }

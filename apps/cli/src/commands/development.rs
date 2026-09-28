@@ -207,25 +207,37 @@ pub fn context_refusal(code: DevelopmentRefusalCode, message: String) -> Outcome
 
 /// Propose content for governed memory and report the admission verdict, over the CLI surface.
 ///
-/// **Existence-slice, not the full feature**, matching its siblings: the content and the scope are
-/// fixed because there is no input argument yet, and adding one is behavioral-parity work rather
-/// than the existence-parity this command exists to give the three adapters something to agree on.
+/// Explicit content and scope are screened; omission retains the legacy CLI probe. This command
+/// performs admission only. Durable
+/// publication requires the authenticated HTTP flow and its separately recorded validation receipt.
 ///
 /// **It returns the VERDICT and no identifier, and that is a measurement rather than a choice.**
-/// Nothing persists a `MemoryCandidate` or a `MemoryRecord` -- both exist only in `core/governor`,
-/// built in memory -- so an id would name something no later call could resolve. The verdict is the
-/// one thing the admission path can honestly answer today: admitted, or refused with its code.
+/// This command persists neither a `MemoryCandidate` nor a `MemoryRecord`; durable records belong
+/// to the authenticated HTTP path. An id here would name something this invocation did not create.
+/// The admission verdict is admitted, or refused with its code.
 ///
 /// The admission path is CONSUMED, not restated. `capture_memory` holds the opt-in above the first
 /// boundary touch and `admit_memory_candidate` screens scope, origin and content; an adapter that
 /// re-decided any of that would be a second authority on what memory is admissible.
 #[must_use]
-pub fn run_memory_propose() -> Outcome {
+pub fn run_memory_propose(content: &str, workspace_id: &str, project_id: &str) -> Outcome {
+    let (Ok(workspace_id), Ok(project_id)) = (
+        graphhelm_protocols::WorkspaceId::parse(workspace_id),
+        graphhelm_protocols::ProjectId::parse(project_id),
+    ) else {
+        return Outcome::domain(
+            "development.memory-propose",
+            vec![Diagnostic::error(
+                "memory_scope_invalid",
+                "workspaceId and projectId must be valid identifiers",
+                "/scope",
+                "development-cli",
+            )],
+        );
+    };
     let scope = graphhelm_protocols::DevelopmentScope {
-        workspace_id: graphhelm_protocols::WorkspaceId::parse("workspace-local")
-            .expect("a constant workspace id is valid"),
-        project_id: graphhelm_protocols::ProjectId::parse("project-local")
-            .expect("a constant project id is valid"),
+        workspace_id,
+        project_id,
         subproject_id: None,
         execution_id: None,
     };
@@ -238,7 +250,7 @@ pub fn run_memory_propose() -> Outcome {
     let verdict = match graphhelm_governor::capture_memory(
         graphhelm_governor::CaptureOptIn::Enabled,
         &scope,
-        "a proposal with no input argument yet",
+        content,
         &mut touches,
     ) {
         Ok(candidate) => match graphhelm_governor::admit_memory_candidate(&candidate, &scope) {
@@ -442,8 +454,7 @@ fn dream_refusal(code: &str, message: &str) -> Outcome {
 /// Report a context-accounting receipt, over the CLI surface.
 ///
 /// **Existence-slice, not the full feature**, matching its siblings: there is no execution to
-/// account for yet, because there is no input argument yet -- wiring one to a real execution's
-/// measured costs is behavioral-parity work.
+/// account for yet; production measurement requires a real execution accounting receipt.
 ///
 /// **The one field is marked `unavailable`, not `measured(0, ...)`, and that is the whole point
 /// of `CostField`'s three-state design (`core/runtime/src/context_accounting.rs`).** Nothing

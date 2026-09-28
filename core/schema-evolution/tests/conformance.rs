@@ -1594,6 +1594,11 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             true,
         ),
         (
+            "memory_validation_recorded",
+            json!({"recordId":"record-1","validatorSignalId":"validation-1","sourceExecutionId":"execution-1","contentDigest":raw_digest(),"sourceSemanticHash":wire_hash()}),
+            true,
+        ),
+        (
             "memory_record_superseded",
             json!({
                 "predecessorId": "record-1",

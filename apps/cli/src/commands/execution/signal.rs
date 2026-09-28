@@ -201,6 +201,30 @@ pub(crate) fn execute(
     key: OpaqueId,
     sealing: Option<&SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
+    execute_authenticated(
+        events,
+        execution,
+        signal,
+        evidence_out,
+        actor,
+        key,
+        sealing,
+        false,
+    )
+}
+
+/// The transport supplies the scoped authentication result; the signal body cannot assert it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_authenticated(
+    events: &Path,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+) -> Result<serde_json::Value, Failure> {
     if evidence_out.is_none() && sealing.is_none() {
         return Err(argument(
             "this Runtime has no keyring, so the signal envelope can only be preserved as a file; \
@@ -370,11 +394,15 @@ pub(crate) fn execute(
         .as_ref()
         .map(|item| vec![item.reference().clone()])
         .unwrap_or_default();
+    let mut recorded = admitted.record.clone();
+    recorded.scoped_agent_authenticated = (scoped_agent_authenticated
+        && actor.actor_type() == graphhelm_protocols::PersistedActorType::Agent)
+        .then_some(true);
     let event = NewEvent::new(
         key,
         actor.clone(),
         Sensitivity::Internal,
-        EventKind::SignalRecorded(admitted.record.clone()),
+        EventKind::SignalRecorded(recorded),
         evidence_refs.clone(),
         vec![],
     );

@@ -2,8 +2,11 @@
 //!
 //! Under construction by TDD. Only what a currently-failing test demanded exists here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use graphhelm_events::{
+    EventRepository, EvidenceOpener, EvidenceRead, EvidenceRepository, ExecutionProjection,
+};
 use graphhelm_protocols::{
     ArtifactBinding, CoverageState, DeclaredLimits, DevelopmentEnvelope, DevelopmentKind,
     DevelopmentRefusalCode, RETRIEVAL_COVERAGE_RECEIPT_API_VERSION,
@@ -12,6 +15,10 @@ use graphhelm_protocols::{
     RetrievalFallbackKind, RetrievalFallbackOutcome, RetrievalFallbackReceipt,
     RetrievalProviderBinding, RetrievalReceivedLimits, RetrievalStepBinding, SemanticVersion,
     SnapshotBinding, WireHash, canonical_json, development_api_version_major,
+};
+use graphhelm_protocols::{
+    ContentSlot, DevelopmentScope, ExecutionId, MemoryEvidenceEnvelope,
+    PersistedMemoryPublicationState, PersistedMemorySemanticState, RepositoryScope,
 };
 use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition};
 use sha2::Digest as _;
@@ -46,6 +53,337 @@ pub struct IndexResponse {
     /// Counted by the side that DROVE the pagination, never reported by the provider. A page count
     /// taken from the thing being bounded is a self-report about the budget it is spending.
     pub pages: u32,
+}
+
+/// A memory item safe to place in an agent context after all lifecycle and Evidence checks pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DurableMemoryItem {
+    pub record_id: String,
+    pub content: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct MemorySourceIdentity {
+    graph_version: u64,
+    semantic_hash: String,
+    snapshot_evidence_id: String,
+    snapshot_content_sha256: String,
+}
+
+/// Check original graph content before using its retained authoring snapshot as a memory source.
+/// An erased, unavailable, unauthenticated, or digest-invalid member invalidates that source.
+/// This observes availability at these reads; callers must recheck after asynchronous work.
+pub async fn source_content_is_available(
+    scope: &RepositoryScope,
+    slots: &[ContentSlot],
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> bool {
+    for slot in slots {
+        let Ok(EvidenceRead::Available(sealed)) = evidence
+            .get_sealed(scope.clone(), slot.evidence_id().clone())
+            .await
+        else {
+            return false;
+        };
+        if sealed.scope() != scope
+            || sealed.reference().evidence_id() != slot.evidence_id()
+            || sealed.reference().content_sha256() != slot.content_sha256()
+        {
+            return false;
+        }
+        let Ok(plaintext) = opener.open(scope.clone(), &sealed).await else {
+            return false;
+        };
+        let digest = plaintext.expose(|bytes| hex::encode(sha2::Sha256::digest(bytes)));
+        if digest != slot.content_sha256().as_str() {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod memory_source_tests {
+    use super::*;
+    use graphhelm_events::{
+        EventRepositoryError, EvidenceError, EvidenceUnavailableReason, RepositoryFuture,
+        SealedEvidence, SecretBytes, WrappedKey,
+    };
+    use graphhelm_protocols::{
+        ContentFieldKind, ContentOwnerKind, EvidenceId, EvidenceReference, OpaqueId, ProjectId,
+        RawSha256, Sensitivity, WorkspaceId,
+    };
+
+    struct SourceIo {
+        source: SealedEvidence,
+        snapshot: SealedEvidence,
+        erased: bool,
+        plaintext: &'static [u8],
+    }
+
+    impl EvidenceRepository for SourceIo {
+        fn get_sealed<'a>(
+            &'a self,
+            scope: RepositoryScope,
+            id: EvidenceId,
+        ) -> RepositoryFuture<'a, Result<EvidenceRead, EventRepositoryError>> {
+            Box::pin(async move {
+                if scope != *self.source.scope() {
+                    return Err(EventRepositoryError::Invalid);
+                }
+                if id == *self.source.reference().evidence_id() {
+                    return Ok(if self.erased {
+                        EvidenceRead::Unavailable(EvidenceUnavailableReason::Erased)
+                    } else {
+                        EvidenceRead::Available(self.source.clone())
+                    });
+                }
+                if id == *self.snapshot.reference().evidence_id() {
+                    return Ok(EvidenceRead::Available(self.snapshot.clone()));
+                }
+                Err(EventRepositoryError::Invalid)
+            })
+        }
+    }
+
+    impl EvidenceOpener for SourceIo {
+        fn open<'a>(
+            &'a self,
+            scope: RepositoryScope,
+            sealed: &'a SealedEvidence,
+        ) -> RepositoryFuture<'a, Result<SecretBytes, EvidenceError>> {
+            Box::pin(async move {
+                if scope != *sealed.scope() {
+                    return Err(EvidenceError::Invalid);
+                }
+                Ok(SecretBytes::new(self.plaintext.to_vec()))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn retained_snapshot_does_not_restore_erased_or_invalid_source_content() {
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse("workspace-memory").unwrap(),
+            ProjectId::parse("project-memory").unwrap(),
+            Some(ExecutionId::parse("source-execution").unwrap()),
+        );
+        // SHA-256 of the external I/O fixture b"source", not a value returned by the verifier.
+        let digest =
+            RawSha256::parse("41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d")
+                .unwrap();
+        let sealed = |id: &str| {
+            SealedEvidence::new(
+                EvidenceReference::new(
+                    EvidenceId::parse(id).unwrap(),
+                    digest.clone(),
+                    RawSha256::parse("a".repeat(64)).unwrap(),
+                ),
+                scope.clone(),
+                "text/plain",
+                Sensitivity::Internal,
+                "standard",
+                "xchacha20poly1305",
+                vec![0; 24],
+                vec![0; 16],
+                WrappedKey::new(
+                    "fixture-key",
+                    "fixture-handle",
+                    "xchacha20poly1305",
+                    vec![0; 24],
+                    vec![0; 48],
+                    RawSha256::parse("b".repeat(64)).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let mut io = SourceIo {
+            source: sealed("source-content"),
+            snapshot: sealed("retained-snapshot"),
+            erased: false,
+            plaintext: b"source",
+        };
+        let slots = [ContentSlot::new(
+            OpaqueId::parse("source-slot").unwrap(),
+            ContentOwnerKind::Graph,
+            OpaqueId::parse("source-graph").unwrap(),
+            ContentFieldKind::Description,
+            0,
+            io.source.reference().evidence_id().clone(),
+            digest,
+            Sensitivity::Internal,
+            true,
+        )];
+        assert!(source_content_is_available(&scope, &slots, &io, &io).await);
+        io.erased = true;
+        assert!(matches!(
+            io.get_sealed(scope.clone(), io.snapshot.reference().evidence_id().clone())
+                .await
+                .unwrap(),
+            EvidenceRead::Available(_)
+        ));
+        assert!(!source_content_is_available(&scope, &slots, &io, &io).await);
+        io.erased = false;
+        io.plaintext = b"changed";
+        assert!(!source_content_is_available(&scope, &slots, &io, &io).await);
+    }
+}
+
+async fn current_memory_source(
+    scope: &RepositoryScope,
+    execution_id: &str,
+    events: &dyn EventRepository,
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> Option<MemorySourceIdentity> {
+    let execution_id = ExecutionId::parse(execution_id).ok()?;
+    let source_scope = RepositoryScope::new(
+        scope.workspace_id().clone(),
+        scope.project_id().clone(),
+        Some(execution_id.clone()),
+    );
+    let history = events
+        .read_replay_stream(&source_scope, execution_id.as_str())
+        .ok()?;
+    let projection =
+        graphhelm_events::replay(&source_scope, execution_id.as_str(), &history).ok()?;
+    let graph = projection.current_graph.as_ref()?;
+    if !source_content_is_available(&source_scope, graph.content_slots(), evidence, opener).await {
+        return None;
+    }
+    let reference = projection.authoring_snapshots.get(&graph.number())?;
+    let EvidenceRead::Available(sealed) = evidence
+        .get_sealed(source_scope.clone(), reference.evidence_id().clone())
+        .await
+        .ok()?
+    else {
+        return None;
+    };
+    if sealed.reference() != reference {
+        return None;
+    }
+    let plaintext = opener.open(source_scope, &sealed).await.ok()?;
+    let digest = plaintext.expose(|bytes| hex::encode(sha2::Sha256::digest(bytes)));
+    if digest != reference.content_sha256().as_str() {
+        return None;
+    }
+    Some(MemorySourceIdentity {
+        graph_version: graph.number(),
+        semantic_hash: graph.semantic_hash().as_str().to_owned(),
+        snapshot_evidence_id: reference.evidence_id().as_str().to_owned(),
+        snapshot_content_sha256: digest,
+    })
+}
+
+/// Retrieve durable memory after restart/replay. Every rejection is fail-closed and omitted from
+/// context: disabled callers pass `None`, while stale, expired, unpublished, withdrawn, semantic
+/// non-validated, missing, or digest-invalid records never become items.
+#[allow(clippy::too_many_arguments)]
+pub async fn retrieve_durable_memory(
+    enabled: bool,
+    scope: &RepositoryScope,
+    expected_scope: &DevelopmentScope,
+    projection: &ExecutionProjection,
+    now_unix: i64,
+    events: &dyn EventRepository,
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> Vec<DurableMemoryItem> {
+    if !enabled {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    let mut item_sources = BTreeMap::<String, String>::new();
+    let mut sources = BTreeMap::<String, Option<MemorySourceIdentity>>::new();
+    for (record_id, record) in &projection.memory_records {
+        if record.publication != Some(PersistedMemoryPublicationState::Published)
+            || record.semantic != Some(PersistedMemorySemanticState::Validated)
+        {
+            continue;
+        }
+        let Some(reference) = record.evidence_refs.first() else {
+            continue;
+        };
+        let Ok(EvidenceRead::Available(sealed)) = evidence
+            .get_sealed(scope.clone(), reference.evidence_id().clone())
+            .await
+        else {
+            continue;
+        };
+        if sealed.reference() != reference {
+            continue;
+        }
+        let Ok(plain) = opener.open(scope.clone(), &sealed).await else {
+            continue;
+        };
+        let (envelope, envelope_digest) = plain.expose(|bytes| {
+            (
+                serde_json::from_slice::<MemoryEvidenceEnvelope>(bytes).ok(),
+                hex::encode(sha2::Sha256::digest(bytes)),
+            )
+        });
+        let Some(envelope) = envelope else { continue };
+        if !envelope.independently_validated
+            || &envelope.scope != expected_scope
+            || envelope.expires_at_unix <= now_unix
+            || envelope.source_execution_id.is_none()
+            || envelope.source_semantic_hash.is_none()
+            || envelope.validator_signal_id.is_none()
+        {
+            continue;
+        }
+        let digest = hex::encode(sha2::Sha256::digest(envelope.content.as_bytes()));
+        if digest != envelope.content_digest.as_str()
+            || sealed.reference().content_sha256().as_str() != envelope_digest
+        {
+            continue;
+        }
+        let Some(source_execution_id) = envelope.source_execution_id.as_ref() else {
+            continue;
+        };
+        if !sources.contains_key(source_execution_id) {
+            let source =
+                current_memory_source(scope, source_execution_id, events, evidence, opener).await;
+            sources.insert(source_execution_id.clone(), source);
+        }
+        let Some(Some(source)) = sources.get(source_execution_id) else {
+            continue;
+        };
+        if envelope.source_graph_version != Some(source.graph_version)
+            || envelope.source_semantic_hash.as_deref() != Some(source.semantic_hash.as_str())
+            || envelope.source_snapshot_evidence_id.as_deref()
+                != Some(source.snapshot_evidence_id.as_str())
+            || envelope.source_snapshot_content_sha256.as_deref()
+                != Some(source.snapshot_content_sha256.as_str())
+        {
+            continue;
+        }
+        items.push(DurableMemoryItem {
+            record_id: record_id.clone(),
+            content: envelope.content,
+        });
+        item_sources.insert(record_id.clone(), source_execution_id.clone());
+    }
+    // Recheck after all asynchronous reads. Cache one identity per source, then refuse the
+    // affected items if that source moved during retrieval. This observes freshness at the last
+    // read; it does not lock the graph or claim that future edits cannot invalidate the capsule.
+    let mut stale_sources = BTreeSet::new();
+    for (execution_id, observed) in sources {
+        if observed.is_some()
+            && current_memory_source(scope, &execution_id, events, evidence, opener).await
+                != observed
+        {
+            stale_sources.insert(execution_id);
+        }
+    }
+    items.retain(|item| {
+        item_sources
+            .get(&item.record_id)
+            .is_some_and(|execution_id| !stale_sources.contains(execution_id))
+    });
+    items
 }
 
 impl IndexResponse {

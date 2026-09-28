@@ -383,6 +383,9 @@ pub struct MemoryRecordProjection {
     /// The predecessor this record supersedes, if this record has ever been named as a SUCCESSOR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<OpaqueId>,
+    /// Evidence references carried by publication events. Plaintext is never projected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<graphhelm_protocols::EvidenceReference>,
 }
 
 const fn is_zero(value: &u64) -> bool {
@@ -1369,6 +1372,24 @@ fn apply_projection_event(
             let record = projection.memory_records.entry(record_id).or_default();
             record.publication = Some(payload.resulting_state);
             record.last_transition_sequence = Some(event.sequence);
+            record.evidence_refs = event.evidence_refs.clone();
+        }
+        EventKind::MemoryValidationRecorded(payload) => {
+            let record_id = payload.record_id.to_string();
+            if !projection.memory_records.contains_key(&record_id)
+                && projection.memory_records.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            let record = projection.memory_records.entry(record_id).or_default();
+            // Replaying a validation receipt cannot revive a superseded or expired record.
+            if matches!(
+                record.semantic,
+                None | Some(PersistedMemorySemanticState::Candidate)
+                    | Some(PersistedMemorySemanticState::Validated)
+            ) {
+                record.semantic = Some(PersistedMemorySemanticState::Validated);
+            }
         }
         EventKind::MemoryRecordSuperseded(payload) => {
             let predecessor_id = payload.predecessor_id.to_string();
@@ -2626,6 +2647,16 @@ mod tests {
                 },
             )
         }
+        fn validated(record: &str) -> EventKind {
+            EventKind::MemoryValidationRecorded(graphhelm_protocols::MemoryValidationRecorded {
+                record_id: OpaqueId::parse(record).unwrap(),
+                validator_signal_id: OpaqueId::parse("validation-signal").unwrap(),
+                source_execution_id: OpaqueId::parse("source-execution").unwrap(),
+                content_digest: graphhelm_protocols::RawSha256::parse("0".repeat(64)).unwrap(),
+                source_semantic_hash: WireHash::parse(format!("sha256:{}", "1".repeat(64)))
+                    .unwrap(),
+            })
+        }
 
         let mut projection = ExecutionProjection::default();
         let mut holds = BTreeSet::new();
@@ -2670,6 +2701,35 @@ mod tests {
             MAX_PROJECTION_NODES,
             "a refused key must not partially land in the map"
         );
+        let validation = envelope("validation-existing", 10_003, validated("record-1"));
+        apply_projection_event(&mut projection, &mut holds, &validation).unwrap();
+        assert_eq!(
+            projection.memory_records["record-1"].semantic,
+            Some(PersistedMemorySemanticState::Validated)
+        );
+        let validation_overflow =
+            envelope("validation-overflow", 10_004, validated("record-overflow"));
+        assert_eq!(
+            apply_projection_event(&mut projection, &mut holds, &validation_overflow),
+            Err(ReplayError::LimitExceeded)
+        );
+        assert!(!projection.memory_records.contains_key("record-overflow"));
+        for terminal in [
+            PersistedMemorySemanticState::Contradicted,
+            PersistedMemorySemanticState::Deprecated,
+            PersistedMemorySemanticState::Expired,
+        ] {
+            projection
+                .memory_records
+                .get_mut("record-1")
+                .unwrap()
+                .semantic = Some(terminal);
+            apply_projection_event(&mut projection, &mut holds, &validation).unwrap();
+            assert_eq!(
+                projection.memory_records["record-1"].semantic,
+                Some(terminal)
+            );
+        }
     }
 
     /// The HARDER half of the ceiling (ISSUES-lane review of #836): a single

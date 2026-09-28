@@ -134,6 +134,26 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             true,
         ),
         (
+            json!({"type":"memory_validation_recorded","data":{"recordId":"record-1","validatorSignalId":"validation-1","sourceExecutionId":"execution-1","contentDigest":raw,"sourceSemanticHash":hash}}),
+            true,
+        ),
+        (
+            json!({"type":"dream_shadow_recorded","data":{
+                "runId":"dream-run-1",
+                "scope":{"workspaceId":"workspace-1","projectId":"project-1"},
+                "trigger":"manual","category":"code_finding",
+                "inputSha256":raw,"evidenceSha256":[raw],
+                "outcome":"advisory_proposal","plannerId":"planner-1",
+                "criticId":"critic-1","criticVerdict":"accepted",
+                "taskRequest":{
+                    "taskId":"task-dream-1","dreamRunId":"dream-run-1",
+                    "scope":{"workspaceId":"workspace-1","projectId":"project-1"},
+                    "findingSha256":raw,"evidenceSha256":[raw],"origin":"dream_generated"
+                }
+            }}),
+            true,
+        ),
+        (
             json!({"type":"memory_record_superseded","data":{"predecessorId":"record-1","successorId":"record-2","reason":"contradicted","predecessorNewSemanticState":"contradicted"}}),
             true,
         ),

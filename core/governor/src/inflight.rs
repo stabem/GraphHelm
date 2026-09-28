@@ -134,6 +134,7 @@ fn build_signal_record(
     let envelope_sha256 = graphhelm_graph::raw_content_sha256(externalize)
         .map_err(|_| GovernanceError::InvalidSignal)?;
     Ok(SignalRecorded {
+        scoped_agent_authenticated: None,
         execution_id: graphhelm_protocols::OpaqueId::parse(execution_id)
             .map_err(|_| GovernanceError::InvalidSignal)?,
         signal_id: graphhelm_protocols::OpaqueId::parse(signal.id())

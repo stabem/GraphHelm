@@ -24,8 +24,8 @@ use graphhelm_governor::{
     MemoryPublicationTransitionRequest, MemoryRecord, MemoryRecordSupersededRequest,
     MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
     admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
-    check_dependency_freshness, handoff_into_scope, publication_steps,
-    record_memory_admission_refusal, record_memory_publication_transition,
+    check_dependency_freshness, durable_memory_evidence_bytes, handoff_into_scope,
+    publication_steps, record_memory_admission_refusal, record_memory_publication_transition,
     record_memory_record_superseded, republish, supersede, validate_candidate,
 };
 use graphhelm_protocols::{
@@ -49,6 +49,17 @@ fn scope() -> DevelopmentScope {
         subproject_id: None,
         execution_id: None,
     }
+}
+
+#[test]
+fn durable_evidence_contains_screened_content_and_expiry_without_journal_shape() {
+    let candidate = MemoryCandidate::draft(scope(), "a bounded observation");
+    let bytes = durable_memory_evidence_bytes(&candidate, 2_000, true).expect("serialize");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("valid envelope");
+    assert_eq!(value["content"], "a bounded observation");
+    assert_eq!(value["expiresAtUnix"], 2_000);
+    assert_eq!(value["independentlyValidated"], true);
+    assert!(value.get("evidence").is_none());
 }
 
 /// The production change this catches: a refusal record that quotes the value it refused — the

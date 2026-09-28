@@ -198,6 +198,18 @@
       },
       "additionalProperties": false
     },
+    "memoryValidationRecorded": {
+      "type": "object",
+      "required": ["recordId", "validatorSignalId", "sourceExecutionId", "contentDigest", "sourceSemanticHash"],
+      "properties": {
+        "recordId": {"$ref": "#/$defs/opaqueId"},
+        "validatorSignalId": {"$ref": "#/$defs/opaqueId"},
+        "sourceExecutionId": {"$ref": "#/$defs/opaqueId"},
+        "contentDigest": {"$ref": "#/$defs/rawSha256"},
+        "sourceSemanticHash": {"$ref": "#/$defs/wireHash"}
+      },
+      "additionalProperties": false
+    },
     "memoryRecordSuperseded": {
       "type": "object",
       "required": ["predecessorId", "successorId", "reason", "predecessorNewSemanticState"],
@@ -571,7 +583,8 @@
         "sourceId": {"$ref": "#/$defs/opaqueId"},
         "kind": {"type": "string", "minLength": 1},
         "severity": {"$ref": "#/$defs/signalSeverity"},
-        "envelopeSha256": {"$ref": "#/$defs/rawSha256"}
+        "envelopeSha256": {"$ref": "#/$defs/rawSha256"},
+        "scopedAgentAuthenticated": {"type": "boolean"}
       },
       "additionalProperties": false
     },
@@ -1058,6 +1071,15 @@
           "type": "object",
           "required": ["type", "data"],
           "properties": {
+            "type": {"const": "memory_validation_recorded"},
+            "data": {"$ref": "#/$defs/memoryValidationRecorded"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
             "type": {"const": "memory_record_superseded"},
             "data": {"$ref": "#/$defs/memoryRecordSuperseded"}
           },
@@ -1467,6 +1489,7 @@
     {"properties": {"kind": {"properties": {"type": {"const": "graph_validation_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_admission_refused"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_publication_transitioned"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "memory_validation_recorded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "memory_record_superseded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "dream_shadow_recorded"}}}, "scope": {"$ref": "#/$defs/projectScope"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "graph_version_published"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},

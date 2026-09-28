@@ -469,6 +469,7 @@ mod tests {
                     actor.clone(),
                     Sensitivity::Internal,
                     EventKind::SignalRecorded(SignalRecorded {
+                        scoped_agent_authenticated: None,
                         execution_id: OpaqueId::parse("execution-budget").unwrap(),
                         signal_id: OpaqueId::parse(format!("signal-{index}")).unwrap(),
                         source_kind: SignalSourceKind::Node,

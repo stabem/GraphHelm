@@ -1,13 +1,13 @@
 //! Durable memory lifecycle events (#220).
 
 use graphhelm_protocols::{
-    EventKind, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, MemoryAdmissionRefused, NewEvent,
-    OpaqueId, PersistedActor, PersistedMemoryPublicationState,
+    EventKind, EvidenceReference, MemoryAdmissionLocal, MemoryAdmissionRefusalCode,
+    MemoryAdmissionRefused, NewEvent, OpaqueId, PersistedActor, PersistedMemoryPublicationState,
     PersistedMemoryPublicationTransition, PersistedMemorySemanticState,
-    PersistedSupersessionReason, RepositoryScope, Sensitivity,
+    PersistedSupersessionReason, RawSha256, RepositoryScope, Sensitivity, WireHash,
 };
 
-use crate::{EventRepositoryError, PreparedAppend};
+use crate::{EventRepositoryError, PreparedAppend, SealedEvidence};
 
 /// Complete bounded input for one atomic memory-admission refusal append.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +86,9 @@ pub struct MemoryPublicationTransitionAppend {
     record_id: OpaqueId,
     transition: PersistedMemoryPublicationTransition,
     resulting_state: PersistedMemoryPublicationState,
+    evidence_refs: Vec<EvidenceReference>,
+    sealed_evidence: Vec<SealedEvidence>,
+    validation: Option<(OpaqueId, OpaqueId, RawSha256, WireHash)>,
 }
 
 impl MemoryPublicationTransitionAppend {
@@ -110,7 +113,41 @@ impl MemoryPublicationTransitionAppend {
             record_id,
             transition,
             resulting_state,
+            evidence_refs: Vec::new(),
+            sealed_evidence: Vec::new(),
+            validation: None,
         }
+    }
+
+    /// Attach the sealed Evidence that contains the memory content and typed expiry metadata.
+    #[must_use]
+    pub fn with_evidence(mut self, evidence: EvidenceReference) -> Self {
+        self.evidence_refs.push(evidence);
+        self
+    }
+
+    /// Include the already sealed payload in the same atomic append as its event reference.
+    #[must_use]
+    pub fn with_sealed_evidence(mut self, evidence: SealedEvidence) -> Self {
+        self.sealed_evidence.push(evidence);
+        self
+    }
+
+    #[must_use]
+    pub fn with_validation(
+        mut self,
+        validator_signal_id: OpaqueId,
+        source_execution_id: OpaqueId,
+        content_digest: RawSha256,
+        source_semantic_hash: WireHash,
+    ) -> Self {
+        self.validation = Some((
+            validator_signal_id,
+            source_execution_id,
+            content_digest,
+            source_semantic_hash,
+        ));
+        self
     }
 }
 
@@ -123,25 +160,45 @@ impl MemoryPublicationTransitionAppend {
 pub fn prepare_memory_publication_transition(
     move_: MemoryPublicationTransitionAppend,
 ) -> Result<PreparedAppend, EventRepositoryError> {
+    let mut events = vec![NewEvent::new(
+        move_.idempotency_key.clone(),
+        move_.actor.clone(),
+        Sensitivity::Internal,
+        EventKind::MemoryPublicationTransitioned(
+            graphhelm_protocols::MemoryPublicationTransitioned {
+                record_id: move_.record_id.clone(),
+                transition: move_.transition,
+                resulting_state: move_.resulting_state,
+            },
+        ),
+        move_.evidence_refs,
+        vec![],
+    )];
+    if let Some((validator_signal_id, source_execution_id, content_digest, source_semantic_hash)) =
+        move_.validation
+    {
+        events.push(NewEvent::new(
+            OpaqueId::parse(format!("{}-validation", move_.idempotency_key))
+                .map_err(|_| EventRepositoryError::Invalid)?,
+            move_.actor,
+            Sensitivity::Internal,
+            EventKind::MemoryValidationRecorded(graphhelm_protocols::MemoryValidationRecorded {
+                record_id: move_.record_id,
+                validator_signal_id,
+                source_execution_id,
+                content_digest,
+                source_semantic_hash,
+            }),
+            vec![],
+            vec![],
+        ));
+    }
     PreparedAppend::new(
         move_.scope,
         move_.stream_id,
         move_.expected_next_sequence,
-        vec![NewEvent::new(
-            move_.idempotency_key,
-            move_.actor,
-            Sensitivity::Internal,
-            EventKind::MemoryPublicationTransitioned(
-                graphhelm_protocols::MemoryPublicationTransitioned {
-                    record_id: move_.record_id,
-                    transition: move_.transition,
-                    resulting_state: move_.resulting_state,
-                },
-            ),
-            vec![],
-            vec![],
-        )],
-        vec![],
+        events,
+        move_.sealed_evidence,
         vec![],
     )
 }

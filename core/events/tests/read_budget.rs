@@ -112,6 +112,7 @@ fn signal(index: u64) -> NewEvent {
     event(
         format!("key-{index}"),
         EventKind::SignalRecorded(SignalRecorded {
+            scoped_agent_authenticated: None,
             execution_id: OpaqueId::parse("execution-budget").unwrap(),
             signal_id: OpaqueId::parse(format!("signal-{index}")).unwrap(),
             source_kind: SignalSourceKind::Node,

@@ -2824,6 +2824,7 @@ mod tests {
         .unwrap();
         let signal = |id: &str| {
             EventKind::SignalRecorded(SignalRecorded {
+                scoped_agent_authenticated: None,
                 execution_id: execution_id.clone(),
                 signal_id: OpaqueId::parse(id).unwrap(),
                 source_kind: SignalSourceKind::Node,

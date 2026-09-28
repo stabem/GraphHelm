@@ -4187,6 +4187,16 @@ pub(super) async fn development_memory_propose(
         Ok(opener) => opener,
         Err(_) => return memory_failure("validator Evidence cannot be opened"),
     };
+    if !graphhelm_runtime::retrieval::source_content_is_available(
+        &source_scope,
+        graph.content_slots(),
+        &source_store,
+        opener.as_ref(),
+    )
+    .await
+    {
+        return memory_failure("source graph content is unavailable or invalid");
+    }
     let sealed = match source_store.sealed_evidence(&source_scope, reference.evidence_id()) {
         Ok(EvidenceRead::Available(value)) => value,
         _ => return memory_failure("validator Evidence is missing"),

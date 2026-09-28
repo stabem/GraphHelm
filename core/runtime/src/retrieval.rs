@@ -17,8 +17,8 @@ use graphhelm_protocols::{
     SnapshotBinding, WireHash, canonical_json, development_api_version_major,
 };
 use graphhelm_protocols::{
-    DevelopmentScope, ExecutionId, MemoryEvidenceEnvelope, PersistedMemoryPublicationState,
-    PersistedMemorySemanticState, RepositoryScope,
+    ContentSlot, DevelopmentScope, ExecutionId, MemoryEvidenceEnvelope,
+    PersistedMemoryPublicationState, PersistedMemorySemanticState, RepositoryScope,
 };
 use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition};
 use sha2::Digest as _;
@@ -70,6 +70,167 @@ struct MemorySourceIdentity {
     snapshot_content_sha256: String,
 }
 
+/// Check original graph content before using its retained authoring snapshot as a memory source.
+/// An erased, unavailable, unauthenticated, or digest-invalid member invalidates that source.
+/// This observes availability at these reads; callers must recheck after asynchronous work.
+pub async fn source_content_is_available(
+    scope: &RepositoryScope,
+    slots: &[ContentSlot],
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> bool {
+    for slot in slots {
+        let Ok(EvidenceRead::Available(sealed)) = evidence
+            .get_sealed(scope.clone(), slot.evidence_id().clone())
+            .await
+        else {
+            return false;
+        };
+        if sealed.scope() != scope
+            || sealed.reference().evidence_id() != slot.evidence_id()
+            || sealed.reference().content_sha256() != slot.content_sha256()
+        {
+            return false;
+        }
+        let Ok(plaintext) = opener.open(scope.clone(), &sealed).await else {
+            return false;
+        };
+        let digest = plaintext.expose(|bytes| hex::encode(sha2::Sha256::digest(bytes)));
+        if digest != slot.content_sha256().as_str() {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod memory_source_tests {
+    use super::*;
+    use graphhelm_events::{
+        EventRepositoryError, EvidenceError, EvidenceUnavailableReason, RepositoryFuture,
+        SealedEvidence, SecretBytes, WrappedKey,
+    };
+    use graphhelm_protocols::{
+        ContentFieldKind, ContentOwnerKind, EvidenceId, EvidenceReference, OpaqueId, ProjectId,
+        RawSha256, Sensitivity, WorkspaceId,
+    };
+
+    struct SourceIo {
+        source: SealedEvidence,
+        snapshot: SealedEvidence,
+        erased: bool,
+        plaintext: &'static [u8],
+    }
+
+    impl EvidenceRepository for SourceIo {
+        fn get_sealed<'a>(
+            &'a self,
+            scope: RepositoryScope,
+            id: EvidenceId,
+        ) -> RepositoryFuture<'a, Result<EvidenceRead, EventRepositoryError>> {
+            Box::pin(async move {
+                if scope != *self.source.scope() {
+                    return Err(EventRepositoryError::Invalid);
+                }
+                if id == *self.source.reference().evidence_id() {
+                    return Ok(if self.erased {
+                        EvidenceRead::Unavailable(EvidenceUnavailableReason::Erased)
+                    } else {
+                        EvidenceRead::Available(self.source.clone())
+                    });
+                }
+                if id == *self.snapshot.reference().evidence_id() {
+                    return Ok(EvidenceRead::Available(self.snapshot.clone()));
+                }
+                Err(EventRepositoryError::Invalid)
+            })
+        }
+    }
+
+    impl EvidenceOpener for SourceIo {
+        fn open<'a>(
+            &'a self,
+            scope: RepositoryScope,
+            sealed: &'a SealedEvidence,
+        ) -> RepositoryFuture<'a, Result<SecretBytes, EvidenceError>> {
+            Box::pin(async move {
+                if scope != *sealed.scope() {
+                    return Err(EvidenceError::Invalid);
+                }
+                Ok(SecretBytes::new(self.plaintext.to_vec()))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn retained_snapshot_does_not_restore_erased_or_invalid_source_content() {
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse("workspace-memory").unwrap(),
+            ProjectId::parse("project-memory").unwrap(),
+            Some(ExecutionId::parse("source-execution").unwrap()),
+        );
+        // SHA-256 of the external I/O fixture b"source", not a value returned by the verifier.
+        let digest =
+            RawSha256::parse("41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d")
+                .unwrap();
+        let sealed = |id: &str| {
+            SealedEvidence::new(
+                EvidenceReference::new(
+                    EvidenceId::parse(id).unwrap(),
+                    digest.clone(),
+                    RawSha256::parse("a".repeat(64)).unwrap(),
+                ),
+                scope.clone(),
+                "text/plain",
+                Sensitivity::Internal,
+                "standard",
+                "xchacha20poly1305",
+                vec![0; 24],
+                vec![0; 16],
+                WrappedKey::new(
+                    "fixture-key",
+                    "fixture-handle",
+                    "xchacha20poly1305",
+                    vec![0; 24],
+                    vec![0; 48],
+                    RawSha256::parse("b".repeat(64)).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let mut io = SourceIo {
+            source: sealed("source-content"),
+            snapshot: sealed("retained-snapshot"),
+            erased: false,
+            plaintext: b"source",
+        };
+        let slots = [ContentSlot::new(
+            OpaqueId::parse("source-slot").unwrap(),
+            ContentOwnerKind::Graph,
+            OpaqueId::parse("source-graph").unwrap(),
+            ContentFieldKind::Description,
+            0,
+            io.source.reference().evidence_id().clone(),
+            digest,
+            Sensitivity::Internal,
+            true,
+        )];
+        assert!(source_content_is_available(&scope, &slots, &io, &io).await);
+        io.erased = true;
+        assert!(matches!(
+            io.get_sealed(scope.clone(), io.snapshot.reference().evidence_id().clone())
+                .await
+                .unwrap(),
+            EvidenceRead::Available(_)
+        ));
+        assert!(!source_content_is_available(&scope, &slots, &io, &io).await);
+        io.erased = false;
+        io.plaintext = b"changed";
+        assert!(!source_content_is_available(&scope, &slots, &io, &io).await);
+    }
+}
+
 async fn current_memory_source(
     scope: &RepositoryScope,
     execution_id: &str,
@@ -89,6 +250,9 @@ async fn current_memory_source(
     let projection =
         graphhelm_events::replay(&source_scope, execution_id.as_str(), &history).ok()?;
     let graph = projection.current_graph.as_ref()?;
+    if !source_content_is_available(&source_scope, graph.content_slots(), evidence, opener).await {
+        return None;
+    }
     let reference = projection.authoring_snapshots.get(&graph.number())?;
     let EvidenceRead::Available(sealed) = evidence
         .get_sealed(source_scope.clone(), reference.evidence_id().clone())

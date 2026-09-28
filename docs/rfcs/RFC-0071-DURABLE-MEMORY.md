@@ -25,10 +25,15 @@ scope equals the request, and Evidence is available and digest-valid. Missing, s
 withdrawn, unpublished, or invalid Evidence produces no context item. Retrieval defaults to an empty
 result when durable memory is disabled.
 
+The initial consumer is the opt-in HTTP compile-context preview, using the existing context compiler.
+Its digest proves that eligible content reached that compiler; it does not prove that a model received
+or followed the memory. Automatic injection into running model nodes is not part of this slice.
+
 The contract is deterministic and provider-free. It adds no model, council, paid fallback, or global
 capture switch. Existing publication and supersession events remain separate semantic and
 publication axes. Frozen release schemas are unchanged; the new typed contract is represented by
-existing event and Evidence envelopes and validated before replay.
+current event and Evidence envelopes and validated before replay. A separate
+`MemoryValidationRecorded` fact supplies semantic validation; generic publication Evidence does not.
 
 ### Validation receipt and source binding
 
@@ -48,7 +53,9 @@ identity refuses publication. The validation fact is projected on its own semant
 publication Evidence never upgrades semantic state.
 
 Retrieval repeats the source loader and identity comparison after replay. It excludes records when
-the source execution, trusted graph, or authoring snapshot is missing or changed. This contract
+the source execution, trusted graph, or authoring snapshot is missing or changed. Publication and
+retrieval also require each original graph content slot to remain available, authenticated, and
+digest-valid. A retained authoring snapshot cannot restore an erased source member. This contract
 claims snapshot identity freshness only; it does not claim Git HEAD freshness.
 
 The idempotency identity covers the authenticated actor, idempotency key, candidate digest, scope,

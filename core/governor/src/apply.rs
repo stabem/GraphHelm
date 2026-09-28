@@ -200,10 +200,15 @@ pub fn apply_draft_with_acceptance<'a>(
                     if proposed_nodes.contains(edge.to.as_str()) {
                         false
                     } else {
-                        !matches!(
-                            projection.node_states.get(edge.to.as_str()),
-                            Some(NodeState::Draft | NodeState::Ready)
-                        )
+                        match projection.node_states.get(edge.to.as_str()) {
+                            Some(NodeState::Draft | NodeState::Ready) => false,
+                            Some(_) => true,
+                            None => !projection.current_graph.as_ref().is_some_and(|graph| {
+                                OpaqueId::parse(edge.to.as_str()).is_ok_and(|target| {
+                                    graph.topology().nodes().contains_key(&target)
+                                })
+                            }),
+                        }
                     }
                 }
                 DraftOperation::RemoveNode { .. }

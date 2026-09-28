@@ -29,6 +29,45 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 Open a new Codex session and use `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The separate `graphhelm-codex-hooks` package is required on Codex versions whose Agent Plugin loader skips hooks. The setup skill guides the separate `graphhelm setup` CLI through preview and reviewed application; installing the plugin does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
 
+## Make Claude always use GraphHelm + Keel
+
+Two steps: one for Claude Code on your machine, one for claude.ai.
+
+**1. Claude Code: register the MCP and write the instruction block.** `graphhelm setup` previews first and changes nothing until you accept an exact plan digest. It needs a `graphhelm` build that includes the `register-mcp` and `graphhelm-block` decisions (newer than the v0.1.0 preview).
+
+```sh
+# Preview. Lists unresolved items and, under suggestedResolutions, the decisions below.
+graphhelm setup --project <project> --home <your-home-dir> --dry-run --json
+
+# Register the graphhelm MCP at user scope and upsert the marked GraphHelm + Keel block
+# into ~/.claude/CLAUDE.md. Answer every other unresolved item with <item>=keep.
+graphhelm setup --project <project> --home <your-home-dir> \
+  --resolve home/.claude.json=register-mcp \
+  --resolve home/.claude/CLAUDE.md=graphhelm-block \
+  --out <private-dir>/plan.json
+
+# Review the plan (redacted: digest, scopes, operations).
+graphhelm setup --project <project> --home <your-home-dir> --plan <private-dir>/plan.json
+
+# Apply exactly the digest you reviewed. A backup is kept under --state-root.
+graphhelm setup --project <project> --home <your-home-dir> --state-root <private-dir>/state \
+  --apply <private-dir>/plan.json --accept 'sha256:<reviewed-digest>'
+```
+
+Only `mcpServers.graphhelm` changes in `~/.claude.json`. In `CLAUDE.md`, only the text between `<!-- graphhelm:begin -->` and `<!-- graphhelm:end -->` changes; running it again refreshes that block. Open a new Claude session afterwards. The full walkthrough, including restore, is the [adoption rehearsal](docs/acceptance/adoption-rehearsal.md).
+
+**2. claude.ai: paste personal preferences.** No tool can edit this box, so paste it yourself: claude.ai → Settings → "Instructions for Claude".
+
+```text
+Use GraphHelm and Keel for software work.
+- If the GraphHelm MCP tools (mcp__graphhelm__*) are available, use them for state: briefing, status, events, evidence, resume. Otherwise use the graphhelm CLI with --json, and say which source you used.
+- Keel: keep effort proportional. Docs or one-line fixes need nothing extra. For a code change, first state the promise: what changes, what must keep working, and the command that proves it. Name the paths in scope. Search on purpose, add only the surface the promise needs, and prove it with the smallest adequate test.
+- Journey-Proven Development: work is done only when an observer proves the user-visible promise. With no observer, say OBSERVER_MISSING; never claim success from a proxy.
+- Report passed, failed, skipped and unobserved separately. A later green never erases an earlier red.
+- Issue first, one PR per issue, one independent review before merge.
+- A project's own AGENTS.md or CLAUDE.md overrides these defaults.
+```
+
 ## Try it locally
 
 Install the [pinned Rust toolchain](rust-toolchain.toml), then validate an example graph:

@@ -60,7 +60,15 @@ pub fn run(
     // one — a caller whose publish then failed already knew about the lint warnings, and the
     // reply must not look like it withheld something it already computed.
     let warnings = report.warnings;
-    let version = match publish_loaded(&loaded, owner("owner-local")) {
+    // Governed genesis is attributed to the same owner identity that the sealed publication
+    // append records. Plain starts retain their historical local publication actor; the governed
+    // path uses the explicit CLI owner so replay can verify the actor binding.
+    let publication_actor = if genesis.directory.is_some() && genesis.key_id.is_some() {
+        owner("owner-cli")
+    } else {
+        owner("owner-local")
+    };
+    let version = match publish_loaded(&loaded, publication_actor) {
         Ok(version) => version,
         Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };

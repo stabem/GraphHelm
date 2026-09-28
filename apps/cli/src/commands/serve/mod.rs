@@ -741,11 +741,19 @@ fn agent_route_allowed(request: &Request) -> bool {
     let path = request.uri().path();
     let method = request.method();
     if method == axum::http::Method::GET {
-        return path.ends_with("/briefing")
-            || path.ends_with("/events")
-            || path.matches('/').count() == 3;
+        let segments: Vec<_> = path.split('/').collect();
+        return segments.get(1) == Some(&"v1")
+            && segments.get(2) == Some(&"executions")
+            && (segments.len() == 4
+                || (segments.len() == 5
+                    && (segments[4] == "briefing" || segments[4] == "events")));
     }
-    method == axum::http::Method::POST && path.ends_with("/signal")
+    let segments: Vec<_> = path.split('/').collect();
+    method == axum::http::Method::POST
+        && segments.len() == 5
+        && segments.get(1) == Some(&"v1")
+        && segments.get(2) == Some(&"executions")
+        && segments.get(4) == Some(&"signal")
 }
 
 fn unauthorized_response() -> Response {

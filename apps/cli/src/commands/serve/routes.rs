@@ -1989,6 +1989,40 @@ pub(super) async fn signal(
             "/actor",
         );
     }
+    if identity.actor.actor_type() == PersistedActorType::Agent
+        && signal_value.get("type").and_then(serde_json::Value::as_str) == Some("node_delivery")
+    {
+        let Some(node) = signal_value
+            .pointer("/source/id")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "a scoped delivery must name its source node",
+                "/signal/source/id",
+            );
+        };
+        let Ok(store) = event_store(&state.events) else {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(SIGNAL_COMMAND, "the event store could not be opened").output,
+            );
+        };
+        let Ok((_, _, projection)) = execution::load_projection(&store, Some(&execution_id)) else {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "the execution could not be read",
+                "/execution",
+            );
+        };
+        if projection.node_assignments.get(node) != Some(&identity.actor) {
+            return bad_request(
+                SIGNAL_COMMAND,
+                "the scoped agent is not assigned to this node",
+                "/signal/source/id",
+            );
+        }
+    }
     let signal_bytes = match serde_json::to_vec(signal_value) {
         Ok(bytes) => bytes,
         Err(_) => {

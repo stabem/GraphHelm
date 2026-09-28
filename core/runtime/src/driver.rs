@@ -1341,8 +1341,14 @@ pub async fn drive_to_quiescence_async(
     // complete_if_quiesced decides it.
     let projection = reread_async(&store_open, &scope, &stream).await?;
     let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
-        !projection.applied_drafts.iter().any(|applied| applied == draft_id)
-            && !projection.rejected_drafts.iter().any(|rejected| rejected == draft_id)
+        !projection
+            .applied_drafts
+            .iter()
+            .any(|applied| applied == draft_id)
+            && !projection
+                .rejected_drafts
+                .iter()
+                .any(|rejected| rejected == draft_id)
     });
     if pending_proposal {
         return Ok(projection);

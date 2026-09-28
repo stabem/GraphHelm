@@ -211,6 +211,7 @@ describe("Studio organization and responsive navigation", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText(run, { exact: true }));
       expect(toggle).toHaveAttribute("aria-expanded", wide ? "true" : "false");
+      expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", wide ? "true" : "false");
     } finally {
       cleanup();
       vi.unstubAllGlobals();

@@ -2151,6 +2151,7 @@ export default function App({
           select(id);
           if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
             setProjectsOpen(false);
+            setTalkOpen(false);
           }
         }}
         onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}

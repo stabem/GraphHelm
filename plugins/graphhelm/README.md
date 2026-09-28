@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.7)
+## Session hooks (version 0.1.8)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -86,6 +86,13 @@ claude
 The same environment variables apply to Codex. A desktop app that was already running will not
 inherit variables set later in a terminal. Codex asks the user to review and trust new plugin
 hooks before running them. Updating the plugin does not override that host decision.
+
+Third-party agent hosts can use the same script as a portable adapter. Pass an explicit bounded
+host identity such as `--host my-agent`; unknown hosts use the `graphhelm-portable-v1` JSON
+contract automatically. `start` returns a bounded `context`, `end` returns its acknowledged
+delivery state, and `inspect` returns local observations. A portable response reports the adapter
+boundary and `activation: "unobserved"`; it does not claim that the host loaded the hook or
+accepted a task. Use `--format native` only for the built-in `claude` and `codex` host envelopes.
 
 The token stays in its file and travels only to a loopback HTTP or HTTPS Runtime. A redirect is
 refused. The hook prints `UNOBSERVED` if a bound read or write fails, without blocking the agent

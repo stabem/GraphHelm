@@ -20,6 +20,7 @@ MAX_REPLY = 256 * 1024
 MAX_STATE = 32 * 1024
 MAX_CONTEXT = 1600
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+PORTABLE_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 NEXT_STEPS = {"resume_held", "answer", "diagnose", "dispatch", "finished", "nothing"}
 REMEDIES = {"approve", "claim", "clear", "amend_budget"}
 STATUSES = {"completed", "failed", "cancelled"}
@@ -46,6 +47,12 @@ def _session(payload: dict) -> str:
         raise ValueError("session identity mismatch")
     if not isinstance(value, str) or not ID.fullmatch(value):
         raise ValueError("invalid session identity")
+    return value
+
+
+def _host(value: str) -> str:
+    if not isinstance(value, str) or not PORTABLE_HOST.fullmatch(value):
+        raise ValueError("invalid host identity")
     return value
 
 
@@ -248,15 +255,20 @@ def _context(digest: dict, freshness: str, execution: str, session: str, node_id
     return value
 
 
-def _start_impl(payload: dict, host: str) -> None:
+def _start_impl(payload: dict, host: str, output_format: str = "native") -> None:
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
     session = _session(payload)
     bound = binding()
     if bound is None:
         if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
+            if output_format == "portable":
+                print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": ""}, separators=(",", ":")))
             return
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT}}))
+        if output_format == "portable":
+            print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": KEEL_CONTEXT}, separators=(",", ":")))
+        else:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT}}))
         return
     execution, token_file, url, origin, node_id = bound
     path = state_path(execution, session, host, origin)
@@ -278,18 +290,22 @@ def _start_impl(payload: dict, host: str) -> None:
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}))
+    if output_format == "portable":
+        print(json.dumps({"phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": context}, separators=(",", ":")))
+    else:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}))
 
 
-def start(payload: dict, host: str) -> None:
+def start(payload: dict, host: str, output_format: str = "native") -> None:
+    host = _host(host)
     bound = binding()
     if bound is None:
-        _start_impl(payload, host)
+        _start_impl(payload, host, output_format)
         return
     execution, _, _, origin, _ = bound
     lock = _claim_lock(state_path(execution, _session(payload), host, origin))
     try:
-        _start_impl(payload, host)
+        _start_impl(payload, host, output_format)
     finally:
         _release_lock(lock)
 
@@ -298,6 +314,8 @@ def _signal(execution: str, session: str, host: str, emitted_at: str, node_id: s
     digest = hashlib.sha256(f"v2\0{execution}\0{session}\0{host}\0{origin}".encode()).hexdigest()[:24]
     key = f"session-end-v2-{digest}"
     actor = f"{host}-session-{session}"
+    if len(actor) > 128:
+        raise ValueError("host and session identity too long")
     description = f"{actor} session ended; task outcome was not verified by this hook."
     if node_id:
         description += f" Declared node binding label: {node_id}."
@@ -356,12 +374,13 @@ def _end_impl(payload: dict, host: str) -> None:
     _write_state(path, state)
 
 
-def end(payload: dict, host: str) -> None:
+def end(payload: dict, host: str, output_format: str = "native") -> bool:
+    host = _host(host)
     if payload.get("hook_event_name") != "SessionEnd":
         raise ValueError("wrong hook event")
     bound = binding()
     if bound is None:
-        return
+        return False
     execution, _, _, origin, _ = bound
     session = _session(payload)
     lock = _claim_lock(state_path(execution, session, host, origin))
@@ -369,9 +388,11 @@ def end(payload: dict, host: str) -> None:
         _end_impl(payload, host)
     finally:
         _release_lock(lock)
+    return True
 
 
-def inspect(host: str, session: str | None) -> None:
+def inspect(host: str, session: str | None, output_format: str = "native") -> None:
+    host = _host(host)
     configured_session = os.environ.get("GRAPHHELM_SESSION_ID")
     if session and not ID.fullmatch(session):
         raise ValueError("invalid session identity")
@@ -421,31 +442,48 @@ def inspect(host: str, session: str | None) -> None:
             continue
         except (OSError, ValueError, KeyError, RecursionError):
             skipped += 1
-    print(json.dumps({"phase": "inspect", "host": host, "sessionId": session, "configured": {"executionId": bound[0] if bound else None, "runtimeConfigured": bool(os.environ.get("GRAPHHELM_RUNTIME_URL")), "tokenConfigured": bool(os.environ.get("GRAPHHELM_TOKEN_FILE")), "declaredNodeId": bound[4] if bound else None, "keelContextOptIn": os.environ.get("GRAPHHELM_KEEL_CONTEXT") == "1"}, "localObservations": observed, "truncated": truncated, "skippedStateFiles": skipped, "activation": "unobserved"}, separators=(",", ":")))
+    report = {"phase": "inspect", "host": host, "sessionId": session, "configured": {"executionId": bound[0] if bound else None, "runtimeConfigured": bool(os.environ.get("GRAPHHELM_RUNTIME_URL")), "tokenConfigured": bool(os.environ.get("GRAPHHELM_TOKEN_FILE")), "declaredNodeId": bound[4] if bound else None, "keelContextOptIn": os.environ.get("GRAPHHELM_KEEL_CONTEXT") == "1"}, "localObservations": observed, "truncated": truncated, "skippedStateFiles": skipped, "activation": "unobserved"}
+    if output_format == "portable":
+        report["format"] = "graphhelm-portable-v1"
+    print(json.dumps(report, separators=(",", ":")))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=("start", "end", "inspect"))
-    parser.add_argument("--host", choices=("claude", "codex"), required=True)
+    parser.add_argument("--host", type=_host, required=True)
+    parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
     args = parser.parse_args()
+    host = args.host
+    output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
+    if host in {"claude", "codex"} and output_format == "portable":
+        raise SystemExit("portable format is for third-party hosts")
+    if host not in {"claude", "codex"} and output_format == "native":
+        raise SystemExit("native format is reserved for Claude and Codex")
     try:
         if args.phase == "inspect":
-            inspect(args.host, args.session_id)
+            inspect(host, args.session_id, output_format)
         else:
             payload = hook_input()
             if args.phase == "start":
-                start(payload, args.host)
+                start(payload, host, output_format)
             else:
-                end(payload, args.host)
+                delivered = end(payload, host, output_format)
+                if output_format == "portable":
+                    print(json.dumps({"phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
     except (OSError, ValueError, KeyError, RecursionError) as error:
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
         if args.phase == "inspect":
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))
             return 1
         if args.phase == "start":
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
+            if output_format == "portable":
+                print(json.dumps({"phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
+            else:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
+        elif output_format == "portable":
+            print(json.dumps({"phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
     return 0
 
 

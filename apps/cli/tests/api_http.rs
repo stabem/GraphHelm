@@ -2177,44 +2177,60 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     let keyring = directory.path().join("keyring");
     create_signal_keyring(&keyring);
     let graph = root().join("examples/graphs/software-feature.yaml");
-    let graph_hash = cli(&["graph", "hash", graph.to_str().unwrap()])["data"]["hash"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args([
-            "execution",
-            "start",
-            "--file",
-            graph.to_str().unwrap(),
-            "--events",
-            events.to_str().unwrap(),
-            "--mode",
-            "supervised",
-            "--execution",
-            "exec_feature",
-            "--held",
-            "--keyring",
-            keyring.to_str().unwrap(),
-            "--key-id",
-            "signal-key",
-        ])
-        .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
-        .output()
-        .unwrap();
-    assert!(
-        start.status.success(),
-        "{}",
-        String::from_utf8_lossy(&start.stdout)
+    let credential = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let assigned_credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wrong_credential = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let binding = format!(
+        "{credential}=agent-planner|project-local|exec_feature;{assigned_credential}=agent-z|project-local|exec_feature;{wrong_credential}=agent-other|project-local|exec_feature"
     );
-
+    let extra = [
+        "--keyring",
+        keyring.to_str().unwrap(),
+        "--key-id",
+        "signal-key",
+    ];
+    let (guard, base, owner_token) = serve_with_env(
+        &events,
+        &extra,
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+    let (start_status, start_reply) = post_json(
+        &format!("{base}/v1/executions/exec_feature/start"),
+        &owner_token,
+        &[
+            ("Idempotency-Key", "governed-start-1"),
+            ("X-GraphHelm-Actor", "owner-observer"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(),
+            "mode": "supervised",
+            "held": true
+        }),
+    );
+    assert_eq!(start_status, 200, "{start_reply}");
+    let start_events = get_json(
+        &format!("{base}/v1/executions/exec_feature/events?limit=100"),
+        Some(&owner_token),
+    );
+    let graph_hash = start_events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|event| event["kind"]["data"]["graphHash"].as_str())
+        .unwrap();
     let draft = serde_json::json!({
         "id": "draft-http-two-node",
         "expectedVersion": 1,
         "expectedHash": graph_hash,
         "operations": [
-            {"op": "patchNode", "path": "/spec/nodes/implementation/objective", "value": "review implementation"},
-            {"op": "patchNode", "path": "/spec/nodes/deploy/objective", "value": "review deploy"}
+            {"op": "addNode", "path": "/spec/nodes/a-step", "value": {"type": "agent", "name": "A step", "objective": "Review A", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review A", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://TaskRequest@1", "outputSchema": "schema://RepositoryMap@1", "instructions": "Review A", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
+            {"op": "addNode", "path": "/spec/nodes/z-step", "value": {"type": "agent", "name": "Z step", "objective": "Review Z", "optionality": "required", "agent": {"ephemeral": {"purpose": "Review Z", "capabilities": ["repository.read"], "allowedTools": ["repository.read"], "prohibitedActions": ["repository.write"], "inputSchema": "schema://TaskRequest@1", "outputSchema": "schema://RepositoryMap@1", "instructions": "Review Z", "completionContract": {"requires": ["source_locations"]}, "isolationMinimum": "tier_0"}}, "completion": {"requires": [{"outputSchemaValid": true}]}, "timeoutSeconds": 900}},
+            {"op": "addEdge", "value": {"id": "implementation-to-a-step", "from": "implementation", "to": "a-step", "type": "data"}},
+            {"op": "addEdge", "value": {"id": "a-step-to-z-step", "from": "a-step", "to": "z-step", "type": "data"}}
         ]
     });
     let signal = serde_json::json!({
@@ -2227,25 +2243,6 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
         "emittedAt": "2026-08-13T00:00:00Z",
         "proposal": draft
     });
-    let credential = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-    let wrong_credential = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
-    let binding = format!(
-        "{credential}=agent-planner|project-local|exec_feature;{wrong_credential}=agent-other|project-local|exec_feature"
-    );
-    let extra = [
-        "--keyring",
-        keyring.to_str().unwrap(),
-        "--key-id",
-        "signal-key",
-    ];
-    let (_guard, base, owner_token) = serve_with_env(
-        &events,
-        &extra,
-        &[
-            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
-            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
-        ],
-    );
     let (signal_status, signal_reply) = post_json(
         &format!("{base}/v1/executions/exec_feature/signal"),
         credential,
@@ -2266,10 +2263,10 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     let proposal_digest = proposed["kind"]["data"]["proposalSha256"].as_str().unwrap();
     let draft_id = proposed["kind"]["data"]["draftId"].as_str().unwrap();
     let body = serde_json::json!({
-        "node": "implementation",
+        "node": "z-step",
         "proposalDigest": proposal_digest,
         "draftId": draft_id,
-        "assignments": {"implementation": "agent-planner"}
+        "assignments": {"a-step": "agent-planner", "z-step": "agent-z"}
     });
     let headers = [
         ("Idempotency-Key", "governed-approve-1"),
@@ -2288,7 +2285,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
     let delivery = serde_json::json!({
         "signal": {
             "id": "signal-http-delivery-denied",
-            "source": {"type": "node", "id": "implementation"},
+            "source": {"type": "node", "id": "z-step"},
             "type": "node_delivery",
             "severity": "high",
             "description": "delivery from the assigned implementation node",
@@ -2312,14 +2309,14 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
 
     let (assigned_status, assigned_reply) = post_json(
         &format!("{base}/v1/executions/exec_feature/signal"),
-        credential,
+        assigned_credential,
         &[("Idempotency-Key", "delivery-assigned-agent")],
         &delivery,
     );
     assert_eq!(assigned_status, 200, "{assigned_reply}");
     let delivered_head = head_sequence(&base, &owner_token, "exec_feature");
     assert!(delivered_head > head);
-    drop(_guard);
+    drop(guard);
 
     let (_guard, base, owner_token) = serve_with_env(
         &events,

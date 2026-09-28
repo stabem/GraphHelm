@@ -2080,11 +2080,20 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     let fixtures = all_success_fixtures(directory.path());
     cli_start(&events, &fixtures, execution);
 
-    let (_guard, base, token) = serve(&events);
-    let evidence_out = directory.path().join("evidence.json");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-1", "no_progress"),
-        "evidenceOut": evidence_out.to_str().unwrap(),
     });
 
     let (status, reply) = post_json(
@@ -2102,12 +2111,8 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(reply["data"]["decision"], "requires_approval");
     assert_eq!(reply["data"]["mayProposeMutation"], true);
     assert_eq!(reply["data"]["signalId"], "signal-http-1");
-    assert!(
-        evidence_out.exists(),
-        "the admitted signal's evidence must still be externalized over the API path"
-    );
-
     let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert!(!event["evidenceRefs"].as_array().unwrap().is_empty());
     assert_eq!(event["actor"]["type"], "agent");
     assert_eq!(event["actor"]["id"], "agent-planner");
 }
@@ -2126,14 +2131,23 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
 
     let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
     let (_guard, base, _owner_token) = serve_with_env(
         &events,
-        &[],
-        &[("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str())],
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
     );
     let body = serde_json::json!({
         "signal": signal_envelope("signal-http-scoped-agent", "no_progress"),
-        "evidenceOut": directory.path().join("scoped-evidence.json").to_str().unwrap(),
     });
     let url = format!("{base}/v1/executions/{execution}/signal");
     let headers = [
@@ -2141,6 +2155,15 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
         ("X-GraphHelm-Actor", "owner-forged"),
         ("X-GraphHelm-Actor-Type", "owner"),
     ];
+    let forbidden_path = directory.path().join("scoped-evidence.json");
+    let before = head_sequence(&base, credential, execution);
+    let mut forbidden_body = body.clone();
+    forbidden_body["evidenceOut"] = serde_json::json!(forbidden_path);
+    let (denied_status, denied_reply) = post_json(&url, credential, &headers, &forbidden_body);
+    assert_eq!(denied_status, 400, "{denied_reply}");
+    assert_eq!(denied_reply["diagnostics"][0]["path"], "/evidenceOut");
+    assert_eq!(head_sequence(&base, credential, execution), before);
+    assert!(!forbidden_path.exists());
     let (status, reply) = post_json(&url, credential, &headers, &body);
     assert_eq!(status, 200, "{reply}");
     let event = last_event_of_kind(&base, credential, execution, "signal_recorded");

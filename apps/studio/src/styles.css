@@ -2832,6 +2832,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .proposal-review {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 10px 13px 0;
   padding: 12px;
   border: 1px solid var(--edge);

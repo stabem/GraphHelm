@@ -33,6 +33,12 @@ const ROSTER = event(2, "execution_form_declared", {
   nodeIds: ["deploy", "implementation"],
 });
 
+function authoringSnapshot(graphHash: string, graphVersion = 13): RuntimeEvent {
+  return event(3, "graph_authoring_snapshot_stored", {
+    executionId: "demo", graphVersion, graphHash,
+  });
+}
+
 const SNAPSHOT = event(2, "execution_form_declared", {
   executionId: "demo",
   nodeIds: ["implementation", "deploy"],
@@ -93,12 +99,12 @@ describe("published governed topology", () => {
         },
       },
     });
-    const verified = topologyFromJournal([STARTED, ROSTER, published]);
+    const verified = topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), published]);
     expect(verified?.match).toBe("matched");
     expect(verified?.edges.map((edge) => edge.id)).toEqual(["implementation_to_deploy"]);
 
     const wrong = { ...published, payload: { version: { ...(published.payload as { version: object }).version, semanticHash: OTHER_HASH } } };
-    expect(topologyFromJournal([STARTED, ROSTER, wrong])?.match).toBe("unverified");
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), wrong])?.match).toBe("unverified");
   });
 
   /** Observable contract: a governed successor may have a new semantic hash, but only its exact
@@ -120,11 +126,25 @@ describe("published governed topology", () => {
         topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {}, deploy: {}, verify: {} }, edges: [{ id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" }] },
       },
     });
-    expect(topologyFromJournal([STARTED, ROSTER, initial, accepted, successor])?.edges).toEqual([
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), initial, accepted, successor])?.edges).toEqual([
       { id: "deploy_to_verify", from: "deploy", to: "verify", type: "data" },
     ]);
     const forged = { ...successor, payload: { version: { ...(successor.payload as { version: Record<string, unknown> }).version, predecessor: { number: 13, semanticHash: OTHER_HASH } } } };
-    expect(topologyFromJournal([STARTED, ROSTER, initial, accepted, forged])?.match).toBe("unverified");
+    expect(topologyFromJournal([STARTED, ROSTER, authoringSnapshot(RUN_HASH), initial, accepted, forged])?.match).toBe("unverified");
+  });
+
+  /** Observable contract: the authoring hash recorded at start may differ from the safe published
+   * hash. This catches conflating the two domains and rejecting every real governed genesis. */
+  it("anchors governed genesis to its safe snapshot hash", () => {
+    const authoringHash = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const safeHash = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    const started = event(1, "execution_started", { executionId: "demo", graphHash: authoringHash, graphVersion: 13 });
+    const published = event(4, "graph_version_published", {
+      version: { number: 13, semanticHash: safeHash, predecessor: null,
+        topology: { executionId: "demo", entrypoints: ["implementation"], nodes: { implementation: {} }, edges: [] } },
+    });
+    expect(topologyFromJournal([started, ROSTER, authoringSnapshot(safeHash), published])?.match).toBe("matched");
+    expect(topologyFromJournal([started, ROSTER, authoringSnapshot(authoringHash), published])?.match).toBe("unverified");
   });
 });
 

@@ -99,7 +99,14 @@ function publishedTopologyFromJournal(
   const graphVersion = typeof start.graphVersion === "number" ? start.graphVersion : null;
   if (executionId === null || graphHash === null || graphVersion === null) return null;
   const acceptedVersions = new Set<number>();
+  const safeGenesisHashes = new Map<number, string>();
   for (const event of events) {
+    if (event.kind === "graph_authoring_snapshot_stored" && event.payload !== null && typeof event.payload === "object") {
+      const snapshot = event.payload as Record<string, unknown>;
+      if (snapshot.executionId === executionId && typeof snapshot.graphVersion === "number" && typeof snapshot.graphHash === "string") {
+        safeGenesisHashes.set(snapshot.graphVersion, snapshot.graphHash);
+      }
+    }
     if (event.kind !== "mutation_accepted" && event.kind !== "draft_applied") continue;
     if (event.payload === null || typeof event.payload !== "object") continue;
     const payload = event.payload as Record<string, unknown>;
@@ -126,7 +133,9 @@ function publishedTopologyFromJournal(
     if (seen.has(number)) return false;
     const version = versions.get(number);
     if (version === undefined) return false;
-    if (number === graphVersion) return version.hash === graphHash;
+    // execution_started.graphHash identifies the authoring input. Governed publication has a
+    // separate safe semantic hash, bound by its sibling authoring snapshot event.
+    if (number === graphVersion) return safeGenesisHashes.get(number) === version.hash;
     if (!acceptedVersions.has(number) || version.predecessor === null) return false;
     const predecessor = versions.get(version.predecessor.number);
     return predecessor !== undefined && predecessor.hash === version.predecessor.hash && validChain(version.predecessor.number, new Set([...seen, number]));

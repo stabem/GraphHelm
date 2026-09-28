@@ -121,6 +121,11 @@ class SessionHookTests(unittest.TestCase):
             (SCRIPT.parent / "codex-hooks.json").read_bytes(),
             (companion / "hooks" / "codex-hooks.json").read_bytes(),
         )
+        # Codex 0.157.1 enforces this external host cap, even for larger declarations.
+        codex_hooks = json.loads((companion / "hooks" / "codex-hooks.json").read_text())
+        for matcher in codex_hooks["hooks"]["SessionEnd"]:
+            for handler in matcher["hooks"]:
+                self.assertLessEqual(handler["timeout"], 3)
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):

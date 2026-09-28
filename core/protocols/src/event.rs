@@ -3,11 +3,11 @@ use std::{collections::BTreeMap, fmt};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ActorId, ArtifactReference, CustomsBudgets, EventHash, EvidenceId, EvidenceReference,
-    ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType, OpaqueId, PersistedActor,
-    PersistedActorType, PersistedDiagnostic, PersistedGraphVersion, PersistedTimestamp,
-    PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity, SignalSeverity,
-    SignalSourceKind, SimulationStatus, WireHash,
+    ActorId, ArtifactReference, CustomsBudgets, DreamShadowRecorded, EventHash, EvidenceId,
+    EvidenceReference, ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType, OpaqueId,
+    PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersion,
+    PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
+    SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -188,7 +188,7 @@ impl EventEnvelope {
     }
 }
 
-/// The closed set of 26 replay-safe production events.
+/// The closed set of replay-safe production events.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
@@ -197,6 +197,7 @@ pub enum EventKind {
     MemoryAdmissionRefused(MemoryAdmissionRefused),
     MemoryPublicationTransitioned(MemoryPublicationTransitioned),
     MemoryRecordSuperseded(MemoryRecordSuperseded),
+    DreamShadowRecorded(DreamShadowRecorded),
     GraphVersionPublished(Box<GraphVersionPublished>),
     GraphAuthoringSnapshotStored(GraphAuthoringSnapshotStored),
     DraftProposed(DraftProposed),
@@ -421,6 +422,7 @@ wire_names! {
     MemoryAdmissionRefused => "memory_admission_refused",
     MemoryPublicationTransitioned => "memory_publication_transitioned",
     MemoryRecordSuperseded => "memory_record_superseded",
+    DreamShadowRecorded => "dream_shadow_recorded",
     GraphVersionPublished => "graph_version_published",
     GraphAuthoringSnapshotStored => "graph_authoring_snapshot_stored",
     DraftProposed => "draft_proposed",
@@ -476,6 +478,7 @@ impl EventKind {
                 | Self::MemoryAdmissionRefused(_)
                 | Self::MemoryPublicationTransitioned(_)
                 | Self::MemoryRecordSuperseded(_)
+                | Self::DreamShadowRecorded(_)
                 | Self::EvidenceErasureRequested(_)
                 | Self::EvidenceErasureCompleted(_)
                 | Self::EvidenceCiphertextDeleted(_)

@@ -2,6 +2,8 @@
 
 use axum::http::StatusCode;
 use graphhelm_protocols::{DevelopmentRefusalCode, Diagnostic};
+use std::io::Read;
+use std::path::Path;
 
 use crate::output::Outcome;
 
@@ -256,6 +258,185 @@ pub fn run_memory_propose() -> Outcome {
     };
 
     Outcome::success("development.memory-propose", verdict)
+}
+
+/// Run one explicit bounded Dreams shadow. The input is hashed before any result is emitted;
+/// only the digest and safe metadata cross the event boundary.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn run_dream_shadow(
+    input: &Path,
+    trigger: &str,
+    category: &str,
+    run_id: &str,
+    planner_id: &str,
+    critic_id: &str,
+    reject: bool,
+    events: Option<&Path>,
+) -> Outcome {
+    let file = match std::fs::File::open(input) {
+        Ok(file) => file,
+        Err(_) => return dream_refusal("input_empty", "shadow input could not be read"),
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take((graphhelm_protocols::MAX_DREAM_INPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return dream_refusal("input_empty", "shadow input could not be read");
+    }
+    if bytes.is_empty() {
+        return dream_refusal("input_empty", "shadow input is empty");
+    }
+    if bytes.len() > graphhelm_protocols::MAX_DREAM_INPUT_BYTES {
+        return dream_refusal("input_too_large", "shadow input exceeds the bounded limit");
+    }
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return dream_refusal("input_empty", "shadow input is not valid JSON"),
+    };
+    let canonical = graphhelm_protocols::canonical_json(&value);
+    let input_sha256 = match graphhelm_graph::raw_content_sha256(canonical.as_bytes()) {
+        Ok(digest) => digest,
+        Err(_) => return dream_refusal("input_empty", "shadow input could not be hashed"),
+    };
+    let trigger = match trigger {
+        "manual" => graphhelm_protocols::DreamTrigger::Manual,
+        "idle" => graphhelm_protocols::DreamTrigger::Idle,
+        "incident" => graphhelm_protocols::DreamTrigger::Incident,
+        _ => return dream_refusal("input_empty", "unknown shadow trigger"),
+    };
+    let category = match category {
+        "memory_expiry" => graphhelm_protocols::DreamCategory::MemoryExpiry,
+        "conflict_report" => graphhelm_protocols::DreamCategory::ConflictReport,
+        "retrieval_optimization" => graphhelm_protocols::DreamCategory::RetrievalOptimization,
+        "code_finding" => graphhelm_protocols::DreamCategory::CodeFinding,
+        _ => return dream_refusal("input_empty", "unknown shadow category"),
+    };
+    let parse_id = |value: &str| {
+        graphhelm_protocols::OpaqueId::parse(value)
+            .map_err(|_| dream_refusal("input_empty", "shadow identity is invalid"))
+    };
+    let run_id = match parse_id(run_id) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let planner_id = match parse_id(planner_id) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let critic_id = match parse_id(critic_id) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let scope = graphhelm_protocols::RepositoryScope::new(
+        graphhelm_protocols::WorkspaceId::parse("workspace-local")
+            .expect("constant scope is valid"),
+        graphhelm_protocols::ProjectId::parse("project-local").expect("constant scope is valid"),
+        None,
+    );
+    let evidence_sha256 = match value.get("evidenceSha256") {
+        Some(value) => match value.as_array() {
+            Some(items) => match items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .and_then(|item| graphhelm_protocols::RawSha256::parse(item).ok())
+                })
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(items) => items,
+                None => return dream_refusal("missing_evidence", "evidence digest is invalid"),
+            },
+            None => return dream_refusal("missing_evidence", "evidence digest list is invalid"),
+        },
+        None => Vec::new(),
+    };
+    let finding_sha256 = match value.get("findingSha256") {
+        Some(value) => match value
+            .as_str()
+            .and_then(|item| graphhelm_protocols::RawSha256::parse(item).ok())
+        {
+            Some(value) => Some(value),
+            None => return dream_refusal("task_mapping_missing", "finding digest is invalid"),
+        },
+        None => None,
+    };
+    let task_id = graphhelm_protocols::OpaqueId::parse(format!("task-{}", run_id.as_str())).ok();
+    let request = graphhelm_governor::DreamShadowRequest {
+        run_id: run_id.clone(),
+        scope: scope.clone(),
+        trigger,
+        category,
+        input_bytes: canonical.len(),
+        input_sha256,
+        evidence_sha256,
+        planner_id,
+        critic_id,
+        critic_verdict: if reject {
+            graphhelm_protocols::DreamCriticVerdict::Rejected
+        } else {
+            graphhelm_protocols::DreamCriticVerdict::Accepted
+        },
+        write_critical: value
+            .get("writeCritical")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        finding_sha256,
+        task_id,
+    };
+    let result = graphhelm_governor::evaluate_dream_shadow(&request, &scope);
+    let event = match events {
+        Some(path) => match append_dream_result(path, &scope, &run_id, &result) {
+            Ok(event) => Some(event),
+            Err(_) => return dream_refusal("input_empty", "shadow result could not be appended"),
+        },
+        None => None,
+    };
+    Outcome::success(
+        "development.dream-shadow",
+        serde_json::json!({
+            "runId": result.run_id,
+            "outcome": result.outcome,
+            "validationCode": result.validation_code,
+            "criticVerdict": result.critic_verdict,
+            "taskRequest": result.task_request,
+            "event": event,
+        }),
+    )
+}
+
+fn append_dream_result(
+    path: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    run_id: &graphhelm_protocols::OpaqueId,
+    result: &graphhelm_protocols::DreamShadowRecorded,
+) -> Result<serde_json::Value, graphhelm_events::EventRepositoryError> {
+    let store = super::event_store(path)?;
+    let actor = graphhelm_protocols::PersistedActor::new(
+        graphhelm_protocols::PersistedActorType::Agent,
+        graphhelm_protocols::ActorId::parse("dream-cli")
+            .map_err(|_| graphhelm_events::EventRepositoryError::Invalid)?,
+    );
+    let events = graphhelm_governor::record_dream_shadow(
+        &store,
+        scope.clone(),
+        run_id.clone(),
+        store.next_sequence(scope, run_id.as_str())?,
+        run_id.clone(),
+        actor,
+        result.clone(),
+    )?;
+    serde_json::to_value(events.first())
+        .map_err(|_| graphhelm_events::EventRepositoryError::Invalid)
+}
+
+fn dream_refusal(code: &str, message: &str) -> Outcome {
+    Outcome::domain(
+        "development.dream-shadow",
+        vec![Diagnostic::error(code, message, "/input", "dream-shadow")],
+    )
 }
 
 /// Report a context-accounting receipt, over the CLI surface.

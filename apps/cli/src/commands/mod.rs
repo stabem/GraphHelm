@@ -152,6 +152,25 @@ pub fn run(command: TopLevel) -> Outcome {
             DevelopmentCommand::MemoryStatus => development::run_memory_status(),
             DevelopmentCommand::Present => development::run_present(),
             DevelopmentCommand::MemoryPropose => development::run_memory_propose(),
+            DevelopmentCommand::DreamShadow {
+                input,
+                trigger,
+                category,
+                run_id,
+                planner_id,
+                critic_id,
+                reject,
+                events,
+            } => development::run_dream_shadow(
+                &input,
+                &trigger,
+                &category,
+                &run_id,
+                &planner_id,
+                &critic_id,
+                reject,
+                events.as_deref(),
+            ),
             DevelopmentCommand::CompileContext { budget, require } => {
                 development::run_compile_context(budget, &require)
             }

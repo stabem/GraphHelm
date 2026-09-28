@@ -1604,6 +1604,30 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             true,
         ),
         (
+            "dream_shadow_recorded",
+            json!({
+                "runId": "dream-run-1",
+                "scope": {"workspaceId": "workspace-1", "projectId": "project-1"},
+                "trigger": "manual",
+                "category": "code_finding",
+                "inputSha256": raw_digest(),
+                "evidenceSha256": [raw_digest()],
+                "outcome": "advisory_proposal",
+                "plannerId": "planner-1",
+                "criticId": "critic-1",
+                "criticVerdict": "accepted",
+                "taskRequest": {
+                    "taskId": "task-dream-1",
+                    "dreamRunId": "dream-run-1",
+                    "scope": {"workspaceId": "workspace-1", "projectId": "project-1"},
+                    "findingSha256": raw_digest(),
+                    "evidenceSha256": [raw_digest()],
+                    "origin": "dream_generated"
+                }
+            }),
+            true,
+        ),
+        (
             "graph_version_published",
             json!({"version": persisted_graph_version()}),
             false,

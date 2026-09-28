@@ -339,6 +339,28 @@ pub enum DevelopmentCommand {
     /// Propose content for governed memory and report the admission verdict (#220's admission,
     /// exposed here).
     MemoryPropose,
+    /// Run one explicit deterministic Dreams shadow and record its advisory result (#72).
+    DreamShadow {
+        /// Bounded JSON input describing the shadow snapshot.
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value = "manual")]
+        trigger: String,
+        #[arg(long, default_value = "code_finding")]
+        category: String,
+        #[arg(long, default_value = "dream-run")]
+        run_id: String,
+        #[arg(long, default_value = "dream-planner")]
+        planner_id: String,
+        #[arg(long, default_value = "independent-critic")]
+        critic_id: String,
+        /// Refuse the proposal at the independent critic step.
+        #[arg(long)]
+        reject: bool,
+        /// Optional local event-store directory for the append-only result.
+        #[arg(long)]
+        events: Option<PathBuf>,
+    },
     /// Report a context-accounting receipt (#222/#273's accounting types, exposed here).
     Accounting,
 }

@@ -2839,3 +2839,19 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .proposal-review strong { color: var(--text); }
 .proposal-review code { font-family: var(--mono); overflow-wrap: anywhere; }
+
+.turn-details {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.turn-details code {
+  display: block;
+  margin-top: 4px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--faint);
+}

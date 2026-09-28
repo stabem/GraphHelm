@@ -1,15 +1,15 @@
 {
   "mcpServers": {
     "graphhelm": {
-      "command": "${GRAPHHELM_CLI}",
+      "command": "${GRAPHHELM_CLI:-graphhelm}",
       "args": [
         "mcp",
         "--url",
-        "http://127.0.0.1:8791",
+        "${GRAPHHELM_RUNTIME_URL:-http://127.0.0.1:8791}",
         "--token-file",
         "${GRAPHHELM_TOKEN_FILE}",
         "--actor",
-        "${GRAPHHELM_ACTOR}"
+        "agent-chat"
       ]
     }
   }

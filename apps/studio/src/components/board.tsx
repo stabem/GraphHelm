@@ -825,7 +825,7 @@ export function Board({
           * waived, skipped) over nodes declared. Per-node progress does not exist in the log. */}
         {runId !== undefined && model.nodes.length > 0 && (() => {
           const done = model.nodes.filter(
-            (node) => node.state === "succeeded" || node.state === "waived" || node.state === "skipped",
+            (node) => (node.state === "succeeded" || node.state === "waived" || node.state === "skipped") && nodeStatusLabel(node) !== "review needed",
           ).length;
           const total = model.nodes.length;
           // The run's own pulse line: the newest instant any node reported, straight off the

@@ -227,6 +227,8 @@ export interface MutationOptions {
   /** Reused verbatim across retries of the SAME logical action. Minted per action when absent. */
   idempotencyKey?: string;
   actor?: Actor;
+  /** Exact proposal identity and assigned responsible actor for governed ghost approval. */
+  governed?: { draftId: string; proposalDigest: string; assignments: Record<string, string> };
 }
 
 interface RequestOptions {
@@ -1339,11 +1341,26 @@ export class RuntimeClient {
   /** `POST /v1/executions/{id}/approve` - readies a blocked or ghost node. */
   async approve(executionId: string, node: string, options: MutationOptions = {}): Promise<MutationEvidence> {
     const nodeId = checkedId(node, "node");
+    const body: Record<string, unknown> = { node: nodeId };
+    if (options.governed !== undefined) {
+      if (!/^sha256:[0-9a-f]{64}$/.test(options.governed.proposalDigest)) {
+        throw new RuntimeError("proposalDigest must be sha256:<64 lowercase hex>.", 0, []);
+      }
+      body.draftId = checkedId(options.governed.draftId, "draftId");
+      body.proposalDigest = options.governed.proposalDigest;
+      const assignments = Object.fromEntries(Object.entries(options.governed.assignments).map(([nodeId, actorId]) => [
+        checkedId(nodeId, "assignment node"), checkedId(actorId, "assignment actor"),
+      ]));
+      if (Object.keys(assignments).length === 0) {
+        throw new RuntimeError("assignments must name at least one proposed node.", 0, []);
+      }
+      body.assignments = assignments;
+    }
     return this.#verifiedMutation(
       "approve",
       executionId,
       `/v1/executions/${encodeURIComponent(checkedId(executionId, "executionId"))}/approve`,
-      { node: nodeId },
+      body,
       nodeId,
       options,
     );

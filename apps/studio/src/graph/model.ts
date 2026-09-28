@@ -94,6 +94,7 @@ export interface GraphNode {
   proposal?: {
     draftId: string;
     digest: string | null;
+    evidenceId: string | null;
     status: "proposed" | "accepted" | "rejected" | "unavailable";
     reason: string | null;
   } | null;
@@ -241,7 +242,7 @@ export function buildGraphModel(
   verified?: VerifiedTopology | null,
 ): GraphModel {
   const nodes = new Map<string, GraphNode>();
-  const proposals = new Map<string, { digest: string | null; status: "proposed" | "accepted" | "rejected" | "unavailable"; reason: string | null }>();
+  const proposals = new Map<string, { digest: string | null; evidenceId: string | null; status: "proposed" | "accepted" | "rejected" | "unavailable"; reason: string | null }>();
   const proposalNodes = new Map<string, string>();
   let rosterDeclared = false;
 
@@ -277,6 +278,7 @@ export function buildGraphModel(
         if (draftId !== null) {
           proposals.set(draftId, {
             digest: typeof value.proposalSha256 === "string" ? value.proposalSha256 : null,
+            evidenceId: event.evidenceRefs[0] ?? null,
             status: "proposed",
             reason: null,
           });
@@ -290,7 +292,7 @@ export function buildGraphModel(
         const value = payload as Record<string, unknown>;
         const draftId = typeof value.draftId === "string" ? value.draftId : null;
         if (draftId !== null) {
-          const previous = proposals.get(draftId) ?? { digest: null, status: "rejected" as const, reason: null };
+          const previous = proposals.get(draftId) ?? { digest: null, evidenceId: null, status: "rejected" as const, reason: null };
           proposals.set(draftId, {
             ...previous,
             status: "rejected",
@@ -351,7 +353,7 @@ export function buildGraphModel(
         const draftId = typeof value.draftId === "string" ? value.draftId : null;
         if (draftId !== null) {
           proposalNodes.set(id, draftId);
-          const proposal = proposals.get(draftId) ?? { digest: null, status: "unavailable" as const, reason: "proposal descriptor unavailable" };
+          const proposal = proposals.get(draftId) ?? { digest: null, evidenceId: null, status: "unavailable" as const, reason: "proposal descriptor unavailable" };
           node.proposal = { draftId, ...proposal };
         }
       }

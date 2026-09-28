@@ -326,6 +326,27 @@ describe("verified mutations", () => {
     expect(evidence.actor).toEqual(WEBMCP_ACTOR);
   });
 
+  /** Observable contract: governed approval posts the exact reviewed draft, digest, and assigned
+   * actor. It catches the plausible defect of reusing the legacy node-only body, which could
+   * approve a different proposal. Existing approval coverage only asserts that legacy body. */
+  it("sends the exact governed proposal identity and assignment", async () => {
+    const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const { fetchImpl, calls } = scriptedFetch([
+      { match: (call) => call.method === "POST", reply: ok({ headSequence: 15 }, "execution.approve") },
+      { match: (call) => call.url.includes("/events"), reply: ok({ head: 15, events: [{ sequence: 15, kind: { type: "node_outcome_recorded", data: { nodeId: "review", outcome: "approved" } }, actor: { id: OPERATOR_ACTOR.id, type: OPERATOR_ACTOR.type }, idempotencyKey: "fixed-key-1-outcome-0123456789abcdef" }] }, "execution.events") },
+      { match: () => true, reply: ok(statusData({ headSequence: 15, attention: "can_sleep" })) },
+    ]);
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await client.approve("demo", "review", {
+      actor: OPERATOR_ACTOR,
+      idempotencyKey: "fixed-key-1",
+      governed: { draftId: "draft-1", proposalDigest: digest, assignments: { review: "reviewer" } },
+    });
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({
+      node: "review", draftId: "draft-1", proposalDigest: digest, assignments: { review: "reviewer" },
+    });
+  });
+
   it("does not accept a pause key attached to the wrong event kind", async () => {
     let posted = false;
     const { fetchImpl } = scriptedFetch([

@@ -47,6 +47,25 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("review needed");
     expect(screen.getByRole("note")).toHaveTextContent("A finished step does not prove its goal passed");
   });
+  /** Observable contract: the operator can see the governed proposal's status, responsible actor,
+   * and next action in the actual Work view. This catches the practical defect of exposing the
+   * data only in the graph fold while leaving the primary task surface unusable. */
+  it("shows a governed proposal owner and review action", () => {
+    const ghost = {
+      ...node("review"),
+      state: "ghost",
+      touches: 1,
+      proposal: { draftId: "draft-1", digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", evidenceId: null, status: "proposed" as const, reason: null },
+      assignedActor: { type: "agent", id: "reviewer" },
+      history: [{ sequence: 4, kind: "ghost_node_proposed", nextState: "ghost", outcome: "proposed", occurredAt: null, actorId: "runtime", actorType: "system", evidence: 0 }],
+    };
+    render(<WorkOverview model={{ ...model, nodes: [ghost] }} selectedNode={null} onSelectNode={vi.fn()} />);
+    const card = screen.getByRole("button", { name: /Open node review/ });
+    expect(card).toHaveTextContent("Proposal proposed");
+    expect(card).toHaveTextContent("Responsible actor");
+    expect(card).toHaveTextContent("reviewer");
+    expect(card).toHaveTextContent("assignment is separate from the Runtime recorder");
+  });
   it("keeps a typed verified step distinct from an unverified model reply", () => {
     const verified = {
       ...node("review_browser_evidence"),

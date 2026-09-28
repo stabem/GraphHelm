@@ -342,7 +342,7 @@ describe("governed proposals", () => {
     ];
     const node = buildGraphModel(events as never).nodes[0];
     expect(node.state).toBe("ghost");
-    expect(node.proposal).toEqual({ draftId: "draft-1", digest: "sha256:draft", status: "proposed", reason: null });
+    expect(node.proposal).toEqual({ draftId: "draft-1", digest: "sha256:draft", evidenceId: null, status: "proposed", reason: null });
     expect(node.assignedActor).toEqual({ type: "agent", id: "reviewer" });
     expect(node.history.at(-1)?.actorId).toBe("system-actor");
   });

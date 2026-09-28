@@ -37,7 +37,7 @@ import {
 } from "./format";
 
 /** The one-line reading of an event, or `null` when nothing can be said plainly about it. */
-function describe(event: RuntimeEvent): string | null {
+export function describe(event: RuntimeEvent): string | null {
   const payload =
     event.payload !== null && typeof event.payload === "object"
       ? (event.payload as Record<string, unknown>)
@@ -73,6 +73,8 @@ function describe(event: RuntimeEvent): string | null {
       return mode === null ? "Changed the run's mode." : `Changed the run's mode to ${mode}.`;
     case "ghost_node_proposed":
       return node === null ? "Proposed a new node." : `Proposed ${node} as a new node.`;
+    case "graph_authoring_snapshot_stored":
+      return "Stored the sealed authoring snapshot used to verify this graph.";
     // Bookkeeping, said in words. These used to fall through to the raw-payload branch and a wake
     // lease rendered as `{"cursor":22,...}` between two human sentences (screenshot, 2026-08-30).
     // They stay in the thread - the log IS the thread - but in a voice, not a dump.
@@ -542,7 +544,10 @@ function Thread({
                               <code>{JSON.stringify(entry.payload)}</code>
                             </>
                           ) : (
-                            <p className="turn-text">{said}</p>
+                            <>
+                              <p className="turn-text">{said}</p>
+                              {entry.kind === "graph_authoring_snapshot_stored" && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(entry.payload)}</code></details>}
+                            </>
                           )}
                         </li>
                       );
@@ -630,7 +635,10 @@ function Thread({
                   <code>{JSON.stringify(event.payload)}</code>
                 </>
               ) : (
-                <p className="turn-text">{line}</p>
+                <>
+                  <p className="turn-text">{line}</p>
+                  {event.kind === "graph_authoring_snapshot_stored" && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>}
+                </>
               )}
               {/* A line that promises words ("Said:") and shows none is ambiguous between "the
                 * log holds nothing" and "the UI swallowed it". Elision is marked as elision. */}

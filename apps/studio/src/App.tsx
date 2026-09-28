@@ -65,7 +65,7 @@ import {
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, TalkPanel, actorsInRoom, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { ProjectRail } from "./components/rail";
@@ -1693,9 +1693,10 @@ export default function App({
         lastAt: lastHeard.get(id) ?? null,
         presence: presence[id] ?? null,
       })),
-      ...actorsInRoom(eventList, personas)
-        // The operator is the person AT this screen, not a blob on it.
-        .filter((id) => id !== OPERATOR_ACTOR.id)
+      ...[...new Set(eventList
+        .filter((event) => event.actorType === "agent" && event.actorId !== null)
+        .map((event) => event.actorId as string))]
+        .filter((id) => !personas[id])
         .map((id) => ({ id, charter: null, lastAt: lastHeard.get(id) ?? null, presence: presence[id] ?? null })),
     ];
   }, [eventList, personas]);

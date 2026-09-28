@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { awaitingReply, groupTurns, pinnedToLatest, resetPanelCaches, useEnvelopes } from "./panel";
+import { awaitingReply, describe as describeEvent, groupTurns, pinnedToLatest, resetPanelCaches, useEnvelopes } from "./panel";
 import type { EvidenceContent, RuntimeEvent } from "../runtime/types";
 
 function event(sequence: number, kind: string, payload: Record<string, unknown> = {}): RuntimeEvent {
@@ -17,6 +17,14 @@ function event(sequence: number, kind: string, payload: Record<string, unknown> 
     evidenceRefs: [],
   } as RuntimeEvent;
 }
+
+it("summarizes authoring snapshots instead of exposing their payload by default", () => {
+  const summary = describeEvent(event(8, "graph_authoring_snapshot_stored", {
+    executionId: "run", graphVersion: 3, graphHash: "sha256:safe",
+  }));
+  expect(summary).toMatch(/sealed authoring snapshot/i);
+  expect(summary).not.toContain("sha256:safe");
+});
 
 it("shows the newest sealed report while an older evidence read is still pending", async () => {
   resetPanelCaches();

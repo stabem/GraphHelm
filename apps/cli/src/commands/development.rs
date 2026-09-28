@@ -342,12 +342,7 @@ pub fn run_dream_shadow(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
-    let scope = graphhelm_protocols::RepositoryScope::new(
-        graphhelm_protocols::WorkspaceId::parse("workspace-local")
-            .expect("constant scope is valid"),
-        graphhelm_protocols::ProjectId::parse("project-local").expect("constant scope is valid"),
-        None,
-    );
+    let scope = super::execution::repository_scope();
     let evidence_sha256 = match value.get("evidenceSha256") {
         Some(value) => match value.as_array() {
             Some(items) => match items

@@ -216,6 +216,17 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
 ///
 /// # Errors
 /// [`Failure`] when `execution` is not a valid identifier.
+/// The same addressing rule as [`addressable_scope`] for records that belong to the local
+/// repository rather than to one execution stream (for example the Dreams shadow ledger). One
+/// home for the workspace and project literals, so the two constructions cannot drift apart.
+pub(crate) fn repository_scope() -> RepositoryScope {
+    RepositoryScope::new(
+        WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
+        ProjectId::parse(PROJECT).expect("constant project id is valid"),
+        None,
+    )
+}
+
 pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
     Ok(RepositoryScope::new(
         WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),

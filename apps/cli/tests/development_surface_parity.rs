@@ -149,7 +149,7 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 23] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 24] = [
     "start",
     "list",
     "topology",
@@ -160,6 +160,9 @@ const NON_DEVELOPMENT_TOOLS: [&str; 23] = [
     "evidence",
     "signal",
     "approve",
+    // Owner-only RUNTIME verb on an execution (names the responsible actor for a node), beside
+    // approve -- not a development operation.
+    "assign",
     "pause",
     "resume",
     "cancel",

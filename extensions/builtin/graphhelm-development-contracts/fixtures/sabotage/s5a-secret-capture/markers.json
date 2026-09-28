@@ -2,7 +2,7 @@
   "_safety": "Synthetic markers only. Each carries the SHAPE the detectors match; none is a credential and none authenticates anything.",
   "_measured_at": "origin/main",
   "_detectors": {
-    "memory": "core/governor/src/memory.rs:299  content_is_secret_shaped -> content.contains(\"ghp_\")",
+    "memory": "core/governor/src/memory.rs:313  content_is_secret_shaped -> content.contains(\"ghp_\")",
     "durable": "core/graph/src/persistence.rs:736 is_secret_shaped_counted -> 25 prefixes with tail minima + JWT + PEM + auth + env-URI + reference-name"
   },
   "markers": [

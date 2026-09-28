@@ -1,13 +1,13 @@
 //! Durable memory lifecycle events (#220).
 
 use graphhelm_protocols::{
-    EventKind, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, MemoryAdmissionRefused, NewEvent,
-    OpaqueId, PersistedActor, PersistedMemoryPublicationState,
+    EventKind, EvidenceReference, MemoryAdmissionLocal, MemoryAdmissionRefusalCode,
+    MemoryAdmissionRefused, NewEvent, OpaqueId, PersistedActor, PersistedMemoryPublicationState,
     PersistedMemoryPublicationTransition, PersistedMemorySemanticState,
     PersistedSupersessionReason, RepositoryScope, Sensitivity,
 };
 
-use crate::{EventRepositoryError, PreparedAppend};
+use crate::{EventRepositoryError, PreparedAppend, SealedEvidence};
 
 /// Complete bounded input for one atomic memory-admission refusal append.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +86,8 @@ pub struct MemoryPublicationTransitionAppend {
     record_id: OpaqueId,
     transition: PersistedMemoryPublicationTransition,
     resulting_state: PersistedMemoryPublicationState,
+    evidence_refs: Vec<EvidenceReference>,
+    sealed_evidence: Vec<SealedEvidence>,
 }
 
 impl MemoryPublicationTransitionAppend {
@@ -110,7 +112,23 @@ impl MemoryPublicationTransitionAppend {
             record_id,
             transition,
             resulting_state,
+            evidence_refs: Vec::new(),
+            sealed_evidence: Vec::new(),
         }
+    }
+
+    /// Attach the sealed Evidence that contains the memory content and typed expiry metadata.
+    #[must_use]
+    pub fn with_evidence(mut self, evidence: EvidenceReference) -> Self {
+        self.evidence_refs.push(evidence);
+        self
+    }
+
+    /// Include the already sealed payload in the same atomic append as its event reference.
+    #[must_use]
+    pub fn with_sealed_evidence(mut self, evidence: SealedEvidence) -> Self {
+        self.sealed_evidence.push(evidence);
+        self
     }
 }
 
@@ -138,10 +156,10 @@ pub fn prepare_memory_publication_transition(
                     resulting_state: move_.resulting_state,
                 },
             ),
-            vec![],
+            move_.evidence_refs,
             vec![],
         )],
-        vec![],
+        move_.sealed_evidence,
         vec![],
     )
 }

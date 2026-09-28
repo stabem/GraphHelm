@@ -382,6 +382,9 @@ pub struct MemoryRecordProjection {
     /// The predecessor this record supersedes, if this record has ever been named as a SUCCESSOR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<OpaqueId>,
+    /// Evidence references carried by publication events. Plaintext is never projected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<graphhelm_protocols::EvidenceReference>,
 }
 
 const fn is_zero(value: &u64) -> bool {
@@ -1348,6 +1351,7 @@ fn apply_projection_event(
             let record = projection.memory_records.entry(record_id).or_default();
             record.publication = Some(payload.resulting_state);
             record.last_transition_sequence = Some(event.sequence);
+            record.evidence_refs = event.evidence_refs.clone();
         }
         EventKind::MemoryRecordSuperseded(payload) => {
             let predecessor_id = payload.predecessor_id.to_string();

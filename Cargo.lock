@@ -1093,7 +1093,9 @@ dependencies = [
  "graphhelm-policy",
  "graphhelm-protocols",
  "graphhelm-schema",
+ "hex",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
 ]
 

@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use graphhelm_events::{EvidenceOpener, EvidenceRead, EvidenceRepository, ExecutionProjection};
 use graphhelm_protocols::{
     ArtifactBinding, CoverageState, DeclaredLimits, DevelopmentEnvelope, DevelopmentKind,
     DevelopmentRefusalCode, RETRIEVAL_COVERAGE_RECEIPT_API_VERSION,
@@ -12,6 +13,10 @@ use graphhelm_protocols::{
     RetrievalFallbackKind, RetrievalFallbackOutcome, RetrievalFallbackReceipt,
     RetrievalProviderBinding, RetrievalReceivedLimits, RetrievalStepBinding, SemanticVersion,
     SnapshotBinding, WireHash, canonical_json, development_api_version_major,
+};
+use graphhelm_protocols::{
+    DevelopmentScope, MemoryEvidenceEnvelope, PersistedMemoryPublicationState,
+    PersistedMemorySemanticState, RepositoryScope,
 };
 use graphhelm_tool_broker::record::{ToolCallRecord, ToolDisposition};
 use sha2::Digest as _;
@@ -46,6 +51,70 @@ pub struct IndexResponse {
     /// Counted by the side that DROVE the pagination, never reported by the provider. A page count
     /// taken from the thing being bounded is a self-report about the budget it is spending.
     pub pages: u32,
+}
+
+/// A memory item safe to place in an agent context after all lifecycle and Evidence checks pass.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DurableMemoryItem {
+    pub record_id: String,
+    pub content: String,
+}
+
+/// Retrieve durable memory after restart/replay. Every rejection is fail-closed and omitted from
+/// context: disabled callers pass `None`, while stale, expired, unpublished, withdrawn, semantic
+/// non-validated, missing, or digest-invalid records never become items.
+pub async fn retrieve_durable_memory(
+    enabled: bool,
+    scope: &RepositoryScope,
+    expected_scope: &DevelopmentScope,
+    projection: &ExecutionProjection,
+    now_unix: i64,
+    evidence: &dyn EvidenceRepository,
+    opener: &dyn EvidenceOpener,
+) -> Vec<DurableMemoryItem> {
+    if !enabled {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    for (record_id, record) in &projection.memory_records {
+        if record.publication != Some(PersistedMemoryPublicationState::Published)
+            || record.semantic != Some(PersistedMemorySemanticState::Validated)
+        {
+            continue;
+        }
+        let Some(reference) = record.evidence_refs.first() else {
+            continue;
+        };
+        let Ok(EvidenceRead::Available(sealed)) = evidence
+            .get_sealed(scope.clone(), reference.evidence_id().clone())
+            .await
+        else {
+            continue;
+        };
+        let Ok(plain) = opener.open(scope.clone(), &sealed).await else {
+            continue;
+        };
+        let envelope =
+            plain.expose(|bytes| serde_json::from_slice::<MemoryEvidenceEnvelope>(bytes).ok());
+        let Some(envelope) = envelope else { continue };
+        if !envelope.independently_validated
+            || &envelope.scope != expected_scope
+            || envelope.expires_at_unix <= now_unix
+        {
+            continue;
+        }
+        let digest = hex::encode(sha2::Sha256::digest(envelope.content.as_bytes()));
+        if digest != envelope.content_digest.as_str()
+            || sealed.reference().content_sha256().as_str() != envelope.content_digest.as_str()
+        {
+            continue;
+        }
+        items.push(DurableMemoryItem {
+            record_id: record_id.clone(),
+            content: envelope.content,
+        });
+    }
+    items
 }
 
 impl IndexResponse {

@@ -26,6 +26,15 @@ const OPERABLE: [&str; 6] = [
     "home/.claude/CLAUDE.md",
 ];
 
+/// The MCP registration surfaces `apply` accepts an operation on, guarded there by
+/// `protect_mcp_registration`: only the `graphhelm` server entry may change. They are classified
+/// `keep` (not instruction prose), so a replacement is an owner opt-in, never a required answer.
+const MCP_OPERABLE: [&str; 2] = ["project/.mcp.json", "home/.claude.json"];
+
+fn operable(id: &str) -> bool {
+    OPERABLE.contains(&id) || MCP_OPERABLE.contains(&id)
+}
+
 fn invalid() -> AdoptionError {
     AdoptionError {
         reason: AdoptionReason::InvalidConfiguration,
@@ -127,7 +136,7 @@ pub fn propose(inventory: &Value) -> Result<Value, AdoptionError> {
     let decisions = reviewed
         .iter()
         .map(|item| {
-            let operable = OPERABLE.contains(&item.id.as_str());
+            let operable = operable(&item.id);
             json!({
                 "host": item.host, "item": item.id, "kind": item.kind,
                 "decision": decision_name(item.decision),
@@ -165,7 +174,7 @@ pub fn propose(inventory: &Value) -> Result<Value, AdoptionError> {
                 "operableUnresolved": operable_unresolved,
             },
             "resolution": {
-                "instruction": "Every unresolved item needs an owner decision: --resolve <item>=keep or --resolve <item>=replace:<file with the reviewed bytes>. Only items marked operable can be replaced in this build. Write the result with --out; the private plan is what --apply takes.",
+                "instruction": "Every unresolved item needs an owner decision: --resolve <item>=keep, --resolve <item>=replace:<file with the reviewed bytes>, or --resolve <item>=graphhelm-block to add the marked GraphHelm + Keel block. An operable MCP surface (home/.claude.json, project/.mcp.json) may opt in with --resolve <item>=register-mcp. Only items marked operable can be replaced in this build. Write the result with --out; the private plan is what --apply takes.",
             }
         }
     }))
@@ -186,7 +195,12 @@ pub fn resolve(inventory: &Value, resolutions: &[Resolution]) -> Result<Value, A
             .iter()
             .find(|item| item.id == resolution.item)
             .ok_or_else(review_required)?;
-        if item.decision != Decision::Unresolved || !answered.insert(item.id.clone()) {
+        // An MCP surface is `keep` by classification; the owner may still opt in to a replacement
+        // of it. Any other `keep` item is not a question and cannot be answered.
+        let opt_in = item.decision == Decision::Keep
+            && MCP_OPERABLE.contains(&item.id.as_str())
+            && resolution.decision == Decision::Replace;
+        if (item.decision != Decision::Unresolved && !opt_in) || !answered.insert(item.id.clone()) {
             return Err(review_required());
         }
         // `decision_allowed` bounds the CLASSIFIER, which may only keep or defer a protected
@@ -196,7 +210,7 @@ pub fn resolve(inventory: &Value, resolutions: &[Resolution]) -> Result<Value, A
         match resolution.decision {
             Decision::Keep => kept.push(json!({"item": item.id, "decision": "keep"})),
             Decision::Replace => {
-                if !OPERABLE.contains(&item.id.as_str()) {
+                if !operable(&item.id) {
                     return Err(invalid());
                 }
                 let after = resolution.after.as_deref().ok_or_else(review_required)?;

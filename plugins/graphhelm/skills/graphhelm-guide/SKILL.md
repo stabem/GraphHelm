@@ -10,3 +10,7 @@ Read the bundled [GraphHelm guide](../../README.md) and explain only the parts r
 Use the guide's left-to-right flow to explain how a user promise becomes a scoped change and a proof. For concrete code work, choose the smallest adequate route: Keel for scope and total delivery cost; Journey-Proven Development when the journey, observer, or risk needs explicit treatment. An unavailable observer remains unresolved. Skills advise; only GraphHelm's deterministic controls can validate and publish operational graph changes.
 
 Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. Explain the separate steps only when the user needs them.
+
+## Prefer the GraphHelm MCP tools
+
+When the `graphhelm` MCP server is connected, read live state through its tools rather than shelling out: `mcp__graphhelm__briefing`, `status`, `events`, `evidence`, `resume` and `memory_status` (installed through this plugin the same tools carry the plugin prefix, `mcp__plugin_graphhelm_graphhelm__*`). If neither is connected, use the `graphhelm` CLI with `--json`, and say which source you used. The plugin's server needs `GRAPHHELM_TOKEN_FILE` (and optionally `GRAPHHELM_RUNTIME_URL`, default `http://127.0.0.1:8791`, and `GRAPHHELM_CLI`); `graphhelm setup --resolve home/.claude.json=register-mcp` registers the same server at user scope instead.

@@ -5,7 +5,7 @@
       "args": [
         "mcp",
         "--url",
-        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8791",
         "--token-file",
         "${GRAPHHELM_TOKEN_FILE}",
         "--actor",

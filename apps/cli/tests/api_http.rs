@@ -2305,7 +2305,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
 
     // The HTTP boundary must expose the same owner obligation as the core seam before the
     // approval is submitted. The enum's wire contract is explicit: the tag is snake_case
-    // (`pending_draft`) while its real identity field is camelCase (`draftId`). A node id is
+    // (`pending_draft`) while its real identity field is snake_case (`draft_id`). A node id is
     // not an acceptable substitute because one draft can contain many node operations.
     let pending_status = get_json(
         &format!("{base}/v1/executions/exec_feature"),
@@ -2320,7 +2320,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|reasons| {
                 reasons.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draftId"] == draft_id
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "status must publish the sealed draft's real identity: {pending_status}"
@@ -2334,7 +2334,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|pending| {
                 pending.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draftId"] == draft_id
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "briefing must carry the same sealed draft obligation: {pending_briefing}"
@@ -2361,7 +2361,7 @@ fn governed_http_approval_is_restart_safe_and_digest_bound() {
             .as_array()
             .is_some_and(|reasons| {
                 reasons.iter().any(|reason| {
-                    reason["kind"] == "pending_draft" && reason["draftId"] == draft_id
+                    reason["kind"] == "pending_draft" && reason["draft_id"] == draft_id
                 })
             }),
         "approval must resolve this draft's attention reason: {resolved_status}"

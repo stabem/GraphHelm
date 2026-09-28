@@ -186,7 +186,8 @@ class HandoffTests(unittest.TestCase):
             json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
             json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                        "params": {"name": "status", "arguments": {}}}),
+                        "params": {"name": "status", "arguments": {},
+                                    "_meta": {"progressToken": "native-client-token"}}}),
         ]) + "\n"
         result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
                                 input=payload, capture_output=True, text=True)

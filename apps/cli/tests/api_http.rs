@@ -2089,6 +2089,7 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(reply["command"], "execution.signal");
     assert_eq!(reply["data"]["decision"], "requires_approval");
     assert_eq!(reply["data"]["mayProposeMutation"], true);
+    assert_eq!(reply["data"]["signalId"], "signal-http-1");
     assert!(
         evidence_out.exists(),
         "the admitted signal's evidence must still be externalized over the API path"
@@ -2202,6 +2203,7 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
         serde_json::json!(advanced_head),
         "the retry still reports current status, whose head may be newer"
     );
+    assert_eq!(retry_reply["data"]["signalId"], "signal-http-retry");
     assert_eq!(
         head_sequence(&base, &token, execution),
         advanced_head,
@@ -2278,6 +2280,10 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
     assert!(
         second_reply["data"].get("idempotency").is_none(),
         "a mismatched actor must never receive a retry proof: {second_reply}"
+    );
+    assert!(
+        second_reply["data"].get("signalId").is_none(),
+        "a mismatched actor must never receive the signal acknowledgement: {second_reply}"
     );
     assert_eq!(
         second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
@@ -2401,6 +2407,10 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
     assert!(
         retry_reply["data"].get("idempotency").is_none(),
         "a wrong-kind event must never produce a retry proof: {retry_reply}"
+    );
+    assert!(
+        retry_reply["data"].get("signalId").is_none(),
+        "a wrong-kind event must never produce the signal acknowledgement: {retry_reply}"
     );
     assert_eq!(
         retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",

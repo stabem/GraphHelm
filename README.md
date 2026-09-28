@@ -89,7 +89,7 @@ This command needs no model account, API key, database, or running service. Carg
 | Graph CLI | Validate and lint graphs; compute semantic hashes; create immutable versions and transactional drafts. | [Graph examples](examples/graphs/) · [Graph DSL](docs/graph-engineer/GRAPH_DSL_SPEC.md) |
 | Runtime | Start, monitor, pause, approve, resume, and cancel executions; use fixtures without a provider or configure model and tool routes. | [Offline quickstart](QUICKSTART.md) · [provider-less mode](docs/product/PROVIDER_LESS_MODE.md) |
 | Evidence | Append-only local and PostgreSQL event stores, replay, and execution briefings. | [Architecture](docs/architecture/SYSTEM_ARCHITECTURE.md) · [operations](docs/operations/OBSERVABILITY_AND_RECOVERY.md) |
-| Local Studio | Inspect executions and evidence, see what needs attention, and perform supported control actions through the public Runtime API. | [Studio README](apps/studio/README.md) |
+| Local Studio | Inspect executions and evidence, see what needs attention (`attention` is `needs_you`, `can_sleep`, `unknown`, or `calmed_by_amendment`), and perform supported control actions through the public Runtime API. | [Studio README](apps/studio/README.md) |
 | MCP and setup | Expose Runtime operations to a chat client; inventory host configuration, preview adoption, back it up, and restore it. | [Getting started](docs/install/GETTING_STARTED.md) · [setup specification](docs/agents/AGENTS_SKILLS_PLUGINS.md) |
 
 The Studio above is an **operator MVP**, not the planned visual graph editor. The [roadmap](docs/product/ROADMAP_AND_ACCEPTANCE.md) separates implemented behavior from product goals. The [documentation index](docs/INDEX.md) leads to the full specifications, examples, and historical evidence.

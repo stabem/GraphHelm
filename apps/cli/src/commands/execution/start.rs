@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, path::Path};
 
 use graphhelm_events::PreparedAppend;
 use graphhelm_governor::{
-    PublicationPreparationServices, SealingGraphExternalizer, prepare_genesis_publication,
+    GovernorError, PublicationPreparationServices, SealingGraphExternalizer,
+    prepare_genesis_publication,
 };
 use graphhelm_graph::GraphVersion;
 use graphhelm_protocols::{
@@ -154,6 +155,30 @@ fn validate_before_governed_genesis(
     Ok(())
 }
 
+/// Why governed genesis did not record its sealed authoring snapshot.
+///
+/// The three classes answer three different operator questions, so callers must not fold them:
+/// `Setup` means nothing was written because the sealer or store could not be opened (the same
+/// class as a drive-setup refusal); `NotGovernable` means this graph or stream cannot carry a
+/// recoverable snapshot (RFC-0036: such an execution reports approval content unavailable); and
+/// `Failed` is every other failure once genesis was under way.
+#[derive(Debug)]
+pub(crate) enum GenesisError {
+    Setup(String),
+    NotGovernable(String),
+    Failed(String),
+}
+
+impl GenesisError {
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Setup(message) | Self::NotGovernable(message) | Self::Failed(message) => message,
+        }
+    }
+}
+
+/// The explicit CLI door (`execution start --keyring --key-id`): the operator asked for governed
+/// genesis, so every class of failure refuses the start.
 pub(crate) fn persist_governed_genesis(
     version: &GraphVersion,
     events: &Path,
@@ -162,20 +187,36 @@ pub(crate) fn persist_governed_genesis(
     key_id: &str,
     caller: PersistedActor,
 ) -> Result<(), String> {
+    persist_governed_genesis_classified(version, events, execution, keyring, key_id, caller)
+        .map_err(GenesisError::into_message)
+}
+
+pub(crate) fn persist_governed_genesis_classified(
+    version: &GraphVersion,
+    events: &Path,
+    execution: Option<&str>,
+    keyring: &Path,
+    key_id: &str,
+    caller: PersistedActor,
+) -> Result<(), GenesisError> {
     let sealing = super::signal::SignalKeyring {
         directory: keyring.to_path_buf(),
         key_id: key_id.to_owned(),
     };
-    let sealer = super::signal::open_sealer(&sealing).map_err(|failure| failure.message)?;
-    let store = event_store(events).map_err(|error| error.to_string())?;
-    let stream = resolve_execution_id(version, execution)
-        .map_err(|_| "the graph execution id is not wire-safe".to_owned())?;
+    let sealer = super::signal::open_sealer(&sealing)
+        .map_err(|failure| GenesisError::Setup(failure.message))?;
+    let store = event_store(events).map_err(|error| GenesisError::Setup(error.to_string()))?;
+    let stream = resolve_execution_id(version, execution).map_err(|_| {
+        GenesisError::NotGovernable("the graph execution id is not wire-safe".to_owned())
+    })?;
     if stream.as_str() != version.graph().metadata.execution_id {
-        return Err(
+        return Err(GenesisError::NotGovernable(
             "governed genesis requires --execution to match the graph execution id".to_owned(),
-        );
+        ));
     }
-    let scope = super::addressable_scope(stream.as_str()).map_err(|failure| failure.message)?;
+    let failed = GenesisError::Failed;
+    let scope = super::addressable_scope(stream.as_str())
+        .map_err(|failure| GenesisError::NotGovernable(failure.message))?;
     let clock = SystemClock;
     let preparation = block_on_local(prepare_genesis_publication(
         version,
@@ -186,24 +227,31 @@ pub(crate) fn persist_governed_genesis(
             externalizer: &SealingGraphExternalizer::new(sealer),
         },
     ))
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| match error {
+        GovernorError::InvalidAuthoring | GovernorError::LimitExceeded => {
+            GenesisError::NotGovernable(error.to_string())
+        }
+        GovernorError::InvalidProjection | GovernorError::SealingFailed => {
+            GenesisError::Failed(error.to_string())
+        }
+    })?;
     let actor = caller;
     let snapshot = graphhelm_protocols::GraphAuthoringSnapshotStored {
         execution_id: stream.clone(),
         graph_version: version.number(),
         graph_hash: WireHash::parse(preparation.version.semantic_hash().as_str())
-            .map_err(|_| "the persisted graph hash is not wire-safe".to_owned())?,
+            .map_err(|_| failed("the persisted graph hash is not wire-safe".to_owned()))?,
     };
     let request = PreparedAppend::new(
         scope.clone(),
         stream.clone(),
         store
             .next_sequence(&scope, stream.as_str())
-            .map_err(|error| error.to_string())?,
+            .map_err(|error| failed(error.to_string()))?,
         vec![
             NewEvent::new(
                 OpaqueId::parse("genesis-published")
-                    .map_err(|_| "invalid genesis key".to_owned())?,
+                    .map_err(|_| failed("invalid genesis key".to_owned()))?,
                 actor.clone(),
                 Sensitivity::Internal,
                 EventKind::GraphVersionPublished(Box::new(
@@ -216,7 +264,7 @@ pub(crate) fn persist_governed_genesis(
             ),
             NewEvent::new(
                 OpaqueId::parse("genesis-authoring-snapshot")
-                    .map_err(|_| "invalid snapshot key".to_owned())?,
+                    .map_err(|_| failed("invalid snapshot key".to_owned()))?,
                 actor,
                 Sensitivity::Internal,
                 EventKind::GraphAuthoringSnapshotStored(snapshot),
@@ -231,10 +279,10 @@ pub(crate) fn persist_governed_genesis(
             .collect(),
         vec![],
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| failed(error.to_string()))?;
     store
         .append_atomic(&request)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failed(error.to_string()))?;
     Ok(())
 }
 

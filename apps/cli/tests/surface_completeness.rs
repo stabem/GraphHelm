@@ -192,7 +192,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 4] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 5] = [
     (
         "PUT",
         "/v1/gateway/credentials/{reference}",
@@ -213,6 +213,13 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 4] = [
         "GET",
         "/monitor/{id}",
         "the human HTML monitor page, same reason as the index",
+    ),
+    (
+        "GET",
+        "/v1/executions/{id}/reply-suggestions",
+        "Studio's owner-reply helper: it drafts candidate answers to an agent's pending question \
+         for the HUMAN owner to pick from. Handing it to the chat surface would let the agent that \
+         asked draft its own owner answer, which is self-validation, not a runtime verb",
     ),
 ];
 

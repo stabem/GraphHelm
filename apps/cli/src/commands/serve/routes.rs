@@ -1859,8 +1859,8 @@ pub(super) async fn start(
                     let key_id = sealing.key_id.clone();
                     let version_for_genesis = version.clone();
                     let genesis_actor = actor.clone();
-                    tokio::task::spawn_blocking(move || {
-                        execution::start::persist_governed_genesis(
+                    let genesis = tokio::task::spawn_blocking(move || {
+                        execution::start::persist_governed_genesis_classified(
                             &version_for_genesis,
                             &events,
                             Some(execution.as_str()),
@@ -1872,8 +1872,22 @@ pub(super) async fn start(
                     .await
                     .map_err(|_| {
                         MutationError::Command(driver_failure("the genesis worker stopped"))
-                    })?
-                    .map_err(|error| MutationError::Command(driver_failure(&error)))?;
+                    })?;
+                    // A keyring on the server makes genesis opportunistic, not a new precondition
+                    // on every graph: a graph whose authoring cannot be externalized (or whose
+                    // stream is not its own executionId) starts without a recoverable snapshot,
+                    // which RFC-0036 already defines as "approval content unavailable". A sealer
+                    // or store that cannot open is a drive-setup refusal with nothing written,
+                    // and anything that fails once genesis is under way still refuses the start.
+                    match genesis {
+                        Ok(()) | Err(execution::start::GenesisError::NotGovernable(_)) => {}
+                        Err(execution::start::GenesisError::Setup(message)) => {
+                            return Err(MutationError::Command(setup_failure(&message)));
+                        }
+                        Err(execution::start::GenesisError::Failed(message)) => {
+                            return Err(MutationError::Command(driver_failure(&message)));
+                        }
+                    }
                 }
                 // #90: a held start is the publish half and NO drive half, whichever drive this
                 // graph would otherwise get - the same `execute_held` the CLI's `--held` calls.

@@ -753,6 +753,14 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
             serde_json::json!({"type":"memory_record_superseded","data":{"predecessorId":"record-1","successorId":"record-2","reason":"contradicted","predecessorNewSemanticState":"contradicted"}}),
             true,
         ),
+        (
+            // Same class again: project-level (the payload names `sourceExecutionId`, the execution
+            // the memory came FROM, not an `executionId` to scope the generation), no prelude --
+            // the fold arm creates or updates one record entry (`projection.rs`'s
+            // `MemoryValidationRecorded` arm), `LimitExceeded` its only failure.
+            serde_json::json!({"type":"memory_validation_recorded","data":{"recordId":"record-1","validatorSignalId":"validation-1","sourceExecutionId":"execution-1","contentDigest":"0000000000000000000000000000000000000000000000000000000000000000","sourceSemanticHash":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}}),
+            true,
+        ),
     ];
     // No length literal (#190): the old `assert_eq!(variants.len() + 1, 16)` compared this
     // vec's own length to a hand-written number, so it could never fail regardless of how many

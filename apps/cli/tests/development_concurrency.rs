@@ -116,14 +116,15 @@ fn read_token(path: &Path) -> String {
 }
 
 /// One full request/response round trip: connects, sends `body` in full, reads the whole
-/// response, and returns the HTTP status code plus the wall-clock window it occupied.
+/// response, and returns the HTTP status code, the response text and the wall-clock window it
+/// occupied.
 fn request(
     address: &str,
     method: &str,
     path: &str,
     token: &str,
     body: &[u8],
-) -> (u16, Instant, Instant) {
+) -> (u16, String, Instant, Instant) {
     let start = Instant::now();
     let (host, port) = address
         .split_once(':')
@@ -145,7 +146,7 @@ fn request(
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).unwrap();
     let end = Instant::now();
-    let text = String::from_utf8_lossy(&raw);
+    let text = String::from_utf8_lossy(&raw).into_owned();
     let status_line = text
         .lines()
         .next()
@@ -155,16 +156,29 @@ fn request(
         .nth(1)
         .and_then(|code| code.parse::<u16>().ok())
         .unwrap_or_else(|| panic!("malformed status line: {status_line:?}"));
-    (status, start, end)
+    (status, text, start, end)
 }
 
-const DEVELOPMENT_HTTP_ROUTES: &[(&str, &str)] = &[
-    ("POST", "/v1/development/contract"),
-    ("GET", "/v1/development/memory"),
-    ("POST", "/v1/development/memory"),
-    ("POST", "/v1/development/present"),
-    ("POST", "/v1/development/context"),
-    ("GET", "/v1/development/accounting"),
+/// Each route with the answer an empty `{}` caller must get from it, and a fragment that answer
+/// must carry.
+///
+/// `POST /v1/development/memory` stopped being an existence slice in #75: it now publishes durable
+/// memory and needs opt-in, an idempotency key, a validator signal and a keyring. An empty body is
+/// therefore REFUSED, and the property this test owns is that the refusal under load is the same
+/// deterministic 400 envelope a lone caller gets -- not a reset connection, a 5xx or a hang. The
+/// other five routes still answer an empty body with success.
+const DEVELOPMENT_HTTP_ROUTES: &[(&str, &str, u16, &str)] = &[
+    ("POST", "/v1/development/contract", 200, "\"ok\":true"),
+    ("GET", "/v1/development/memory", 200, "\"ok\":true"),
+    (
+        "POST",
+        "/v1/development/memory",
+        400,
+        "\"command\":\"development.memory-propose\"",
+    ),
+    ("POST", "/v1/development/present", 200, "\"ok\":true"),
+    ("POST", "/v1/development/context", 200, "\"ok\":true"),
+    ("GET", "/v1/development/accounting", 200, "\"ok\":true"),
 ];
 
 /// Twenty concurrent callers, cycling through all six `development.*` routes on ONE running
@@ -187,21 +201,26 @@ fn concurrent_development_requests_all_succeed() {
         .map(|i| {
             let address = address.clone();
             let token = token.clone();
-            let (method, path) = DEVELOPMENT_HTTP_ROUTES[i % DEVELOPMENT_HTTP_ROUTES.len()];
+            let (method, path, _, _) = DEVELOPMENT_HTTP_ROUTES[i % DEVELOPMENT_HTTP_ROUTES.len()];
             std::thread::spawn(move || request(&address, method, path, &token, b"{}"))
         })
         .collect();
 
     let mut windows = Vec::with_capacity(20);
     for (i, handle) in handles.into_iter().enumerate() {
-        let (status, start, end) = handle.join().unwrap_or_else(|_| {
+        let (status, text, start, end) = handle.join().unwrap_or_else(|_| {
             panic!("caller {i} panicked instead of returning a status -- the server did not survive concurrent load")
         });
+        let (method, path, expected, fragment) =
+            DEVELOPMENT_HTTP_ROUTES[i % DEVELOPMENT_HTTP_ROUTES.len()];
         assert_eq!(
-            status,
-            200,
-            "caller {i} against {:?} got {status}, not 200, under concurrent load",
-            DEVELOPMENT_HTTP_ROUTES[i % DEVELOPMENT_HTTP_ROUTES.len()]
+            status, expected,
+            "caller {i} against {method} {path} got {status}, not {expected}, under concurrent load: {text}"
+        );
+        assert!(
+            text.contains(fragment),
+            "caller {i} against {method} {path} answered {status} without the expected envelope \
+             fragment {fragment}: {text}"
         );
         windows.push((start, end));
     }

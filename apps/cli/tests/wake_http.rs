@@ -37,7 +37,46 @@ fn serve(events: &Path) -> (ServerGuard, String, String) {
     serve_with_env(events, &[])
 }
 
+/// Offline, ephemeral fixture key material for the sealed Runtime every test here serves.
+const FIXTURE_EVENTS_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+const FIXTURE_KEY_ID: &str = "wake-fixture-key";
+
+/// The fixture keyring beside `events`, created once per test directory.
+///
+/// Every signal in this file is posted by a scoped AGENT (`agent-wake-test`), and since #61 an
+/// agent may not choose a Runtime filesystem `evidenceOut`. The Runtime seals the envelope into
+/// its Evidence store instead, which needs a keyring -- so the server is started sealed rather
+/// than the agent being handed an owner's path.
+fn fixture_keyring(events: &Path) -> PathBuf {
+    let keyring = events.parent().unwrap().join("wake-keyring");
+    if keyring.exists() {
+        return keyring;
+    }
+    std::fs::create_dir_all(&keyring).unwrap();
+    let init = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "keyring",
+            "init",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            FIXTURE_KEY_ID,
+        ])
+        .env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "fixture keyring init failed: {}{}",
+        String::from_utf8_lossy(&init.stdout),
+        String::from_utf8_lossy(&init.stderr)
+    );
+    keyring
+}
+
 fn serve_with_env(events: &Path, env: &[(&str, &str)]) -> (ServerGuard, String, String) {
+    let keyring = fixture_keyring(events);
     let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
     command
         .args([
@@ -46,7 +85,12 @@ fn serve_with_env(events: &Path, env: &[(&str, &str)]) -> (ServerGuard, String, 
             events.to_str().unwrap(),
             "--bind",
             "127.0.0.1:0",
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            FIXTURE_KEY_ID,
         ])
+        .env("GRAPHHELM_EVENTS_KEY", FIXTURE_EVENTS_KEY)
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     for (key, value) in env {
@@ -530,7 +574,8 @@ fn write_json(directory: &Path, name: &str, value: &serde_json::Value) -> PathBu
     path
 }
 
-fn signal_body(id: &str, evidence_out: &Path) -> serde_json::Value {
+/// No `evidenceOut`: the poster is a scoped agent, and the sealed Runtime preserves the envelope.
+fn signal_body(id: &str) -> serde_json::Value {
     serde_json::json!({
         "signal": {
             "id": id,
@@ -541,7 +586,6 @@ fn signal_body(id: &str, evidence_out: &Path) -> serde_json::Value {
             "evidence": ["exec-1"],
             "emittedAt": "2026-08-16T00:00:00Z"
         },
-        "evidenceOut": evidence_out.to_str().unwrap(),
     })
 }
 
@@ -1555,7 +1599,7 @@ fn an_append_beyond_the_cursor_rings_one_byte_only_after_the_trigger_is_durable(
         &token,
         "/v1/executions/exec-wake-ring/signal",
         "wake-trigger-1",
-        &signal_body("signal-wake-1", &directory.path().join("ev.json")),
+        &signal_body("signal-wake-1"),
     );
     assert_eq!(status, 200, "{reply}");
 
@@ -1807,7 +1851,7 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
         &token,
         "/v1/executions/exec-wake-burn/signal",
         "wake-burn-1",
-        &signal_body("signal-burn-1", &directory.path().join("ev1.json")),
+        &signal_body("signal-burn-1"),
     );
     assert_eq!(status, 200);
     assert_eq!(
@@ -1825,7 +1869,7 @@ fn a_burned_lease_never_rings_twice_and_no_ring_without_a_fresh_append() {
         &token,
         "/v1/executions/exec-wake-burn/signal",
         "wake-burn-2",
-        &signal_body("signal-burn-2", &directory.path().join("ev2.json")),
+        &signal_body("signal-burn-2"),
     );
     assert_eq!(status, 200);
     assert_eq!(
@@ -1852,7 +1896,7 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
         &token,
         "/v1/executions/exec-wake-stale/signal",
         "wake-stale-1",
-        &signal_body("signal-stale-1", &directory.path().join("ev.json")),
+        &signal_body("signal-stale-1"),
     );
     assert_eq!(
         status, 200,
@@ -2350,13 +2394,12 @@ fn a_sleeper_wakes_on_a_peer_append_with_zero_requests_in_the_window() {
     let at_sleep = proxy.connections.load(std::sync::atomic::Ordering::SeqCst);
 
     // B (the waker) appends a signal DIRECTLY at the serve — B is not under measurement.
-    let evidence_out = directory.path().join("choreo-evidence.json");
     let (status, reply) = post_json(
         &base,
         &token,
         &format!("/v1/executions/{execution}/signal"),
         "choreo-signal-1",
-        &signal_body("signal-choreo-1", &evidence_out),
+        &signal_body("signal-choreo-1"),
     );
     assert_eq!(status, 200, "{reply}");
 
@@ -2591,12 +2634,9 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
                 let barrier = barrier.clone();
                 let base = base.clone();
                 let token = token.clone();
-                let evidence = directory
-                    .path()
-                    .join(format!("race-evidence-{round}-{lane}.json"));
                 let path = format!("/v1/executions/{execution}/signal");
                 let key = format!("race-{round}-{lane}");
-                let body = signal_body(&format!("signal-race-{round}-{lane}"), &evidence);
+                let body = signal_body(&format!("signal-race-{round}-{lane}"));
                 std::thread::spawn(move || {
                     let started = Instant::now();
                     barrier.wait();
@@ -2708,29 +2748,36 @@ fn concurrent_sweeps_never_double_consume_a_lease() {
             assert_eq!(record.source_id.as_str(), "implementation");
             assert_eq!(record.kind, "no_progress");
             assert_eq!(record.severity, graphhelm_protocols::SignalSeverity::High);
-            assert!(
-                envelope.evidence_refs.is_empty(),
-                "the unsealed HTTP fixture keeps evidence in its operator file"
+            // The sealed Runtime preserves the envelope in its Evidence store: exactly one
+            // reference, bound to the record's digest, whose opened content is the exact body
+            // this lane sent -- the same three properties the operator file used to carry.
+            assert_eq!(
+                envelope.evidence_refs.len(),
+                1,
+                "the sealed signal references exactly its own envelope"
             );
-            let evidence = directory
-                .path()
-                .join(format!("race-evidence-{round}-{lane}.json"));
+            let reference = &envelope.evidence_refs[0];
             assert!(
-                evidence.exists(),
-                "the request's evidence output is retained"
+                reference.content_sha256().as_str() == record.envelope_sha256.as_str(),
+                "the durable signal remains bound to its exact sealed evidence"
             );
-            let evidence_bytes = std::fs::read(&evidence).unwrap();
-            let evidence_value: serde_json::Value =
-                serde_json::from_slice(&evidence_bytes).unwrap();
+            let opened = get_json(
+                &base,
+                &token,
+                &format!(
+                    "/v1/executions/{execution}/evidence/{}",
+                    reference.evidence_id().as_str()
+                ),
+            );
+            assert_eq!(opened["ok"], true, "{opened}");
+            let content = opened["data"]["content"]
+                .as_str()
+                .unwrap_or_else(|| panic!("the opened evidence carries text content: {opened}"));
+            let evidence_value: serde_json::Value = serde_json::from_str(content).unwrap();
             assert_eq!(
                 evidence_value,
-                signal_body(&signal_id, &evidence)["signal"],
-                "each retry preserves the exact signal body in its evidence file"
-            );
-            let evidence_hash = graphhelm_graph::raw_content_sha256(&evidence_bytes).unwrap();
-            assert!(
-                evidence_hash.as_str() == record.envelope_sha256.as_str(),
-                "the durable signal remains bound to its exact operator evidence"
+                signal_body(&signal_id)["signal"],
+                "each retry preserves the exact signal body in its sealed evidence"
             );
         }
 
@@ -3410,13 +3457,12 @@ fn a_designed_phase3_delay_is_absorbed_by_the_receipt_wait() {
         &[("GRAPHHELM_TEST_WAKE_PHASE3_DELAY_MS", "2000")],
     );
 
-    let evidence_out = directory.path().join("delay-evidence.json");
     let (status, reply) = post_json(
         &base,
         &token,
         &format!("/v1/executions/{execution}/signal"),
         "delay-signal-1",
-        &signal_body("signal-delay-1", &evidence_out),
+        &signal_body("signal-delay-1"),
     );
     assert_eq!(status, 200, "{reply}");
 

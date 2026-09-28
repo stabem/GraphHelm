@@ -147,7 +147,7 @@ detect the defect is absent, optional, or unlinked.
 
 **S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
 identity, never by count"* is applied twice with the reasoning written down —
-`core/governor/src/memory.rs:930` (`validate_candidate`: a validator roster may not be the producer) and
+`core/governor/src/memory.rs:1180` (`validate_candidate`: a validator roster may not be the producer) and
 `apps/cli/tests/jpd_plugin.rs:1560` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
 was absent on the promise-to-observer pair. `JourneyContractGate` now binds the validated contract,
 its validated observation obligations, and its verification result by `contractId` and trusted
@@ -165,7 +165,7 @@ sides and asserts there are eight states. It is careful and correct. It says not
 anything references the definition or carries the value. *"The coverage vocabulary is guarded"* is
 true; *"coverage is enforced"* is what it will be taken to mean.
 
-**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:299` screens with
+**Oracle drift, recorded as drift.** `core/governor/src/memory.rs:313` screens with
 `content.contains("ghp_")`; `core/graph/src/persistence.rs:736` requires a prefix **and** a tail of
 16 or 20. A bare `ghp_` is refused by the first and not the second. The direction is fail-safe —
 memory refuses more — so this is logged as divergence between two oracles, **not** as a
@@ -604,7 +604,7 @@ than a silent reinterpretation.
 
 | | site | trigger |
 |---|---|---|
-| memory admission | `core/governor/src/memory.rs:299` | `content.contains("ghp_")` — one prefix, no tail requirement |
+| memory admission | `core/governor/src/memory.rs:313` | `content.contains("ghp_")` — one prefix, no tail requirement |
 | durable content | `core/graph/src/persistence.rs:736` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, authorization, environment-URI and reference-name forms |
 
 `memory.rs` documents its own boundary, and that doc comment was **verified against
@@ -693,8 +693,8 @@ Every site below is **measured at `origin/main`**, with the ref inside the comma
 closed vocabulary, and refuses a COMPLETE claim the producer's own record contradicts:
 
 ```
-core/runtime/src/retrieval.rs:490   fn plan_coverage_is_a_closed_token
-core/runtime/src/retrieval.rs:371   return Err(RetrievalReceiptError::CoveragePromotion)
+core/runtime/src/retrieval.rs:904   fn plan_coverage_is_a_closed_token
+core/runtime/src/retrieval.rs:728   return Err(RetrievalReceiptError::CoveragePromotion)
 core/runtime/tests/retrieval.rs:3116
        a_plan_coverage_token_outside_the_closed_vocabulary_is_refused
 core/runtime/tests/retrieval.rs:3196
@@ -753,12 +753,12 @@ protection's location.**
 **Protection.**
 
 ```
-core/governor/src/memory.rs:254   if content_is_secret_shaped(content) { ... }
-core/governor/src/memory.rs:259   code: MemoryRefusalCode::SecretDetected
-core/governor/src/memory.rs:299   fn content_is_secret_shaped -> content.contains("ghp_")
-core/governor/tests/memory.rs:58    fn refusal_names_the_code_and_location_but_never_the_secret_value
-core/governor/tests/memory.rs:1026  fn capture_refuses_secret_bearing_content_before_touching_any_boundary
-core/governor/tests/memory.rs:1063  fn the_secret_detector_covers_the_shape_it_declares_and_no_other
+core/governor/src/memory.rs:268   if content_is_secret_shaped(content) { ... }
+core/governor/src/memory.rs:273   code: MemoryRefusalCode::SecretDetected
+core/governor/src/memory.rs:313   fn content_is_secret_shaped -> content.contains("ghp_")
+core/governor/tests/memory.rs:69    fn refusal_names_the_code_and_location_but_never_the_secret_value
+core/governor/tests/memory.rs:1037  fn capture_refuses_secret_bearing_content_before_touching_any_boundary
+core/governor/tests/memory.rs:1074  fn the_secret_detector_covers_the_shape_it_declares_and_no_other
 ```
 
 **Trigger it would catch.** Remove the screen call at :240, or widen `content_is_secret_shaped` to
@@ -777,7 +777,7 @@ carry it into the journal through the one path this design argued was safe."*
 **Protection.**
 
 ```
-core/governor/src/memory.rs:925-949
+core/governor/src/memory.rs:1188-1198
     let producer = candidate.produced_by.as_deref();
     let independent = validators.iter().any(|v| Some(*v) != producer);
     if !independent { ... MemoryRefusalCode::SelfValidated ... }
@@ -802,7 +802,7 @@ The required capability is not mistaken for an identity.
 **Protection.**
 
 ```
-core/governor/src/memory.rs:233-235   if scope != admitting_into { ... ScopeMismatch ... }
+core/governor/src/memory.rs:249-251   if scope != admitting_into { ... ScopeMismatch ... }
 apps/cli/tests/development_contract_schemas.rs:557
        a_scope_mismatch_is_refused_under_its_own_code
 ```

@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 31] = [
+const TOOLS: [ToolSpec; 32] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -260,6 +260,14 @@ const TOOLS: [ToolSpec; 31] = [
                       recorded-replies file on the RUNTIME's host (the keyless door); without \
                       it the server's model route, or \"route\", answers.",
         schema: synthesize_schema,
+    },
+    ToolSpec {
+        name: "assign",
+        description: "Assign a node to a responsible actor (POST /v1/executions/{executionId}/assign). \
+                      Owner-only: the Runtime refuses any other actor type, so an agent session \
+                      cannot assign work to itself. The recorded event keeps the assigned actor \
+                      separate from the owner who recorded it.",
+        schema: assign_schema,
     },
 ];
 
@@ -734,6 +742,17 @@ fn wake_wait_schema() -> serde_json::Value {
 /// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
 /// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
 /// same reason `start_schema` does not encode file-or-graph.
+fn assign_schema() -> serde_json::Value {
+    mutating_schema(
+        serde_json::json!({
+            "executionId": {"type": "string"},
+            "node": {"type": "string"},
+            "actorId": {"type": "string"},
+        }),
+        &["executionId", "node", "actorId"],
+    )
+}
+
 fn synthesize_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({
@@ -1706,6 +1725,19 @@ pub(crate) fn call(
         // publishes, starts and appends nothing. Optional fields travel only when given, so
         // the route's own defaults (the profile's mode, the server's allowlist) apply exactly
         // as they do to a raw HTTP caller.
+        "assign" => require(arguments, "executionId").map(|id| {
+            let body = serde_json::json!({
+                "node": str_arg(arguments, "node").unwrap_or_default(),
+                "actorId": str_arg(arguments, "actorId").unwrap_or_default(),
+            });
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "executions", id, "assign"]),
+                Some(&body),
+                Some(&key),
+                if_match,
+            )
+        }),
         "synthesize" => require(arguments, "goal").map(|goal| {
             let mut body = serde_json::json!({ "goal": goal });
             for field in [

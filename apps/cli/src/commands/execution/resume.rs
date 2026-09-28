@@ -94,6 +94,28 @@ pub(crate) fn execute_from_snapshot(
     keyring: Option<&Path>,
     key_id: Option<&str>,
 ) -> Result<serde_json::Value, Failure> {
+    let version = recover_snapshot_version(events, execution, keyring, key_id)?;
+    execute_with_verification(
+        &version,
+        events,
+        fixtures,
+        execution,
+        owner_actor(),
+        idempotency_key("execution-resumed"),
+        false,
+    )
+}
+
+/// Recovers and authenticates the persisted authoring snapshot without selecting an executor.
+/// Callers that have a configured Runtime must pass this version through the normal prepared-drive
+/// path; using the fixture executor here would make a snapshot resume look successful while never
+/// reaching the configured agent runtime.
+pub(crate) fn recover_snapshot_version(
+    events: &Path,
+    execution: Option<&str>,
+    keyring: Option<&Path>,
+    key_id: Option<&str>,
+) -> Result<GraphVersion, Failure> {
     let (keyring, key_id) = match (keyring, key_id) {
         (Some(keyring), Some(key_id)) => (keyring, key_id),
         _ => {
@@ -109,7 +131,7 @@ pub(crate) fn execute_from_snapshot(
     };
     let opener = super::signal::open_sealer(&sealing)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
-    let (scope, stream, projection) = super::load_projection(&store, execution)?;
+    let (scope, _stream, projection) = super::load_projection(&store, execution)?;
     let active = projection
         .current_graph
         .as_ref()
@@ -168,15 +190,7 @@ pub(crate) fn execute_from_snapshot(
     .map_err(|_| execution_state("the authoring snapshot failed integrity checks", "/graph"))?;
     let version = GraphVersion::from_record(record)
         .map_err(|_| execution_state("the authoring snapshot is invalid", "/graph"))?;
-    execute_with_verification(
-        &version,
-        events,
-        fixtures,
-        Some(stream.as_str()),
-        owner_actor(),
-        idempotency_key("execution-resumed"),
-        false,
-    )
+    Ok(version)
 }
 
 fn block_on_local<F: std::future::Future>(future: F) -> F::Output {

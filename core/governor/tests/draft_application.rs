@@ -531,6 +531,7 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
         proposal_sha256: digest,
         assignments,
         decision_key: None,
+        decision_node: None,
     };
     let ids = Ids::default();
     let services = ApplyServices {

@@ -29,6 +29,7 @@ pub(crate) struct GovernedApproval<'a> {
     pub draft_id: Option<&'a str>,
     pub assignments: Option<&'a BTreeMap<String, String>>,
     pub decision_key: Option<OpaqueId>,
+    pub decision_node: Option<OpaqueId>,
     pub approving_actor: PersistedActor,
 }
 
@@ -67,6 +68,7 @@ pub fn run(
                     draft_id,
                     assignments: None,
                     decision_key: Some(idempotency_key("node-outcome")),
+                    decision_node: OpaqueId::parse(node).ok(),
                     approving_actor: owner_actor(),
                 },
             ),
@@ -313,6 +315,7 @@ pub(crate) fn execute_governed(
         proposal_sha256: requested_digest,
         assignments,
         decision_key: request.decision_key,
+        decision_node: request.decision_node,
     };
     let apply = block_on_local(apply_draft_with_acceptance(
         &graphhelm_graph::GraphVersion::from_record(authoring)

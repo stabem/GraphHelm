@@ -21,7 +21,9 @@ use graphhelm_events::{
 use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question};
 use graphhelm_graph::GraphVersion;
-use graphhelm_protocols::{ActorId, Diagnostic, EvidenceId, PersistedActor, PersistedActorType};
+use graphhelm_protocols::{
+    ActorId, Diagnostic, EvidenceId, OpaqueId, PersistedActor, PersistedActorType,
+};
 use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
 use graphhelm_runtime::executor::{
     AsyncNodeExecutor, ModelExecutor, PortExecutor, SplitExecutor, ToolExecutor,
@@ -2219,6 +2221,12 @@ pub(super) async fn approve(
                             draft_id: Some(&draft_id),
                             assignments: assignments.as_ref(),
                             decision_key: Some(key),
+                            decision_node: Some(OpaqueId::parse(&node).map_err(|_| {
+                                execution::execution_state(
+                                    "the node identifier is invalid",
+                                    "/node",
+                                )
+                            })?),
                             approving_actor: owner,
                         },
                     )
@@ -2700,32 +2708,33 @@ pub(super) async fn resume(
         ExecutorWiring::from_state(&state),
         |actor, key| {
             Box::pin(async move {
-                if source.is_none() {
+                let version = if source.is_none() {
                     let Some(sealing) = drive_state.sealing.as_ref() else {
                         return Err(MutationError::Command(driver_failure(
                             "snapshot resume requires the server sealing keyring",
                         )));
                     };
                     let events = drive_state.events.clone();
-                    let fixtures = fixtures.clone();
                     let execution = drive_execution_id.clone();
                     let directory = sealing.directory.clone();
                     let key_id = sealing.key_id.clone();
-                    return Ok(tokio::task::spawn_blocking(move || {
-                        execution::resume::execute_from_snapshot(
+                    tokio::task::spawn_blocking(move || {
+                        execution::resume::recover_snapshot_version(
                             &events,
-                            fixtures.as_deref(),
                             Some(execution.as_str()),
                             Some(directory.as_path()),
                             Some(key_id.as_str()),
                         )
                     })
                     .await
-                    .map_err(|_| driver_failure("the snapshot resume worker stopped"))??);
-                }
-                let version =
-                    load_and_publish(source.as_ref().expect("source present"), RESUME_COMMAND)
-                        .map_err(MutationError::Prepared)?;
+                    .map_err(|_| driver_failure("the snapshot resume worker stopped"))??
+                } else if let Some(source) = source.as_ref() {
+                    load_and_publish(source, RESUME_COMMAND).map_err(MutationError::Prepared)?
+                } else {
+                    return Err(MutationError::Command(driver_failure(
+                        "resume source disappeared",
+                    )));
+                };
                 // See `start`'s matching branch for why the async drive is conditional.
                 if drive_is_viable_for(&drive_state, &version.graph().spec) {
                     // #83: the drive's fallible setup runs FIRST, so the resume decision is the

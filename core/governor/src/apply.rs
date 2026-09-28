@@ -50,6 +50,7 @@ pub struct ExecutionDraftAcceptance {
     pub assignments: BTreeMap<OpaqueId, PersistedActor>,
     /// The HTTP mutation key, when the caller needs retry recognition at the API boundary.
     pub decision_key: Option<OpaqueId>,
+    pub decision_node: Option<OpaqueId>,
 }
 
 impl std::fmt::Debug for ApplyResult {
@@ -429,7 +430,7 @@ pub fn apply_draft_with_acceptance<'a>(
                     vec![],
                 )?);
                 pending.push(new_event(
-                    if acceptance.assignments.keys().next() == Some(node_id) {
+                    if acceptance.decision_node.as_ref() == Some(node_id) {
                         acceptance
                             .decision_key
                             .clone()
@@ -981,7 +982,7 @@ fn validate_committed_outcome_grammar(
                                 || event.idempotency_key
                                     != acceptance
                                         .and_then(|value| {
-                                            (value.assignments.keys().next()
+                                            (value.decision_node.as_ref()
                                                 == Some(&payload.node_id))
                                                 .then(|| value.decision_key.clone())
                                                 .flatten()

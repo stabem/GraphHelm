@@ -333,7 +333,11 @@ pub(crate) fn execute_governed(
         },
         Some(&acceptance),
     ))
-    .map_err(|_| execution_state("the Governor rejected the proposal", "/proposal"))?;
+    .map_err(|error| Failure {
+        code: error.code(),
+        message: error.to_string(),
+        pointer: "/proposal".to_owned(),
+    })?;
     if !apply.events.iter().any(|event| {
         matches!(&event.kind, EventKind::GhostNodeProposed(payload) if payload.node_id.as_str() == node)
     }) {

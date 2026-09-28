@@ -205,17 +205,6 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
     })
 }
 
-/// The ONE scope the `execution` verbs can address for a given execution id.
-///
-/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
-/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
-/// it -- so the index offered rows under any scope the generic `events` commands can write,
-/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
-/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
-/// execution that exists and then gets an empty history back.
-///
-/// # Errors
-/// [`Failure`] when `execution` is not a valid identifier.
 /// The same addressing rule as [`addressable_scope`] for records that belong to the local
 /// repository rather than to one execution stream (for example the Dreams shadow ledger). One
 /// home for the workspace and project literals, so the two constructions cannot drift apart.
@@ -227,6 +216,17 @@ pub(crate) fn repository_scope() -> RepositoryScope {
     )
 }
 
+/// The ONE scope the `execution` verbs can address for a given execution id.
+///
+/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
+/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
+/// it -- so the index offered rows under any scope the generic `events` commands can write,
+/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
+/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
+/// execution that exists and then gets an empty history back.
+///
+/// # Errors
+/// [`Failure`] when `execution` is not a valid identifier.
 pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
     Ok(RepositoryScope::new(
         WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),

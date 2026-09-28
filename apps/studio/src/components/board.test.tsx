@@ -96,6 +96,10 @@ describe("the run capsule", () => {
     render(
       <Board
         model={PROGRESS_MODEL}
+        projectName="GraphHelm"
+        projectPath="F:/github/GraphHelm"
+        latestRecordedUpdate={{ sequence: 8, occurredAt: null }}
+        initialLayout="overview"
         board={emptyBoard()}
         selectedNode={null}
         onSelectNode={() => {}}
@@ -105,6 +109,7 @@ describe("the run capsule", () => {
       />,
     );
     expect(screen.getByLabelText("This run's progress")).toHaveTextContent(/last activity ·/);
+    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("F:/github/GraphHelm");
   });
 
   it("stays off the canvas when no run is named", () => {

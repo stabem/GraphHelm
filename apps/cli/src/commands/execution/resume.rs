@@ -325,6 +325,21 @@ pub(crate) fn execute_prepared(
     execute_prepared_with_verification(version, events, fixtures, execution, actor, key, true)
 }
 
+/// Snapshot recovery has already authenticated the sealed authoring record and checked it against
+/// the active persisted graph. It must not pass through the file-resume hash seam: that seam
+/// compares a caller-supplied authoring file with the original execution hash, while this path
+/// supplies the Governor's recovered successor snapshot.
+pub(crate) fn execute_prepared_from_snapshot(
+    version: &GraphVersion,
+    events: &Path,
+    fixtures: Option<&Path>,
+    execution: Option<&str>,
+    actor: PersistedActor,
+    key: OpaqueId,
+) -> Result<PreparedDrive, Failure> {
+    execute_prepared_with_verification(version, events, fixtures, execution, actor, key, false)
+}
+
 fn execute_prepared_with_verification(
     version: &GraphVersion,
     events: &Path,

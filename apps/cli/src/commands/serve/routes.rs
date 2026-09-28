@@ -2790,14 +2790,25 @@ pub(super) async fn resume(
                     let setup =
                         prepare_drive(&drive_state, RESUME_COMMAND, &drive_execution, &payload)
                             .await?;
-                    let prepared = execution::resume::execute_prepared(
-                        &version,
-                        &drive_state.events,
-                        fixtures.as_deref(),
-                        Some(drive_execution_id.as_str()),
-                        actor,
-                        key,
-                    )?;
+                    let prepared = if source.is_none() {
+                        execution::resume::execute_prepared_from_snapshot(
+                            &version,
+                            &drive_state.events,
+                            fixtures.as_deref(),
+                            Some(drive_execution_id.as_str()),
+                            actor,
+                            key,
+                        )?
+                    } else {
+                        execution::resume::execute_prepared(
+                            &version,
+                            &drive_state.events,
+                            fixtures.as_deref(),
+                            Some(drive_execution_id.as_str()),
+                            actor,
+                            key,
+                        )?
+                    };
                     if drive_state.runtime.is_some() {
                         // See `start`: a detached runtime drive survives the request that
                         // triggered it, while GET status remains the progress observer.

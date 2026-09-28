@@ -400,8 +400,8 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
 describe("opening", () => {
   it("reviews a raw-digest DraftProposed before any ghost event and submits plain AddNode ids", async () => {
     const content = JSON.stringify({ id: "draft-wire", operations: [
-      { op: "addNode", path: "/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },
-      { op: "addNode", path: "/nodes/verify", value: { name: "Verify", objective: "Check the summary" } },
+      { op: "addNode", path: "/spec/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },
+      { op: "addNode", path: "/spec/nodes/verify", value: { name: "Verify", objective: "Check the summary" } },
       { op: "addEdge", value: { from: "summarize", to: "verify", type: "data" } },
     ] });
     const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
@@ -426,6 +426,23 @@ describe("opening", () => {
     const [, node, options] = firstCall(client.approve as unknown as { mock: { calls: unknown[][] } });
     expect(node).toBe("summarize");
     expect(options).toEqual(expect.objectContaining({ governed: { draftId: "draft-wire", proposalDigest: rawDigest, assignments: { summarize: "agent-a", verify: "agent-a" } } }));
+  });
+
+  it("rejects the obsolete unscoped node pointer", async () => {
+    const content = JSON.stringify({ id: "draft-invalid-path", operations: [
+      { op: "addNode", path: "/nodes/summarize", value: { name: "Summarize" } },
+    ] });
+    const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 3, events: [
+        { sequence: 3, kind: "draft_proposed", payload: { draftId: "draft-invalid-path", proposalSha256: rawDigest }, occurredAt: null, actorId: "agent-a", actorType: "agent", idempotencyKey: "k3", eventId: "e3", evidenceRefs: ["sealed-invalid"] },
+      ] })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "sealed-invalid", mediaType: "application/json", sensitivity: "confidential", contentSha256: rawDigest, content })),
+    });
+    await open(client);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-invalid-path");
+    expect(await screen.findByText("typed addNode path is invalid")).toBeVisible();
+    expect(screen.getByRole("button", { name: "review selected proposal" })).toBeDisabled();
   });
   it("opens the organized overview without applying saved canvas coordinates", async () => {
     render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm"})} />);

@@ -84,8 +84,8 @@ function rawSha256(digest: string): string {
 }
 
 function nodeIdFromDraftPath(path: unknown): string | null {
-  if (typeof path !== "string" || !path.startsWith("/nodes/") || path.length <= "/nodes/".length) return null;
-  const encoded = path.slice("/nodes/".length);
+  if (typeof path !== "string" || !path.startsWith("/spec/nodes/") || path.length <= "/spec/nodes/".length) return null;
+  const encoded = path.slice("/spec/nodes/".length);
   if (encoded.includes("/")) return null;
   let decoded: string;
   try {

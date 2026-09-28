@@ -217,7 +217,12 @@ fn load_agent_credentials() -> Result<BTreeMap<String, ScopedAgentCredential>, F
                 "/agentCredentials",
             ));
         };
-        if credential.is_empty() || credential.len() > 256 || result.contains_key(credential) {
+        if credential.len() != 64
+            || !credential
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || result.contains_key(credential)
+        {
             return Err(serve_invalid(
                 "GRAPHHELM_AGENT_CREDENTIALS contains an invalid or duplicate credential",
                 "/agentCredentials",
@@ -712,14 +717,9 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
     // all consume an explicit principal extractor.
     let Some((_, scoped)) = state.agent_credentials.iter().find(|(credential, scoped)| {
         constant_time_eq(presented.as_bytes(), credential.as_bytes())
+            && scoped.project == execution::PROJECT
             && request.uri().path().split('/').nth(3) == Some(scoped.execution.as_str())
-            && request
-                .headers()
-                .get("x-graphhelm-project")
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|project| {
-                    constant_time_eq(project.as_bytes(), scoped.project.as_bytes())
-                })
+            && agent_route_allowed(&request)
     }) else {
         return unauthorized_response();
     };
@@ -735,6 +735,17 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     next.run(request).await
+}
+
+fn agent_route_allowed(request: &Request) -> bool {
+    let path = request.uri().path();
+    let method = request.method();
+    if method == axum::http::Method::GET {
+        return path.ends_with("/briefing")
+            || path.ends_with("/events")
+            || path.matches('/').count() == 3;
+    }
+    method == axum::http::Method::POST && path.ends_with("/signal")
 }
 
 fn unauthorized_response() -> Response {

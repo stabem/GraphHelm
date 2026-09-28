@@ -2100,6 +2100,46 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(event["actor"]["id"], "agent-planner");
 }
 
+/// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an
+/// owner or another seat, and the same credential cannot cross its one execution binding. This
+/// observes the real HTTP middleware plus the durable event actor, rather than checking a parser
+/// result made from values supplied by the test itself.
+#[test]
+fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-scoped-agent";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let (_guard, base, _owner_token) = serve_with_env(
+        &events,
+        &[],
+        &[("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str())],
+    );
+    let body = serde_json::json!({
+        "signal": signal_envelope("signal-http-scoped-agent", "no_progress"),
+        "evidenceOut": directory.path().join("scoped-evidence.json").to_str().unwrap(),
+    });
+    let url = format!("{base}/v1/executions/{execution}/signal");
+    let headers = [
+        ("Idempotency-Key", "scoped-agent-signal-1"),
+        ("X-GraphHelm-Actor", "owner-forged"),
+        ("X-GraphHelm-Actor-Type", "owner"),
+    ];
+    let (status, reply) = post_json(&url, credential, &headers, &body);
+    assert_eq!(status, 200, "{reply}");
+    let event = last_event_of_kind(&base, credential, execution, "signal_recorded");
+    assert_eq!(event["actor"]["type"], "agent");
+    assert_eq!(event["actor"]["id"], "agent-planner");
+
+    let foreign = format!("{base}/v1/executions/exec-http-other/signal");
+    let (foreign_status, foreign_reply) = post_json(&foreign, credential, &headers, &body);
+    assert_eq!(foreign_status, 401, "{foreign_reply}");
+}
+
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
 /// not 409, and appends nothing — the store's own `GHE003_IDEMPOTENCY_CONFLICT` on the
 /// freshly-recomputed-sequence collision (the checkpoint this task verified empirically) is

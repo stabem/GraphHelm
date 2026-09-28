@@ -64,7 +64,14 @@ pub fn run(
         Err(error) => return Outcome::internal(COMMAND, error).with_warnings(warnings),
     };
     if let (Some(keyring), Some(key_id)) = (genesis.directory, genesis.key_id) {
-        if let Err(error) = persist_governed_genesis(&version, events, execution, keyring, key_id) {
+        if let Err(error) = persist_governed_genesis(
+            &version,
+            events,
+            execution,
+            keyring,
+            key_id,
+            super::owner_actor(),
+        ) {
             return Outcome::internal(COMMAND, error).with_warnings(warnings);
         }
     } else if genesis.directory.is_some() || genesis.key_id.is_some() {
@@ -109,6 +116,7 @@ pub(crate) fn persist_governed_genesis(
     execution: Option<&str>,
     keyring: &Path,
     key_id: &str,
+    caller: PersistedActor,
 ) -> Result<(), String> {
     let sealing = super::signal::SignalKeyring {
         directory: keyring.to_path_buf(),
@@ -129,17 +137,13 @@ pub(crate) fn persist_governed_genesis(
         version,
         &PublicationPreparationServices {
             scope: scope.clone(),
-            actor: owner("owner-local"),
+            actor: owner(caller.id().as_str()),
             clock: &clock,
             externalizer: &SealingGraphExternalizer::new(sealer),
         },
     ))
     .map_err(|error| error.to_string())?;
-    let actor = PersistedActor::new(
-        PersistedActorType::Owner,
-        graphhelm_protocols::ActorId::parse("owner-local")
-            .map_err(|_| "the owner actor is not wire-safe".to_owned())?,
-    );
+    let actor = caller;
     let snapshot = graphhelm_protocols::GraphAuthoringSnapshotStored {
         execution_id: stream.clone(),
         graph_version: version.number(),

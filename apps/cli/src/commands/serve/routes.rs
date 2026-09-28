@@ -1845,6 +1845,7 @@ pub(super) async fn start(
                     let directory = sealing.directory.clone();
                     let key_id = sealing.key_id.clone();
                     let version_for_genesis = version.clone();
+                    let genesis_actor = actor.clone();
                     tokio::task::spawn_blocking(move || {
                         execution::start::persist_governed_genesis(
                             &version_for_genesis,
@@ -1852,6 +1853,7 @@ pub(super) async fn start(
                             Some(execution.as_str()),
                             &directory,
                             &key_id,
+                            genesis_actor,
                         )
                     })
                     .await

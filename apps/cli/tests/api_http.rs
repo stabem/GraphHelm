@@ -9757,6 +9757,19 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
         &serde_json::json!({"signal": owner_signal}),
     );
     assert_eq!(owner_signal_status, 200, "{owner_signal_reply}");
+    let mut forged_signal = validator_signal.clone();
+    forged_signal["id"] = serde_json::json!("memory-forged-agent-signal");
+    let (forged_status, forged_reply) = post_json(
+        &format!("{base}/v1/executions/{source_execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-forged-agent-signal-key"),
+            ("X-GraphHelm-Actor", "forged-memory-reviewer"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({"signal": forged_signal}),
+    );
+    assert_eq!(forged_status, 200, "{forged_reply}");
     let scope = serde_json::json!({
         "optIn": true,
         "content": content,
@@ -9766,6 +9779,19 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
         "validatorSignalId": validator_signal_id,
         "expiresAtUnix": chrono::Utc::now().timestamp() + 3_600,
     });
+    let mut forged_publication = scope.clone();
+    forged_publication["validatorSignalId"] = serde_json::json!("memory-forged-agent-signal");
+    let (forged_publication_status, forged_publication_reply) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-forged-agent-publication"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &forged_publication,
+    );
+    assert_eq!(forged_publication_status, 409, "{forged_publication_reply}");
     let (alias_status, alias_reply) = post_json(
         &format!("{base}/v1/development/memory"),
         &token,
@@ -9849,6 +9875,20 @@ fn durable_memory_publishes_replays_and_enters_production_context() {
     );
     assert_eq!(retry_status, 200, "{retry}");
     assert_eq!(retry["data"]["recordId"], published["data"]["recordId"]);
+    let mut changed_intent = scope.clone();
+    changed_intent["expiresAtUnix"] =
+        serde_json::json!(scope["expiresAtUnix"].as_i64().unwrap() + 1);
+    let (conflict_status, conflict_reply) = post_json(
+        &format!("{base}/v1/development/memory"),
+        &token,
+        &[
+            ("Idempotency-Key", "memory-71-publish"),
+            ("X-GraphHelm-Actor", "memory-owner"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &changed_intent,
+    );
+    assert_eq!(conflict_status, 409, "{conflict_reply}");
     drop(guard);
 
     let (_restarted, base, token) = serve_with_env(&events, &server_args, &env);

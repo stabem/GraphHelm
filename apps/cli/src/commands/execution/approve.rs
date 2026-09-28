@@ -20,6 +20,15 @@ use crate::output::Outcome;
 
 const COMMAND: &str = "execution.approve";
 
+pub(crate) struct GovernedApproval<'a> {
+    pub keyring: &'a Path,
+    pub key_id: &'a str,
+    pub assigned_actor: Option<&'a str>,
+    pub proposal_digest: Option<&'a str>,
+    pub draft_id: Option<&'a str>,
+    pub approving_actor: PersistedActor,
+}
+
 /// The owner approves a `Ghost` or `Blocked` node, readying it — for a `Blocked` node with
 /// `last_outcome == Interrupted`, this *is* the triage act `resume_preconditions` waits for.
 ///
@@ -29,6 +38,7 @@ const COMMAND: &str = "execution.approve";
 ///
 /// Calls `execute` with the owner actor and a fresh per-invocation idempotency key, exactly as
 /// before Milestone 05a Task 3 — byte-identical CLI behaviour.
+#[allow(clippy::too_many_arguments)] // preserves the stable CLI dispatcher seam while adding exact governed review identity
 pub fn run(
     events: &Path,
     execution: Option<&str>,
@@ -37,6 +47,7 @@ pub fn run(
     key_id: Option<&str>,
     assigned_actor: Option<&str>,
     proposal_digest: Option<&str>,
+    draft_id: Option<&str>,
 ) -> Outcome {
     finish(
         COMMAND,
@@ -45,10 +56,14 @@ pub fn run(
                 events,
                 execution,
                 node,
-                keyring,
-                key_id,
-                assigned_actor,
-                proposal_digest,
+                GovernedApproval {
+                    keyring,
+                    key_id,
+                    assigned_actor,
+                    proposal_digest,
+                    draft_id,
+                    approving_actor: owner_actor(),
+                },
             ),
             (None, None) => execute(
                 events,
@@ -73,14 +88,11 @@ pub(crate) fn execute_governed(
     events: &Path,
     execution: Option<&str>,
     node: &str,
-    keyring: &Path,
-    key_id: &str,
-    assigned_actor: Option<&str>,
-    proposal_digest: Option<&str>,
+    request: GovernedApproval<'_>,
 ) -> Result<serde_json::Value, Failure> {
     let keyring = super::signal::SignalKeyring {
-        directory: keyring.to_owned(),
-        key_id: key_id.to_owned(),
+        directory: request.keyring.to_owned(),
+        key_id: request.key_id.to_owned(),
     };
     let opener = super::signal::open_sealer(&keyring)?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
@@ -158,7 +170,8 @@ pub(crate) fn execute_governed(
     let history = store
         .read_replay_stream(&scope, &stream)
         .map_err(|error| repository_failure(&error))?;
-    let requested_digest = proposal_digest
+    let requested_digest = request
+        .proposal_digest
         .map(|value| {
             graphhelm_protocols::RawSha256::parse(value)
                 .map_err(|_| execution_state("the proposal digest is invalid", "/proposalDigest"))
@@ -170,6 +183,15 @@ pub(crate) fn execute_governed(
                 "/proposalDigest",
             )
         })?;
+    let requested_draft_id = request
+        .draft_id
+        .map(|value| {
+            OpaqueId::parse(value)
+                .map_err(|_| execution_state("the draft identifier is invalid", "/draftId"))
+        })
+        .transpose()?;
+    let requested_draft_id = requested_draft_id
+        .ok_or_else(|| execution_state("draft-id is required for governed approval", "/draftId"))?;
     let mut candidates = Vec::new();
     for event in history.iter().rev() {
         let EventKind::DraftProposed(payload) = &event.kind else {
@@ -206,6 +228,7 @@ pub(crate) fn execute_governed(
         .map_err(|_| execution_state("the proposal digest is invalid", "/proposal"))?;
         if &calculated == digest
             && draft.id == payload.draft_id.as_str()
+            && requested_draft_id.as_str() == draft.id
             && requested_digest == *digest
             && draft.operations.iter().any(
                 |operation| matches!(operation, DraftOperation::AddNode { id, .. } if id == node),
@@ -232,7 +255,7 @@ pub(crate) fn execute_governed(
     let ids = UuidIds;
     let clock = SystemClock;
     let externalizer = SealingGraphExternalizer::new(opener);
-    let assigned_actor = assigned_actor.ok_or_else(|| {
+    let assigned_actor = request.assigned_actor.ok_or_else(|| {
         execution_state(
             "actor-id is required so the approved node has an authenticated owner",
             "/actorId",
@@ -264,7 +287,7 @@ pub(crate) fn execute_governed(
             scope: scope.clone(),
             stream_id: OpaqueId::parse(&stream)
                 .map_err(|_| execution_state("the execution stream is invalid", "/execution"))?,
-            actor: Actor::new(ActorType::Owner, "owner-cli"),
+            actor: Actor::new(ActorType::Owner, request.approving_actor.id().as_str()),
             clock: &clock,
             ids: &ids,
             externalizer: &externalizer,

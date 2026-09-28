@@ -325,6 +325,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id,
                 actor_id,
                 proposal_digest,
+                draft_id,
             } => execution::approve::run(
                 &events,
                 execution.as_deref(),
@@ -333,6 +334,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 key_id.as_deref(),
                 actor_id.as_deref(),
                 proposal_digest.as_deref(),
+                draft_id.as_deref(),
             ),
             ExecutionCommand::Assign {
                 events,

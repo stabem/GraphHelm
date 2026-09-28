@@ -181,6 +181,24 @@ pub fn apply_draft_with_acceptance<'a>(
                     return Err(ApplyError::InvalidOperation);
                 }
             }
+            let proposed_nodes: BTreeSet<&str> = draft
+                .operations
+                .iter()
+                .filter_map(|operation| match operation {
+                    DraftOperation::AddNode { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if proposed_nodes.len() != acceptance.assignments.len()
+                || proposed_nodes.iter().any(|node_id| {
+                    !acceptance
+                        .assignments
+                        .keys()
+                        .any(|key| key.as_str() == *node_id)
+                })
+            {
+                return Err(ApplyError::InvalidOperation);
+            }
         }
         let base_safe_hash = safe_semantic_hash_for(&services.scope, &base.to_record())?;
         let Some(active) = services

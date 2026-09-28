@@ -771,6 +771,9 @@ pub enum ExecutionCommand {
         /// Full sha256 digest of the sealed proposal under review.
         #[arg(long = "proposal-digest")]
         proposal_digest: Option<String>,
+        /// Exact sealed draft identifier reviewed by the owner.
+        #[arg(long = "draft-id")]
+        draft_id: Option<String>,
     },
     /// Assigns an approved ghost node to an agent by its authenticated actor id.
     Assign {

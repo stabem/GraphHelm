@@ -2089,25 +2089,56 @@ pub(super) async fn approve(
         );
     };
     let node = node.to_owned();
-    let Some(proposal_digest) = payload
+    let proposal_digest = payload
         .get("proposalDigest")
-        .and_then(serde_json::Value::as_str)
-    else {
+        .and_then(serde_json::Value::as_str);
+    let actor_id = payload.get("actorId").and_then(serde_json::Value::as_str);
+    let draft_id = payload.get("draftId").and_then(serde_json::Value::as_str);
+    let governed = proposal_digest.is_some() || actor_id.is_some() || draft_id.is_some();
+    if !governed {
+        let events = state.events.clone();
+        let execution = execution_id.clone();
+        return run_idempotent_mutation(
+            &state.events,
+            &execution_id,
+            APPROVE_COMMAND,
+            identity,
+            ExecutorWiring::from_state(&state),
+            move |actor, key| {
+                Box::pin(async move {
+                    Ok(execution::approve::execute(
+                        &events,
+                        Some(execution.as_str()),
+                        &node,
+                        actor,
+                        key,
+                    )?)
+                })
+            },
+        )
+        .await;
+    }
+    let Some(proposal_digest) = proposal_digest else {
         return bad_request(
             APPROVE_COMMAND,
-            "the request body must carry the exact \"proposalDigest\"",
+            "governed approval requires \"proposalDigest\"",
             "/proposalDigest",
         );
     };
-    let proposal_digest = proposal_digest.to_owned();
-    let Some(actor_id) = payload.get("actorId").and_then(serde_json::Value::as_str) else {
+    let Some(actor_id) = actor_id else {
         return bad_request(
             APPROVE_COMMAND,
-            "the request body must carry the assigned \"actorId\"",
+            "governed approval requires \"actorId\"",
             "/actorId",
         );
     };
-    let actor_id = actor_id.to_owned();
+    let Some(draft_id) = draft_id else {
+        return bad_request(
+            APPROVE_COMMAND,
+            "governed approval requires \"draftId\"",
+            "/draftId",
+        );
+    };
     let Some(sealing) = state.sealing.clone() else {
         return bad_request(
             APPROVE_COMMAND,
@@ -2115,6 +2146,9 @@ pub(super) async fn approve(
             "/keyring",
         );
     };
+    let proposal_digest = proposal_digest.to_owned();
+    let actor_id = actor_id.to_owned();
+    let draft_id = draft_id.to_owned();
     let events = state.events.clone();
     let drive_execution_id = execution_id.clone();
 
@@ -2124,16 +2158,20 @@ pub(super) async fn approve(
         APPROVE_COMMAND,
         identity,
         ExecutorWiring::from_state(&state),
-        |_actor, _key| {
+        |owner, _key| {
             Box::pin(async move {
                 Ok(execution::approve::execute_governed(
                     &events,
                     Some(drive_execution_id.as_str()),
                     &node,
-                    &sealing.directory,
-                    &sealing.key_id,
-                    Some(&actor_id),
-                    Some(&proposal_digest),
+                    execution::approve::GovernedApproval {
+                        keyring: &sealing.directory,
+                        key_id: &sealing.key_id,
+                        assigned_actor: Some(&actor_id),
+                        proposal_digest: Some(&proposal_digest),
+                        draft_id: Some(&draft_id),
+                        approving_actor: owner,
+                    },
                 )?)
             })
         },

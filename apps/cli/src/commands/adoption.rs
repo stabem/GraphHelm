@@ -123,9 +123,19 @@ Maintained by `graphhelm setup` (`--resolve <item>=graphhelm-block`). Edit outsi
 
 - For multi-step work use GraphHelm. Prefer the `mcp__graphhelm__*` tools (`briefing`, `status`, `start`, `evidence`, `resume`); when that MCP server is not connected, use the `graphhelm` CLI.
 - Write code under Keel, proportionally: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
-- Start from the promise, search on purpose, add only the surface the promise needs, and prove it with the smallest adequate observer.
-- Journey-Proven Development: work is done when an observer proves the user-visible promise. With no observer, report `OBSERVER_MISSING` instead of claiming success.
-- A project's own AGENTS.md or CLAUDE.md takes precedence over this block.";
+- Journey-Proven Development: work is done when an observer proves the user-visible promise.
+- A project's own AGENTS.md or CLAUDE.md takes precedence over this block.
+
+Keel, in brief (the full rules are the `keel` skill's REFERENCE.md; read it only when this does not answer):
+
+1. Stay inside the card and search on purpose: open what it names, then search for the specific symbol or caller; change only the paths the task needs, even when a file outside it has the same defect.
+2. Add nothing unrequested: no helper, type, module, flag, dependency, file or test the task does not need. Extend an existing body or reuse a proven symbol before adding a type; a new interface needs a real caller (producer and consumer may land together).
+3. Keep existing behaviour working: before editing shared code, find its other callers and what they rely on.
+4. A new test names the defect and fails on the parent (without your change); a test green before the fix proves nothing. A new or changed test states its cost (run time, what it needs) and passes the `test-audit` skill's four-question gate.
+5. Prove the promise with the smallest check that observes it; a proxy (another OS, a mock, an emulator, a cross-compile) is not an observation.
+6. When you cannot observe the promise here, change nothing, say what is missing, and end with `OBSERVER_MISSING: <what is missing>`. Never write \"verified\" for what you did not observe.
+7. Stop when the promise is proven: no refactor, reformat or sweep beyond it.
+8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still covers its obligation.";
 
 /// Inserts or refreshes the marked block. Idempotent: the output of a run is a fixed point. Line
 /// endings follow the file (CRLF when the file already uses it). A begin marker with no end marker

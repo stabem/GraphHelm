@@ -2,6 +2,6 @@
   "version": "0.1.0",
   "packages": [
     {"id":"graphhelm-jpd","version":"0.1.0","digest":"sha256:b9bc6fd86913acf9d98fceac94b9c4b554d19b15ede7d44306e46ffc4be9eb10","path":"../builtin/graphhelm-jpd"},
-    {"id":"graphhelm-development-contracts","version":"0.1.0","digest":"sha256:31667e35e62f3d21a9650e07cc31c49820c35bd98c77b4f41a5d45220350fb2d","path":"../builtin/graphhelm-development-contracts"}
+    {"id":"graphhelm-development-contracts","version":"0.1.0","digest":"sha256:5f87bd49c53378173070bfff8b31e5552f2005fdd51df1980b4adb3c0cda9a2c","path":"../builtin/graphhelm-development-contracts"}
   ]
 }

@@ -150,24 +150,36 @@ For example, changing a comment-only display label can use the direct route; cha
 timeout or permission setting needs an observer of the resulting behavior, even if the diff is one
 line. A config parser accepting the value does not observe that behavior.
 
-**The four moves, when Keel applies:**
+**When Keel applies, these rules bind** (the same digest the `keel` skill loads):
 
-1. **Start from the promise.** State what changes, what must keep working, and the command that
-   observes each. The card names paths, not globs.
-2. **Start from the card, then search on purpose.** Open what the card names first. When you need
-   more, search for the specific symbol or caller rather than browsing, and record in the PR body
-   what context the card was missing: that record is how cards get better.
-3. **Add only surface the promise needs.** Prefer extending an existing body or reusing a proven
-   symbol over a new type, layer or helper. A new interface needs real callers; a producer and its
-   consumer may arrive in the same change when both are proven there. Counts of new modules, types,
-   functions and tests are signals for the reviewer, never a quota: do not inflate a function or
-   drop a test to stay under a number.
-4. **Prove with the smallest adequate observer.** Name the criterion and the defect a test would
-   catch, assert against a value the code under test did not produce, mock only I/O, clock and
-   randomness. Mutation testing is used only when it adds evidence the existing proof lacks; it is
-   not an admission ritual (the meaningful-test rule above governs). To gate a new test, audit a
-   suite, or remove a test, use the `test-audit` skill
-   (`extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md`).
+1. Stay inside the card and search on purpose: open what it names first, then search for the
+   specific symbol or caller. Change only the paths the task needs; a file the task does not reach
+   is out of scope, even when it has the same defect or looks untidy.
+2. Add nothing unrequested: no new helper, type, module, flag, dependency, file or test the task
+   does not need. Extend an existing body or reuse a proven symbol before adding a type; a new
+   interface needs a real caller (producer and consumer may land together).
+3. Keep existing behaviour working. Before editing shared code, find its other callers and the
+   behaviour they rely on; a fix that breaks a neighbour is not a fix.
+4. A new test must name the defect and fail on the parent (without your change). A test that is
+   green before the fix proves nothing; do not add it. A new or changed test states its cost (run
+   time, what it needs) and passes the `test-audit` skill's four-question gate.
+5. Prove the promise with the smallest check that observes it. A proxy (another OS, a mock, an
+   emulator, a cross-compile, a test compiled out on this host) is not an observation.
+6. When you cannot observe the promise on this host, change nothing, say what is missing, and end
+   with `OBSERVER_MISSING: <what is missing>`. Never write "verified" for what you did not observe.
+7. Stop when the promise is proven. Do not refactor, reformat or sweep beyond it.
+8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still
+   covers its obligation. No record, no removal.
+
+Here also: the card names paths, not globs; record in the PR body what context the card was
+missing.
+A test asserts against a value the code under test did not produce and mocks only I/O, clock and
+randomness; mutation testing only when it adds evidence the existing proof lacks. Counts of new
+modules, types, functions and tests are signals for the reviewer, never a quota: do not inflate a
+function or drop a test to stay under a number. The full rules, read on demand:
+`extensions/builtin/graphhelm-development-contracts/skills/keel/REFERENCE.md` and
+[docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md); to gate, audit or remove a test, the `test-audit`
+skill (`extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md`).
 
 **What is enforced (objective contracts only):** one review by another session or a blind subagent that runs the
 reached tests, as [docs/process/DELIVERY.md](docs/process/DELIVERY.md) says; a new dependency is

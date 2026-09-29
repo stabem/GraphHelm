@@ -2,6 +2,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { WorkOverview, isFirstEntryNode } from "./work-overview";
 import type { GraphModel } from "../graph/model";
+import type { SubagentReadModel } from "../runtime/subagents";
 
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
@@ -242,7 +243,7 @@ describe("compact run handoff", () => {
   it("states that session relationships are unavailable without inventing parentage", () => {
     render(<WorkOverview model={model} crew={[{ id: "builder", charter: null }]} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Team" })).toBeInTheDocument();
-    expect(screen.getByText("Session relationships unavailable · showing a flat team list.")).toBeInTheDocument();
+    expect(screen.getByText("Checking recorded session links · showing a flat team list.")).toBeInTheDocument();
     expect(screen.queryByText(/parent|child|reports to/i)).not.toBeInTheDocument();
   });
 
@@ -251,6 +252,35 @@ describe("compact run handoff", () => {
     render(<WorkOverview model={{ ...model, nodes: [completed] }} runStatus="completed" selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Open node finished/ })).toHaveTextContent("review needed");
     expect(screen.getByRole("note")).toHaveTextContent("does not prove its goal passed");
+  });
+  it("opens the first unverified result from the suggested next action", () => {
+    const select = vi.fn();
+    const completed = { ...node("finished"), state: "succeeded" as const, resultSource: "model_reply" as const };
+    render(<WorkOverview model={{ ...model, nodes: [completed] }} selectedNode={null} onSelectNode={select} />);
+    fireEvent.click(screen.getByRole("button", { name: "Review first unverified node" }));
+    expect(select).toHaveBeenCalledWith("finished");
+    expect(screen.getByRole("region", { name: "Now, last, and next" })).toHaveTextContent("Suggested: review node results");
+  });
+  it("shows only observed host session membership and no invented result", () => {
+    const subagents: SubagentReadModel = {
+      executionId: "run-one", rejected: 0, latestByChild: {}, relationships: [{
+        executionId: "run-one", parentSessionId: "parent-1", childAgentId: "child-1",
+        agentType: "worker", declaredNodeId: null, sourceId: "codex-session-parent-1",
+        sourceActorId: "codex-session-parent-1", sourceActorType: "agent",
+        startedSequence: 10, startedAt: "2026-09-29T12:00:00Z", startedEvidenceId: "ev-start",
+        stoppedSequence: null, stoppedAt: null, stoppedEvidenceId: null, lastChildEvent: null, phase: "started",
+      }],
+    };
+    render(<WorkOverview model={model} subagents={subagents} selectedNode={null} onSelectNode={vi.fn()} />);
+    const tree = screen.getByRole("group", { name: "Recorded subagent sessions" });
+    expect(tree).toHaveTextContent("Recorded host session parent-1 · 1 subagent");
+    expect(tree).toHaveTextContent("child-1");
+    expect(tree).toHaveTextContent("stop not recorded");
+    fireEvent.click(within(tree).getByText("child-1"));
+    expect(tree).toHaveTextContent("Start: event #10");
+    expect(tree).toHaveTextContent("No direct child action recorded");
+    expect(tree).toHaveTextContent("Task result and acceptance not verified here");
+    expect(tree).not.toHaveTextContent("completed");
   });
 });
 

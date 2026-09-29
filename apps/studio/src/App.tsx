@@ -33,6 +33,7 @@ import {
   newIdempotencyKey,
 } from "./runtime/client";
 import { devSession, newestPresenceByActor, type AgentPresence, type DevSession } from "./runtime/session";
+import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
 import type {
   Briefing,
   ClaimEvidence,
@@ -1590,6 +1591,30 @@ export default function App({
     },
     [],
   );
+  const [subagentRead, setSubagentRead] = useState<SubagentReadModel | null>(null);
+  const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
+  useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
+  useEffect(() => {
+    if (!selected || events === null) {
+      setSubagentRead(null);
+      return;
+    }
+    let cancelled = false;
+    const run = selected;
+    const readEvidence = (executionId: string, evidenceId: string) => {
+      const key = `${executionId}\u0000${evidenceId}`;
+      let pending = subagentEvidenceCache.current.get(key);
+      if (!pending) {
+        pending = openEvidence(executionId, evidenceId);
+        subagentEvidenceCache.current.set(key, pending);
+      }
+      return pending;
+    };
+    void readSubagentRelationships({ executionId: run, events: eventList, readEvidence })
+      .then((result) => { if (!cancelled) setSubagentRead(result); })
+      .catch(() => { if (!cancelled) setSubagentRead({ executionId: run, relationships: [], latestByChild: {}, rejected: 1 }); });
+    return () => { cancelled = true; };
+  }, [selected, events, eventList, openEvidence]);
 
   const readProjectDocument = useCallback(async (reference: DocumentReference) => {
     const client = clientRef.current;
@@ -1708,7 +1733,7 @@ export default function App({
   // pair becomes a bubble standing on the board.
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const recentActivity = useMemo(() => eventList
-    .filter((event) => event.kind === "signal_recorded")
+    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event))
     .slice(-5)
     .reverse()
     .map((event) => ({
@@ -1734,7 +1759,7 @@ export default function App({
   const agentReports = useMemo(() => {
     const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
     for (const event of eventList) {
-      if (event.kind !== "signal_recorded" || event.actorType !== "agent" || event.actorId === null) continue;
+      if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || event.actorType !== "agent" || event.actorId === null) continue;
       latest.set(event.actorId, {
         sequence: event.sequence,
         occurredAt: event.occurredAt,
@@ -1747,6 +1772,7 @@ export default function App({
     const spoken = eventList.filter(
       (event) =>
         event.kind === "signal_recorded" &&
+        !isSubagentLifecycleSignal(event) &&
         (event.actorType === "agent" || event.actorType === "owner"),
     );
     const room = spoken.filter((event) => (envelopes[event.sequence]?.to ?? null) === null);
@@ -2648,6 +2674,7 @@ export default function App({
               crew={crew}
               activity={recentActivity}
               latestEvent={latestEvent}
+              subagents={subagentRead?.executionId === selected ? subagentRead : null}
               attention={pendingOwnerReview ? "needs_you" : status.attention}
               nextAction={pendingOwnerReview ? {
                 label: "Review pending proposal",

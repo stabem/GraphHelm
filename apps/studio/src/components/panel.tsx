@@ -23,6 +23,7 @@ import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
+import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
@@ -87,6 +88,8 @@ export function describe(event: RuntimeEvent): string | null {
       // `kind`/`severity`/`sourceKind` and no `description`, because D-036 keeps free-form content
       // out of event payloads. The words arrive underneath, out of sealed evidence.
       const signalKind = typeof payload.kind === "string" ? payload.kind : null;
+      if (signalKind === "agent_subagent_started") return "Observed a subagent start; see Team for the verified session link.";
+      if (signalKind === "agent_subagent_stopped") return "Observed a subagent stop; its result still needs separate evidence.";
       const severity = typeof payload.severity === "string" ? payload.severity : null;
       const from = typeof payload.sourceKind === "string" ? payload.sourceKind : null;
       // `operator_note` is outside the recognized set on purpose, so the Governor records it and
@@ -806,7 +809,7 @@ export function useEnvelopes(
   useEffect(() => {
     if (executionId === undefined || openEvidence === undefined) return;
     const carriers = events.filter(
-      (event) => event.kind === "signal_recorded" && event.evidenceRefs.length > 0,
+      (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
     let live = true;
     void (async () => {
@@ -1437,7 +1440,7 @@ export function RunPanel({
   const askers: Array<{ id: string; at: string | null }> = [];
   for (let index = events.length - 1; index >= 0 && askers.length < 2; index -= 1) {
     const event = events[index];
-    if (event.kind !== "signal_recorded") continue;
+    if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event)) continue;
     if (event.actorType !== "agent" || event.actorId === null) continue;
     if (askers.some((asker) => asker.id === event.actorId)) continue;
     askers.push({ id: event.actorId, at: event.occurredAt });
@@ -1460,7 +1463,7 @@ export function RunPanel({
   // a thread that silently hides turns reads exactly like a thread where nothing was said.
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
-  const spokenCount = events.filter((event) => event.kind === "signal_recorded").length;
+  const spokenCount = events.filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event)).length;
   const shown =
     needle === ""
       ? events

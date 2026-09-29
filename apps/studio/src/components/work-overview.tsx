@@ -12,6 +12,7 @@ import {
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
+import type { SubagentReadModel } from "../runtime/subagents";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -26,6 +27,7 @@ export interface WorkOverviewProps {
   projectPath?: string | null;
   latestRecordedUpdate?: RecordedUpdate | null;
   latestEvent?: LatestEvent | null;
+  subagents?: SubagentReadModel | null;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
@@ -103,6 +105,7 @@ export function WorkOverview({
   projectPath = null,
   latestRecordedUpdate = null,
   latestEvent = null,
+  subagents = null,
   crew = [],
   talks = [],
   activity = [],
@@ -165,6 +168,12 @@ export function WorkOverview({
     return leftActive - rightActive;
   });
   const activeNodeNames = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).map((node) => node.id);
+  const reviewNode = model.nodes.find((node) => nodeStatusLabel(node) === "review needed");
+  const sessions = new Map<string, SubagentReadModel["relationships"]>();
+  for (const child of subagents?.relationships ?? []) {
+    const key = `${child.sourceId}\u0000${child.parentSessionId}`;
+    sessions.set(key, [...(sessions.get(key) ?? []), child]);
+  }
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -177,16 +186,17 @@ export function WorkOverview({
         <div className="work-counts" aria-label="Workspace counts">
           <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
           <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
-          <span><Users aria-hidden="true" size={15} /> {crew.length} agents</span>
+          <span><Users aria-hidden="true" size={15} /> {crew.length} agent identities</span>
+          {subagents && subagents.relationships.length > 0 && <span><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"}</span>}
           <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
 
       <section className="work-now-strip" aria-label="Now, last, and next">
-        <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong><small>{activeNodeNames.length > 0 ? `${activeNodeNames.slice(0, 3).join(", ")}${activeNodeNames.length > 3 ? ` +${activeNodeNames.length - 3}` : ""}` : "No active node recorded"}</small></div>
+        <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong>{activeNodeNames.length > 0 ? <small><button type="button" className="work-inline-link" onClick={() => onSelectNode(activeNodeNames[0])}>Open {activeNodeNames[0]}</button>{activeNodeNames.length > 1 ? ` · ${activeNodeNames.length - 1} more active` : ""}</small> : <small>No active node recorded</small>}</div>
         <div><span>Last</span><strong>{latestEvent ? `Event #${latestEvent.sequence} · ${readable(latestEvent.kind)}` : "No latest event recorded"}</strong><small>{latestEvent ? `${latestEvent.actorId ?? "Unknown actor"} · ${ago(latestEvent.occurredAt)}` : "Last chat report is shown below"}</small></div>
-        <div><span>Next</span><strong>{nextAction?.label ?? "No next action recorded"}</strong><small>{nextAction?.detail ?? "The Runtime has recorded no owner action."}</small></div>
+        <div><span>Next</span><strong>{nextAction?.label ?? (reviewNode ? "Suggested: review node results" : "No next action recorded")}</strong><small>{nextAction?.detail ?? (reviewNode ? <button type="button" className="work-inline-link" aria-label="Review first unverified node" onClick={() => onSelectNode(reviewNode.id)}>Open {reviewNode.id} · acceptance unverified</button> : "The Runtime has recorded no owner action.")}</small></div>
       </section>
 
       <section className="work-identity" aria-label="Active workspace">
@@ -227,7 +237,22 @@ export function WorkOverview({
               <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
               <span>{crew.length}</span>
             </div>
-            {crew.length > 0 && <p className="work-team-flat-note">Session relationships unavailable · showing a flat team list.</p>}
+            {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Recorded subagent sessions">
+              {[...sessions].map(([key, children]) => <details className="work-session" key={key} open>
+                <summary>Recorded host session {children[0].parentSessionId} · {children.length} subagent{children.length === 1 ? "" : "s"}</summary>
+                <small>Source: {children[0].sourceId}. The record does not identify who directly delegated a nested task.</small>
+                <ul>{children.map((child) => <li key={child.childAgentId}><details className="work-child-details">
+                  <summary><strong>{child.childAgentId}</strong><span>Role: {child.agentType} · {child.phase === "stopped" ? "stop observed" : "stop not recorded"}</span></summary>
+                  <small>Start: event #{child.startedSequence} · {ago(child.startedAt)} · evidence {child.startedEvidenceId}</small>
+                  {child.stoppedSequence !== null && <small>Stop: event #{child.stoppedSequence} · {ago(child.stoppedAt)} · evidence {child.stoppedEvidenceId}</small>}
+                  <small>{child.lastChildEvent ? `Last direct child event: #${child.lastChildEvent.sequence} · ${readable(child.lastChildEvent.kind)} · ${ago(child.lastChildEvent.occurredAt)}` : "No direct child action recorded"}</small>
+                  <small>{child.declaredNodeId ? `Declared node: ${child.declaredNodeId}; assignment not verified` : "Assigned task not recorded"}</small>
+                  <small>Task result and acceptance not verified here.</small>
+                </details></li>)}</ul>
+              </details>)}
+            </div>}
+            {sessions.size === 0 && <p className="work-team-flat-note">{subagents === null ? "Checking recorded session links · showing a flat team list." : "No readable session links · showing a flat team list."}</p>}
+            {subagents && subagents.rejected > 0 && <p className="work-caution" role="note">{subagents.rejected} session signal{subagents.rejected === 1 ? "" : "s"} could not be verified.</p>}
             {crew.length === 0 ? (
               <p className="work-empty">No agents have been observed in this run.</p>
             ) : (

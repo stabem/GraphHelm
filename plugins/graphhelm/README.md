@@ -235,4 +235,11 @@ until the host's own fresh-session event is observed. Do not register a second c
 The adoption CLI does not migrate opaque hook commands; the setup skill identifies legacy
 registrations and requires an explicit, backed-up migration for those entries.
 
+The optional `SubagentStart` and `SubagentStop` hooks record a child identity under the host
+session bound to the current execution. They do not receive the direct nested delegator, task
+title, result, or acceptance verdict. Studio shows only the verified host-session link and the
+observed lifecycle events; a missing stop never means the child is still working. The hooks send
+one compact signal per phase, with no model call or transcript upload. Installing updated source
+does not prove host activation; verify a fresh native session separately.
+
 To add a methodology companion, install `graphhelm-jpd@graphhelm` or `graphhelm-development-contracts@graphhelm` with the host's `plugin install` / `plugin add` command. Install `graphhelm-codex-hooks@graphhelm` for Codex hook compatibility as shown above. The [skill catalog](https://github.com/stabem/GraphHelm/blob/main/docs/skills/README.md) shows when each is useful. Their MCP registration needs `GRAPHHELM_CLI` to be an absolute trusted executable path, `GRAPHHELM_TOKEN_FILE` to name a local token file, and `GRAPHHELM_ACTOR` to identify the chat session. Never paste the token value into a manifest or prompt.

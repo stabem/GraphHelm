@@ -24,6 +24,30 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/subagent_hook.py\" start --host codex",
+            "statusMessage": "Recording GraphHelm subagent start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/subagent_hook.py\" stop --host codex",
+            "statusMessage": "Recording GraphHelm subagent stop",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

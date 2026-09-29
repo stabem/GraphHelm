@@ -12,18 +12,22 @@ import {
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
+import type { SubagentReadModel } from "../runtime/subagents";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
 type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
 type AgentReport = { sequence: number; occurredAt: string | null; text: string | null };
 type RecordedUpdate = { sequence: number; occurredAt: string | null };
+type LatestEvent = { sequence: number; kind: string; actorId: string | null; actorType: string | null; occurredAt: string | null };
 
 export interface WorkOverviewProps {
   model: GraphModel;
   projectName?: string | null;
   projectPath?: string | null;
   latestRecordedUpdate?: RecordedUpdate | null;
+  latestEvent?: LatestEvent | null;
+  subagents?: SubagentReadModel | null;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
@@ -78,10 +82,9 @@ function latestObservationForAgent(model: GraphModel, agentId: string): { node: 
   let latest: { node: GraphNode; at: string | null; timestamp: number } | null = null;
   for (const node of model.nodes) {
     for (const event of node.history) {
-      // Runtime lifecycle events may be recorded by system-runtime while the durable assignment
-      // names the agent doing the work. Keep recorder and responsible actor separate, but let the
-      // collaboration card follow the assigned agent's actual node history.
-      if (event.actorId !== agentId && node.assignedActor?.id !== agentId) continue;
+      // The event actor is the only historical fact this event carries. Current assignment is a
+      // separate present-tense responsibility and must not rewrite who recorded old work.
+      if (event.actorId !== agentId) continue;
       const timestamp = event.sequence;
       if (latest === null || timestamp >= latest.timestamp) {
         latest = { node, at: event.occurredAt, timestamp };
@@ -101,6 +104,8 @@ export function WorkOverview({
   projectName = null,
   projectPath = null,
   latestRecordedUpdate = null,
+  latestEvent = null,
+  subagents = null,
   crew = [],
   talks = [],
   activity = [],
@@ -157,6 +162,19 @@ export function WorkOverview({
   const orderedCrew = [...crew].sort((left, right) =>
     (agentReports[right.id]?.sequence ?? 0) - (agentReports[left.id]?.sequence ?? 0),
   );
+  const orderedNodes = [...model.nodes].sort((left, right) => {
+    const leftActive = ["running", "queued", "linting"].includes(left.state) ? 0 : 1;
+    const rightActive = ["running", "queued", "linting"].includes(right.state) ? 0 : 1;
+    return leftActive - rightActive;
+  });
+  const activeNodeNames = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).map((node) => node.id);
+  const reviewNode = model.nodes.find((node) => nodeStatusLabel(node) === "review needed");
+  const sessions = new Map<string, SubagentReadModel["relationships"]>();
+  for (const child of subagents?.relationships ?? []) {
+    const key = `${child.sourceId}\u0000${child.parentSessionId}`;
+    sessions.set(key, [...(sessions.get(key) ?? []), child]);
+  }
+  const jumpToTeam = () => document.getElementById("work-team")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -169,11 +187,18 @@ export function WorkOverview({
         <div className="work-counts" aria-label="Workspace counts">
           <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
           <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
-          <span><Users aria-hidden="true" size={15} /> {crew.length} agents</span>
+          <span><Users aria-hidden="true" size={15} /> {crew.length} agent identities</span>
+          {subagents && subagents.relationships.length > 0 && <button type="button" className="work-count-link" onClick={jumpToTeam}><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"} · open team</button>}
           <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
+
+      <section className="work-now-strip" aria-label="Now, last, and next">
+        <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong>{activeNodeNames.length > 0 ? <small><button type="button" className="work-inline-link" onClick={() => onSelectNode(activeNodeNames[0])}>Open {activeNodeNames[0]}</button>{activeNodeNames.length > 1 ? ` · ${activeNodeNames.length - 1} more active` : ""}</small> : <small>No active node recorded</small>}</div>
+        <div><span>Last</span><strong>{latestEvent ? `Event #${latestEvent.sequence} · ${readable(latestEvent.kind)}` : "No latest event recorded"}</strong><small>{latestEvent ? `${latestEvent.actorId ?? "Unknown actor"} · ${ago(latestEvent.occurredAt)}` : "Last chat report is shown below"}</small></div>
+        <div><span>Next</span><strong>{nextAction?.label ?? (reviewNode ? "Suggested: review node results" : "No next action recorded")}</strong><small>{nextAction?.detail ?? (reviewNode ? <button type="button" className="work-inline-link" aria-label="Review first unverified node" onClick={() => onSelectNode(reviewNode.id)}>Open {reviewNode.id} · acceptance unverified</button> : "The Runtime has recorded no owner action.")}</small></div>
+      </section>
 
       <section className="work-identity" aria-label="Active workspace">
         <div><span>Project</span><strong>{projectName ?? "Project name unavailable"}</strong></div>
@@ -208,17 +233,34 @@ export function WorkOverview({
 
       <div className="work-layout">
         <aside className="work-sidebar" aria-label="Collaboration">
-          <section className="work-section">
+          <section className="work-section" id="work-team">
             <div className="work-section-heading">
-              <div><Users aria-hidden="true" size={17} /><h2>Collaboration</h2></div>
+              <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
               <span>{crew.length}</span>
             </div>
+            {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Recorded subagent sessions">
+              {[...sessions].map(([key, children]) => <details className="work-session" key={key} open>
+                <summary>Recorded host session {children[0].parentSessionId} · {children.length} subagent{children.length === 1 ? "" : "s"}</summary>
+                <small>Source: {children[0].sourceId}. The record does not identify who directly delegated a nested task.</small>
+                <ul>{children.map((child) => <li key={child.childAgentId}><details className="work-child-details">
+                  <summary><strong>{child.childAgentId}</strong><span>Role: {child.agentType} · {child.phase === "stopped" ? "stop observed" : "stop not recorded"}</span></summary>
+                  <small>Start: event #{child.startedSequence} · {ago(child.startedAt)} · evidence {child.startedEvidenceId}</small>
+                  {child.stoppedSequence !== null && <small>Stop: event #{child.stoppedSequence} · {ago(child.stoppedAt)} · evidence {child.stoppedEvidenceId}</small>}
+                  <small>{child.lastChildEvent ? `Last direct child event: #${child.lastChildEvent.sequence} · ${readable(child.lastChildEvent.kind)} · ${ago(child.lastChildEvent.occurredAt)}` : "No direct child action recorded"}</small>
+                  <small>{child.declaredNodeId ? `Declared node: ${child.declaredNodeId}; assignment not verified` : "Assigned task not recorded"}</small>
+                  <small>Task result and acceptance not verified here.</small>
+                </details></li>)}</ul>
+              </details>)}
+            </div>}
+            {sessions.size === 0 && <p className="work-team-flat-note">{subagents === null ? "Checking recorded session links · showing a flat team list." : "No readable session links · showing a flat team list."}</p>}
+            {subagents && subagents.rejected > 0 && <p className="work-caution" role="note">{subagents.rejected} session signal{subagents.rejected === 1 ? "" : "s"} could not be verified.</p>}
             {crew.length === 0 ? (
               <p className="work-empty">No agents have been observed in this run.</p>
             ) : (
               <div className="work-agent-list">
                 {orderedCrew.map((agent) => {
                   const observation = latestObservationForAgent(model, agent.id);
+                  const responsibilities = model.nodes.filter((node) => node.assignedActor?.id === agent.id);
                   const report = agentReports[agent.id];
                   const isSelected = selectedAgent === agent.id;
                   return (
@@ -232,6 +274,8 @@ export function WorkOverview({
                           <span>Last node update</span>
                           {observation ? (
                             <><strong>{observation.node.id}</strong><small>{ago(observation.at)}</small></>
+                          ) : responsibilities.length > 0 ? (
+                            <><strong>{responsibilities.map((node) => node.id).join(", ")}</strong><small>Current responsibility · no actor event recorded</small></>
                           ) : <strong className="work-muted">No node activity yet</strong>}
                         </span>
                         {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
@@ -297,7 +341,7 @@ export function WorkOverview({
             <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
           ) : (
             <div className="work-node-grid">
-              {model.nodes.map((node) => {
+              {orderedNodes.map((node) => {
                 const latest = latestNodeEvent(node);
                 const result = nodeResult(node);
                 const incoming = model.edgesKnown ? model.edges.filter((edge) => edge.to === node.id && nodeIds.has(edge.from)) : [];

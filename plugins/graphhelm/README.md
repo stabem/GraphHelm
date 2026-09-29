@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.10)
+## Session hooks (version 0.1.18)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -54,12 +54,16 @@ the current state. `SessionEnd` records an attributed
 `agent_session_ended` signal. It never marks a task or node complete. The hook does not create a
 run, pick a run by project name, or forward the host's raw payload.
 
-SessionStart keeps its one-second socket inactivity limit. SessionEnd allows one
-request up to 2.5 seconds of socket inactivity, so a durable acknowledgement
-slower than one second can be confirmed without another request. Codex bounds the
-SessionEnd command to three seconds; Claude declares five seconds. Codex 0.157.1
-clamps larger declarations to three seconds. The socket limit alone is not a
-wall-time deadline. A timeout remains unobserved; it never becomes task success.
+SessionStart allows one request up to 2.5 seconds of socket inactivity, within
+Claude's five-second total hook bound, so a fresh briefing slower than one second
+can still be observed without another request. SessionEnd uses the same 2.5-second
+socket budget for its durable acknowledgement. Codex bounds the SessionEnd command
+to three seconds; Claude declares five seconds. Codex 0.157.1 clamps larger
+declarations to three seconds. A socket inactivity limit is not a wall-time
+deadline: host cancellation can stop the hook before its acknowledgement is
+observed, while a separately recorded durable Runtime effect remains real. An
+unavailable briefing or acknowledgement stays UNOBSERVED; it never becomes task
+success and is never retried by this hook.
 
 Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
 agent host:

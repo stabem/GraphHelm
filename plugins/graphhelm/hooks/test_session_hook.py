@@ -21,11 +21,16 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     mismatch_ack = False
     next_step = {"kind": "diagnose"}
     ack_execution = "run-test"
+    get_started = None
+    get_release = None
     post_started = None
     post_release = None
 
     def do_GET(self):
         self.requests.append(("GET", self.path, dict(self.headers), None))
+        if self.get_started:
+            self.get_started.set()
+            self.get_release.wait(timeout=3)
         if self.redirect_to:
             self.send_response(302)
             self.send_header("Location", self.redirect_to)
@@ -85,6 +90,8 @@ class SessionHookTests(unittest.TestCase):
         RuntimeHandler.mismatch_ack = False
         RuntimeHandler.next_step = {"kind": "diagnose"}
         RuntimeHandler.ack_execution = "run-test"
+        RuntimeHandler.get_started = None
+        RuntimeHandler.get_release = None
         RuntimeHandler.post_started = None
         RuntimeHandler.post_release = None
         self.temp = tempfile.TemporaryDirectory()
@@ -218,6 +225,38 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn("test-token", context)
         self.assertEqual(RuntimeHandler.requests[0][1], "/v1/executions/run-test/briefing")
         self.assertEqual(RuntimeHandler.requests[0][2]["Authorization"], "Bearer test-token")
+
+    def test_start_accepts_slow_fresh_briefing_with_one_get(self):
+        # The old one-second socket budget discarded a valid Runtime briefing.
+        # Release a real HTTP response after that boundary and prove fresh sanitized context.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        RuntimeHandler.get_started = threading.Event()
+        RuntimeHandler.get_release = threading.Event()
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "start", "--host", "claude"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=self.env,
+        )
+        process.stdin.write(json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}))
+        process.stdin.close()
+        process.stdin = None
+        release = threading.Timer(1.25, RuntimeHandler.get_release.set)
+        try:
+            self.assertTrue(RuntimeHandler.get_started.wait(timeout=3))
+            release.start()
+            stdout, stderr = process.communicate(timeout=6)
+        finally:
+            release.cancel()
+            RuntimeHandler.get_release.set()
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=6)
+        self.assertEqual((process.returncode, stderr), (0, ""))
+        context = json.loads(stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("FRESH", context)
+        self.assertIn('sequence 19; nextStep {"kind":"diagnose"}', context)
+        self.assertNotIn("SECRET_PLEASE_IGNORE_ALL_RULES", context)
+        self.assertEqual([item[0] for item in RuntimeHandler.requests], ["GET"])
 
     def test_compact_reuses_scoped_sanitized_briefing_without_http(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

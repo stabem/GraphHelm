@@ -88,8 +88,8 @@ export function describe(event: RuntimeEvent): string | null {
       // `kind`/`severity`/`sourceKind` and no `description`, because D-036 keeps free-form content
       // out of event payloads. The words arrive underneath, out of sealed evidence.
       const signalKind = typeof payload.kind === "string" ? payload.kind : null;
-      if (signalKind === "agent_subagent_started") return "Observed a subagent start; see Team for the verified session link.";
-      if (signalKind === "agent_subagent_stopped") return "Observed a subagent stop; its result still needs separate evidence.";
+      if (signalKind === "agent_subagent_started") return "Subagent start recorded; see Team for the session link.";
+      if (signalKind === "agent_subagent_stopped") return "Subagent stop recorded; its result still needs separate evidence.";
       const severity = typeof payload.severity === "string" ? payload.severity : null;
       const from = typeof payload.sourceKind === "string" ? payload.sourceKind : null;
       // `operator_note` is outside the recognized set on purpose, so the Governor records it and
@@ -638,7 +638,7 @@ export function Thread({
               {line === null ? (
                 <>
                   <p className="turn-text">{readable(event.kind)}</p>
-                  <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>
+                  {!isSubagentLifecycleSignal(event) && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>}
                 </>
               ) : (
                 <>
@@ -659,6 +659,7 @@ export function Thread({
                 )}
               {executionId !== undefined &&
                 openEvidence !== undefined &&
+                !isSubagentLifecycleSignal(event) &&
                 event.evidenceRefs.map((evidenceId) => (
                   <Said
                     key={evidenceId}

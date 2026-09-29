@@ -1752,7 +1752,15 @@ export default function App({
     sequence: number; kind: string; actorId: string | null; actorType: string | null; occurredAt: string | null;
   } | null>(
     (latest, event) => latest === null || event.sequence > latest.sequence
-      ? { sequence: event.sequence, kind: event.kind, actorId: event.actorId, actorType: event.actorType, occurredAt: event.occurredAt }
+      ? {
+        sequence: event.sequence,
+        kind: event.kind === "signal_recorded" && typeof (event.payload as Record<string, unknown> | null)?.kind === "string"
+          ? (event.payload as Record<string, unknown>).kind as string
+          : event.kind,
+        actorId: event.actorId,
+        actorType: event.actorType,
+        occurredAt: event.occurredAt,
+      }
       : latest,
     null,
   ), [eventList]);

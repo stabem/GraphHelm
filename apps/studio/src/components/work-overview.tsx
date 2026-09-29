@@ -174,6 +174,7 @@ export function WorkOverview({
     const key = `${child.sourceId}\u0000${child.parentSessionId}`;
     sessions.set(key, [...(sessions.get(key) ?? []), child]);
   }
+  const jumpToTeam = () => document.getElementById("work-team")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -187,7 +188,7 @@ export function WorkOverview({
           <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
           <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
           <span><Users aria-hidden="true" size={15} /> {crew.length} agent identities</span>
-          {subagents && subagents.relationships.length > 0 && <span><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"}</span>}
+          {subagents && subagents.relationships.length > 0 && <button type="button" className="work-count-link" onClick={jumpToTeam}><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"} · open team</button>}
           <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
@@ -232,7 +233,7 @@ export function WorkOverview({
 
       <div className="work-layout">
         <aside className="work-sidebar" aria-label="Collaboration">
-          <section className="work-section">
+          <section className="work-section" id="work-team">
             <div className="work-section-heading">
               <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
               <span>{crew.length}</span>

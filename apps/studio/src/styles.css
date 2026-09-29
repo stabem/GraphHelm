@@ -2339,6 +2339,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-run { display: block; color: #9999a5; font-size: 12px; overflow-wrap: anywhere; }
 .work-counts { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; color: #c5c5ce; font-size: 12px; }
 .work-counts > span { display: inline-flex; align-items: center; gap: 6px; }
+.work-counts > .work-count-link { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: #d8bbff; font: inherit; cursor: pointer; }
 .work-count-attention { color: #ffb36b; }
 .work-now-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
 .work-now-strip > div { display: grid; gap: 3px; min-width: 0; padding: 12px; border: 1px solid #494052; border-radius: 10px; background: #241f2b; }

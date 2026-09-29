@@ -48,6 +48,19 @@ it("collapses technical payloads without dropping the recorded event", () => {
   expect(details).toHaveTextContent("draft-1");
 });
 
+it("keeps subagent lifecycle signals out of chat evidence and raw technical payloads", () => {
+  const signal = event(10, "signal_recorded", {
+    kind: "agent_subagent_started", sourceKind: "tool", sourceId: "codex-session-parent",
+    signalId: "sig-1", envelopeSha256: "sha256:sealed",
+  });
+  signal.evidenceRefs = ["sealed-subagent-envelope"];
+  const open = vi.fn(async () => ({ evidenceId: "sealed-subagent-envelope", content: "{\"childAgentId\":\"child\"}", contentSha256: "hash", mediaType: "application/json", sensitivity: "internal" as const }));
+  render(React.createElement(Thread, { events: [signal], executionId: "run", openEvidence: open }));
+  expect(screen.getByText("Subagent start recorded; see Team for the session link.")).toBeInTheDocument();
+  expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+  expect(open).not.toHaveBeenCalled();
+});
+
 it("shows the newest sealed report while an older evidence read is still pending", async () => {
   resetPanelCaches();
   const older = event(1, "signal_recorded");

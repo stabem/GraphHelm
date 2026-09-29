@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/keel-card.schema.json",
+  "title": "Keel Card",
+  "description": "The contract card `graphhelm keel check --card` reads (#1330): the paths in scope, the promise and the command that proves it, plus the public symbols the change adds and an optional allowance. Every path the diff touches must equal a scope path or lie under one (keel.scope.path_outside_card). Bounds on the card itself are keel.yaml `card` (keel.card.*).",
+  "type": "object",
+  "required": [
+    "promise",
+    "scopePaths",
+    "proof"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "promise": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The observable promise the change keeps."
+    },
+    "scopePaths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Repository-relative files or directories, `/`-separated. Paths, not globs: `*`, `?`, `[` and `..` are refused (keel.card.scope_not_a_path)."
+    },
+    "proof": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The command that proves the promise."
+    },
+    "exportedSymbols": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Public symbols the change adds. The check reports added public symbols the card does not name."
+    },
+    "allowance": {
+      "$ref": "#/$defs/surfaceBudget",
+      "description": "Surface declared at planning time, added to keel.yaml `surface` and capped by `maxAllowance`."
+    }
+  },
+  "$defs": {
+    "surfaceBudget": {
+      "type": "object",
+      "required": [
+        "newModule",
+        "newType",
+        "newPublicFn",
+        "newDependency",
+        "newTest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "newModule": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newType": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newPublicFn": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newDependency": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "newTest": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "promise": "graphhelm keel check refuses a diff that touches a path outside its card",
+  "scopePaths": [
+    "core/policy/src/keel.rs",
+    "apps/cli/src/commands/keel.rs",
+    "apps/cli/tests/keel_check.rs"
+  ],
+  "proof": "cargo test -p graphhelm-cli --test keel_check",
+  "exportedSymbols": [
+    "check",
+    "check_scope",
+    "changed_paths",
+    "Card"
+  ],
+  "allowance": {
+    "newModule": 1,
+    "newType": 4,
+    "newPublicFn": 3,
+    "newDependency": 0,
+    "newTest": 4
+  }
+}

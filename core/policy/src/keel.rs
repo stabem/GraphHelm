@@ -447,6 +447,270 @@ pub fn check_card(
     findings
 }
 
+/// A Keel contract card as `graphhelm keel check` reads it (#1330). The JSON shape is
+/// `schemas/keel-card.schema.json` in the development-contracts package: the three-line card of
+/// `docs/process/DELIVERY.md` (paths, promise, proving command) plus, for new public surface, the
+/// symbols it adds and an optional allowance declared at planning time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Card {
+    pub promise: String,
+    /// Repository-relative paths, `/`-separated. A path names a file or a directory; a changed
+    /// path is inside the card when it equals a scope path or lies under one.
+    pub scope_paths: Vec<String>,
+    /// The command that proves the promise.
+    pub proof: String,
+    #[serde(default)]
+    pub exported_symbols: Vec<String>,
+    #[serde(default)]
+    pub allowance: Option<SurfaceBudget>,
+}
+
+/// One path a diff touches, as read from its headers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedPath {
+    pub path: String,
+    pub is_new: bool,
+    pub is_deleted: bool,
+    /// False when the header carried a quoted or escaped path this reader does not decode. Such a
+    /// path cannot be compared with a card plainly, so a scope finding on it is a signal only.
+    pub plain: bool,
+}
+
+/// The write surface a diff spent, set beside what its card declared.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceReport {
+    pub changed_files: u32,
+    pub new_files: u32,
+    pub new_test_files: u32,
+    pub new_tests: u32,
+    pub new_modules: u32,
+    pub new_public_symbols: u32,
+    pub new_dependencies: u32,
+    pub card_scope_paths: Option<u32>,
+    pub card_exported_symbols: Option<u32>,
+    /// Public symbols the diff adds that the card does not name. Reported, not refused.
+    pub undeclared_public_symbols: Vec<String>,
+}
+
+/// The whole verdict of `graphhelm keel check` on one diff, one optional card, one policy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeelCheck {
+    pub policy_version: String,
+    pub card_declared: bool,
+    pub changed_paths: Vec<ChangedPath>,
+    pub surface: SurfaceReport,
+    pub classification: Classification,
+    /// Card findings, scope findings and the classification's findings, in that order.
+    pub findings: Vec<Finding>,
+    /// True when any finding in `findings` is blocking.
+    pub refused: bool,
+}
+
+/// Reads every path a unified diff touches from its headers: `diff --git`, `---`/`+++`, and
+/// `rename from`/`rename to`. A binary or mode-only change has no `+++` line, so the `diff --git`
+/// header is read too when its two sides are the same path. A quoted header path is kept as
+/// written and marked not plain.
+#[must_use]
+pub fn changed_paths(diff: &str) -> Vec<ChangedPath> {
+    let mut out: Vec<ChangedPath> = Vec::new();
+    let mut new_file = false;
+    let mut deleted_file = false;
+    let mut block: Vec<String> = Vec::new();
+    for raw in diff.lines() {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            flush_block(&mut block, new_file, deleted_file, &mut out);
+            new_file = false;
+            deleted_file = false;
+            if let Some(path) = symmetric_header_path(rest) {
+                block.push(path);
+            } else if rest.starts_with('"') {
+                block.push(rest.to_owned());
+            }
+            continue;
+        }
+        if line.starts_with("new file mode") {
+            new_file = true;
+        } else if line.starts_with("deleted file mode") {
+            deleted_file = true;
+        } else if let Some(path) = line
+            .strip_prefix("rename from ")
+            .or_else(|| line.strip_prefix("rename to "))
+            .or_else(|| line.strip_prefix("copy to "))
+        {
+            push_unique(&mut block, path.to_owned());
+        } else if let Some(side) = line
+            .strip_prefix("+++ ")
+            .or_else(|| line.strip_prefix("--- "))
+        {
+            let side = side.split('\t').next().unwrap_or(side);
+            if side == "/dev/null" {
+                continue;
+            }
+            let path = side
+                .strip_prefix("a/")
+                .or_else(|| side.strip_prefix("b/"))
+                .unwrap_or(side);
+            push_unique(&mut block, path.to_owned());
+        }
+    }
+    flush_block(&mut block, new_file, deleted_file, &mut out);
+    out
+}
+
+fn flush_block(
+    block: &mut Vec<String>,
+    is_new: bool,
+    is_deleted: bool,
+    out: &mut Vec<ChangedPath>,
+) {
+    for path in block.drain(..) {
+        if let Some(existing) = out.iter_mut().find(|entry| entry.path == path) {
+            existing.is_new |= is_new;
+            existing.is_deleted |= is_deleted;
+            continue;
+        }
+        let plain = !path.starts_with('"') && !path.contains('\\');
+        out.push(ChangedPath {
+            path,
+            is_new,
+            is_deleted,
+            plain,
+        });
+    }
+}
+
+fn push_unique(block: &mut Vec<String>, path: String) {
+    if !block.contains(&path) {
+        block.push(path);
+    }
+}
+
+/// `a/P b/P` -> `P`. Any other shape (a rename, a quoted path) returns `None`: the `---`/`+++` or
+/// `rename` lines name those sides.
+fn symmetric_header_path(rest: &str) -> Option<String> {
+    let after = rest.strip_prefix("a/")?;
+    let length = after.len().checked_sub(3)?;
+    if length % 2 != 0 {
+        return None;
+    }
+    let half = length / 2;
+    let (left, right) = (after.get(..half)?, after.get(half..)?);
+    (right.strip_prefix(" b/")? == left).then(|| left.to_owned())
+}
+
+fn normalize_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let path = path.trim_start_matches("./");
+    path.trim_end_matches('/').to_owned()
+}
+
+/// `keel.scope.path_outside_card`: every changed path must lie inside a scope path of the card.
+/// Blocking when the path was read plainly; a quoted or escaped path is a signal, because this
+/// reader cannot tell whether its decoded form is inside the card.
+#[must_use]
+pub fn check_scope(changed: &[ChangedPath], scope_paths: &[String]) -> Vec<Finding> {
+    let scopes: Vec<String> = scope_paths
+        .iter()
+        .map(|scope| normalize_path(scope))
+        .filter(|scope| !scope.is_empty())
+        .collect();
+    let mut findings = Vec::new();
+    for entry in changed {
+        let path = normalize_path(&entry.path);
+        let inside = scopes.iter().any(|scope| {
+            path == *scope
+                || path
+                    .strip_prefix(scope.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        });
+        if inside {
+            continue;
+        }
+        findings.push(Finding {
+            rule: "keel.scope.path_outside_card".into(),
+            path: Some(entry.path.clone()),
+            detail: if entry.plain {
+                format!(
+                    "changed but not under any of the card's {} scope paths",
+                    scopes.len()
+                )
+            } else {
+                "quoted or escaped path not decoded; compare it with the card by hand".into()
+            },
+            blocking: entry.plain,
+        });
+    }
+    findings
+}
+
+/// Runs the card bounds, the scope rule and the surface classifier over one diff. `card` carries
+/// the card and its size in bytes. Without a card only the classifier runs, so no scope finding
+/// exists and only an objective diff contract can block.
+#[must_use]
+pub fn check(diff: &str, card: Option<(&Card, u64)>, policy: &KeelPolicy) -> KeelCheck {
+    let changed = changed_paths(diff);
+    let classification = classify_write(
+        diff,
+        policy,
+        card.and_then(|(card, _)| card.allowance),
+        Mode::Full,
+    );
+    let mut findings = Vec::new();
+    if let Some((card, bytes)) = card {
+        findings.extend(check_card(
+            &card.scope_paths,
+            &card.exported_symbols,
+            bytes,
+            &policy.card,
+        ));
+        findings.extend(check_scope(&changed, &card.scope_paths));
+    }
+    findings.extend(classification.findings.iter().cloned());
+    let count = |debit: Debit| classification.totals.get(&debit).copied().unwrap_or(0);
+    let as_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let undeclared_public_symbols = card.map_or_else(Vec::new, |(card, _)| {
+        classification
+            .charges
+            .iter()
+            .filter(|charge| matches!(charge.debit, Debit::NewPublicFn | Debit::NewType))
+            .filter(|charge| !card.exported_symbols.contains(&charge.symbol))
+            .map(|charge| charge.symbol.clone())
+            .collect()
+    });
+    let surface = SurfaceReport {
+        changed_files: as_u32(changed.len()),
+        new_files: as_u32(changed.iter().filter(|entry| entry.is_new).count()),
+        new_test_files: as_u32(
+            changed
+                .iter()
+                .filter(|entry| entry.is_new && is_test_path(&entry.path))
+                .count(),
+        ),
+        new_tests: count(Debit::NewTest),
+        new_modules: count(Debit::NewModule),
+        new_public_symbols: count(Debit::NewPublicFn).saturating_add(count(Debit::NewType)),
+        new_dependencies: count(Debit::NewDependency),
+        card_scope_paths: card.map(|(card, _)| as_u32(card.scope_paths.len())),
+        card_exported_symbols: card.map(|(card, _)| as_u32(card.exported_symbols.len())),
+        undeclared_public_symbols,
+    };
+    let refused = findings.iter().any(|finding| finding.blocking);
+    KeelCheck {
+        policy_version: policy.version.clone(),
+        card_declared: card.is_some(),
+        changed_paths: changed,
+        surface,
+        classification,
+        findings,
+        refused,
+    }
+}
+
 struct DiffFile {
     path: String,
     is_new: bool,

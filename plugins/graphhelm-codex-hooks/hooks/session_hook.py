@@ -46,7 +46,7 @@ def hook_input() -> dict:
                 value, end = parser.raw_decode(text, start)
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise ValueError("invalid hook input") from error
-            if text[end:].strip():
+            if text[end:].strip(" \t\r\n"):
                 raise ValueError("multiple hook inputs")
             if not isinstance(value, dict):
                 raise ValueError("hook input is not an object")
@@ -65,7 +65,7 @@ def hook_input() -> dict:
             continue
         if decoder.getstate()[0]:
             raise ValueError("invalid hook input")
-        if text[end:].strip():
+        if text[end:].strip(" \t\r\n"):
             raise ValueError("multiple hook inputs")
         if not isinstance(value, dict):
             raise ValueError("hook input is not an object")

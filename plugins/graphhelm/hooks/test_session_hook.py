@@ -169,9 +169,10 @@ class SessionHookTests(unittest.TestCase):
         with patch.object(module.sys, "stdin", ChunkedInput(chunks)):
             self.assertEqual(module.hook_input(), expected)
 
-        invalid_suffix = ChunkedInput([b'{"ok":true}\xc3'])
-        with patch.object(module.sys, "stdin", invalid_suffix), self.assertRaisesRegex(ValueError, "invalid hook input"):
-            module.hook_input()
+        for suffix in (b'\xc3', b'\xc2\xa0'):
+            invalid_suffix = ChunkedInput([b'{"ok":true}' + suffix])
+            with self.subTest(suffix=suffix), patch.object(module.sys, "stdin", invalid_suffix), self.assertRaises(ValueError):
+                module.hook_input()
 
     def run_hook(self, phase, host="claude", **payload):
         event = "SessionStart" if phase == "start" else "SessionEnd"

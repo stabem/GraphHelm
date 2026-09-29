@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import urllib.error
 import urllib.parse
 
@@ -206,38 +207,50 @@ def _run(payload: dict, host: str, event: str) -> None:
     phase = PHASES[event]
     path = _state_path(execution, origin, host, parent, child, agent_type, phase)
     identity = (execution, origin, host, parent, child, agent_type, phase)
-    state = _read(path, identity)
-    if state is None:
-        emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        signal_id, signal = _signal(execution, origin, host, parent, child, agent_type, phase, node, emitted_at)
-        state = {"version": 1, "executionId": execution, "runtimeOrigin": origin, "host": host,
-                 "parentSessionId": parent, "childAgentId": child, "agentType": agent_type,
-                 "phase": phase, "declaredNodeId": node, "signalId": signal_id, "signal": signal, "delivered": False}
-        _write(path, state)
-    if state["delivered"]:
-        return
-    signal = state["signal"]
-    signal_id = state["signalId"]
+    lock_deadline = time.monotonic() + 6.0
+    while True:
+        try:
+            lock = _claim_lock(path)
+            break
+        except ValueError as error:
+            if str(error) != "hook state busy" or time.monotonic() >= lock_deadline:
+                raise
+            time.sleep(min(0.025, max(0.0, lock_deadline - time.monotonic())))
     try:
-        reply = request(
-            f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
-            token_from_file(token_file), "POST", {"signal": signal},
-            {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent",
-             "X-GraphHelm-Actor-Session": parent, "Idempotency-Key": signal_id}, timeout=5.0,
-        )
-        data = reply.get("data")
-        if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
-            raise ValueError("signal acknowledgment did not match")
-    except urllib.error.HTTPError as error:
-        if 400 <= error.code < 500:
-            raise
-        if not _reconcile(url, token_from_file(token_file), execution, signal):
-            raise
-    except (OSError, ValueError, KeyError):
-        if not _reconcile(url, token_from_file(token_file), execution, signal):
-            raise
-    state["delivered"] = True
-    _write(path, state)
+        state = _read(path, identity)
+        if state is None:
+            emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            signal_id, signal = _signal(execution, origin, host, parent, child, agent_type, phase, node, emitted_at)
+            state = {"version": 1, "executionId": execution, "runtimeOrigin": origin, "host": host,
+                     "parentSessionId": parent, "childAgentId": child, "agentType": agent_type,
+                     "phase": phase, "declaredNodeId": node, "signalId": signal_id, "signal": signal, "delivered": False}
+            _write(path, state)
+        if state["delivered"]:
+            return
+        signal = state["signal"]
+        signal_id = state["signalId"]
+        try:
+            reply = request(
+                f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
+                token_from_file(token_file), "POST", {"signal": signal},
+                {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent",
+                 "X-GraphHelm-Actor-Session": parent, "Idempotency-Key": signal_id}, timeout=5.0,
+            )
+            data = reply.get("data")
+            if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+                raise ValueError("signal acknowledgment did not match")
+        except urllib.error.HTTPError as error:
+            if 400 <= error.code < 500:
+                raise
+            if not _reconcile(url, token_from_file(token_file), execution, signal):
+                raise
+        except (OSError, ValueError, KeyError):
+            if not _reconcile(url, token_from_file(token_file), execution, signal):
+                raise
+        state["delivered"] = True
+        _write(path, state)
+    finally:
+        _release_lock(lock)
 
 
 def main() -> int:

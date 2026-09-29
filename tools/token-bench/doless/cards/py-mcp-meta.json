@@ -1,0 +1,13 @@
+{
+  "promise": "tools/call accepts an object _meta; every other params field, identity override and oversized frame is still refused",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/task_handoff.py",
+    "plugins/graphhelm-codex-hooks/hooks/task_handoff.py",
+    "plugins/graphhelm/hooks/test_task_handoff.py",
+    "plugins/graphhelm/plugin.json",
+    "plugins/graphhelm/.claude-plugin/plugin.json",
+    "plugins/graphhelm/.codex-plugin/plugin.json",
+    "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json"
+  ],
+  "proof": "python -m unittest discover -s plugins/graphhelm/hooks -p test_*.py"
+}

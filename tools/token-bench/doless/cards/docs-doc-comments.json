@@ -1,0 +1,8 @@
+{
+  "promise": "each displaced doc block documents its own function again; only /// lines move",
+  "scopePaths": [
+    "apps/cli/src/commands/execution/mod.rs",
+    "apps/cli/src/commands/mcp/tools.rs"
+  ],
+  "proof": "python oracle over the two files; rustfmt --check on both"
+}

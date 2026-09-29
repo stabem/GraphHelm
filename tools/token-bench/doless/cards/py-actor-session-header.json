@@ -1,0 +1,11 @@
+{
+  "promise": "the SessionEnd signal request sends the host session id as X-GraphHelm-Actor-Session",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/session_hook.py",
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    "plugins/graphhelm/README.md",
+    "plugins/graphhelm/plugin.json",
+    "plugins/graphhelm/.claude-plugin/plugin.json"
+  ],
+  "proof": "python -m unittest discover -s plugins/graphhelm/hooks -p test_*.py"
+}

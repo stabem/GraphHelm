@@ -1,0 +1,8 @@
+{
+  "promise": "a recognised execution.signal retry replies with the original signalId; a mismatched actor or wrong-kind event gets none",
+  "scopePaths": [
+    "apps/cli/src/commands/serve/mod.rs",
+    "apps/cli/tests/api_http.rs"
+  ],
+  "proof": "cargo test -p graphhelm-cli --test api_http (the four signal/idempotency cells)"
+}

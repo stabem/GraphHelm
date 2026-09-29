@@ -57,7 +57,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
         self.requests.append(("POST", self.path, dict(self.headers), json.loads(body)))
         if self.post_started:
             self.post_started.set()
-            self.post_release.wait(timeout=3)
+            self.post_release.wait(timeout=6)
         signal = json.loads(body)["signal"]
         signal_id = "wrong" if self.mismatch_ack else signal["id"]
         try:
@@ -137,7 +137,7 @@ class SessionHookTests(unittest.TestCase):
         # Preserve the full host budgets: a smaller declaration can kill the command
         # before its bounded HTTP acknowledgement, even when the script is unchanged.
         codex_hooks = json.loads((companion / "hooks" / "codex-hooks.json").read_text())
-        for phase, budget in (("SessionStart", 10), ("SessionEnd", 3)):
+        for phase, budget in (("SessionStart", 10), ("SessionEnd", 10)):
             self.assertEqual(
                 [handler["timeout"] for matcher in codex_hooks["hooks"][phase]
                  for handler in matcher["hooks"]],
@@ -373,7 +373,7 @@ class SessionHookTests(unittest.TestCase):
         self.assertTrue(sent[0][2]["Idempotency-Key"].startswith("session-end-v"))
 
     def test_end_accepts_slow_matching_ack_without_extra_posts(self):
-        # The previous one-second socket timeout lost a durable acknowledgement.
+        # The previous 2.5-second socket timeout lost a durable acknowledgement.
         # Release a real HTTP response after that boundary; assert delivery, not timing.
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.post_started = threading.Event()
@@ -386,17 +386,17 @@ class SessionHookTests(unittest.TestCase):
         process.stdin.write(json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}))
         process.stdin.close()
         process.stdin = None
-        release = threading.Timer(1.25, RuntimeHandler.post_release.set)
+        release = threading.Timer(3.0, RuntimeHandler.post_release.set)
         try:
             self.assertTrue(RuntimeHandler.post_started.wait(timeout=3))
             release.start()
-            stdout, stderr = process.communicate(timeout=6)
+            stdout, stderr = process.communicate(timeout=10)
         finally:
             release.cancel()
             RuntimeHandler.post_release.set()
             if process.poll() is None:
                 process.kill()
-                process.communicate(timeout=6)
+                process.communicate(timeout=10)
         self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
         state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
         self.assertTrue(json.loads(state.read_text())["delivery"]["delivered"])

@@ -135,13 +135,18 @@ def _description(execution: str, host: str, parent: str, child: str, agent_type:
     return json.dumps(details, separators=(",", ":"), sort_keys=True)
 
 
+def _actor_id(host: str, parent: str) -> str:
+    actor = f"{host}-session-{parent}"
+    if len(actor) <= 128:
+        return actor
+    identity = f"{host}\0{parent}"
+    return f"agent-session-{hashlib.sha256(identity.encode()).hexdigest()[:48]}"
+
+
 def _signal(execution: str, origin: str, host: str, parent: str, child: str,
             agent_type: str, phase: str, node: str | None, emitted_at: str) -> tuple[str, dict]:
     signal_id = _key(execution, origin, host, parent, child, agent_type, phase)
-    actor = f"{host}-session-{parent}"
-    if len(actor) > 128:
-        identity = f"{host}\0{parent}"
-        actor = f"agent-session-{hashlib.sha256(identity.encode()).hexdigest()[:48]}"
+    actor = _actor_id(host, parent)
     signal = {
         "id": signal_id,
         "source": {"type": "tool", "id": actor},

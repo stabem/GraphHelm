@@ -7,9 +7,15 @@ const executionId = "run-new";
 const childAgentId = "child-1";
 
 async function evidenceFor(overrides: Record<string, unknown> = {}, evidenceId = "ev-1"): Promise<EvidenceContent> {
+  const parentSessionId = typeof overrides.parentSessionId === "string" ? overrides.parentSessionId : "parent-1";
+  let actorId = `codex-session-${parentSessionId}`;
+  if (actorId.length > 128) {
+    const hash = await digestOf(new TextEncoder().encode(`codex\u0000${parentSessionId}`).buffer, globalThis.crypto.subtle);
+    actorId = `agent-session-${hash.slice("sha256:".length, "sha256:".length + 48)}`;
+  }
   const envelope = {
     id: typeof overrides.signalId === "string" ? overrides.signalId : "sig-envelope",
-    source: { type: "tool", id: `codex-session-${typeof overrides.parentSessionId === "string" ? overrides.parentSessionId : "parent-1"}` },
+    source: { type: "tool", id: actorId },
     type: `agent_subagent_${overrides.phase === "stopped" ? "stopped" : "started"}`,
     evidence: [executionId],
     description: JSON.stringify({ protocol: "graphhelm-subagent-v1", executionId, host: "codex", parentSessionId: "parent-1", childAgentId, agentType: "worker", phase: "started", declaredNodeId: null, ...overrides }),
@@ -96,5 +102,17 @@ describe("readSubagentRelationships", () => {
     expect(result.relationships).toHaveLength(1);
     expect(result.relationships[0].phase).toBe("started");
     expect(result.rejected).toBe(1);
+  });
+  it("matches the bounded actor id used for long native session identities", async () => {
+    const parentSessionId = "p".repeat(128);
+    const evidence = await evidenceFor({ parentSessionId });
+    const actorId = JSON.parse(evidence.content).source.id as string;
+    const result = await readSubagentRelationships({
+      executionId,
+      events: [event(1, "agent_subagent_started", evidence.contentSha256, { sourceId: actorId, actorId })],
+      readEvidence: async () => evidence,
+    });
+    expect(result.relationships).toHaveLength(1);
+    expect(result.relationships[0].parentSessionId).toBe(parentSessionId);
   });
 });

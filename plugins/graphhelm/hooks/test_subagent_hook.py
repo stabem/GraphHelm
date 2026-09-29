@@ -1,6 +1,7 @@
 """Offline contract tests for provider-neutral child-agent telemetry."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -96,6 +97,16 @@ class SubagentHookTests(unittest.TestCase):
                                    "executionId": "run-test", "host": "codex", "parentSessionId": "parent-1",
                                    "phase": "started", "protocol": "graphhelm-subagent-v1"})
         self.assertEqual(Handler.requests[0][2]["signal"]["source"]["id"], "codex-session-parent-1")
+
+    def test_long_parent_uses_same_bounded_actor_identity(self):
+        parent = "p" * 128
+        payload = {"hook_event_name": "SubagentStart", "session_id": parent,
+                   "agent_id": "child-1", "agent_type": "worker"}
+        result = self.run_hook("start", payload)
+        self.assertEqual(result.stderr, "")
+        actor = Handler.requests[0][2]["signal"]["source"]["id"]
+        expected = "agent-session-" + hashlib.sha256(f"codex\0{parent}".encode()).hexdigest()[:48]
+        self.assertEqual(actor, expected)
 
     def test_identity_and_wrong_event_fail_closed_without_http(self):
         bad = self.run_hook("start", {"hook_event_name": "SubagentStart", "session_id": "parent-1", "agent_id": "", "agent_type": "worker"})

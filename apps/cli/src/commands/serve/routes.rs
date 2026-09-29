@@ -5202,7 +5202,7 @@ mod off_reactor_tests {
             "{briefing_text}"
         );
         assert_eq!(
-            briefing_json["data"]["executionId"], "execution-known",
+            briefing_json["data"]["asOfSequence"], 1,
             "{briefing_text}"
         );
         assert_eq!(briefing_runs.len(), 1);

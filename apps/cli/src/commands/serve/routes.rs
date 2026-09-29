@@ -5201,10 +5201,7 @@ mod off_reactor_tests {
             briefing_json["command"], "execution.briefing",
             "{briefing_text}"
         );
-        assert_eq!(
-            briefing_json["data"]["asOfSequence"], 1,
-            "{briefing_text}"
-        );
+        assert_eq!(briefing_json["data"]["asOfSequence"], 1, "{briefing_text}");
         assert_eq!(briefing_runs.len(), 1);
         assert_ne!(briefing_runs[0], reactor);
 

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 SCRIPT = Path(__file__).with_name("task_hook.py")
@@ -17,6 +18,7 @@ class Handler(BaseHTTPRequestHandler):
     requests = []
     events = []
     ambiguous = False
+    slow_post = False
 
     def do_GET(self):
         self.__class__.requests.append(("GET", self.path, None))
@@ -34,6 +36,21 @@ class Handler(BaseHTTPRequestHandler):
                                       "kind": {"type": "signal_recorded", "data": {
                                           "signalId": signal["id"], "executionId": "run-test",
                                           "sourceId": actor_id, "kind": signal["type"]}}})
+        if self.__class__.slow_post:
+            self.__class__.slow_post = False
+            encoded = json.dumps({"ok": True, "data": {"executionId": "run-test", "signalId": signal["id"]}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            try:
+                for byte in encoded:
+                    self.wfile.write(bytes((byte,)))
+                    self.wfile.flush()
+                    time.sleep(0.15)
+            except OSError:
+                pass
+            return
         if self.__class__.ambiguous:
             self.__class__.ambiguous = False
             self.close_connection = True
@@ -54,7 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 class ClaudeTaskHookTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server = type("DaemonHTTPServer", (ThreadingHTTPServer,), {"daemon_threads": True})(
+            ("127.0.0.1", 0), Handler
+        )
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -68,6 +87,7 @@ class ClaudeTaskHookTests(unittest.TestCase):
         Handler.requests = []
         Handler.events = []
         Handler.ambiguous = False
+        Handler.slow_post = False
         self.temp = tempfile.TemporaryDirectory()
         token = Path(self.temp.name) / "token"
         token.write_text("test-token", encoding="utf-8")
@@ -87,7 +107,7 @@ class ClaudeTaskHookTests(unittest.TestCase):
                             "task_description": "Must not be persisted", "teammate_name": "researcher",
                             "team_name": "legacy-name-must-not-be-persisted"}
         return subprocess.run([sys.executable, str(SCRIPT), phase], input=json.dumps(value),
-                              text=True, capture_output=True, env=self.env, timeout=8)
+                              text=True, capture_output=True, env=self.env, timeout=10)
 
     def test_records_only_bounded_title_teammate_and_phase(self):
         result = self.run_hook("created")
@@ -124,6 +144,25 @@ class ClaudeTaskHookTests(unittest.TestCase):
         self.assertEqual(len([item for item in Handler.requests if item[0] == "GET"]), 1)
         self.assertEqual(self.run_hook("completed").stderr, "")
         self.assertEqual(len([item for item in Handler.requests if item[0] == "POST"]), 1)
+
+    def test_slow_ack_obeys_hook_deadline_and_retry_recovers_same_signal(self):
+        Handler.slow_post = True
+        started = time.monotonic()
+        first = self.run_hook("completed")
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 9.5)
+        self.assertIn("deadline exceeded", first.stderr)
+        posts = [item[2]["signal"] for item in Handler.requests if item[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+        receipt = next((Path(self.temp.name) / "state").glob("native-task-*.json"))
+        self.assertFalse(json.loads(receipt.read_text(encoding="utf-8"))["delivered"])
+
+        retry = self.run_hook("completed")
+        self.assertEqual(retry.stderr, "")
+        retried_posts = [item[2]["signal"] for item in Handler.requests if item[0] == "POST"]
+        self.assertEqual(len(retried_posts), 2)
+        self.assertEqual(retried_posts[0], retried_posts[1])
+        self.assertTrue(json.loads(receipt.read_text(encoding="utf-8"))["delivered"])
 
     def test_recognizable_credentials_in_title_or_teammate_are_not_sent(self):
         for field, value in (("task_subject", "Set token: ghp_abcdefghijklmnopqrstuvwxyz"),

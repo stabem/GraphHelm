@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +27,10 @@ from session_hook import (
 )
 
 PROTOCOL = "graphhelm-native-task-v1"
+HOOK_BUDGET_SECONDS = 8.0
+LOCK_BUDGET_SECONDS = 1.5
+POST_BUDGET_SECONDS = 2.5
+RECONCILE_REQUEST_BUDGET_SECONDS = 0.5
 PHASES = {"TaskCreated": "created", "TaskCompleted": "completed"}
 SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(?:password|passwd|token|secret|api[_-]?key|authorization)\b\s*[:=]\s*['\"]?[^\s'\";,]+"
@@ -74,6 +79,13 @@ def _identity(payload: dict) -> tuple[str, str, str, str | None]:
 def _key(execution: str, origin: str, host: str, parent: str, task_id: str, phase: str) -> str:
     identity = f"{PROTOCOL}\0{execution}\0{origin}\0{host}\0{parent}\0{task_id}\0{phase}"
     return f"native-task-{phase}-v1-{hashlib.sha256(identity.encode()).hexdigest()[:32]}"
+
+
+def _request_budget(deadline: float, maximum: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("hook deadline exceeded")
+    return min(maximum, remaining)
 
 
 def _state_path(execution: str, origin: str, host: str, parent: str, task_id: str, phase: str) -> Path:
@@ -160,15 +172,17 @@ def _read(path: Path, identity: tuple[str, str, str, str, str, str, str | None, 
     return value
 
 
-def _reconcile(url: str, token: str, execution: str, signal: dict) -> bool:
+def _reconcile(url: str, token: str, execution: str, signal: dict, deadline: float) -> bool:
     signal_id = signal["id"]
     actor_id = signal["source"]["id"]
     after = 0
     for _ in range(16):
+        if time.monotonic() >= deadline:
+            return False
         try:
             data = request(
                 f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/events?after={after}&limit=128",
-                token, "GET", timeout=1.0,
+                token, "GET", timeout=_request_budget(deadline, RECONCILE_REQUEST_BUDGET_SECONDS),
             ).get("data")
         except (OSError, ValueError, KeyError):
             return False
@@ -196,7 +210,7 @@ def _reconcile(url: str, token: str, execution: str, signal: dict) -> bool:
     return False
 
 
-def _run(payload: dict, event: str) -> None:
+def _run(payload: dict, event: str, deadline: float) -> None:
     if payload.get("hook_event_name") != event:
         raise ValueError("wrong hook event")
     parent, task_id, title, teammate = _identity(payload)
@@ -208,15 +222,15 @@ def _run(payload: dict, event: str) -> None:
     host = "claude"
     path = _state_path(execution, origin, host, parent, task_id, phase)
     identity = (execution, origin, host, parent, task_id, title, teammate, phase)
-    deadline = time.monotonic() + 6.0
+    lock_deadline = min(deadline, time.monotonic() + LOCK_BUDGET_SECONDS)
     while True:
         try:
             lock = _claim_lock(path)
             break
         except ValueError as error:
-            if str(error) != "hook state busy" or time.monotonic() >= deadline:
+            if str(error) != "hook state busy" or time.monotonic() >= lock_deadline:
                 raise
-            time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
+            time.sleep(min(0.025, max(0.0, lock_deadline - time.monotonic())))
     try:
         state = _read(path, identity)
         if state is None:
@@ -236,7 +250,8 @@ def _run(payload: dict, event: str) -> None:
                 f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
                 token_from_file(token_file), "POST", {"signal": signal},
                 {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent",
-                 "X-GraphHelm-Actor-Session": parent, "Idempotency-Key": signal_id}, timeout=5.0,
+                 "X-GraphHelm-Actor-Session": parent, "Idempotency-Key": signal_id},
+                timeout=_request_budget(deadline, POST_BUDGET_SECONDS),
             )
             data = reply.get("data")
             if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
@@ -244,10 +259,10 @@ def _run(payload: dict, event: str) -> None:
         except urllib.error.HTTPError as error:
             if 400 <= error.code < 500:
                 raise
-            if not _reconcile(url, token_from_file(token_file), execution, signal):
+            if not _reconcile(url, token_from_file(token_file), execution, signal, deadline):
                 raise
         except (OSError, ValueError, KeyError):
-            if not _reconcile(url, token_from_file(token_file), execution, signal):
+            if not _reconcile(url, token_from_file(token_file), execution, signal, deadline):
                 raise
         state["delivered"] = True
         _write(path, state)
@@ -261,10 +276,22 @@ def main() -> int:
     parser.add_argument("phase", choices=("created", "completed"))
     args = parser.parse_args()
     event = "TaskCreated" if args.phase == "created" else "TaskCompleted"
-    try:
-        _run(hook_input(), event)
-    except (OSError, ValueError, KeyError, RecursionError) as error:
-        print(f"graphhelm-task-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
+    deadline = time.monotonic() + HOOK_BUDGET_SECONDS
+    errors: list[Exception] = []
+
+    def execute() -> None:
+        try:
+            _run(hook_input(), event, deadline)
+        except (OSError, ValueError, KeyError, RecursionError) as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=execute, name="graphhelm-task-hook", daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    if worker.is_alive():
+        print(f"graphhelm-task-hook: {args.phase} unobserved (deadline exceeded)", file=sys.stderr)
+    elif errors:
+        print(f"graphhelm-task-hook: {args.phase} unobserved ({type(errors[0]).__name__})", file=sys.stderr)
     return 0
 
 

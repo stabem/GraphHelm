@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 
 from session_hook import ID, PORTABLE_HOST, _briefing_digest, _validate_digest, binding, request, token_from_file
@@ -213,12 +214,20 @@ def _sealed_signal(url: str, token: str, execution: str, event: dict) -> dict:
 def _post_signal(url: str, token: str, execution: str, signal: dict, signal_id: str,
                  session: str) -> dict:
     actor = signal.get("source", {}).get("id")
-    return request(
-        f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token, "POST",
-        {"signal": signal},
-        {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
-         "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id},
-        timeout=HANDOFF_TIMEOUT)
+    try:
+        return request(
+            f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token, "POST",
+            {"signal": signal},
+            {"X-GraphHelm-Actor": actor, "X-GraphHelm-Actor-Type": "agent",
+             "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id},
+            timeout=HANDOFF_TIMEOUT)
+    except urllib.error.HTTPError:
+        raise  # A definite Runtime refusal is not an ambiguous transport acknowledgement.
+    except (TimeoutError, ConnectionError, urllib.error.URLError):
+        # The write may already be durable. Both callers MUST independently open and validate
+        # the exact sealed journal record below; this marker alone never proves a write.
+        # No second POST, longer socket timeout, or owner-permission fallback is allowed here.
+        return {"writeAcknowledgement": "unobserved"}
 
 
 def _make_offer(execution: str, host: str, session: str, recipient_host: str,
@@ -267,6 +276,7 @@ def offer(host: str, session: str, recipient_host: str, recipient_session: str,
     offer_id = _offer_id(execution, session, host, recipient_host, recipient_session, origin, handoff_id)
     events = _events(url, token, execution)
     existing = _signal_event(events, offer_id)
+    acknowledgement = None
     if existing:
         signal = _sealed_signal(url, token, execution, existing)
         if signal.get("source", {}).get("id") != _actor(host, session) or signal.get("to") != _actor(recipient_host, recipient_session):
@@ -276,15 +286,21 @@ def offer(host: str, session: str, recipient_host: str, recipient_session: str,
         briefing = _briefing(url, token, execution)
         emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         signal = _make_offer(execution, host, session, recipient_host, recipient_session, origin, briefing, emitted_at, handoff_id)
-        _post_signal(url, token, execution, signal, offer_id, session)
+        acknowledgement = _post_signal(url, token, execution, signal, offer_id, session)
         recorded = _signal_event(_events(url, token, execution), offer_id)
         if not recorded:
             raise ValueError("Runtime did not expose the recorded handoff offer")
-        _sealed_signal(url, token, execution, recorded)
+        sealed = _sealed_signal(url, token, execution, recorded)
+        if (sealed.get("source") != signal["source"] or sealed.get("to") != signal["to"]
+                or json.loads(sealed.get("description", "{}")) != json.loads(signal["description"])):
+            raise ValueError("recorded handoff offer does not match this write")
         state = "recorded"
-    return {"format": "graphhelm-portable-v1", "phase": "offer", "state": state,
+    result = {"format": "graphhelm-portable-v1", "phase": "offer", "state": state,
             "executionId": execution, "offerId": offer_id, "recipient": signal.get("to"),
             "sealed": True, "activation": "unobserved"}
+    if acknowledgement and acknowledgement.get("writeAcknowledgement") == "unobserved":
+        result["writeAcknowledgement"] = "unobserved"
+    return result
 
 
 def receive(host: str, session: str, offer_id: str) -> dict:
@@ -313,6 +329,7 @@ def receive(host: str, session: str, offer_id: str) -> dict:
     briefing = _briefing(url, token, execution)
     receipt_id = _receipt_id(offer_id, host, session, origin)
     existing = _signal_event(events, receipt_id)
+    acknowledgement = None
     if existing:
         receipt = _sealed_signal(url, token, execution, existing)
         _validate_receipt(receipt, execution, offer_id, actor, offer_signal["source"]["id"])
@@ -325,16 +342,19 @@ def receive(host: str, session: str, offer_id: str) -> dict:
                    separators=(",", ":"), sort_keys=True),
                    "evidence": [execution], "emittedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                    "to": offer_signal["source"]["id"], "replyTo": offer_id}
-        _post_signal(url, token, execution, receipt, receipt_id, session)
+        acknowledgement = _post_signal(url, token, execution, receipt, receipt_id, session)
         recorded = _signal_event(_events(url, token, execution), receipt_id)
         if not recorded:
             raise ValueError("Runtime did not expose the recorded handoff receipt")
         _validate_receipt(_sealed_signal(url, token, execution, recorded), execution, offer_id,
                           actor, offer_signal["source"]["id"])
         state = "recorded"
-    return {"format": "graphhelm-portable-v1", "phase": "receive", "state": state,
+    result = {"format": "graphhelm-portable-v1", "phase": "receive", "state": state,
             "executionId": execution, "offerId": offer_id, "receiptId": receipt_id,
             "recipient": actor, "briefing": briefing, "accepted": False, "activation": "unobserved"}
+    if acknowledgement and acknowledgement.get("writeAcknowledgement") == "unobserved":
+        result["writeAcknowledgement"] = "unobserved"
+    return result
 
 
 def status(host: str, session: str, offer_id: str | None) -> dict:
@@ -509,7 +529,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.15"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.16"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})

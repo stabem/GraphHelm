@@ -27,6 +27,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     requests = []
     next_sequence = 1
     bad_pages = False
+    post_mode = "normal"
 
     def do_GET(self):
         RuntimeHandler.requests.append(("GET", self.path, dict(self.headers)))
@@ -52,6 +53,12 @@ class RuntimeHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         payload = json.loads(raw)
         RuntimeHandler.requests.append(("POST", self.path, dict(self.headers), payload))
+        if self.post_mode == "refuse":
+            self.send_error(403)
+            return
+        if self.post_mode == "drop_without_record":
+            self.close_connection = True
+            return
         signal = payload["signal"]
         content = json.dumps(signal, separators=(",", ":"))
         digest = hashlib.sha256(content.encode()).hexdigest()
@@ -64,6 +71,11 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                 "severity": signal["severity"], "envelopeSha256": digest}}})
             self.evidence[f"evidence-{signal_id}"] = (content, digest)
             RuntimeHandler.next_sequence += 1
+        if self.post_mode == "corrupt_then_drop":
+            self.evidence[f"evidence-{signal_id}"] = (content + "tampered", digest)
+        if self.post_mode in {"drop", "corrupt_then_drop"}:
+            self.close_connection = True
+            return
         self._write({"ok": True, "data": {"executionId": "run-1", "signalId": signal_id}})
 
     def _write(self, body):
@@ -88,6 +100,7 @@ class HandoffTests(unittest.TestCase):
     def setUp(self):
         RuntimeHandler.events = []; RuntimeHandler.evidence = {}; RuntimeHandler.requests = []
         RuntimeHandler.next_sequence = 1; RuntimeHandler.bad_pages = False
+        RuntimeHandler.post_mode = "normal"
         self.temp = tempfile.TemporaryDirectory()
         token = Path(self.temp.name) / "events.token"; token.write_text("test-token", encoding="utf-8")
         self.env = {"GRAPHHELM_EXECUTION_ID": "run-1", "GRAPHHELM_TOKEN_FILE": str(token),
@@ -111,6 +124,66 @@ class HandoffTests(unittest.TestCase):
         post = [item for item in RuntimeHandler.requests if item[0] == "POST"]
         self.assertEqual(post[0][2]["X-Graphhelm-Actor".title()], MODULE._actor("claude", "sender-1"))
         self.assertNotIn("objective", json.dumps(post))
+
+    def test_lost_http_ack_is_reconciled_from_sealed_records_without_post_retry(self):
+        RuntimeHandler.post_mode = "drop"
+        with patch.dict(os.environ, self.env, clear=False):
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", offered["offerId"])
+            replay = MODULE.receive("codex", "receiver", offered["offerId"])
+            report = MODULE.status("codex", "receiver", offered["offerId"])
+        self.assertEqual(offered["state"], "recorded")
+        self.assertEqual(received["state"], "recorded")
+        self.assertEqual(offered["writeAcknowledgement"], "unobserved")
+        self.assertEqual(received["writeAcknowledgement"], "unobserved")
+        self.assertFalse(received["accepted"])
+        self.assertEqual(replay["state"], "already_recorded")
+        self.assertEqual(report["offers"][0]["receipts"], [received["receiptId"]])
+        posts = [item for item in RuntimeHandler.requests if item[0] == "POST"]
+        self.assertEqual(len(posts), 2)
+        self.assertEqual([post[2]["X-Graphhelm-Actor-Session"] for post in posts], ["sender", "receiver"])
+
+    def test_timeout_after_real_write_reconciles_offer_and_receive(self):
+        original = MODULE.request
+
+        def lost_ack(url, token, method, *args, **kwargs):
+            response = original(url, token, method, *args, **kwargs)
+            if method == "POST":
+                raise TimeoutError("lost acknowledgement")
+            return response
+
+        with patch.dict(os.environ, self.env, clear=False), patch.object(MODULE, "request", side_effect=lost_ack):
+            offered = MODULE.offer("claude", "sender", "codex", "receiver")
+            received = MODULE.receive("codex", "receiver", offered["offerId"])
+        self.assertEqual(received["writeAcknowledgement"], "unobserved")
+        self.assertEqual([event["kind"]["data"]["kind"] for event in RuntimeHandler.events],
+                         [MODULE.OFFER_KIND, MODULE.RECEIPT_KIND])
+        self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 2)
+
+    def test_lost_ack_without_exact_valid_record_remains_unobserved(self):
+        for mode in ("drop_without_record", "corrupt_then_drop"):
+            with self.subTest(mode=mode), patch.dict(os.environ, self.env, clear=False):
+                RuntimeHandler.post_mode = mode
+                with self.assertRaises(ValueError):
+                    MODULE.offer("claude", "sender", "codex", "receiver", mode)
+                self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]),
+                                 1 if mode == "drop_without_record" else 2)
+        for mode in ("drop_without_record", "corrupt_then_drop"):
+            with self.subTest(receive_mode=mode), patch.dict(os.environ, self.env, clear=False):
+                RuntimeHandler.post_mode = "normal"
+                offered = MODULE.offer("claude", "sender", "codex", "receiver", "receive-" + mode)
+                before = len([item for item in RuntimeHandler.requests if item[0] == "POST"])
+                RuntimeHandler.post_mode = mode
+                with self.assertRaises(ValueError):
+                    MODULE.receive("codex", "receiver", offered["offerId"])
+                self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), before + 1)
+
+    def test_definite_http_refusal_is_not_reconciled_into_success(self):
+        RuntimeHandler.post_mode = "refuse"
+        with patch.dict(os.environ, self.env, clear=False), self.assertRaises(MODULE.urllib.error.HTTPError):
+            MODULE.offer("claude", "sender", "codex", "receiver")
+        self.assertEqual(RuntimeHandler.events, [])
+        self.assertEqual([item[0] for item in RuntimeHandler.requests], ["GET", "GET", "POST"])
 
     def test_wrong_recipient_and_non_advancing_page_are_unobserved(self):
         with patch.dict(os.environ, self.env, clear=False):

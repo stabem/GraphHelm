@@ -131,6 +131,15 @@ original journal event, opens its sealed envelope, reads a fresh bounded briefin
 sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status` reconstructs
 offers and matching receipts from the Runtime journal.
 
+A timed-out or disconnected write can have committed before its response was lost. The adapter
+does not repeat that POST. It reads the journal and validates the exact sealed offer or receipt,
+including content hash, execution, actor and addressing. Only verified durable evidence permits
+`state: recorded`; the result retains `writeAcknowledgement: unobserved` for that attempt.
+Missing, invalid or unavailable evidence remains unobserved. Explicit HTTP refusals are not
+reconciled into success. This proves retrieval only: `accepted: false`, task completion and native
+host activation remain separate. Socket timeouts still bound inactivity rather than total wall time;
+the caller must bound the whole operation, including reconciliation reads.
+
 ```powershell
 python <installed-plugin>/hooks/task_handoff.py offer --host claude --session-id <sender-session> --recipient-host codex --recipient-session-id <receiver-session> --handoff-id <bounded-id>
 python <installed-plugin>/hooks/task_handoff.py receive --host codex --session-id <receiver-session> --offer-id <offer-id>

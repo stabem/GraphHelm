@@ -151,7 +151,7 @@ not retried automatically. `--handoff-id` distinguishes multiple offers between 
 sessions in one execution; repeating the same id replays the journal record after local state loss.
 
 The same adapter has an optional, explicitly configured stdio MCP mode. The Codex compatibility
-companion registers it with a `${PLUGIN_ROOT}` path; the main plugin does not register a second
+companion registers it with a plugin-relative working directory and script path; the main plugin does not register a second
 server. The server makes no Runtime request while starting. Its legacy environment session mode
 uses `GRAPHHELM_MCP_HOST`, `GRAPHHELM_SESSION_ID`, `GRAPHHELM_EXECUTION_ID`,
 `GRAPHHELM_TOKEN_FILE`, and (when needed) `GRAPHHELM_RUNTIME_URL`. For normal Codex calls, opt

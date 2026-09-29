@@ -21,19 +21,19 @@ function event(seq: number, phase: "created" | "completed", evidence: EvidenceCo
 
 describe("readClaudeTasks", () => {
   it("verifies sealed create and completion events but labels them as observations", async () => {
-    const created = await sealed("created", "ev-created");
+    const created = await sealed("created", "ev-created", "planner");
     const completed = await sealed("completed", "ev-completed");
     const result = await readClaudeTasks({ executionId, events: [event(2, "completed", completed), event(1, "created", created)], readEvidence: vi.fn(async (_run, id) => id === created.evidenceId ? created : completed) });
     expect(result.rejected).toBe(0);
     expect(result.tasks).toHaveLength(1);
-    expect(result.tasks[0]).toMatchObject({ taskSubject: "Review the checkout flow", teammateName: "reviewer", createdSequence: 1, completedSequence: 2 });
+    expect(result.tasks[0]).toMatchObject({ taskSubject: "Review the checkout flow", createdByTeammateName: "planner", completedByTeammateName: "reviewer", createdSequence: 1, completedSequence: 2 });
   });
 
   it("keeps a completion without its creation and rejects tampered evidence", async () => {
     const completed = await sealed("completed", "ev-completed");
     const signal = event(2, "completed", completed);
     const result = await readClaudeTasks({ executionId, events: [signal], readEvidence: vi.fn(async () => completed) });
-    expect(result.tasks[0]).toMatchObject({ createdSequence: null, completedSequence: 2 });
+    expect(result.tasks[0]).toMatchObject({ createdSequence: null, createdByTeammateName: null, completedSequence: 2, completedByTeammateName: "reviewer" });
     expect(isClaudeTaskSignal(signal)).toBe(true);
     const bad = await readClaudeTasks({ executionId, events: [{ ...signal, payload: { ...(signal.payload as Record<string, unknown>), sourceId: "different-actor" } }], readEvidence: vi.fn(async () => completed) });
     expect(bad.tasks).toHaveLength(0);
@@ -43,6 +43,6 @@ describe("readClaudeTasks", () => {
   it("preserves an unreported teammate as unknown", async () => {
     const created = await sealed("created", "ev-created", null);
     const result = await readClaudeTasks({ executionId, events: [event(1, "created", created)], readEvidence: vi.fn(async () => created) });
-    expect(result.tasks[0].teammateName).toBeNull();
+    expect(result.tasks[0].createdByTeammateName).toBeNull();
   });
 });

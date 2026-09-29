@@ -285,17 +285,28 @@ describe("compact run handoff", () => {
   });
   it("shows Claude task lifecycle separately and never calls completion acceptance", () => {
     const claudeTasks: ClaudeTaskReadModel = { executionId: "run-one", rejected: 0, tasks: [{
-      executionId: "run-one", nativeTaskId: "task-7", taskSubject: "Review the checkout flow", teammateName: "reviewer",
+      executionId: "run-one", nativeTaskId: "task-7", taskSubject: "Review the checkout flow", createdByTeammateName: "planner", completedByTeammateName: "reviewer",
       parentSessionId: "session-1", createdSequence: 11, createdAt: null, createdEvidenceId: "ev-created",
       completedSequence: 15, completedAt: null, completedEvidenceId: "ev-completed",
     }] };
     render(<WorkOverview model={model} claudeTasks={claudeTasks} selectedNode={null} onSelectNode={vi.fn()} />);
     const region = screen.getByRole("region", { name: "Claude tasks observed" });
     expect(region).toHaveTextContent("Review the checkout flow");
-    expect(region).toHaveTextContent("Teammate name reported by Claude: reviewer");
-    expect(region).toHaveTextContent("Marked complete in Claude · event #15 · output review not observed");
+    expect(region).toHaveTextContent("created by teammate: planner");
+    expect(region).toHaveTextContent("completed by teammate: reviewer · output review not observed");
     expect(region).toHaveTextContent("not proof of assignment");
     expect(region).not.toHaveTextContent("Output accepted");
+  });
+  it("labels missing task creator and completer names as unknown", () => {
+    const claudeTasks: ClaudeTaskReadModel = { executionId: "run-one", rejected: 0, tasks: [{
+      executionId: "run-one", nativeTaskId: "task-8", taskSubject: "Check the release", createdByTeammateName: null, completedByTeammateName: null,
+      parentSessionId: "session-1", createdSequence: 21, createdAt: null, createdEvidenceId: "ev-created",
+      completedSequence: 23, completedAt: null, completedEvidenceId: "ev-completed",
+    }] };
+    render(<WorkOverview model={model} claudeTasks={claudeTasks} selectedNode={null} onSelectNode={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Claude tasks observed" });
+    expect(region).toHaveTextContent("created by teammate: unknown");
+    expect(region).toHaveTextContent("completed by teammate: unknown");
   });
 });
 

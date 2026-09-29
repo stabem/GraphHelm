@@ -14,7 +14,8 @@ export interface ClaudeTaskObservation {
   executionId: string;
   nativeTaskId: string;
   taskSubject: string;
-  teammateName: string | null;
+  createdByTeammateName: string | null;
+  completedByTeammateName: string | null;
   parentSessionId: string;
   createdSequence: number | null;
   createdAt: string | null;
@@ -125,14 +126,16 @@ export async function readClaudeTasks({ executionId, events, readEvidence }: Rea
     const current = tasks.get(key);
     if (phase === "created") {
       if (current?.createdSequence !== null && current !== undefined) { rejected++; continue; }
-      tasks.set(key, { executionId, nativeTaskId: taskId, taskSubject: subject, teammateName: teammate,
+      tasks.set(key, { executionId, nativeTaskId: taskId, taskSubject: subject,
+        createdByTeammateName: teammate, completedByTeammateName: current?.completedByTeammateName ?? null,
         parentSessionId: parent, createdSequence: seq, createdAt: event.occurredAt, createdEvidenceId: evidenceId,
         completedSequence: current?.completedSequence ?? null, completedAt: current?.completedAt ?? null,
         completedEvidenceId: current?.completedEvidenceId ?? null });
     } else {
       if (current?.completedSequence !== null && current !== undefined) { rejected++; continue; }
-      tasks.set(key, current ? { ...current, completedSequence: seq, completedAt: event.occurredAt, completedEvidenceId: evidenceId }
-        : { executionId, nativeTaskId: taskId, taskSubject: subject, teammateName: teammate,
+      tasks.set(key, current ? { ...current, completedByTeammateName: teammate, completedSequence: seq, completedAt: event.occurredAt, completedEvidenceId: evidenceId }
+        : { executionId, nativeTaskId: taskId, taskSubject: subject, createdByTeammateName: null,
+          completedByTeammateName: teammate,
           parentSessionId: parent, createdSequence: null, createdAt: null, createdEvidenceId: null,
           completedSequence: seq, completedAt: event.occurredAt, completedEvidenceId: evidenceId });
     }

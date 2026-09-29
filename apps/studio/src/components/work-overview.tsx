@@ -263,9 +263,8 @@ export function WorkOverview({
               <ul>{claudeTasks.tasks.map((task) => <li className="work-session" key={`${task.parentSessionId}:${task.nativeTaskId}`}>
                 <strong>{task.taskSubject}</strong>
                 <small>Claude task {task.nativeTaskId} · session {task.parentSessionId}</small>
-                {task.teammateName && <small>Teammate name reported by Claude: {task.teammateName}</small>}
-                <small>{task.createdSequence === null ? "Creation not observed" : `Creation observed · event #${task.createdSequence}`}</small>
-                <small>{task.completedSequence === null ? "Completion not observed" : `Marked complete in Claude · event #${task.completedSequence} · output review not observed`}</small>
+                <small>{task.createdSequence === null ? "Creation not observed" : `Creation observed · event #${task.createdSequence} · created by teammate: ${task.createdByTeammateName ?? "unknown"}`}</small>
+                <small>{task.completedSequence === null ? "Completion not observed" : `Marked complete in Claude · event #${task.completedSequence} · completed by teammate: ${task.completedByTeammateName ?? "unknown"} · output review not observed`}</small>
               </li>)}</ul>
             </section>}
             {claudeTasks && claudeTasks.rejected > 0 && <p className="work-caution" role="note">{claudeTasks.rejected} Claude task signal{claudeTasks.rejected === 1 ? "" : "s"} could not be verified.</p>}

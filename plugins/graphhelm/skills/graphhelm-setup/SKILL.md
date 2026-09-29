@@ -33,6 +33,19 @@ project settings, which would add another handler.
    not read or write another run. `GRAPHHELM_NODE_ID`, when supplied, is an explicit configured
    node reference, not proof that the Runtime assigned that node to the agent. A desktop process
    already running does not inherit environment changes from a later terminal.
+   For a bound Claude session, inspect the launching environment's
+   `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`. Claude defaults to a shared 1.5-second
+   shutdown budget; a plugin's per-hook timeout does not increase it. Configure the
+   supported launcher variable to `10000` milliseconds for the bundled ten-second
+   end declaration, preserving an explicitly longer owner setting. Do not write
+   this variable into the hook child or duplicate registrations in settings. Treat
+   a persistent launcher change as a scoped, authorized configuration migration:
+   capture its previous value and recovery command, then test a fresh native
+   shutdown. An already running desktop process does not inherit a later change.
+   A successful host exit alone is insufficient: verify the hook's native outcome,
+   local acknowledgement, and matching sealed Runtime event separately. Do not
+   resend an ambiguous signal to make the observer pass. The CLI adoption plan does
+   not configure this launch variable; do not claim it does.
    Unbound sessions are silent by default; use `GRAPHHELM_KEEL_CONTEXT=1` only when the owner wants
    the standalone Keel reminder without a GraphHelm execution.
 3. Inventory direct legacy registrations such as `graphhelm-identity.ps1` alongside plugin hooks.

@@ -60,18 +60,26 @@ operation and does not consume a second object. EOF before a complete object, in
 UTF-8 or JSON, a non-object value, and an oversized frame remain invalid input.
 
 SessionStart allows one request up to five seconds of socket inactivity, within
-Claude's ten-second total hook bound, including startup and durable cache
+Claude's ten-second hook declaration, including startup and durable cache
 publication. Runtime's five-second operator read budget is a progress check and
-does not guarantee a response within five seconds. SessionEnd keeps its existing
-2.5-second socket budget: Codex declares three seconds and Claude declares five
-seconds for that event. Claude's ten-second SessionStart declaration is a host
-budget, and older Codex versions may clamp larger declarations to three seconds;
-the declaration alone does not guarantee that every installed host honors ten
-seconds. A socket inactivity limit is not a wall-time deadline: host cancellation
-can stop the hook before its acknowledgement is observed, while a separately
-recorded durable Runtime effect remains real. An unavailable briefing or
-acknowledgement stays UNOBSERVED; it never becomes task success and is never
-retried by this hook.
+does not guarantee a response within five seconds. SessionEnd also allows five
+seconds of socket inactivity; both plugins declare ten seconds for that event.
+Older Codex versions may clamp larger declarations to three seconds. Inspect the
+installed host's effective budget rather than assuming it honors a declaration.
+
+Claude has a separate shared shutdown budget, which defaults to 1.5 seconds.
+A plugin's SessionEnd `timeout` does **not** raise that shared budget. Set
+`CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=10000` in the environment that launches
+Claude when using the bound end hook. This is a supported host setting; changing
+it inside a hook cannot change its parent's budget. See the
+[Claude SessionEnd reference](https://code.claude.com/docs/en/hooks#sessionend).
+This setting permits more shutdown time, not more requests or tokens. A desktop
+process already running must be restarted from the configured launch environment.
+
+A socket inactivity limit is not a wall-time deadline. Host cancellation can stop
+the hook before its acknowledgement is observed, while a separately recorded
+Runtime effect remains durable. An unavailable briefing or acknowledgement stays
+UNOBSERVED; it never becomes task success and is never retried by this hook.
 
 Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
 agent host:
@@ -92,6 +100,7 @@ For example, in PowerShell before launching an agent in a terminal:
 $env:GRAPHHELM_EXECUTION_ID = 'run-example'
 $env:GRAPHHELM_TOKEN_FILE = 'C:/path/to/events.token'
 $env:GRAPHHELM_RUNTIME_URL = 'http://127.0.0.1:8793'
+$env:CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS = '10000'
 claude
 ```
 

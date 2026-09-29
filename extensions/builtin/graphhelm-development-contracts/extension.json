@@ -943,7 +943,32 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:5093504e3f1cec4c09c6d46293b888e12481ddadb9e0780fccf38504dd2b39e8",
+          "sha256": "sha256:77697d048f447ce6b84d32ac483e150bcafb9ad5c5c7006c4ca4bb68e3caf4a5",
+          "effects": [
+            "artifact.propose",
+            "runtime.connect",
+            "runtime.read"
+          ],
+          "permissions": [
+            "network.loopback",
+            "package.read",
+            "runtime.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "surfaces": [
+            "tool:events",
+            "tool:status"
+          ],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/keel-reference",
+          "kind": "skill",
+          "path": "skills/keel/REFERENCE.md",
+          "sha256": "sha256:f25551888272880abf654df442c604a0fb93aec68f2199c52a784b8dc772807c",
           "effects": [
             "artifact.propose",
             "runtime.connect",

@@ -139,6 +139,7 @@ export function Board({
   activity = [],
   latestEvent = null,
   subagents = null,
+  claudeTasks = null,
   agentReports = {},
   runStatus = null,
   attention = null,
@@ -188,6 +189,7 @@ export function Board({
   activity?: WorkOverviewProps["activity"];
   latestEvent?: WorkOverviewProps["latestEvent"];
   subagents?: WorkOverviewProps["subagents"];
+  claudeTasks?: WorkOverviewProps["claudeTasks"];
   agentReports?: WorkOverviewProps["agentReports"];
   runStatus?: string | null;
   attention?: WorkOverviewProps["attention"];
@@ -800,7 +802,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

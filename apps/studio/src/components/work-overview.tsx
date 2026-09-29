@@ -13,6 +13,7 @@ import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
 import type { SubagentReadModel } from "../runtime/subagents";
+import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -28,6 +29,7 @@ export interface WorkOverviewProps {
   latestRecordedUpdate?: RecordedUpdate | null;
   latestEvent?: LatestEvent | null;
   subagents?: SubagentReadModel | null;
+  claudeTasks?: ClaudeTaskReadModel | null;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
@@ -106,6 +108,7 @@ export function WorkOverview({
   latestRecordedUpdate = null,
   latestEvent = null,
   subagents = null,
+  claudeTasks = null,
   crew = [],
   talks = [],
   activity = [],
@@ -254,6 +257,18 @@ export function WorkOverview({
             </div>}
             {sessions.size === 0 && <p className="work-team-flat-note">{subagents === null ? "Checking recorded session links · showing a flat team list." : "No readable session links · showing a flat team list."}</p>}
             {subagents && subagents.rejected > 0 && <p className="work-caution" role="note">{subagents.rejected} session signal{subagents.rejected === 1 ? "" : "s"} could not be verified.</p>}
+            {claudeTasks && claudeTasks.tasks.length > 0 && <section className="work-session-list" aria-label="Claude tasks observed">
+              <h3>Claude tasks observed · {claudeTasks.tasks.length}</h3>
+              <p className="work-team-flat-note">These are Claude task lifecycle records. A teammate name is metadata, not proof of assignment. “Marked complete” does not mean the result was reviewed or accepted.</p>
+              <ul>{claudeTasks.tasks.map((task) => <li className="work-session" key={`${task.parentSessionId}:${task.nativeTaskId}`}>
+                <strong>{task.taskSubject}</strong>
+                <small>Claude task {task.nativeTaskId} · session {task.parentSessionId}</small>
+                {task.teammateName && <small>Teammate name reported by Claude: {task.teammateName}</small>}
+                <small>{task.createdSequence === null ? "Creation not observed" : `Creation observed · event #${task.createdSequence}`}</small>
+                <small>{task.completedSequence === null ? "Completion not observed" : `Marked complete in Claude · event #${task.completedSequence} · output review not observed`}</small>
+              </li>)}</ul>
+            </section>}
+            {claudeTasks && claudeTasks.rejected > 0 && <p className="work-caution" role="note">{claudeTasks.rejected} Claude task signal{claudeTasks.rejected === 1 ? "" : "s"} could not be verified.</p>}
             {crew.length === 0 ? (
               <p className="work-empty">No agents have been observed in this run.</p>
             ) : (

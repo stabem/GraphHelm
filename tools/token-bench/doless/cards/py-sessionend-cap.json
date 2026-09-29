@@ -1,0 +1,16 @@
+{
+  "promise": "Codex SessionEnd declares at most 3 s and the end acknowledgement wait fits inside it; Claude keeps 5 s",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/codex-hooks.json",
+    "plugins/graphhelm-codex-hooks/hooks/codex-hooks.json",
+    "plugins/graphhelm/hooks/session_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    "plugins/graphhelm/README.md",
+    "plugins/graphhelm/plugin.json",
+    "plugins/graphhelm/.claude-plugin/plugin.json",
+    "plugins/graphhelm/.codex-plugin/plugin.json",
+    "plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json"
+  ],
+  "proof": "python -m unittest discover -s plugins/graphhelm/hooks -p test_*.py"
+}

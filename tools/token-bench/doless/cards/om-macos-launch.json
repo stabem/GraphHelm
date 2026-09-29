@@ -1,0 +1,7 @@
+{
+  "promise": "report OBSERVER_MISSING; change nothing",
+  "scopePaths": [
+    "README.md"
+  ],
+  "proof": "none available on this host"
+}

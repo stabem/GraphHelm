@@ -14,7 +14,10 @@ run, so the split is shown in tokens AND in dollars; the dollars are the session
 `total_cost_usd` apportioned by token share, which is an approximation - the real per-message
 price depends on cache hits the transcript does not itemise.
 
-Usage: python tools/token-bench/split.py [--task 1044] [--version 4]
+Usage: python tools/token-bench/split.py [--task 1044] [--version 4] [--results doless/results.jsonl]
+
+(This splits a run's COST. The do-less train/test task split is frozen in doless/tasks.json;
+`doless.py split` prints it.)
 """
 from __future__ import annotations
 
@@ -91,8 +94,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--task")
     parser.add_argument("--version", type=int)
+    parser.add_argument("--results", type=Path, default=RESULTS,
+                        help="results file; doless/results.jsonl splits the do-less rows")
     args = parser.parse_args()
-    rows = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8").splitlines() if l.strip()]
+    results = args.results if args.results.is_absolute() else HERE / args.results
+    rows = [json.loads(l) for l in results.read_text(encoding="utf-8").splitlines() if l.strip()]
     print("at | v | task | arm | verdict | USD total | agent | mcp | gate  (tokens, then USD apportioned)")
     for r in rows:
         if args.task and r["task"] != args.task:

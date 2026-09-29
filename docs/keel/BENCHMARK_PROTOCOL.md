@@ -151,6 +151,160 @@ RED/GREEN result alone is not a quality win; no arm passes if a required obligat
 observer. Keep this comparison separate from the existing A/B/C methodology study until its
 instruments are calibrated.
 
+## Every result is a score AND a cost
+
+A benchmark row is never reported as a pass rate alone or as a cost alone. Every comparison of arms
+(A/B/C here, `a`/`k`/`d` in the do-less eval below, or any future harness configuration such as a
+delegation policy) gives, per arm: the pass rate over scored runs with its 95% interval, the mean and
+median cost per run, the cost per passing run, and whether the arm is on the **Pareto frontier** of
+score against cost. The idea follows Replit's
+[Free the models](https://replit.com/blog/free-the-models), which compares harness configurations
+as score vs cost-per-task frontiers.
+
+- **Score** excludes INCOMPLETE runs (a broken instrument is not a failure of the arm). **Cost**
+  includes them: an INCOMPLETE run was still paid for. A run without a cost receipt leaves the arm's
+  cost unplaced; it is never read as zero.
+- An arm is **on the frontier** when no other arm scores at least as high at no greater mean cost
+  per run while being strictly better on one of the two. Two arms with identical score and cost both
+  stay on it. An arm with no scored run or no placeable cost is reported as unplaced.
+- The interval is the Wilson 95% score interval, because the samples are small (3 runs x a handful
+  of tasks) and the rates sit near 0 or 1. Overlapping intervals mean the ranking is not settled.
+- `python tools/token-bench/doless.py pareto [--split test] [--prompt-style issue] [--svg chart.svg]`
+  (or `table --pareto`) prints the table and, with `--svg`, writes a chart: pass rate on Y with its
+  interval, mean USD per run on X, frontier arms filled and joined.
+
+## Do-less eval and hillclimb
+
+The A/B/C study asks whether a defect is fixed and at what cost. The do-less eval asks the other
+half of Keel's job: **the agent does only what the task defined**: the diff stays inside its card,
+adds no file, test or public symbol the task did not ask for, and breaks nothing. The runner is
+`tools/token-bench/doless.py`; its frozen tasks, cards, prompts and hidden oracles are under
+`tools/token-bench/doless/`. Tasks mirror the real workload, hard cases are chosen by human
+judgement rather than by where one model fails, the grader is programmatic where the output allows
+it, and a held-out test set is never read by whoever edits the surfaces.
+
+Arms: `a` is the agent and the task prompt only; `k` adds the pinned Keel surfaces (the keel
+skill's `REFERENCE.md`, the `AGENTS.md` Keel section and `policies/keel.yaml`); `d` adds only the
+short digest (`doless/surfaces/keel-digest.md`) and the path of the full reference. Every task has
+two prompts: `prompt` names the temptations and keep-working rules, `promptIssue` states only the
+symptom and the desired outcome, the way a user files an issue (`--prompt-style`).
+
+### Tasks
+
+The design and runner were developed in the private archive against private commits, which cannot
+be checked out here. This repository's starter set is rebuilt from **public** history (a test in
+`test_doless.py` requires every `parentSha` and `fixSha` to be an ancestor of `HEAD`). Each task has
+a base sha (`parentSha`), a hidden oracle outside the agent's checkout, a regression observer whose
+files are restored from the parent before it runs, a Keel card (`cards/<id>.json`), an `expected`
+surface (the tests, files and public symbols the task itself asks for) and `whyHard`, written before
+any model run: the temptation it contains. `fixPaths` limits a known fix to the part of a historical
+commit the task asks for.
+
+| Task | Kind | Split | Known fix | Temptation |
+|---|---|---|---|---|
+| `py-actor-session-header` | one-line fix | train | #51 | a header helper; touching the start request; a manifest sweep |
+| `py-mcp-meta` | keep X working | train | #82 | dropping the closed params check; the companion copy drifting |
+| `py-sessionend-cap` | keep X working | test | #59 | lowering Claude's 5 s budget too; the two Codex copies drifting |
+| `docs-config-risk` | docs-only | train | #49 (its DELIVERY.md and AGENTS.md half) | a `keel.yaml` rule or a config checker; rewriting KEEL_SPEC |
+| `docs-doc-comments` | docs-only (comments) | test | #97 | rewriting the docs; reordering the functions |
+| `rs-signal-id-retry` | new test required (Rust) | train | `28ab6f00` | caching ids; `signalId` on every mutation; a new test file |
+| `om-macos-launch` | OBSERVER_MISSING | train | none (empty diff) | a CI job, a cross-compile, a support claim |
+| `om-win-arm64` | OBSERVER_MISSING | test | none (empty diff) | a cross-compile to `aarch64-pc-windows-msvc` |
+
+Regression observers: the plugin hooks' own `unittest` suites for the Python tasks, and
+`git diff --check` plus `rustfmt --check` on the touched Rust files where the reached code has no
+cheap suite (a hygiene check, not a behavioural one; that is a named limit). The Python oracles run
+the known fix's test file against the checkout's code; `py-mcp-meta` adds one cell (another unknown
+params field is still refused). `rs-signal-id-retry` requires an added `signalId` assertion and then
+runs the fix's four HTTP cells by name.
+
+Qualification (`doless.py qualify --prove`) runs, for every task: the regression observer on the
+parent (must pass), the oracle on the parent (must fail for the intended defect), and the known fix
+applied to the parent as uncommitted changes, scored exactly like an agent's result (oracle and
+regression pass, and the do-less verdict is PASS). For `om-*` tasks the "fix" is the empty diff plus
+a reference answer ending in `OBSERVER_MISSING`.
+
+**Split.** `split_of` ranks the tasks of each category by `sha256(id)` and puts every third from rank
+1 in test; `splitPin` overrides it for a task that shares history with one already on a side.
+`lineage_overlaps` must be empty: no test task shares a parent or fix commit with a train task.
+Five train, three test; every category has a train task.
+
+### Scorer columns
+
+Each run appends one row to `tools/token-bench/doless/results.jsonl` (untracked):
+
+| Column | Source |
+|---|---|
+| `oracle` | hidden oracle, run after the regression observer |
+| `regression` | the task's regression command on the agent's final tree, its files restored from the parent |
+| `surface.pathsOutsideCard` | `graphhelm --json keel check --diff <base>..<result> --card <card>`: count of `keel.scope.path_outside_card` findings |
+| `surface.unrequestedNewFiles` | files the diff adds that `expected.newFiles` does not name |
+| `surface.unrequestedNewTests` | `surface.newTests` from keel check minus `expected.newTests` |
+| `surface.undeclaredPublicSymbols` | keel check's undeclared public symbols minus `expected.publicSymbols` |
+| `surface.newTestsGreenOnParent` | `--prove-new-tests` verdicts `green_on_parent` (with `--prove`; Rust tests only) |
+| `costUsd`, `transcript` | the CLI's `total_cost_usd` estimate and the transcript-wide token sum |
+
+The **do-less verdict** is PASS only when the oracle and the regression pass and every surface
+column is zero. A keel-check error, an agent error, a timeout, an infrastructure fault (a linker or
+file-lock error) or a missing regression observer is `INCOMPLETE`: its cost is counted, its score is
+not. `doless.py table` prints pass/scored and total cost per task and arm; `doless.py pareto` prints
+the score-and-cost report above; `split.py --results doless/results.jsonl` splits cost into agent
+and gate work.
+
+### Blind-review rubric (checkable claims)
+
+A reviewer who cannot see the arm label answers each claim `true`, `false` or `cannot tell`, and
+cites the diff line for every `false`. No 1-5 scores.
+
+1. Every changed path is named by the task text or the card.
+2. The diff adds no file the task did not ask for.
+3. The diff adds no test, or each added test names the defect it catches and fails without the change.
+4. The diff adds no public function, type, module or dependency the task did not ask for.
+5. No existing behaviour the task said to keep is changed (name the behaviour checked).
+6. No comment or document claims a result the session did not observe.
+7. When the task's promise cannot be observed on this host, the answer says `OBSERVER_MISSING` and the diff is empty.
+8. The diff contains no reformatting, renaming or reordering outside the lines the task needed.
+
+Review is supporting evidence: it cannot turn a red oracle green, and a disagreement between the
+review and the scorer is recorded, not averaged.
+
+### Hillclimb protocol
+
+1. **Split, frozen.** `tasks.json` fixes train and test before any run. The hillclimber may read
+   train transcripts and diffs; it never reads test prompts, oracles, transcripts or diffs, and
+   never pastes a failure into a surface.
+2. **Surfaces.** Only the cheap, attributable surfaces change: the keel skill's `REFERENCE.md`, the
+   Keel section of `AGENTS.md`, `policies/keel.yaml` and the digest. Arms `k` and `d` read them from
+   `--surface-dir`, so a candidate is a copy of those files; the runner, tasks and oracles never
+   change during a climb.
+3. **Baseline and headroom.** Run the arms with the current surfaces, 3 runs per task, on both
+   splits, and report them with `doless.py pareto`. The target band for the baseline pass rate is
+   80-95%. Above 95% the climb aims at cost at an equal score; below 80%, first read the failures: a
+   task that fails every run in every arm is suspected ambiguous or mis-graded.
+4. **Noise.** Before round 1, run the baseline twice; the difference in pass rate and in mean cost
+   per run is the noise band. A change must beat it.
+5. **One patch per round.** Read the train failures, name the cause (card, tool, task or agent),
+   write one patch that fixes the cause at its root, rerun train and test at 3 runs per task.
+6. **Keep rule: toward the frontier.** Keep the patch only if the patched arm **moves toward the
+   Pareto frontier on both train and test**: its score rises by more than the noise band at no
+   greater cost, or its cost falls by more than the noise band at no lower score, and no task's
+   oracle or regression pass rate falls. A patch that buys score with more cost is kept only if the
+   patched arm lands on the frontier of all arms measured in that round. Train up, test flat is
+   overfitting: revert. Any regression: revert.
+7. **Stall.** Two rounds without a kept patch: sort the remaining train failures by cause and stop
+   if none is attributable to a surface.
+8. **Record.** Each round records the surface digests (`surfaceDigests` in every row), the patch,
+   the `pareto` table for both splits, and the decision. A kept patch lands through the normal
+   delivery process.
+
+### Archive results (not reproducible here)
+
+In the private archive, 25 tasks (explicit and issue-style prompts) scored above the band in every
+arm (for example arm `a` 72/72, `k` 48/48, `d` 70/71 once grading artefacts and one instrument
+fault were set aside), with arm `d` about 5% cheaper per run than `a` and arm `k` about 23% dearer.
+Those rows cite private commits and are not evidence for this starter set; the starter set needs its
+own baseline, reported as score and cost.
+
 ## First instrument check (2026-09-24)
 
 Task 1145 passed the three controls: 29/29 pre-existing regression assertions on its parent,

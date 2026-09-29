@@ -16,6 +16,7 @@ export interface ClaudeTaskObservation {
   taskSubject: string;
   createdByTeammateName: string | null;
   completedByTeammateName: string | null;
+  sourceId: string;
   parentSessionId: string;
   createdSequence: number | null;
   createdAt: string | null;
@@ -128,7 +129,7 @@ export async function readClaudeTasks({ executionId, events, readEvidence }: Rea
       if (current?.createdSequence !== null && current !== undefined) { rejected++; continue; }
       tasks.set(key, { executionId, nativeTaskId: taskId, taskSubject: subject,
         createdByTeammateName: teammate, completedByTeammateName: current?.completedByTeammateName ?? null,
-        parentSessionId: parent, createdSequence: seq, createdAt: event.occurredAt, createdEvidenceId: evidenceId,
+        sourceId: actor, parentSessionId: parent, createdSequence: seq, createdAt: event.occurredAt, createdEvidenceId: evidenceId,
         completedSequence: current?.completedSequence ?? null, completedAt: current?.completedAt ?? null,
         completedEvidenceId: current?.completedEvidenceId ?? null });
     } else {
@@ -136,7 +137,7 @@ export async function readClaudeTasks({ executionId, events, readEvidence }: Rea
       tasks.set(key, current ? { ...current, completedByTeammateName: teammate, completedSequence: seq, completedAt: event.occurredAt, completedEvidenceId: evidenceId }
         : { executionId, nativeTaskId: taskId, taskSubject: subject, createdByTeammateName: null,
           completedByTeammateName: teammate,
-          parentSessionId: parent, createdSequence: null, createdAt: null, createdEvidenceId: null,
+          sourceId: actor, parentSessionId: parent, createdSequence: null, createdAt: null, createdEvidenceId: null,
           completedSequence: seq, completedAt: event.occurredAt, completedEvidenceId: evidenceId });
     }
   }

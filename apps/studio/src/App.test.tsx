@@ -476,6 +476,58 @@ describe("opening", () => {
     expect(await screen.findByText("typed addNode path is invalid")).toBeVisible();
     expect(screen.getByRole("button", { name: "review selected proposal" })).toBeDisabled();
   });
+
+  it("keeps governed approval disabled until a paused Runtime has no running node", async () => {
+    const content = JSON.stringify({ id: "draft-paused-gate", operations: [
+      { op: "addNode", path: "/spec/nodes/summarize", value: { name: "Summarize", objective: "Make a short summary" } },
+    ] });
+    const rawDigest = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
+    let phase: "running" | "paused-running" | "paused-ready" = "running";
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({
+        ...STATUS,
+        status: phase === "running" ? "running" : "paused",
+        nodeStateCounts: { blocked: 1 },
+        nodeStates: phase === "paused-running" ? { summarize: "running" } : {},
+      })),
+      getEvents: vi.fn(async () => ({
+        head: 13,
+        events: [
+          { sequence: 2, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["summarize"] }, occurredAt: null, actorId: "system-cli", actorType: "system", idempotencyKey: "k2", eventId: "e2", evidenceRefs: [] },
+          { sequence: 3, kind: "draft_proposed", payload: { draftId: "draft-paused-gate", proposalSha256: rawDigest }, occurredAt: null, actorId: "agent-a", actorType: "agent", idempotencyKey: "k3", eventId: "e3", evidenceRefs: ["sealed-paused-gate"] },
+        ],
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "sealed-paused-gate", mediaType: "application/json", sensitivity: "confidential", contentSha256: rawDigest, content })),
+    });
+    render(
+      <App
+        createClient={() => client as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={20}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
+    await userEvent.click(screen.getByText("Run actions"));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-paused-gate");
+
+    const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText("Pause the run before approving this proposal.")).toBeVisible();
+    expect(client.approve).not.toHaveBeenCalled();
+
+    phase = "paused-running";
+    await waitFor(() => expect(screen.getByText("Approval is waiting for the running node to stop.")).toBeVisible());
+    expect(approve).toBeDisabled();
+    expect(client.approve).not.toHaveBeenCalled();
+
+    phase = "paused-ready";
+    await waitFor(() => expect(approve).toBeEnabled());
+    await userEvent.click(approve);
+    await waitFor(() => expect(client.approve).toHaveBeenCalled());
+  });
+
   it("opens the organized overview without applying saved canvas coordinates", async () => {
     render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"F:/github/GraphHelm"})} />);
     expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();

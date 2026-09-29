@@ -2016,6 +2016,24 @@ export default function App({
   const retryTarget = approveTarget !== "" && retryFailures.has(approveTarget);
   /** A running retry failure must be paused before its owner can allow another attempt. */
   const approvalNeedsPause = status?.status === "running" && approveTarget !== "";
+  /** Governed drafts may be inspected at any time, but approval is only legal against a paused
+   * Runtime observation with no node still running. The Runtime owns this state; Studio must not
+   * pause or retry implicitly from the governed proposal button. */
+  const observedNodeStates = status === null
+    ? []
+    : Object.values((status as ExecutionStatus & { nodeStates?: Record<string, unknown> }).nodeStates ?? {});
+  const runningNodeCount = Math.max(
+    status?.nodeStateCounts.running ?? 0,
+    observedNodeStates.filter((state) => state === "running").length,
+  );
+  const governedApprovalAllowed = status?.status === "paused" && runningNodeCount === 0;
+  const governedApprovalWaitReason = governedApprovalAllowed
+    ? null
+    : status?.status !== "paused"
+      ? "Pause the run before approving this proposal."
+      : runningNodeCount > 0
+        ? "Approval is waiting for the running node to stop."
+        : "Wait for the Runtime to report a paused state before approving this proposal.";
   const stalledAfterFailure = status?.status === "running" && retryFailures.size > 0 &&
     ["ready", "queued", "linting", "running"].every((state) => (status.nodeStateCounts[state] ?? 0) === 0);
   const waitingInstead = approveTarget === "" && blocking.length > 0;
@@ -2736,7 +2754,7 @@ export default function App({
                 className="act"
                 onClick={() =>
                   void runMutation((client) =>
-                    governedApproval !== null && proposalReview.state === "ready"
+                    governedApproval !== null && proposalReview.state === "ready" && governedApprovalAllowed
                       ? client.approve(selected, governedApproval.node.id, {
                           governed: { draftId: governedApproval.draftId, proposalDigest: governedApproval.proposalDigest, assignments: governedApproval.assignments },
                           actor: OPERATOR_ACTOR,
@@ -2758,7 +2776,7 @@ export default function App({
                         }),
                   )
                 }
-                disabled={busy || (approveTarget === "" && governedApproval === null) || durableProposals.length > 0 && governedApproval === null}
+                disabled={busy || (approveTarget === "" && governedApproval === null) || durableProposals.length > 0 && governedApproval === null || governedApproval !== null && !governedApprovalAllowed}
               >
                 {governedApproval !== null
                   ? `approve proposal for ${governedApproval.node.id}`
@@ -2772,6 +2790,9 @@ export default function App({
               </button>
               {durableProposals.length > 0 && governedApproval === null && (
                 <p className="hint">Select a sealed draft, review its typed nodes and dependencies, then choose a responsible actor for each node.</p>
+              )}
+              {governedApproval !== null && governedApprovalWaitReason !== null && (
+                <p className="hint">{governedApprovalWaitReason}</p>
               )}
               {approvalNeedsPause && (
                 <p className="hint">Pause the running task first. After it is paused, approve the node.</p>

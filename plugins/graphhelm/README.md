@@ -131,6 +131,11 @@ original journal event, opens its sealed envelope, reads a fresh bounded briefin
 sealed `task_handoff_received` signal with `replyTo` pointing to the offer. `status` reconstructs
 offers and matching receipts from the Runtime journal.
 
+When `status` names an offer ID, it opens only that offer's sealed content. It still validates the
+current recipient's receipt records to determine which reference that offer; receipt matching and
+integrity checks are unchanged. Unfiltered status continues opening all offer records. An unavailable
+unrelated offer cannot block a targeted read, while unavailable or corrupt selected evidence is refused.
+
 A timed-out or disconnected write can have committed before its response was lost. The adapter
 does not repeat that POST. It reads the journal and validates the exact sealed offer or receipt,
 including content hash, execution, actor and addressing. Only verified durable evidence permits

@@ -36,6 +36,9 @@ class RuntimeHandler(BaseHTTPRequestHandler):
                     "pending": [], "unevaluated": [], "decisions": [], "workDone": []}}
         elif "/evidence/" in self.path:
             evidence_id = self.path.rsplit("/", 1)[-1]
+            if evidence_id not in self.evidence:
+                self.send_error(404)
+                return
             content, digest = self.evidence[evidence_id]
             body = {"ok": True, "data": {"evidenceId": evidence_id, "mediaType": "application/json",
                     "contentSha256": digest, "content": content}}
@@ -142,6 +145,36 @@ class HandoffTests(unittest.TestCase):
         posts = [item for item in RuntimeHandler.requests if item[0] == "POST"]
         self.assertEqual(len(posts), 2)
         self.assertEqual([post[2]["X-Graphhelm-Actor-Session"] for post in posts], ["sender", "receiver"])
+
+    def test_targeted_status_avoids_unrelated_offer_evidence_and_preserves_receipts(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            selected = MODULE.offer("claude", "sender", "codex", "receiver", "selected")
+            other = MODULE.offer("claude", "sender", "codex", "receiver", "other")
+            selected_receipt = MODULE.receive("codex", "receiver", selected["offerId"])
+            other_receipt = MODULE.receive("codex", "receiver", other["offerId"])
+            del RuntimeHandler.evidence[f"evidence-{other['offerId']}"]
+            RuntimeHandler.requests = []
+            report = MODULE.status("codex", "receiver", selected["offerId"])
+            self.assertEqual(report["offers"][0]["offerId"], selected["offerId"])
+            self.assertEqual(report["offers"][0]["receipts"], [selected_receipt["receiptId"]])
+            evidence_reads = [row[1].rsplit("/", 1)[-1] for row in RuntimeHandler.requests if "/evidence/" in row[1]]
+            self.assertCountEqual(evidence_reads, [f"evidence-{selected['offerId']}",
+                f"evidence-{selected_receipt['receiptId']}", f"evidence-{other_receipt['receiptId']}"])
+            self.assertTrue(all(row[0] == "GET" for row in RuntimeHandler.requests))
+            with self.assertRaises(MODULE.urllib.error.HTTPError):
+                MODULE.status("codex", "receiver", None)
+
+    def test_targeted_status_still_refuses_missing_or_corrupt_selected_evidence(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            selected = MODULE.offer("claude", "sender", "codex", "receiver")
+            evidence_id = f"evidence-{selected['offerId']}"
+            content, digest = RuntimeHandler.evidence[evidence_id]
+            RuntimeHandler.evidence[evidence_id] = (content + "tampered", digest)
+            with self.assertRaises(ValueError):
+                MODULE.status("codex", "receiver", selected["offerId"])
+            del RuntimeHandler.evidence[evidence_id]
+            with self.assertRaises(MODULE.urllib.error.HTTPError):
+                MODULE.status("codex", "receiver", selected["offerId"])
 
     def test_timeout_after_real_write_reconciles_offer_and_receive(self):
         original = MODULE.request

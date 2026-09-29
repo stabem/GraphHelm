@@ -34,43 +34,73 @@ fn refuse(message: &str, pointer: &str) -> Outcome {
 /// `GRAPHHELM_API_TOKEN` — never argv — with both-absent a refusal naming the two options,
 /// and the actor admitted by the same wire rules the serve layer applies.
 fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Outcome> {
-    if !client::is_loopback_url(&args.url) {
-        return Err(refuse(
-            "--url must name a loopback authority (http://127.0.0.1:PORT, localhost, or \
-             [::1]); the MCP server never talks to a remote API",
-            "/url",
-        ));
-    }
-    if let Err(reason) = url::validate_base(&args.url) {
-        return Err(refuse(&reason, "/url"));
-    }
-    let token = if args.discover {
-        // #1325: the port the discovery record is keyed by. Resolved lazily, per tool call, so the
-        // bridge starts even when no Runtime is up yet and follows a Runtime swap on the port.
-        let port = url::port_of(&args.url).ok_or_else(|| {
-            refuse(
-                "--discover needs --url to name an explicit port (http://127.0.0.1:PORT)",
-                "/url",
-            )
-        })?;
-        client::TokenSource::discover(port)
-    } else {
-        let token = match &args.token_file {
-            Some(path) => std::fs::read_to_string(path)
-                .map_err(|_| refuse("--token-file does not name a readable file", "/tokenFile"))?,
-            None => std::env::var("GRAPHHELM_API_TOKEN").map_err(|_| {
+    let (base_url, token) = if args.discover && args.url.is_none() {
+        let project = match &args.project {
+            Some(project) => project.clone(),
+            None => std::env::current_dir().map_err(|_| {
                 refuse(
-                    "no token: supply --token-file <path>, the GRAPHHELM_API_TOKEN \
-                     environment variable, or --discover (the token value never travels via argv)",
-                    "/tokenFile",
+                    "the MCP process working directory is unavailable; pass --project",
+                    "/project",
                 )
             })?,
         };
-        let token = Zeroizing::new(token.trim().to_owned());
-        if token.is_empty() {
-            return Err(refuse("the token is empty", "/tokenFile"));
+        let project_id =
+            crate::commands::execution::delivery::project_id(&project).map_err(|_| {
+                refuse(
+                    "--project must name an existing project directory",
+                    "/project",
+                )
+            })?;
+        (
+            String::new(),
+            client::TokenSource::discover_project(project_id),
+        )
+    } else {
+        let base_url = args.url.as_ref().ok_or_else(|| {
+            refuse(
+                "supply --url for a direct connection, or omit it with --discover to use the project Runtime",
+                "/url",
+            )
+        })?;
+        if !client::is_loopback_url(base_url) {
+            return Err(refuse(
+                "--url must name a loopback authority (http://127.0.0.1:PORT, localhost, or \
+                 [::1]); the MCP server never talks to a remote API",
+                "/url",
+            ));
         }
-        client::TokenSource::Fixed(token)
+        if let Err(reason) = url::validate_base(base_url) {
+            return Err(refuse(&reason, "/url"));
+        }
+        let token = if args.discover {
+            // Legacy mode remains for older user registrations pinned to one port.
+            let port = url::port_of(base_url).ok_or_else(|| {
+                refuse(
+                    "legacy port discovery needs an explicit --url; omit --url to discover by project",
+                    "/url",
+                )
+            })?;
+            client::TokenSource::discover(port)
+        } else {
+            let token = match &args.token_file {
+                Some(path) => std::fs::read_to_string(path).map_err(|_| {
+                    refuse("--token-file does not name a readable file", "/tokenFile")
+                })?,
+                None => std::env::var("GRAPHHELM_API_TOKEN").map_err(|_| {
+                    refuse(
+                        "no token: supply --token-file <path> or the GRAPHHELM_API_TOKEN \
+                         environment variable (the token value never travels via argv)",
+                        "/tokenFile",
+                    )
+                })?,
+            };
+            let token = Zeroizing::new(token.trim().to_owned());
+            if token.is_empty() {
+                return Err(refuse("the token is empty", "/tokenFile"));
+            }
+            client::TokenSource::Fixed(token)
+        };
+        (base_url.clone(), token)
     };
     let (actor, actor_from_env) = match &args.actor {
         Some(name) => (name.clone(), false),
@@ -131,7 +161,7 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
         ));
     }
     Ok(client::ApiClient::new(
-        args.url.clone(),
+        base_url,
         token,
         actor,
         args.actor_type.clone(),

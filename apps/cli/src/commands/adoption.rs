@@ -33,7 +33,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             });
         }
     };
-    // #1325: the project entry names that project's token; the user entry discovers the Runtime.
+    // The project entry pins the project identity; the user entry derives it from the host cwd.
     let registration = Registrations {
         project: provisioning.claude_registration(),
         user: provisioning.user_registration(),
@@ -234,8 +234,8 @@ fn item_path(item: &str, args: &AdoptionSetupArgs) -> Option<std::path::PathBuf>
 /// `--plan` and `--accept` path as a hand-written replacement, and a source that moves before
 /// `--apply` is refused as stale. `None`: the MCP item already carries this exact registration,
 /// so there is nothing to decide; a block that is already current becomes `keep`.
-/// The two `register-mcp` entries: `project/.mcp.json` pins that project's token file, and
-/// `home/.claude.json` (one entry for every project) uses `mcp --discover` (#1325).
+/// The two `register-mcp` entries: the project file names its project root, while the user file
+/// uses the host's active working directory to select the project.
 struct Registrations {
     project: serde_json::Value,
     user: serde_json::Value,

@@ -423,9 +423,9 @@ duplicated.
 
 ## 6. Connect a chat harness
 
-`init` wrote the registration; the harness only has to read it. The token travels as a **file
-path** (`--token-file`), never inline and never through argv, and every mutation the chat makes is
-attributed to the actor `agent-chat`.
+`init` wrote the registration; the harness only has to read it. The active project selects its
+Runtime by identity. The token stays in its private file; neither the port nor the token path is
+copied into the MCP registration. Every mutation the chat makes is attributed to `agent-chat`.
 
 **Claude Code** — `<project>/.mcp.json` was written (or merged, keeping any other server in it).
 Start Claude Code in the project directory; it reads `.mcp.json` from the project root. If a
@@ -438,15 +438,16 @@ use the graphhelm MCP tool list
 Expected: one row, `demo`, with its attention verdict — the same answer the Studio shows.
 
 **One registration for every project (Claude Code, user scope).** `graphhelm setup --resolve
-home/.claude.json=register-mcp` writes `graphhelm mcp --url http://127.0.0.1:8791 --discover
---actor agent-chat` into `~/.claude.json`. It names no project's token. A `serve` on a fixed port
-publishes a discovery record at `~/.graphhelm/runtime/<port>.json` (or under
-`GRAPHHELM_RUNTIME_DIR`) that names its token file and a random instance id. `mcp --discover`
-reads that record, checks that the Runtime's `/health` reports the same instance, and only then
-reads the token file. After a 401 it reads the record again, so switching the Runtime on 8791 to
-another project needs no new registration. With no live Runtime on the port, each tool call is
-refused with a message naming the `serve` command to run. A Runtime started by an older build
-publishes no record: restart it. `--bind 127.0.0.1:0` publishes nothing.
+home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-chat` into
+`~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
+the host does not launch it there) to find that project's Runtime. `serve --project <path>` writes
+an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
+`GRAPHHELM_RUNTIME_DIR`) with the actual loopback URL, token-file path, and random instance id.
+Before reading the token file, MCP checks that `/health` reports both the same project identity
+and the same live instance. Multiple projects can therefore use different ports at once. An
+ambiguous or stale mapping is refused; MCP never guesses. `--bind 127.0.0.1:0` is supported when
+the project is supplied. The older `--url ... --discover` form still follows whichever Runtime
+occupies that one port for existing registrations.
 
 **Codex** — `init` wrote `<project>/.graphhelm/codex.config.toml` and does not touch your home
 directory. Append its contents to `~/.codex/config.toml` yourself:

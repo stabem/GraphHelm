@@ -184,20 +184,17 @@ impl Provisioning {
     pub(super) fn claude_registration(&self) -> Value {
         json!({
             "command": command_for_registration(),
-            "args": mcp_arguments(&format!("http://{}", self.bind), &secret_file::token_path(&self.events)),
+            "args": mcp_arguments(Some(&self.project)),
         })
     }
 
-    /// The USER-scope entry (`~/.claude.json`, #1325): one registration for every project, so it
-    /// names no project's token file. `mcp --discover` takes the token of whichever Runtime is
-    /// serving the bind's port, from the discovery record that Runtime published.
+    /// The USER-scope entry (`~/.claude.json`): one registration for every project. `mcp` derives
+    /// the active project from the host process's working directory and resolves its Runtime.
     pub(super) fn user_registration(&self) -> Value {
         json!({
             "command": command_for_registration(),
             "args": [
                 "mcp",
-                "--url",
-                format!("http://{}", self.bind),
                 "--discover",
                 "--actor",
                 MCP_ACTOR,
@@ -253,13 +250,12 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
     let gitignore_path = project.join(GITIGNORE_FILE);
     let gitignore_state = ensure_gitignore(&project, &gitignore_path)?;
 
-    let url = format!("http://{bind}");
     let mut registrations = Vec::new();
     for harness in harnesses {
         registrations.push(match harness {
             Harness::ClaudeCode => {
                 let path = project.join(CLAUDE_CODE_FILE);
-                let state = ensure_claude_code(&path, &url, &token_path)?;
+                let state = ensure_claude_code(&path, &project)?;
                 json!({
                     "harness": "claude-code",
                     "path": CLAUDE_CODE_FILE,
@@ -269,7 +265,7 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
             }
             Harness::Codex => {
                 let path = root.join(CODEX_SNIPPET_FILE);
-                let state = ensure_codex(&path, &url, &token_path)?;
+                let state = ensure_codex(&path)?;
                 json!({
                     "harness": "codex",
                     "path": under_root(CODEX_SNIPPET_FILE),
@@ -309,6 +305,7 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
         "harnesses": registrations,
         "next": next_steps(&NextPaths {
             bind: &bind,
+            project: &project,
             root: &root,
             events: &events,
             key: &key_path,
@@ -572,18 +569,18 @@ fn detect_harnesses(project: &Path) -> Vec<Harness> {
     found
 }
 
-/// The `graphhelm` server entry both harnesses register: the token travels as a FILE PATH, never
-/// as a value (`mcp --token-file`'s own contract).
-fn mcp_arguments(url: &str, token_path: &Path) -> Vec<String> {
-    vec![
-        "mcp".to_owned(),
-        "--url".to_owned(),
-        url.to_owned(),
-        "--token-file".to_owned(),
-        token_path.to_string_lossy().into_owned(),
-        "--actor".to_owned(),
-        MCP_ACTOR.to_owned(),
-    ]
+/// The project-scoped Claude MCP entry carries the project root, not a Runtime port or token.
+/// User-scoped entries omit the root so the host's active working directory selects the project.
+fn mcp_arguments(project: Option<&Path>) -> Vec<String> {
+    let mut arguments = vec!["mcp".to_owned(), "--discover".to_owned()];
+    if let Some(project) = project {
+        arguments.extend([
+            "--project".to_owned(),
+            project.to_string_lossy().into_owned(),
+        ]);
+    }
+    arguments.extend(["--actor".to_owned(), MCP_ACTOR.to_owned()]);
+    arguments
 }
 
 /// The program a harness will spawn: THIS binary, by absolute path. `"graphhelm"` bare would
@@ -602,10 +599,10 @@ fn command_for_registration() -> String {
         )
 }
 
-fn ensure_claude_code(path: &Path, url: &str, token_path: &Path) -> Result<State, Failure> {
+fn ensure_claude_code(path: &Path, project: &Path) -> Result<State, Failure> {
     let entry = json!({
         "command": command_for_registration(),
-        "args": mcp_arguments(url, token_path),
+        "args": mcp_arguments(Some(project)),
     });
     let unparseable = || {
         refused(
@@ -669,9 +666,9 @@ fn toml_string(value: &str) -> String {
     out
 }
 
-fn ensure_codex(path: &Path, url: &str, token_path: &Path) -> Result<State, Failure> {
+fn ensure_codex(path: &Path) -> Result<State, Failure> {
     refuse_symlink(path, "/codex")?;
-    let arguments = mcp_arguments(url, token_path)
+    let arguments = mcp_arguments(None)
         .iter()
         .map(|argument| toml_string(argument))
         .collect::<Vec<_>>()
@@ -679,7 +676,7 @@ fn ensure_codex(path: &Path, url: &str, token_path: &Path) -> Result<State, Fail
     let command = toml_string(&command_for_registration());
     let snippet = format!(
         "# GraphHelm MCP server registration for Codex. Append to ~/.codex/config.toml.\n\
-         # The token travels via a file path, never inline and never via argv.\n\
+         # The active project selects its authenticated Runtime; no port or token is pinned.\n\
          [mcp_servers.{MCP_SERVER_NAME}]\n\
          command = {command}\n\
          args = [{arguments}]\n"
@@ -701,6 +698,7 @@ fn ensure_codex(path: &Path, url: &str, token_path: &Path) -> Result<State, Fail
 
 struct NextPaths<'a> {
     bind: &'a SocketAddr,
+    project: &'a Path,
     root: &'a Path,
     events: &'a Path,
     key: &'a Path,
@@ -751,8 +749,8 @@ fn next_steps(paths: &NextPaths<'_>) -> Vec<Value> {
         }),
         json!({
             "step": "start the Runtime on loopback (the serve.started line warns at once if the key or the key id does not open the keyring)",
-            "powershell": format!("graphhelm serve --events {ps_events} --bind {bind} --keyring {ps_keyring} --key-id {key_id}"),
-            "bash": format!("graphhelm serve --events {events} --bind {bind} --keyring {keyring} --key-id {key_id}"),
+        "powershell": format!("graphhelm serve --events {ps_events} --bind {bind} --project {} --keyring {ps_keyring} --key-id {key_id}", quoted_powershell(paths.project)),
+        "bash": format!("graphhelm serve --events {events} --bind {bind} --project {} --keyring {keyring} --key-id {key_id}", quoted_bash(paths.project)),
         }),
         json!({
             "step": "start the Studio, from your GraphHelm clone (Node 22+ and npm are needed only for this step)",
@@ -884,6 +882,7 @@ mod tests {
         let root = dir.path().join(".graphhelm");
         let steps = next_steps(&NextPaths {
             bind: &"127.0.0.1:8791".parse().unwrap(),
+            project: dir.path(),
             root: &root,
             events: &root.join("events"),
             key: &root.join("serve.key"),

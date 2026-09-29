@@ -455,13 +455,10 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         .cloned()
         .unwrap_or_else(|| panic!("no .claude.json operation: {reviewed}"));
     assert_eq!(operation["registration"]["args"][0], "mcp");
-    assert_eq!(
-        operation["registration"]["args"][2],
-        "http://127.0.0.1:8791"
-    );
-    // #1325: the user-scope entry names no project's token file; it discovers the live Runtime.
-    assert_eq!(operation["registration"]["args"][3], "--discover");
-    assert_eq!(operation["registration"]["args"][5], "agent-chat");
+    // User-scope discovery follows the host's active project directory, not a fixed port/token.
+    assert_eq!(operation["registration"]["args"][1], "--discover");
+    assert_eq!(operation["registration"]["args"][2], "--actor");
+    assert_eq!(operation["registration"]["args"][3], "agent-chat");
     assert!(
         !operation["registration"]["args"]
             .as_array()
@@ -492,9 +489,10 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         graphhelm_host_adoption::is_graphhelm_registration(entry),
         "{entry}"
     );
-    // #1325: one user-scope entry serves every project, so it names no project's token file.
+    // One user-scope entry discovers the active project by identity, never a fixed port/token.
     let args = entry["args"].as_array().unwrap();
     assert!(args.contains(&"--discover".into()), "{entry}");
+    assert!(!args.contains(&"--url".into()), "{entry}");
     assert!(!args.contains(&"--token-file".into()), "{entry}");
 
     let user =

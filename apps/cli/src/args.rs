@@ -401,24 +401,26 @@ pub enum DevelopmentCommand {
 
 #[derive(Debug, Args)]
 pub struct McpArgs {
-    /// The Public Runtime API's base URL. Loopback-only, fail-closed: userinfo is stripped
-    /// before host inspection (the post-#36 rule), so `[::1]@evil.com` shapes never pass.
-    #[arg(long)]
-    pub url: String,
+    /// The Public Runtime API's base URL for a direct or legacy port-discovery connection.
+    /// Omit with `--discover` to resolve the active project's Runtime automatically.
+    /// Loopback-only, fail-closed: userinfo is stripped before host inspection.
+    #[arg(long, required_unless_present = "discover")]
+    pub url: Option<String>,
     /// File whose first line is the bearer token. Alternative: `GRAPHHELM_API_TOKEN`. The
     /// flag wins; both absent is a refusal naming the two options. The token value itself
     /// NEVER travels via argv.
     #[arg(long = "token-file", conflicts_with = "discover")]
     pub token_file: Option<PathBuf>,
-    /// Take the token from whichever Runtime is serving `--url`'s port (#1325), instead of one
-    /// project's `--token-file`. `serve` on a fixed port publishes a discovery record under
-    /// `~/.graphhelm/runtime/` (or `GRAPHHELM_RUNTIME_DIR`) naming its token FILE; the record is
-    /// believed only when that Runtime's `/health` reports the record's instance id, and is read
-    /// again after a 401, so one user-scope registration follows a project switch on the same
-    /// port. No live record is a refusal on each tool call, never a fallback.
-    /// `GRAPHHELM_API_TOKEN` is ignored in this mode.
+    /// Discover the token and endpoint from a verified Runtime record. With `--url`, keeps the
+    /// legacy behavior of following the Runtime on that port. Without `--url`, selects the active
+    /// project's Runtime by identity, independent of its port. No live or unique identity match
+    /// is a refusal; there is no fallback. `GRAPHHELM_API_TOKEN` is ignored in this mode.
     #[arg(long)]
     pub discover: bool,
+    /// Project directory whose Runtime this MCP process is allowed to discover. With
+    /// `--discover` and no `--url`, defaults to the process working directory.
+    #[arg(long, requires = "discover", conflicts_with = "url")]
+    pub project: Option<PathBuf>,
     /// The actor every mutation is attributed to (the serve layer's actor id rules).
     /// OPTIONAL because one `.mcp.json` is shared by every session in a repository, so a
     /// literal here makes every session the same actor (#1058). Falls back to

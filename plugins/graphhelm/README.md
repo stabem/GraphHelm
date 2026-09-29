@@ -151,7 +151,7 @@ not retried automatically. `--handoff-id` distinguishes multiple offers between 
 sessions in one execution; repeating the same id replays the journal record after local state loss.
 
 The same adapter has an optional, explicitly configured stdio MCP mode. The Codex compatibility
-companion registers it with a `${PLUGIN_ROOT}` path; the main plugin does not register a second
+companion registers it with a plugin-relative working directory and script path; the main plugin does not register a second
 server. The server makes no Runtime request while starting. Its legacy environment session mode
 uses `GRAPHHELM_MCP_HOST`, `GRAPHHELM_SESSION_ID`, `GRAPHHELM_EXECUTION_ID`,
 `GRAPHHELM_TOKEN_FILE`, and (when needed) `GRAPHHELM_RUNTIME_URL`. For normal Codex calls, opt
@@ -160,6 +160,10 @@ into native metadata mode with `GRAPHHELM_MCP_SESSION_SOURCE=codex_metadata`; it
 `threadId` and `sessionId` values. `GRAPHHELM_SESSION_ID`, when set, pins that per-call identity.
 The server does not retain a session between calls. Initialize and tool discovery can run unbound;
 an actual tool call without fixed execution, Runtime, and token configuration remains unobserved.
+The companion explicitly forwards the host's task execution, Runtime URL, token-file path, optional
+session pin, and optional node binding through `env_vars`. It never forwards the token contents or
+accepts those settings from model arguments. Starting Codex without these task settings leaves the
+server discoverable but its task calls unobserved.
 
 Configure the trusted server process and run directly when needed:
 

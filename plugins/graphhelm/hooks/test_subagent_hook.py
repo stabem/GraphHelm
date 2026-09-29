@@ -19,6 +19,10 @@ class Handler(BaseHTTPRequestHandler):
     events = []
     ambiguous = False
     wrong_actor = False
+    pause_post = False
+    post_entered = threading.Event()
+    duplicate_post_entered = threading.Event()
+    release_post = threading.Event()
 
     def do_GET(self):
         self.__class__.requests.append(("GET", self.path, None))
@@ -31,6 +35,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.__class__.requests.append(("POST", self.path, body))
+        if sum(item[0] == "POST" for item in self.__class__.requests) > 1:
+            self.__class__.duplicate_post_entered.set()
         signal = body["signal"]
         actor_id = "other-agent" if self.__class__.wrong_actor else signal["source"]["id"]
         self.__class__.events.append({"sequence": len(self.__class__.events) + 1,
@@ -38,6 +44,10 @@ class Handler(BaseHTTPRequestHandler):
                                       "kind": {"type": "signal_recorded", "data": {
                                           "signalId": signal["id"], "executionId": "run-test",
                                           "sourceId": actor_id, "kind": signal["type"]}}})
+        if self.__class__.pause_post:
+            self.__class__.pause_post = False
+            self.__class__.post_entered.set()
+            self.__class__.release_post.wait(timeout=3)
         if self.__class__.ambiguous:
             self.__class__.ambiguous = False
             self.close_connection = True
@@ -69,6 +79,10 @@ class SubagentHookTests(unittest.TestCase):
         Handler.events = []
         Handler.ambiguous = False
         Handler.wrong_actor = False
+        Handler.pause_post = False
+        Handler.post_entered = threading.Event()
+        Handler.duplicate_post_entered = threading.Event()
+        Handler.release_post = threading.Event()
         self.temp = tempfile.TemporaryDirectory()
         token = Path(self.temp.name) / "token"
         token.write_text("test-token", encoding="utf-8")
@@ -118,6 +132,37 @@ class SubagentHookTests(unittest.TestCase):
     def test_duplicate_is_suppressed_with_stable_id(self):
         self.assertEqual(self.run_hook("stop").stderr, "")
         self.assertEqual(self.run_hook("stop").stderr, "")
+        posts = [item for item in Handler.requests if item[0] == "POST"]
+        self.assertEqual(len(posts), 1)
+
+    def test_concurrent_duplicate_waits_for_delivery_and_posts_once(self):
+        Handler.pause_post = True
+        first = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "start", "--host", "codex"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=self.env,
+        )
+        payload = json.dumps({"hook_event_name": "SubagentStart", "session_id": "parent-1",
+                              "agent_id": "child-1", "agent_type": "worker"})
+        first.stdin.write(payload)
+        first.stdin.close()
+        self.assertTrue(Handler.post_entered.wait(timeout=1))
+        second = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "start", "--host", "codex"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=self.env,
+        )
+        second.stdin.write(payload)
+        second.stdin.close()
+        self.assertFalse(Handler.duplicate_post_entered.wait(timeout=0.5))
+        self.assertIsNone(second.poll(), "the duplicate callback should wait on the state lock")
+        Handler.release_post.set()
+        _, first_stderr = first.communicate(timeout=8)
+        _, second_stderr = second.communicate(timeout=8)
+        self.assertEqual(first_stderr, "")
+        self.assertEqual(second_stderr, "")
+        self.assertEqual(first.returncode, 0)
+        self.assertEqual(second.returncode, 0)
         posts = [item for item in Handler.requests if item[0] == "POST"]
         self.assertEqual(len(posts), 1)
 

@@ -132,7 +132,7 @@ Keel, in brief (the full rules are the `keel` skill's REFERENCE.md; read it only
 2. Add nothing unrequested: no helper, type, module, flag, dependency, file or test the task does not need. Extend an existing body or reuse a proven symbol before adding a type; a new interface needs a real caller (producer and consumer may land together).
 3. Keep existing behaviour working: before editing shared code, find its other callers and what they rely on.
 4. A new test names the defect and fails on the parent (without your change); a test green before the fix proves nothing. A new or changed test states its cost (run time, what it needs) and passes the `test-audit` skill's four-question gate.
-5. Prove the promise with the smallest check that observes it; a proxy (another OS, a mock, an emulator, a cross-compile) is not an observation.
+5. Prove the promise with the smallest check that observes it; a proxy (another OS, a mock, an emulator, a cross-compile) is not an observation. Report passed, failed, skipped and unobserved separately; a later green never erases an earlier red.
 6. When you cannot observe the promise here, change nothing, say what is missing, and end with `OBSERVER_MISSING: <what is missing>`. Never write \"verified\" for what you did not observe.
 7. Stop when the promise is proven: no refactor, reformat or sweep beyond it.
 8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still covers its obligation.";

@@ -273,7 +273,7 @@ describe("compact run handoff", () => {
       }],
     };
     render(<WorkOverview model={model} subagents={subagents} selectedNode={null} onSelectNode={vi.fn()} />);
-    const tree = screen.getByRole("group", { name: "Recorded subagent sessions" });
+    const tree = screen.getByRole("group", { name: "Observed host sessions" });
     expect(tree).toHaveTextContent("Recorded host session parent-1 · 1 subagent");
     expect(tree).toHaveTextContent("child-1");
     expect(tree).toHaveTextContent("stop not recorded");
@@ -286,27 +286,50 @@ describe("compact run handoff", () => {
   it("shows Claude task lifecycle separately and never calls completion acceptance", () => {
     const claudeTasks: ClaudeTaskReadModel = { executionId: "run-one", rejected: 0, tasks: [{
       executionId: "run-one", nativeTaskId: "task-7", taskSubject: "Review the checkout flow", createdByTeammateName: "planner", completedByTeammateName: "reviewer",
-      parentSessionId: "session-1", createdSequence: 11, createdAt: null, createdEvidenceId: "ev-created",
+      sourceId: "claude-session-session-1", parentSessionId: "session-1", createdSequence: 11, createdAt: null, createdEvidenceId: "ev-created",
       completedSequence: 15, completedAt: null, completedEvidenceId: "ev-completed",
     }] };
     render(<WorkOverview model={model} claudeTasks={claudeTasks} selectedNode={null} onSelectNode={vi.fn()} />);
-    const region = screen.getByRole("region", { name: "Claude tasks observed" });
+    const region = screen.getByRole("group", { name: "Observed host sessions" });
     expect(region).toHaveTextContent("Review the checkout flow");
     expect(region).toHaveTextContent("created by teammate: planner");
     expect(region).toHaveTextContent("completed by teammate: reviewer · output review not observed");
     expect(region).toHaveTextContent("not proof of assignment");
+    expect(region).toHaveTextContent("Recorded host session session-1 · 1 task");
+    expect(region).toHaveTextContent("not linked to a particular subagent");
     expect(region).not.toHaveTextContent("Output accepted");
   });
   it("labels missing task creator and completer names as unknown", () => {
     const claudeTasks: ClaudeTaskReadModel = { executionId: "run-one", rejected: 0, tasks: [{
       executionId: "run-one", nativeTaskId: "task-8", taskSubject: "Check the release", createdByTeammateName: null, completedByTeammateName: null,
-      parentSessionId: "session-1", createdSequence: 21, createdAt: null, createdEvidenceId: "ev-created",
+      sourceId: "claude-session-session-1", parentSessionId: "session-1", createdSequence: 21, createdAt: null, createdEvidenceId: "ev-created",
       completedSequence: 23, completedAt: null, completedEvidenceId: "ev-completed",
     }] };
     render(<WorkOverview model={model} claudeTasks={claudeTasks} selectedNode={null} onSelectNode={vi.fn()} />);
-    const region = screen.getByRole("region", { name: "Claude tasks observed" });
+    const region = screen.getByRole("group", { name: "Observed host sessions" });
     expect(region).toHaveTextContent("created by teammate: unknown");
     expect(region).toHaveTextContent("completed by teammate: unknown");
+  });
+  it("groups task records only with the matching host identity and keeps task-only sessions visible", () => {
+    const task = {
+      executionId: "run-one", nativeTaskId: "task-9", taskSubject: "Check docs", createdByTeammateName: "planner", completedByTeammateName: null,
+      sourceId: "claude-session-session-1", parentSessionId: "session-1", createdSequence: 31, createdAt: null, createdEvidenceId: "ev-created",
+      completedSequence: null, completedAt: null, completedEvidenceId: null,
+    };
+    const subagents: SubagentReadModel = { executionId: "run-one", rejected: 0, latestByChild: {}, relationships: [
+      { executionId: "run-one", parentSessionId: "session-1", childAgentId: "claude-child", agentType: "worker", declaredNodeId: null, sourceId: "claude-session-session-1", sourceActorId: "claude-session-session-1", sourceActorType: "agent", startedSequence: 10, startedAt: null, startedEvidenceId: "ev-start", stoppedSequence: null, stoppedAt: null, stoppedEvidenceId: null, lastChildEvent: null, phase: "started" },
+      { executionId: "run-one", parentSessionId: "session-1", childAgentId: "codex-child", agentType: "worker", declaredNodeId: null, sourceId: "codex-session-session-1", sourceActorId: "codex-session-session-1", sourceActorType: "agent", startedSequence: 11, startedAt: null, startedEvidenceId: "ev-codex", stoppedSequence: null, stoppedAt: null, stoppedEvidenceId: null, lastChildEvent: null, phase: "started" },
+    ] };
+    render(<WorkOverview model={model} subagents={subagents} claudeTasks={{ executionId: "run-one", rejected: 0, tasks: [task] }} selectedNode={null} onSelectNode={vi.fn()} />);
+    const sessions = screen.getByRole("group", { name: "Observed host sessions" });
+    const summaries = within(sessions).getAllByText(/Recorded host session session-1 · 1 subagent/);
+    const claude = summaries.find((summary) => summary.textContent?.includes("1 task"))!.closest("details")!;
+    expect(claude).toHaveTextContent("claude-child");
+    expect(claude).toHaveTextContent("Check docs");
+    expect(claude).not.toHaveTextContent("codex-child");
+    const codex = summaries.find((summary) => !summary.textContent?.includes("1 task"))!.closest("details")!;
+    expect(codex).toHaveTextContent("codex-child");
+    expect(codex).not.toHaveTextContent("Check docs");
   });
 });
 

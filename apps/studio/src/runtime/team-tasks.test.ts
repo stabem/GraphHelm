@@ -26,7 +26,7 @@ describe("readClaudeTasks", () => {
     const result = await readClaudeTasks({ executionId, events: [event(2, "completed", completed), event(1, "created", created)], readEvidence: vi.fn(async (_run, id) => id === created.evidenceId ? created : completed) });
     expect(result.rejected).toBe(0);
     expect(result.tasks).toHaveLength(1);
-    expect(result.tasks[0]).toMatchObject({ taskSubject: "Review the checkout flow", createdByTeammateName: "planner", completedByTeammateName: "reviewer", createdSequence: 1, completedSequence: 2 });
+    expect(result.tasks[0]).toMatchObject({ taskSubject: "Review the checkout flow", createdByTeammateName: "planner", completedByTeammateName: "reviewer", sourceId: "claude-session-session-1", parentSessionId: "session-1", createdSequence: 1, completedSequence: 2 });
   });
 
   it("keeps a completion without its creation and rejects tampered evidence", async () => {

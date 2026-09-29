@@ -172,10 +172,18 @@ export function WorkOverview({
   });
   const activeNodeNames = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).map((node) => node.id);
   const reviewNode = model.nodes.find((node) => nodeStatusLabel(node) === "review needed");
-  const sessions = new Map<string, SubagentReadModel["relationships"]>();
+  const sessions = new Map<string, { sourceId: string; parentSessionId: string; children: SubagentReadModel["relationships"]; tasks: NonNullable<WorkOverviewProps["claudeTasks"]>["tasks"] }>();
   for (const child of subagents?.relationships ?? []) {
     const key = `${child.sourceId}\u0000${child.parentSessionId}`;
-    sessions.set(key, [...(sessions.get(key) ?? []), child]);
+    const group = sessions.get(key) ?? { sourceId: child.sourceId, parentSessionId: child.parentSessionId, children: [], tasks: [] };
+    group.children.push(child);
+    sessions.set(key, group);
+  }
+  for (const task of claudeTasks?.tasks ?? []) {
+    const key = `${task.sourceId}\u0000${task.parentSessionId}`;
+    const group = sessions.get(key) ?? { sourceId: task.sourceId, parentSessionId: task.parentSessionId, children: [], tasks: [] };
+    group.tasks.push(task);
+    sessions.set(key, group);
   }
   const jumpToTeam = () => document.getElementById("work-team")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 
@@ -241,32 +249,31 @@ export function WorkOverview({
               <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
               <span>{crew.length}</span>
             </div>
-            {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Recorded subagent sessions">
-              {[...sessions].map(([key, children]) => <details className="work-session" key={key} open>
-                <summary>Recorded host session {children[0].parentSessionId} · {children.length} subagent{children.length === 1 ? "" : "s"}</summary>
-                <small>Source: {children[0].sourceId}. The record does not identify who directly delegated a nested task.</small>
-                <ul>{children.map((child) => <li key={child.childAgentId}><details className="work-child-details">
+            {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Observed host sessions">
+              {[...sessions].map(([key, session]) => <details className="work-session" key={key} open>
+                <summary>Recorded host session {session.parentSessionId}{session.children.length > 0 ? ` · ${session.children.length} subagent${session.children.length === 1 ? "" : "s"}` : ""}{session.tasks.length > 0 ? ` · ${session.tasks.length} task${session.tasks.length === 1 ? "" : "s"}` : ""}</summary>
+                <small>Source: {session.sourceId}.{session.children.length > 0 ? " The record does not identify who directly delegated a nested task." : ""}</small>
+                {session.children.length > 0 && <ul>{session.children.map((child) => <li key={child.childAgentId}><details className="work-child-details">
                   <summary><strong>{child.childAgentId}</strong><span>Role: {child.agentType} · {child.phase === "stopped" ? "stop observed" : "stop not recorded"}</span></summary>
                   <small>Start: event #{child.startedSequence} · {ago(child.startedAt)} · evidence {child.startedEvidenceId}</small>
                   {child.stoppedSequence !== null && <small>Stop: event #{child.stoppedSequence} · {ago(child.stoppedAt)} · evidence {child.stoppedEvidenceId}</small>}
                   <small>{child.lastChildEvent ? `Last direct child event: #${child.lastChildEvent.sequence} · ${readable(child.lastChildEvent.kind)} · ${ago(child.lastChildEvent.occurredAt)}` : "No direct child action recorded"}</small>
                   <small>{child.declaredNodeId ? `Declared node: ${child.declaredNodeId}; assignment not verified` : "Assigned task not recorded"}</small>
                   <small>Task result and acceptance not verified here.</small>
-                </details></li>)}</ul>
+                </details></li>)}</ul>}
+                {session.tasks.length > 0 && <div className="work-session-tasks" aria-label="Claude tasks observed in this session">
+                  <p className="work-team-flat-note">Claude task records observed in this session. They are not linked to a particular subagent; teammate names are not proof of assignment. Marked complete does not mean reviewed or accepted.</p>
+                  <ul>{session.tasks.map((task) => <li key={task.nativeTaskId}>
+                    <strong>{task.taskSubject}</strong>
+                    <small>Claude task {task.nativeTaskId}</small>
+                    <small>{task.createdSequence === null ? "Creation not observed" : `Creation observed · event #${task.createdSequence} · created by teammate: ${task.createdByTeammateName ?? "unknown"}`}</small>
+                    <small>{task.completedSequence === null ? "Completion not observed" : `Marked complete in Claude · event #${task.completedSequence} · completed by teammate: ${task.completedByTeammateName ?? "unknown"} · output review not observed`}</small>
+                  </li>)}</ul>
+                </div>}
               </details>)}
             </div>}
             {sessions.size === 0 && <p className="work-team-flat-note">{subagents === null ? "Checking recorded session links · showing a flat team list." : "No readable session links · showing a flat team list."}</p>}
             {subagents && subagents.rejected > 0 && <p className="work-caution" role="note">{subagents.rejected} session signal{subagents.rejected === 1 ? "" : "s"} could not be verified.</p>}
-            {claudeTasks && claudeTasks.tasks.length > 0 && <section className="work-session-list" aria-label="Claude tasks observed">
-              <h3>Claude tasks observed · {claudeTasks.tasks.length}</h3>
-              <p className="work-team-flat-note">These are Claude task lifecycle records. A teammate name is metadata, not proof of assignment. “Marked complete” does not mean the result was reviewed or accepted.</p>
-              <ul>{claudeTasks.tasks.map((task) => <li className="work-session" key={`${task.parentSessionId}:${task.nativeTaskId}`}>
-                <strong>{task.taskSubject}</strong>
-                <small>Claude task {task.nativeTaskId} · session {task.parentSessionId}</small>
-                <small>{task.createdSequence === null ? "Creation not observed" : `Creation observed · event #${task.createdSequence} · created by teammate: ${task.createdByTeammateName ?? "unknown"}`}</small>
-                <small>{task.completedSequence === null ? "Completion not observed" : `Marked complete in Claude · event #${task.completedSequence} · completed by teammate: ${task.completedByTeammateName ?? "unknown"} · output review not observed`}</small>
-              </li>)}</ul>
-            </section>}
             {claudeTasks && claudeTasks.rejected > 0 && <p className="work-caution" role="note">{claudeTasks.rejected} Claude task signal{claudeTasks.rejected === 1 ? "" : "s"} could not be verified.</p>}
             {crew.length === 0 ? (
               <p className="work-empty">No agents have been observed in this run.</p>

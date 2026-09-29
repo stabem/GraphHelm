@@ -727,7 +727,16 @@ pub(super) async fn status(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
-    match execution::status::budgeted(&state.events, Some(&execution_id), None) {
+    let events = state.events.clone();
+    let Some(result) =
+        off_reactor(move || execution::status::budgeted(&events, Some(&execution_id), None)).await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(STATUS_COMMAND, "the status task failed").output,
+        );
+    };
+    match result {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(STATUS_COMMAND, value).output,
@@ -1537,7 +1546,16 @@ pub(super) async fn briefing(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
-    match execution::briefing::budgeted(&state.events, Some(&execution_id)) {
+    let events = state.events.clone();
+    let Some(result) =
+        off_reactor(move || execution::briefing::budgeted(&events, Some(&execution_id))).await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(BRIEFING_COMMAND, "the briefing task failed").output,
+        );
+    };
+    match result {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(BRIEFING_COMMAND, value).output,
@@ -1562,7 +1580,16 @@ pub(super) async fn events(
         Err((message, pointer)) => return bad_request(EVENTS_COMMAND, message, pointer),
     };
 
-    match execute_events_tail(&state.events, &execution_id, after, limit) {
+    let events = state.events.clone();
+    let Some(result) =
+        off_reactor(move || execute_events_tail(&events, &execution_id, after, limit)).await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(EVENTS_COMMAND, "the events task failed").output,
+        );
+    };
+    match result {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(EVENTS_COMMAND, value).output,
@@ -4954,7 +4981,14 @@ mod off_reactor_tests {
     use std::sync::{Arc, Mutex};
 
     use axum::body::Bytes;
+    use axum::extract::Path as UrlPath;
     use axum::http::StatusCode;
+    use graphhelm_events::PreparedAppend;
+    use graphhelm_protocols::{
+        ActorId, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId,
+        PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity, WireHash,
+        WorkspaceId,
+    };
 
     use super::{
         MutationError, graph_topology, list_executions_over, off_reactor, off_reactor_witness,
@@ -4992,6 +5026,52 @@ mod off_reactor_tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn known_execution_state() -> (tempfile::TempDir, super::ServeState) {
+        let directory = tempfile::tempdir().unwrap();
+        let execution_id = OpaqueId::parse("execution-known").unwrap();
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse(crate::commands::execution::WORKSPACE).unwrap(),
+            ProjectId::parse(crate::commands::execution::PROJECT).unwrap(),
+            Some(ExecutionId::parse(execution_id.as_str()).unwrap()),
+        );
+        let event = NewEvent::new(
+            OpaqueId::parse("started-known").unwrap(),
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-test").unwrap(),
+            ),
+            Sensitivity::Internal,
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+            vec![],
+            vec![],
+        );
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        store
+            .append_atomic(
+                &PreparedAppend::new(scope, execution_id, 1, vec![event], vec![], vec![]).unwrap(),
+            )
+            .unwrap();
+        let events: Arc<Path> = Arc::from(directory.path().to_owned());
+        let state = super::ServeState {
+            token: Arc::<[u8]>::from(Vec::<u8>::new()),
+            agent_credentials: Arc::new(std::collections::BTreeMap::new()),
+            instance: Arc::from("test-instance"),
+            project: None,
+            events,
+            runtime: None,
+            sealing: None,
+            cancels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            sweep_interval: None,
+            read_audit: None,
+        };
+        (directory, state)
     }
 
     /// The helper's own contract, with a closure that can observe its thread: the work runs
@@ -5079,6 +5159,72 @@ mod off_reactor_tests {
             runs[0], reactor,
             "the execution index replayed on the reactor thread"
         );
+    }
+
+    #[test]
+    fn status_briefing_and_events_reads_go_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let (_directory, state) = known_execution_state();
+        let (status_text, status_runs) = measured(async {
+            body_text(
+                super::status(
+                    axum::extract::State(state.clone()),
+                    UrlPath("execution-known".to_owned()),
+                )
+                .await,
+            )
+            .await
+        });
+        let status_json: serde_json::Value = serde_json::from_str(&status_text).unwrap();
+        assert_eq!(status_json["ok"], true, "{status_text}");
+        assert_eq!(status_json["command"], "execution.status", "{status_text}");
+        assert_eq!(status_json["data"]["headSequence"], 1, "{status_text}");
+        assert_eq!(status_runs.len(), 1);
+        assert_ne!(status_runs[0], reactor);
+
+        let (briefing_text, briefing_runs) = measured(async {
+            body_text(
+                super::briefing(
+                    axum::extract::State(state.clone()),
+                    UrlPath("execution-known".to_owned()),
+                )
+                .await,
+            )
+            .await
+        });
+        let briefing_json: serde_json::Value = serde_json::from_str(&briefing_text).unwrap();
+        assert_eq!(briefing_json["ok"], true, "{briefing_text}");
+        assert_eq!(
+            briefing_json["command"], "execution.briefing",
+            "{briefing_text}"
+        );
+        assert_eq!(
+            briefing_json["data"]["executionId"], "execution-known",
+            "{briefing_text}"
+        );
+        assert_eq!(briefing_runs.len(), 1);
+        assert_ne!(briefing_runs[0], reactor);
+
+        let (events_text, events_runs) = measured(async {
+            body_text(
+                super::events(
+                    axum::extract::State(state),
+                    UrlPath("execution-known".to_owned()),
+                    axum::extract::RawQuery(None),
+                )
+                .await,
+            )
+            .await
+        });
+        let events_json: serde_json::Value = serde_json::from_str(&events_text).unwrap();
+        assert_eq!(events_json["ok"], true, "{events_text}");
+        assert_eq!(events_json["command"], "execution.events", "{events_text}");
+        assert_eq!(events_json["data"]["head"], 1, "{events_text}");
+        assert_eq!(events_runs.len(), 1);
+        assert_ne!(events_runs[0], reactor);
     }
 
     fn wiring_for(manifest_path: PathBuf) -> RuntimeWiring {

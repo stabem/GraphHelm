@@ -4,6 +4,13 @@
       "command": "python",
       "cwd": ".",
       "args": ["hooks/task_handoff.py", "--mcp-stdio"],
+      "env_vars": [
+        "GRAPHHELM_EXECUTION_ID",
+        "GRAPHHELM_RUNTIME_URL",
+        "GRAPHHELM_TOKEN_FILE",
+        "GRAPHHELM_SESSION_ID",
+        "GRAPHHELM_NODE_ID"
+      ],
       "env": {
         "GRAPHHELM_MCP_HOST": "codex",
         "GRAPHHELM_MCP_SESSION_SOURCE": "codex_metadata"

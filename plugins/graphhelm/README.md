@@ -160,6 +160,10 @@ into native metadata mode with `GRAPHHELM_MCP_SESSION_SOURCE=codex_metadata`; it
 `threadId` and `sessionId` values. `GRAPHHELM_SESSION_ID`, when set, pins that per-call identity.
 The server does not retain a session between calls. Initialize and tool discovery can run unbound;
 an actual tool call without fixed execution, Runtime, and token configuration remains unobserved.
+The companion explicitly forwards the host's task execution, Runtime URL, token-file path, optional
+session pin, and optional node binding through `env_vars`. It never forwards the token contents or
+accepts those settings from model arguments. Starting Codex without these task settings leaves the
+server discoverable but its task calls unobserved.
 
 Configure the trusted server process and run directly when needed:
 

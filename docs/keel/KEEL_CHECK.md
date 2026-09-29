@@ -59,7 +59,7 @@ never refused).
 |---|---|
 | 0 | Nothing blocks. Warnings may be present. |
 | 2 | A finding blocks. `ok` is false and the report is still in `data`. |
-| 3 | Input error `GHCLI030_KEEL_CHECK_INPUT`: the range is not a range, git failed, or the card is not a card. |
+| 3 | Input error `GHCLI031_KEEL_CHECK_INPUT`: the range is not a range, git failed, or the card is not a card. |
 
 ## Limits
 

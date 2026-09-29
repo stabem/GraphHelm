@@ -159,12 +159,12 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(3));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("GHCLI030_KEEL_CHECK_INPUT"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("GHCLI031_KEEL_CHECK_INPUT"));
 
     let scratch = tempfile::tempdir().unwrap();
     let bad = scratch.path().join("card.json");
     fs::write(&bad, br#"{"scopePaths":["src"],"unknown":1}"#).unwrap();
     let (code, reply) = run(repo.path(), Some(&bad));
     assert_eq!(code, 3, "{reply}");
-    assert_eq!(codes(&reply), vec!["GHCLI030_KEEL_CHECK_INPUT"]);
+    assert_eq!(codes(&reply), vec!["GHCLI031_KEEL_CHECK_INPUT"]);
 }

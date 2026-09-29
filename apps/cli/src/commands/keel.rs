@@ -19,7 +19,7 @@ const KEEL_POLICY: &str = include_str!(
 /// read. A card between the two is read and reported as `keel.card.too_large`.
 const MAX_CARD_READ_BYTES: u64 = 1024 * 1024;
 
-const INPUT_INVALID: &str = crate::error_codes::GHCLI030_KEEL_CHECK_INPUT;
+const INPUT_INVALID: &str = crate::error_codes::GHCLI031_KEEL_CHECK_INPUT;
 
 pub(super) fn run(operation: keel_contract_index::Operation) -> Outcome {
     match keel_contract_index::execute_public(operation) {

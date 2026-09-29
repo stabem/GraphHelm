@@ -53,7 +53,7 @@ pub const GHCLI027_INIT_REFUSED: &str = "GHCLI027_INIT_REFUSED";
 pub const GHCLI028_EXECUTION_NOT_FOUND: &str = "GHCLI028_EXECUTION_NOT_FOUND";
 pub const GHCLI029_ADOPTION_REFUSED: &str = "GHCLI029_ADOPTION_REFUSED";
 /// `graphhelm keel check` could not read its input: the range, git, or the card (#1330).
-pub const GHCLI030_KEEL_CHECK_INPUT: &str = "GHCLI030_KEEL_CHECK_INPUT";
+pub const GHCLI031_KEEL_CHECK_INPUT: &str = "GHCLI031_KEEL_CHECK_INPUT";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -93,7 +93,7 @@ pub const ALL: &[&str] = &[
     GHCLI027_INIT_REFUSED,
     GHCLI028_EXECUTION_NOT_FOUND,
     GHCLI029_ADOPTION_REFUSED,
-    GHCLI030_KEEL_CHECK_INPUT,
+    GHCLI031_KEEL_CHECK_INPUT,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

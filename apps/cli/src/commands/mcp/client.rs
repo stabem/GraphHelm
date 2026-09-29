@@ -94,12 +94,32 @@ pub(crate) enum TokenSource {
         port: u16,
         cache: std::sync::Mutex<Option<Zeroizing<String>>>,
     },
+    /// `--discover` without `--url`: resolve the current project's verified Runtime, regardless
+    /// of its port. The endpoint and token are refreshed after a refused request or transport
+    /// failure; a transport failure itself is never retried because it may have landed.
+    DiscoverProject {
+        project_id: String,
+        cache: std::sync::Mutex<Option<DiscoveredEndpoint>>,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct DiscoveredEndpoint {
+    url: String,
+    token: Zeroizing<String>,
 }
 
 impl TokenSource {
     pub(crate) fn discover(port: u16) -> Self {
         Self::Discover {
             port,
+            cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn discover_project(project_id: String) -> Self {
+        Self::DiscoverProject {
+            project_id,
             cache: std::sync::Mutex::new(None),
         }
     }
@@ -179,49 +199,88 @@ impl ApiClient {
         idempotency_key: Option<&str>,
         if_match: Option<u64>,
     ) -> Result<(u16, serde_json::Value), String> {
-        let token = self.current_token()?;
-        let result = self.request_with(&token, method, path, body, idempotency_key, if_match);
-        let TokenSource::Discover { cache, .. } = &self.token else {
+        let endpoint = self.current_endpoint()?;
+        let result = self.request_with(&endpoint, method, path, body, idempotency_key, if_match);
+        if !self.is_discovering() {
             return result;
-        };
+        }
         match &result {
             // A 401 means the request was refused before it did anything, so asking the record
             // again and retrying once is safe: the Runtime on the port may have been swapped.
             Ok((401, _)) => {
-                *cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                let fresh = self.current_token()?;
-                if fresh.as_str() == token.as_str() {
+                self.clear_discovery_cache();
+                let fresh = self.current_endpoint()?;
+                if fresh.url == endpoint.url && fresh.token.as_str() == endpoint.token.as_str() {
                     return result;
                 }
                 self.request_with(&fresh, method, path, body, idempotency_key, if_match)
             }
             // A transport failure may have landed; never retried here, only re-resolved next time.
             Err(_) => {
-                *cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                self.clear_discovery_cache();
                 result
             }
             Ok(_) => result,
         }
     }
 
-    /// The token for the next request: the fixed one, or the discovered one (cached).
-    fn current_token(&self) -> Result<Zeroizing<String>, String> {
+    fn is_discovering(&self) -> bool {
+        matches!(
+            &self.token,
+            TokenSource::Discover { .. } | TokenSource::DiscoverProject { .. }
+        )
+    }
+
+    fn clear_discovery_cache(&self) {
         match &self.token {
-            TokenSource::Fixed(token) => Ok(token.clone()),
+            TokenSource::Discover { cache, .. } => {
+                *cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            }
+            TokenSource::DiscoverProject { cache, .. } => {
+                *cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            }
+            TokenSource::Fixed(_) => {}
+        }
+    }
+
+    /// The destination and credential for the next request.
+    fn current_endpoint(&self) -> Result<DiscoveredEndpoint, String> {
+        match &self.token {
+            TokenSource::Fixed(token) => Ok(DiscoveredEndpoint {
+                url: self.base_url.clone(),
+                token: token.clone(),
+            }),
             TokenSource::Discover { port, cache } => {
                 let mut cache = cache
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(token) = cache.as_ref() {
-                    return Ok(token.clone());
+                    return Ok(DiscoveredEndpoint {
+                        url: self.base_url.clone(),
+                        token: token.clone(),
+                    });
                 }
                 let token = self.discover(*port)?;
                 *cache = Some(token.clone());
-                Ok(token)
+                Ok(DiscoveredEndpoint {
+                    url: self.base_url.clone(),
+                    token,
+                })
+            }
+            TokenSource::DiscoverProject { project_id, cache } => {
+                let mut cache = cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(endpoint) = cache.as_ref() {
+                    return Ok(endpoint.clone());
+                }
+                let endpoint = self.discover_project(project_id)?;
+                *cache = Some(endpoint.clone());
+                Ok(endpoint)
             }
         }
     }
@@ -260,9 +319,67 @@ impl ApiClient {
         Ok(Zeroizing::new(token))
     }
 
+    /// Selects the one live Runtime registered for a project identity, with no port supplied by
+    /// the caller. More than one live instance is ambiguous and is refused before tool data is
+    /// returned or changed.
+    fn discover_project(&self, project_id: &str) -> Result<DiscoveredEndpoint, String> {
+        use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
+        use std::time::Duration;
+
+        const HEALTH_TIMEOUT: Duration = Duration::from_secs(1);
+        let fail = |reason: &str| format!("project Runtime discovery: {reason}");
+        let dir = crate::commands::runtime_record::registry_dir()
+            .ok_or_else(|| fail("no home directory and no GRAPHHELM_RUNTIME_DIR"))?;
+        let records = crate::commands::runtime_record::read_project(&dir, project_id)
+            .map_err(|error| fail(&error))?;
+        let mut live = Vec::new();
+        for record in records {
+            if !is_loopback_url(&record.url) || super::url::validate_base(&record.url).is_err() {
+                continue;
+            }
+            let health = TransportRequest {
+                method: "GET",
+                url: super::url::join(&record.url, "/health")?,
+                headers: Vec::new(),
+                body: Vec::new(),
+                timeout: HEALTH_TIMEOUT,
+            };
+            let Ok(response) = self.transport.execute(&health) else {
+                continue;
+            };
+            if response.status != 200 {
+                continue;
+            }
+            let body: serde_json::Value =
+                serde_json::from_slice(&response.body).unwrap_or(serde_json::Value::Null);
+            if body["data"]["instance"].as_str() == Some(record.instance.as_str())
+                && body["data"]["projectId"].as_str() == Some(project_id)
+            {
+                live.push(record);
+            }
+        }
+        if live.len() != 1 {
+            return Err(fail(if live.is_empty() {
+                "no live Runtime proved this project's identity; start `graphhelm serve --project <project>`"
+            } else {
+                "more than one live Runtime is registered for this project; stop the duplicate Runtime"
+            }));
+        }
+        let record = live.pop().expect("one live record was checked");
+        let token = crate::commands::secret_file::read_existing(
+            &record.token_file,
+            "discovered project token",
+        )
+        .map_err(|error| fail(error.message()))?;
+        Ok(DiscoveredEndpoint {
+            url: record.url,
+            token: Zeroizing::new(token),
+        })
+    }
+
     fn request_with(
         &self,
-        token: &Zeroizing<String>,
+        endpoint: &DiscoveredEndpoint,
         method: &'static str,
         path: &str,
         body: Option<&serde_json::Value>,
@@ -272,7 +389,7 @@ impl ApiClient {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
         let mut headers = vec![(
             "Authorization".to_owned(),
-            format!("Bearer {}", token.as_str()),
+            format!("Bearer {}", endpoint.token.as_str()),
         )];
         if let Some(key) = idempotency_key {
             headers.push(("Idempotency-Key".to_owned(), key.to_owned()));
@@ -288,7 +405,7 @@ impl ApiClient {
         }
         let request = TransportRequest {
             method,
-            url: super::url::join(&self.base_url, path)?,
+            url: super::url::join(&endpoint.url, path)?,
             headers,
             body: payload,
             timeout: REQUEST_TIMEOUT,

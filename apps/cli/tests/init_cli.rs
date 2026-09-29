@@ -188,10 +188,9 @@ fn an_empty_directory_becomes_a_provisioned_project() {
         args,
         [
             "mcp",
-            "--url",
-            "http://127.0.0.1:8791",
-            "--token-file",
-            paths.token.to_str().unwrap(),
+            "--discover",
+            "--project",
+            project.path().to_str().unwrap(),
             "--actor",
             "agent-chat",
         ]
@@ -205,7 +204,9 @@ fn an_empty_directory_becomes_a_provisioned_project() {
     let codex = std::fs::read_to_string(paths.root.join("codex.config.toml")).unwrap();
     assert!(codex.contains("[mcp_servers.graphhelm]"), "{codex}");
     assert!(!codex.contains("command = \"graphhelm\""), "{codex}");
-    assert!(codex.contains("\"--token-file\""), "{codex}");
+    assert!(codex.contains("\"--discover\""), "{codex}");
+    assert!(!codex.contains("\"--url\""), "{codex}");
+    assert!(!codex.contains("\"--token-file\""), "{codex}");
     assert!(codex.contains("~/.codex/config.toml"), "{codex}");
 
     let next = data["next"].as_array().unwrap();
@@ -234,6 +235,7 @@ fn an_empty_directory_becomes_a_provisioned_project() {
             .unwrap()
             .contains("--key-id studio")
     );
+    assert!(next[1]["bash"].as_str().unwrap().contains("--project"));
     assert!(
         next[2]["powershell"]
             .as_str()

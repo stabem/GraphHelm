@@ -1,10 +1,9 @@
-//! Runtime discovery records (#1325): how one user-scope MCP registration reaches whichever
-//! Runtime is serving a fixed loopback port, without naming any one project's token.
+//! Runtime discovery records: resolve a project-bound MCP session to its live loopback Runtime.
 //!
-//! `serve` on a fixed port writes `<registry>/<port>.json`, where `<registry>` is
-//! `GRAPHHELM_RUNTIME_DIR` or `~/.graphhelm/runtime`. The record names the token FILE, never the
-//! token: it holds the url, the token-file path, the events directory, the pid, the start instant
-//! and a random `instance` id that the same server also reports on `/health`.
+//! `serve` writes a port record for legacy `--url --discover` and a project record under
+//! `<registry>/projects/<project-id>/<instance>.json` for port-independent discovery. The record
+//! names the token FILE, never the token. Project discovery verifies both the random `instance`
+//! and the project identity reported by `/health` before reading that file.
 //!
 //! Rules:
 //!
@@ -20,8 +19,7 @@
 //!   record, so a reader sees either the old record or the new one, never a torn one. Two Runtimes
 //!   cannot race for one port's record, because only one of them can hold the port.
 //! - **Symlinks are refused** for the registry directory and the record, on write and on read.
-//! - An OS-assigned port (`--bind 127.0.0.1:0`) publishes nothing: no registration can name that
-//!   port in advance, and test servers must not litter the user's home.
+//! - Project records include the actual bound URL, so an OS-assigned loopback port works.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -32,6 +30,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const DIR_ENV: &str = "GRAPHHELM_RUNTIME_DIR";
 const VERSION: u32 = 1;
 const MAX_RECORD_BYTES: u64 = 16 * 1024;
+const MAX_PROJECT_RECORDS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,10 +43,19 @@ pub(crate) struct Record {
     /// Seconds since the Unix epoch.
     pub(crate) started_at: u64,
     pub(crate) instance: String,
+    /// Canonical path-derived identity. Absent only on pre-discovery/legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) project_id: Option<String>,
 }
 
 impl Record {
-    pub(crate) fn new(url: String, token_file: PathBuf, events: PathBuf, instance: String) -> Self {
+    pub(crate) fn new(
+        url: String,
+        token_file: PathBuf,
+        events: PathBuf,
+        instance: String,
+        project_id: Option<String>,
+    ) -> Self {
         let started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
@@ -59,6 +67,7 @@ impl Record {
             pid: std::process::id(),
             started_at,
             instance,
+            project_id,
         }
     }
 }
@@ -73,6 +82,14 @@ pub(crate) fn registry_dir() -> Option<PathBuf> {
 
 pub(crate) fn record_path(dir: &Path, port: u16) -> PathBuf {
     dir.join(format!("{port}.json"))
+}
+
+fn project_dir(dir: &Path, project_id: &str) -> PathBuf {
+    dir.join("projects").join(project_id)
+}
+
+fn project_record_path(dir: &Path, project_id: &str, instance: &str) -> PathBuf {
+    project_dir(dir, project_id).join(format!("{instance}.json"))
 }
 
 /// A fresh random instance id: 16 bytes of OS randomness, hex.
@@ -91,7 +108,7 @@ fn refuse_symlink(path: &Path, what: &str) -> Result<(), String> {
     }
 }
 
-/// Writes `record` as `<dir>/<port>.json`, atomically and owner-only.
+/// Writes the compatibility record as `<dir>/<port>.json`, atomically and owner-only.
 pub(crate) fn publish(dir: &Path, port: u16, record: &Record) -> Result<PathBuf, String> {
     refuse_symlink(dir, "runtime registry directory")?;
     std::fs::create_dir_all(dir)
@@ -123,6 +140,119 @@ pub(crate) fn publish(dir: &Path, port: u16, record: &Record) -> Result<PathBuf,
         return Err("the runtime record could not be written".to_owned());
     }
     Ok(target)
+}
+
+/// Writes a project record under the path-derived identity, independent of the chosen port.
+pub(crate) fn publish_project(dir: &Path, record: &Record) -> Result<PathBuf, String> {
+    let project_id = record
+        .project_id
+        .as_deref()
+        .ok_or_else(|| "the Runtime has no project identity".to_owned())?;
+    if project_id.len() != 64 || !project_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("the project identity is malformed".to_owned());
+    }
+    let projects = dir.join("projects");
+    refuse_symlink(dir, "runtime registry directory")?;
+    std::fs::create_dir_all(&projects)
+        .map_err(|_| "the project runtime registry could not be created".to_owned())?;
+    refuse_symlink(&projects, "project runtime registry directory")?;
+    let target_dir = project_dir(dir, project_id);
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|_| "the project runtime record directory could not be created".to_owned())?;
+    refuse_symlink(&target_dir, "project runtime record directory")?;
+    let target = project_record_path(dir, project_id, &record.instance);
+    refuse_symlink(&target, "project runtime record")?;
+    let mut bytes = serde_json::to_vec_pretty(record)
+        .map_err(|_| "the project runtime record could not be serialized".to_owned())?;
+    bytes.push(b'\n');
+    let temp = target_dir.join(format!(".{}.tmp", record.instance));
+    let _ = std::fs::remove_file(&temp);
+    let written = (|| -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, &target)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return Err("the project runtime record could not be written".to_owned());
+    }
+    Ok(target)
+}
+
+/// Reads bounded records for exactly one project. Liveness and uniqueness are checked by the
+/// caller; old or malformed files never broaden the selected project.
+pub(crate) fn read_project(dir: &Path, project_id: &str) -> Result<Vec<Record>, String> {
+    if project_id.len() != 64 || !project_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("the project identity is malformed".to_owned());
+    }
+    refuse_symlink(dir, "runtime registry directory")?;
+    let projects = dir.join("projects");
+    refuse_symlink(&projects, "project runtime registry directory")?;
+    let path = project_dir(dir, project_id);
+    refuse_symlink(&path, "project runtime record directory")?;
+    let entries = std::fs::read_dir(&path).map_err(|_| {
+        "no Runtime has registered this project; start `graphhelm serve` for this project"
+            .to_owned()
+    })?;
+    let mut records = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|_| "the project runtime records could not be listed".to_owned())?;
+        if entry.path().extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        if records.len() >= MAX_PROJECT_RECORDS {
+            return Err("too many Runtime records are registered for this project".to_owned());
+        }
+        let record = read_project_record(&entry.path())?;
+        if record.project_id.as_deref() != Some(project_id) {
+            return Err("a project Runtime record names a different project".to_owned());
+        }
+        records.push(record);
+    }
+    if records.is_empty() {
+        return Err(
+            "no Runtime has registered this project; start `graphhelm serve` for this project"
+                .to_owned(),
+        );
+    }
+    Ok(records)
+}
+
+fn read_project_record(path: &Path) -> Result<Record, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| "a project Runtime record could not be read".to_owned())?;
+    if metadata.file_type().is_symlink() {
+        return Err("a project Runtime record must not be a symbolic link".to_owned());
+    }
+    if !metadata.is_file() || metadata.len() > MAX_RECORD_BYTES {
+        return Err("a project Runtime record is not a small regular file".to_owned());
+    }
+    reject_insecure_permissions(&metadata)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_RECORD_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| "a project Runtime record could not be read".to_owned())?;
+    let record: Record = serde_json::from_slice(&bytes)
+        .map_err(|_| "a project Runtime record is invalid".to_owned())?;
+    if record.version != VERSION
+        || record.instance.len() != 32
+        || !record.instance.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(
+            "a project Runtime record has an unsupported version or malformed instance".to_owned(),
+        );
+    }
+    Ok(record)
 }
 
 /// Reads and validates `<dir>/<port>.json`. It says nothing about liveness: the caller confirms
@@ -190,6 +320,7 @@ mod tests {
             PathBuf::from("/p/.graphhelm/events.token"),
             PathBuf::from("/p/.graphhelm/events"),
             instance.into(),
+            None,
         )
     }
 

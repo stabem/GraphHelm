@@ -117,6 +117,8 @@ struct ServeState {
     /// carries it, so a reader believes a record only when the server on its port is the one
     /// that wrote it.
     instance: Arc<str>,
+    /// Path-derived project identity used by port-independent MCP discovery.
+    project_id: Option<Arc<str>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
@@ -181,12 +183,24 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         .map_err(|error| serve_invalid(error.message(), "/token"))?;
     let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
     let agent_credentials = load_agent_credentials()?;
+    let project_id = args
+        .project
+        .as_deref()
+        .map(crate::commands::execution::delivery::project_id)
+        .transpose()
+        .map_err(|_| {
+            serve_invalid(
+                "--project must name an existing project directory",
+                "/project",
+            )
+        })?;
     let instance =
         super::runtime_record::new_instance().map_err(|message| serve_invalid(&message, "/"))?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
         agent_credentials: Arc::new(agent_credentials),
         instance: Arc::from(instance),
+        project_id: project_id.map(Arc::from),
         project: args.project.as_deref().map(Arc::from),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
@@ -500,9 +514,7 @@ async fn serve_forever(
         .local_addr()
         .map_err(|_| serve_invalid("the bound address could not be read back", "/bind"))?;
     let mut startup_warnings = startup_warnings;
-    if address.port() != 0
-        && let Err(message) = publish_runtime_record(bound, &state)
-    {
+    if let Err(message) = publish_runtime_record(address, bound, &state) {
         // A warning, not a refusal: the Runtime works; only `mcp --discover` cannot find it.
         startup_warnings.push(Diagnostic::warning(
             SERVE_INVALID_CODE,
@@ -688,9 +700,13 @@ fn build_router(state: ServeState) -> Router {
         .with_state(state)
 }
 
-/// #1325: the discovery record for a fixed port -- see `runtime_record` for the rules. Only the
-/// token FILE's path is written, never the token.
-fn publish_runtime_record(bound: SocketAddr, state: &ServeState) -> Result<(), String> {
+/// Port discovery remains for old registrations; project discovery works across ports. Records
+/// contain token-file paths only, never token values.
+fn publish_runtime_record(
+    requested: SocketAddr,
+    bound: SocketAddr,
+    state: &ServeState,
+) -> Result<(), String> {
     let dir = super::runtime_record::registry_dir()
         .ok_or_else(|| "no home directory and no GRAPHHELM_RUNTIME_DIR".to_owned())?;
     let events = std::path::absolute(&*state.events)
@@ -700,8 +716,15 @@ fn publish_runtime_record(bound: SocketAddr, state: &ServeState) -> Result<(), S
         secret_file::token_path(&events),
         events,
         state.instance.to_string(),
+        state.project_id.as_deref().map(str::to_owned),
     );
-    super::runtime_record::publish(&dir, bound.port(), &record).map(|_| ())
+    if requested.port() != 0 {
+        super::runtime_record::publish(&dir, bound.port(), &record)?;
+    }
+    if state.project_id.is_some() {
+        super::runtime_record::publish_project(&dir, &record)?;
+    }
+    Ok(())
 }
 
 /// Unauthenticated liveness. `instance` is this process's random id (#1325): not a secret, it only
@@ -711,7 +734,7 @@ async fn health(State(state): State<ServeState>) -> impl IntoResponse {
         StatusCode::OK,
         Outcome::success(
             HEALTH_COMMAND,
-            serde_json::json!({ "instance": &*state.instance }),
+            serde_json::json!({ "instance": &*state.instance, "projectId": state.project_id.as_deref() }),
         )
         .output,
     )

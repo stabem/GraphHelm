@@ -45,9 +45,18 @@ fn health(port: u16) -> Option<serde_json::Value> {
 /// Starts `serve` on `port` against `events`, publishing into `registry`, and waits until the
 /// record names the instance `/health` reports.
 fn serve(events: &Path, port: u16, registry: &Path) -> Killed {
-    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+    serve_with_project(events, port, registry, None)
+}
+
+fn serve_with_project(events: &Path, port: u16, registry: &Path, project: Option<&Path>) -> Killed {
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
         .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
-        .arg(format!("127.0.0.1:{port}"))
+        .arg(format!("127.0.0.1:{port}"));
+    if let Some(project) = project {
+        command.args(["--project", project.to_str().unwrap()]);
+    }
+    let child = command
         .env("GRAPHHELM_RUNTIME_DIR", registry)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -92,7 +101,7 @@ struct Bridge {
 
 impl Bridge {
     fn start(port: u16, registry: &Path, token_args: &[&str]) -> Self {
-        let mut child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--url"])
             .arg(format!("http://127.0.0.1:{port}"))
             .args(token_args)
@@ -104,6 +113,39 @@ impl Bridge {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
+        Self::from_child(child)
+    }
+
+    fn start_project(project: &Path, registry: &Path) -> Self {
+        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["mcp", "--discover", "--project"])
+            .arg(project)
+            .args(["--actor", "project-discovery-test"])
+            .env("GRAPHHELM_RUNTIME_DIR", registry)
+            .env_remove("GRAPHHELM_API_TOKEN")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Self::from_child(child)
+    }
+
+    fn start_in_project_cwd(project: &Path, registry: &Path) -> Self {
+        let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["mcp", "--discover", "--actor", "project-discovery-test"])
+            .current_dir(project)
+            .env("GRAPHHELM_RUNTIME_DIR", registry)
+            .env_remove("GRAPHHELM_API_TOKEN")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Self::from_child(child)
+    }
+
+    fn from_child(mut child: Child) -> Self {
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut bridge = Self {
@@ -150,6 +192,74 @@ impl Bridge {
         );
         reply.to_string()
     }
+}
+
+#[test]
+fn project_discovery_routes_two_projects_to_distinct_ports_and_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project_a = dir.path().join("project-a");
+    let project_b = dir.path().join("project-b");
+    let events_a = project_a.join(".graphhelm").join("events");
+    let events_b = project_b.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events_a).unwrap();
+    std::fs::create_dir_all(&events_b).unwrap();
+    let port_a = free_port();
+    let port_b = free_port();
+    assert_ne!(port_a, port_b);
+
+    let _runtime_a = serve_with_project(&events_a, port_a, &registry, Some(&project_a));
+    let _runtime_b = serve_with_project(&events_b, port_b, &registry, Some(&project_b));
+    let token_a = std::fs::read_to_string(events_a.with_extension("token")).unwrap();
+    let token_b = std::fs::read_to_string(events_b.with_extension("token")).unwrap();
+    assert_ne!(token_a, token_b, "each project keeps its own bearer token");
+
+    // The single user-scope registration has no project path; the host's project cwd binds each
+    // MCP process automatically. Project-local init entries may instead pass `--project`.
+    let mut bridge_a = Bridge::start_in_project_cwd(&project_a, &registry);
+    let mut bridge_b = Bridge::start_in_project_cwd(&project_b, &registry);
+    let reply_a = bridge_a.list();
+    let reply_b = bridge_b.list();
+    assert!(
+        authorized(&reply_a),
+        "project A's Runtime must answer: {reply_a}"
+    );
+    assert!(
+        authorized(&reply_b),
+        "project B's Runtime must answer: {reply_b}"
+    );
+    assert!(!bridge_a.transcript.contains(token_a.trim()));
+    assert!(!bridge_b.transcript.contains(token_b.trim()));
+}
+
+#[test]
+fn project_discovery_refuses_missing_or_ambiguous_project_bindings() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let missing = dir.path().join("missing-project");
+    std::fs::create_dir_all(&missing).unwrap();
+    let mut missing_bridge = Bridge::start_project(&missing, &registry);
+    let missing_reply = missing_bridge.list();
+    assert!(
+        missing_reply.contains("no Runtime has registered this project"),
+        "an unregistered project must fail closed: {missing_reply}"
+    );
+
+    let project = dir.path().join("duplicate-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let events_a = dir.path().join("store-a").join("events");
+    let events_b = dir.path().join("store-b").join("events");
+    std::fs::create_dir_all(events_a.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(events_b.parent().unwrap()).unwrap();
+    let runtime_a = serve_with_project(&events_a, free_port(), &registry, Some(&project));
+    let runtime_b = serve_with_project(&events_b, free_port(), &registry, Some(&project));
+    let mut duplicate_bridge = Bridge::start_project(&project, &registry);
+    let duplicate_reply = duplicate_bridge.list();
+    assert!(
+        duplicate_reply.contains("more than one live Runtime is registered"),
+        "two live stores for one project must not be guessed between: {duplicate_reply}"
+    );
+    drop((runtime_a, runtime_b));
 }
 
 fn authorized(reply: &str) -> bool {
@@ -246,6 +356,71 @@ fn an_ephemeral_port_publishes_no_record() {
         .unwrap();
     assert!(line.contains("serve.started"), "{line}");
     assert!(!registry.exists(), "port 0 must not publish");
+}
+
+#[test]
+fn project_discovery_uses_the_runtime_assigned_loopback_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("ephemeral-project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+
+    let child = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events"])
+        .arg(&events)
+        .args(["--bind", "127.0.0.1:0", "--project"])
+        .arg(&project)
+        .env("GRAPHHELM_RUNTIME_DIR", &registry)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _runtime = Killed(child);
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let (record, project_id) = loop {
+        let found = std::fs::read_dir(registry.join("projects"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(|entry| {
+                std::fs::read_dir(entry.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
+            .find_map(|entry| {
+                let bytes = std::fs::read(entry.path()).ok()?;
+                let record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+                Some((
+                    record,
+                    entry.path().parent()?.file_name()?.to_str()?.to_owned(),
+                ))
+            });
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "serve never published a project record"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let url = record["url"].as_str().unwrap();
+    let port = url.rsplit(':').next().unwrap().parse::<u16>().unwrap();
+    assert_ne!(port, 0, "the record contains the OS-assigned port");
+    let health = health(port).expect("the assigned port answers health");
+    assert_eq!(health["data"]["instance"], record["instance"]);
+    assert_eq!(health["data"]["projectId"], project_id);
+
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "the discovered Runtime must answer: {reply}"
+    );
 }
 
 #[test]

@@ -5063,6 +5063,7 @@ mod off_reactor_tests {
             token: Arc::<[u8]>::from(Vec::<u8>::new()),
             agent_credentials: Arc::new(std::collections::BTreeMap::new()),
             instance: Arc::from("test-instance"),
+            project_id: None,
             project: None,
             events,
             runtime: None,

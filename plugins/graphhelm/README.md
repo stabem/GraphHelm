@@ -39,7 +39,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you.
 
-## Session hooks (version 0.1.19)
+## Session hooks (version 0.1.20)
 
 This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
@@ -53,6 +53,11 @@ HTTP read. A cached summary never authorizes a state transition; the Runtime sti
 the current state. `SessionEnd` records an attributed
 `agent_session_ended` signal. It never marks a task or node complete. The hook does not create a
 run, pick a run by project name, or forward the host's raw payload.
+
+Each hook process accepts one bounded JSON object frame. It returns after the first
+complete object, even when the caller keeps stdin open; a process performs one
+operation and does not consume a second object. EOF before a complete object, invalid
+UTF-8 or JSON, a non-object value, and an oversized frame remain invalid input.
 
 SessionStart allows one request up to five seconds of socket inactivity, within
 Claude's ten-second total hook bound, including startup and durable cache

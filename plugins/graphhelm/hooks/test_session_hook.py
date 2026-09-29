@@ -238,12 +238,13 @@ class SessionHookTests(unittest.TestCase):
             text=True, env=self.env,
         )
         process.stdin.write(json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}))
-        process.stdin.close()
-        process.stdin = None
+        process.stdin.flush()
         release = threading.Timer(3.0, RuntimeHandler.get_release.set)
         try:
             self.assertTrue(RuntimeHandler.get_started.wait(timeout=3))
             release.start()
+            process.stdin.close()
+            process.stdin = None
             stdout, stderr = process.communicate(timeout=6)
         finally:
             release.cancel()

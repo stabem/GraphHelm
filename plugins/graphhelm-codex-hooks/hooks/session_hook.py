@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 from datetime import datetime, timezone
 import hashlib
 import itertools
@@ -32,13 +33,43 @@ KEEL_CONTEXT = ("Keel is guidance and measurement, not a pass/fail ritual. Start
 
 
 def hook_input() -> dict:
-    raw = sys.stdin.buffer.read(MAX_INPUT + 1)
-    if len(raw) > MAX_INPUT:
-        raise ValueError("hook input too large")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError("hook input is not an object")
-    return value
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    parser = json.JSONDecoder()
+    text = ""
+    size = 0
+    while True:
+        chunk = sys.stdin.buffer.read1(4096)
+        if not chunk:
+            try:
+                text += decoder.decode(b"", final=True)
+                start = len(text) - len(text.lstrip())
+                value, end = parser.raw_decode(text, start)
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ValueError("invalid hook input") from error
+            if text[end:].strip():
+                raise ValueError("multiple hook inputs")
+            if not isinstance(value, dict):
+                raise ValueError("hook input is not an object")
+            return value
+        size += len(chunk)
+        if size > MAX_INPUT:
+            raise ValueError("hook input too large")
+        try:
+            text += decoder.decode(chunk)
+        except UnicodeDecodeError as error:
+            raise ValueError("invalid hook input") from error
+        start = len(text) - len(text.lstrip())
+        try:
+            value, end = parser.raw_decode(text, start)
+        except json.JSONDecodeError as error:
+            if error.pos >= len(text) or "Unterminated string" in error.msg:
+                continue
+            raise ValueError("invalid hook input") from error
+        if text[end:].strip():
+            raise ValueError("multiple hook inputs")
+        if not isinstance(value, dict):
+            raise ValueError("hook input is not an object")
+        return value
 
 
 def _session(payload: dict) -> str:

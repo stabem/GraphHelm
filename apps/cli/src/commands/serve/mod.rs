@@ -1715,18 +1715,12 @@ async fn run_idempotent_mutation_inner<'a>(
             // Milestone 05a follow-up Important: a fresh mutation success previously carried no
             // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`
             // did, both via `execution::status::execute`), forcing an extra GET per
-            // `If-Match`-chained write. `current_head` costs one more store open beyond what `run`
-            // just did internally — every mutation's own `execute()` returns only
-            // `render(&projection)`'s aggregate view, never the raw event list a head sequence
-            // needs, so there is no history already in hand here to reuse instead. Avoiding that
-            // extra open would mean widening every command's return shape across
-            // `execution/{signal,approve,pause,resume,cancel,start}.rs`, outside this fix's
-            // footprint in the serve layer alone.
+            // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
+            // validated stream snapshot so those fields describe the same committed history.
+            let (head_sequence, waiting_input) =
+                fresh_stream_snapshot(events, execution, wiring.any_fixture());
             if let serde_json::Value::Object(ref mut map) = value {
-                map.insert(
-                    "headSequence".to_owned(),
-                    serde_json::json!(current_head(events, execution)),
-                );
+                map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
             }
             // 05g: the mutation's append is durable at this point — sweep the wake leases,
             // fire-and-forget (a wake failure never fails the route that triggered it; the
@@ -1754,9 +1748,8 @@ async fn run_idempotent_mutation_inner<'a>(
             // `nodeStateCounts` field at all (measured -- neither calls `execution::render`), so
             // a check keyed on that field would silently never fire for them regardless of the
             // execution's real state, which is exactly the "reads as normal progress" failure
-            // this diagnostic exists to close (M's review of #424). Re-reading the projection
-            // costs one more store open, the same shape `current_head` above already pays on
-            // every successful mutation.
+            // this diagnostic exists to close (M's review of #424). The snapshot above supplies
+            // the projection result without a second store open.
             // The check has a THIRD outcome, not just present/absent (M's second finding on
             // #424): a store read can fail. Answering `false` there would recreate exactly the
             // ambiguity this diagnostic exists to close -- an unreadable store reads as "no
@@ -1764,7 +1757,11 @@ async fn run_idempotent_mutation_inner<'a>(
             // way. So a read failure gets its OWN diagnostic naming that the check could not run,
             // rather than silently agreeing with the calm case. Narrow path (this store was just
             // written to by the mutation above), kept non-silent anyway rather than assumed safe.
-            annotate_fixture_only(&mut outcome.output, events, execution, wiring);
+            if wiring.any_fixture()
+                && let Some(diagnostic) = fixture_only_diagnostic(waiting_input, wiring)
+            {
+                outcome.output.diagnostics.push(diagnostic);
+            }
             respond(StatusCode::OK, outcome.output)
         }
         Err(MutationError::Prepared(response)) => response,
@@ -2588,6 +2585,38 @@ enum WaitingInputCheck {
     Undetermined,
 }
 
+/// Read response metadata from one validated history. Real-executor wiring needs only the
+/// head; preserve the previous short circuit so it does not pay for a fixture-only replay.
+fn fresh_stream_snapshot(
+    events: &Path,
+    execution: &str,
+    check_waiting: bool,
+) -> (Option<u64>, WaitingInputCheck) {
+    let Ok(store) = event_store(events) else {
+        return (None, WaitingInputCheck::Undetermined);
+    };
+    let Ok((scope, stream, history)) = execution::resolve_stream(&store, Some(execution)) else {
+        return (None, WaitingInputCheck::Undetermined);
+    };
+    let head = Some(history.last().map_or(0, |event| event.sequence));
+    if !check_waiting {
+        return (head, WaitingInputCheck::Undetermined);
+    }
+    let check = match graphhelm_events::replay(&scope, &stream, &history) {
+        Ok(projection)
+            if projection
+                .node_states
+                .values()
+                .any(|state| *state == graphhelm_protocols::NodeState::WaitingInput) =>
+        {
+            WaitingInputCheck::Present
+        }
+        Ok(_) => WaitingInputCheck::Absent,
+        Err(_) => WaitingInputCheck::Undetermined,
+    };
+    (head, check)
+}
+
 fn fixture_only_diagnostic(check: WaitingInputCheck, wiring: ExecutorWiring) -> Option<Diagnostic> {
     let kinds = wiring.fixture_kinds();
     match check {
@@ -2630,24 +2659,7 @@ fn annotate_fixture_only(
 }
 
 fn check_waiting_input(events: &Path, execution: &str) -> WaitingInputCheck {
-    let Ok(store) = event_store(events) else {
-        return WaitingInputCheck::Undetermined;
-    };
-    let Ok((scope, stream, history)) = execution::resolve_stream(&store, Some(execution)) else {
-        return WaitingInputCheck::Undetermined;
-    };
-    let Ok(projection) = graphhelm_events::replay(&scope, &stream, &history) else {
-        return WaitingInputCheck::Undetermined;
-    };
-    if projection
-        .node_states
-        .values()
-        .any(|state| *state == graphhelm_protocols::NodeState::WaitingInput)
-    {
-        WaitingInputCheck::Present
-    } else {
-        WaitingInputCheck::Absent
-    }
+    fresh_stream_snapshot(events, execution, true).1
 }
 
 /// Equal-length fold with `|=` so no early return leaks which byte differed. Lengths are not

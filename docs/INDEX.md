@@ -10,7 +10,7 @@ Start with the [repository README](../README.md) for the current product boundar
 | Install the CLI, Runtime, and Studio for a project | [Getting started](install/GETTING_STARTED.md) |
 | Understand the current Studio | [Studio MVP](ux/STUDIO_MVP.md) · [Studio app README](../apps/studio/README.md) |
 | Write or validate a graph | [Graph Engineer guide](graph-engineer/GRAPH_ENGINEER_GUIDE.md) · [Graph DSL](graph-engineer/GRAPH_DSL_SPEC.md) · [examples](../examples/) |
-| Use GraphHelm's development method | [JPD](harness/JOURNEY_PROVEN_DEVELOPMENT.md) · [Keel](keel/KEEL_SPEC.md) · [skills guide](skills/README.md) |
+| Use GraphHelm's development method | [JPD](harness/JOURNEY_PROVEN_DEVELOPMENT.md) · [Keel](keel/KEEL_SPEC.md) · [Keel check](keel/KEEL_CHECK.md) · [skills guide](skills/README.md) |
 | Change this repository | [Contributing](../CONTRIBUTING.md) · [delivery process](process/DELIVERY.md) |
 | Report a security issue privately | [Security policy](../SECURITY.md) |
 

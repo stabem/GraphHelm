@@ -119,6 +119,7 @@ they add no evidence or reach the approved budget boundary. There is no universa
 - Add property tests where they materially cover canonicalization, immutability, or replay. Keep generators bounded and deterministic under the committed proptest regression seed.
 - Golden fixtures are allowed only for reviewed canonical JSON, semantic hashes, and ordered event output. A fixture update requires an explicit explanation in the commit/PR.
 - Every public method must have working behavior in the same commit. No `TODO`, `TBD`, `unimplemented!`, empty handler, or ceremonial scaffold is allowed.
+- **Meaningful-test rule.** A test earns its place only by protecting an observable contract against a credible regression that existing coverage misses, without production seams no real caller needs. Before adding or changing a test, answer four questions: what observable behavior or contract it protects; what credible regression makes it fail; why existing coverage will not catch that; whether it needs production seams no real caller needs. State its cost (run time, what it needs). Skip tests for reversible, low-impact changes that only mirror the implementation. A test may be removed when its deletion record names the observer that still covers its obligation (`KEEL_SPEC.md` Law 3); a lower test count is never a win by itself. Stop when the behavior is proven and the required checks are green: no optional proof polish. The `test-audit` skill carries the gate, the audit list and the deletion record. The next two bullets are part of this rule.
 - Before adding or requesting a test, name the observable contract, the plausible defect it would catch, and the gap in existing coverage. Choose the smallest adequate proof and reuse existing coverage when it observes the contract. Do not impose blanket TDD, red-first steps, mutation exercises, or test quotas.
 - Reject unconditional passes, mock self-confirmation, assertions over values created by the test, and checks that merely freeze incidental source spelling or private call order. Preserve tests for real architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility, and platform contracts.
 - Runtime-affecting configuration needs behavioral evidence; parsing or shape validation alone is not proof. Report passed, failed, skipped, and unobserved separately. A skipped or unavailable observer never counts as a pass, and an unobserved promise remains unresolved.
@@ -164,7 +165,9 @@ line. A config parser accepting the value does not observe that behavior.
 4. **Prove with the smallest adequate observer.** Name the criterion and the defect a test would
    catch, assert against a value the code under test did not produce, mock only I/O, clock and
    randomness. Mutation testing is used only when it adds evidence the existing proof lacks; it is
-   not an admission ritual (the meaningful-test rule above governs).
+   not an admission ritual (the meaningful-test rule above governs). To gate a new test, audit a
+   suite, or remove a test, use the `test-audit` skill
+   (`extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md`).
 
 **What is enforced (objective contracts only):** one review by another session or a blind subagent that runs the
 reached tests, as [docs/process/DELIVERY.md](docs/process/DELIVERY.md) says; a new dependency is

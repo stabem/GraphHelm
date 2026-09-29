@@ -4,7 +4,7 @@
 # `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
 # rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
 # Bump `version` in the same commit as any change below.
-version: "1.1.0"
+version: "1.2.0"
 
 # READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
 # is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
@@ -12,6 +12,12 @@ card:
   maxScopePaths: 12
   maxExportedSymbols: 8
   maxCardBytes: 4096
+
+# SCOPE (1.2.0, #1330). `graphhelm keel check --diff <base>..<head> --card <card.json>` compares every
+# path the diff touches with the card's `scopePaths` (card shape: `schemas/keel-card.schema.json`).
+# A path that is neither a scope path nor under one is `keel.scope.path_outside_card`. It BLOCKS when
+# a card was declared and the path was read plainly; a quoted or escaped path the checker does not
+# decode is a signal. Without a card there is no scope rule, only the counts below as signals.
 
 # WRITE ECONOMY. What one node may bring into existence without a declared allowance. Zero is a
 # budget: a new dependency is never free. Overrun is refused by NAME (`keel.surface.<kind>_over_budget`),

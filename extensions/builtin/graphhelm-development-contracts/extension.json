@@ -929,7 +929,7 @@
           "id": "policy/keel",
           "kind": "policy",
           "path": "policies/keel.yaml",
-          "sha256": "sha256:8c19d5d673c8cb645bf9ab071b030b756cb00544ac33432c2317ac4e8fc81990",
+          "sha256": "sha256:c882d1e8c12762ba6626cb70dea63f4ce21dfcea7361db0cd61f8c8b6573d129",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -943,7 +943,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:25591a2fd947030c425d43e2ee67cee86efacea7e9363b959f4acad6acf01b8e",
+          "sha256": "sha256:3b03afd96f0ca2ecd0a6816204e2b17a383f6a80f1b2367a7e5b8b33229366b0",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -965,10 +965,25 @@
           "family": "development-contracts"
         },
         {
+          "id": "skill/test-audit",
+          "kind": "skill",
+          "path": "skills/test-audit/SKILL.md",
+          "sha256": "sha256:4c37c52517c8f7a9aaa5e8c9ada7b25a122cc7daa183c9457dc033bcd09aa248",
+          "effects": [],
+          "permissions": [
+            "package.read"
+          ],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
           "id": "fixture/keel-valid-policy-shipped-shape",
           "kind": "fixture",
           "path": "fixtures/keel/valid/policy-shipped-shape.json",
-          "sha256": "sha256:d23277ffe0fdb1199e22444f1bdf900875f4ec05f131de4a26ea3ab385291048",
+          "sha256": "sha256:dd9022c0ffe7ca51c7230bb2eeee2cf0d9f6a1b8ef146710f1b199545f0e8db9",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -981,7 +996,7 @@
           "id": "fixture/keel-invalid-ladder-strikes-per-rung-zero",
           "kind": "fixture",
           "path": "fixtures/keel/invalid/ladder-strikes-per-rung-zero.json",
-          "sha256": "sha256:1f49d33723ac93340d96d5352a782e70b2598352e0b80893812fa0f5d9d570a1",
+          "sha256": "sha256:10be6feb91b0f3b7950f4739fb7162766221da0223a5bb009d9ee691e2859fd3",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -994,7 +1009,7 @@
           "id": "fixture/keel-invalid-surface-unknown-kind",
           "kind": "fixture",
           "path": "fixtures/keel/invalid/surface-unknown-kind.json",
-          "sha256": "sha256:0d55e4e6e9be09caa91d03ff17a3915cc8fa370aa8428c35ecfe8031caadab63",
+          "sha256": "sha256:9951c9ea1df25109a14283a25ded94037f58b8f4df103b3cf27b23ddf609c5fc",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1002,6 +1017,33 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/keel-card",
+          "kind": "schema",
+          "path": "schemas/keel-card.schema.json",
+          "sha256": "sha256:c487907662251f6e9c95466ccdac286660d949c3d69c440a4d0332b65d72e359",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/keel-card-valid-full",
+          "kind": "fixture",
+          "path": "fixtures/keel-card/valid/card-full.json",
+          "sha256": "sha256:01e6de743d2819a49f86287b0ab7baf1a1185b23932ff31d958ec1e4cc3b2626",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/keel-card.schema.json"
         }
       ]
     },

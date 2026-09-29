@@ -80,7 +80,7 @@ fn rules(c: &Classification) -> Vec<&str> {
 #[test]
 fn the_shipped_policy_loads_into_the_struct_and_its_fixtures_agree_with_it() {
     let policy = shipped_policy();
-    assert_eq!(policy.version, "1.1.0");
+    assert_eq!(policy.version, "1.2.0");
     assert_eq!(
         policy.surface_enforcement,
         Enforcement::Signal,
@@ -133,7 +133,7 @@ fn a_body_only_edit_in_an_existing_file_charges_nothing() {
     let c = classify_write(&d, &policy, None, Mode::Full);
     assert!(c.charges.is_empty(), "{c:?}");
     assert!(!c.refused);
-    assert_eq!(c.policy_version, "1.1.0");
+    assert_eq!(c.policy_version, "1.2.0");
 }
 
 #[test]
@@ -583,4 +583,130 @@ fn a_disabled_ladder_measures_the_rung_and_applies_none() {
         ..off
     };
     assert_eq!(effective_mode(&[drift; 4], &on), Mode::PatchOnly);
+}
+
+fn card(scope: &[&str]) -> graphhelm_policy::keel::Card {
+    graphhelm_policy::keel::Card {
+        promise: "p".into(),
+        scope_paths: scope.iter().map(|path| (*path).to_owned()).collect(),
+        proof: "cargo test".into(),
+        exported_symbols: vec!["added".into()],
+        allowance: None,
+    }
+}
+
+fn scope_rules(report: &graphhelm_policy::keel::KeelCheck) -> Vec<(String, bool)> {
+    report
+        .findings
+        .iter()
+        .filter(|finding| finding.rule == "keel.scope.path_outside_card")
+        .map(|finding| (finding.path.clone().unwrap_or_default(), finding.blocking))
+        .collect()
+}
+
+#[test]
+fn changed_paths_reads_new_deleted_renamed_and_binary_headers() {
+    let text = "diff --git a/src/a.rs b/src/a.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.rs\n@@ -0,0 +1 @@\n+x\n\
+diff --git a/old.rs b/old.rs\ndeleted file mode 100644\n--- a/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n\
+diff --git a/from.rs b/to.rs\nsimilarity index 100%\nrename from from.rs\nrename to to.rs\n\
+diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
+    let paths = graphhelm_policy::keel::changed_paths(text);
+    let names: Vec<&str> = paths.iter().map(|entry| entry.path.as_str()).collect();
+    assert_eq!(names, ["src/a.rs", "old.rs", "from.rs", "to.rs", "img.png"]);
+    assert!(paths[0].is_new && !paths[0].is_deleted);
+    assert!(paths[1].is_deleted && !paths[1].is_new);
+    assert!(paths.iter().all(|entry| entry.plain));
+}
+
+#[test]
+fn scope_is_a_path_or_a_directory_prefix_never_a_string_prefix() {
+    let text = format!(
+        "{}{}{}",
+        diff("src/lib.rs", false, "pub fn added() {}"),
+        diff("src-other/x.rs", false, "let a = 1;"),
+        diff("docs/notes.md", true, "note"),
+    );
+    let policy = shipped_policy();
+    let bound = card(&["./src/", "docs/notes.md"]);
+    let report = graphhelm_policy::keel::check(&text, Some((&bound, 100)), &policy);
+    assert_eq!(scope_rules(&report), [("src-other/x.rs".to_owned(), true)]);
+    assert!(report.refused);
+    assert_eq!(report.surface.changed_files, 3);
+    assert_eq!(report.surface.new_files, 1);
+}
+
+#[test]
+fn a_rename_out_of_scope_and_a_deletion_out_of_scope_both_block() {
+    let text = "diff --git a/src/a.rs b/lib/a.rs\nrename from src/a.rs\nrename to lib/a.rs\n\
+diff --git a/gone.rs b/gone.rs\ndeleted file mode 100644\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
+    let report =
+        graphhelm_policy::keel::check(text, Some((&card(&["src"]), 100)), &shipped_policy());
+    assert_eq!(
+        scope_rules(&report),
+        [("lib/a.rs".to_owned(), true), ("gone.rs".to_owned(), true)]
+    );
+}
+
+#[test]
+fn a_quoted_path_is_a_signal_and_no_card_means_no_scope_rule() {
+    // git quotes a non-ASCII path and escapes its bytes in octal; this reader does not decode it.
+    let quoted = r#""a/sp\303\251c.rs""#;
+    let text = [
+        format!("diff --git {quoted} {quoted}"),
+        format!("--- {quoted}"),
+        format!("+++ {quoted}"),
+        "@@ -1 +1 @@".to_owned(),
+        "+x".to_owned(),
+        String::new(),
+    ]
+    .join("\n");
+    let text = text.as_str();
+    let report =
+        graphhelm_policy::keel::check(text, Some((&card(&["src"]), 100)), &shipped_policy());
+    let rules = scope_rules(&report);
+    assert!(!rules.is_empty());
+    assert!(rules.iter().all(|(_, blocking)| !blocking), "{rules:?}");
+    assert!(!report.refused);
+
+    let loose = diff("anywhere/x.rs", false, "let a = 1;");
+    let report = graphhelm_policy::keel::check(&loose, None, &shipped_policy());
+    assert!(!report.card_declared);
+    assert!(scope_rules(&report).is_empty());
+    assert!(!report.refused);
+}
+
+#[test]
+fn the_report_sets_counts_beside_the_card() {
+    let text = format!(
+        "{}{}",
+        diff(
+            "src/lib.rs",
+            false,
+            "pub fn added() {}\npub struct Sneaked;"
+        ),
+        diff("tests/extra.rs", true, "#[test]\nfn a() {}"),
+    );
+    let report = graphhelm_policy::keel::check(
+        &text,
+        Some((&card(&["src", "tests"]), 100)),
+        &shipped_policy(),
+    );
+    assert!(!report.refused, "{:?}", report.findings);
+    assert_eq!(report.surface.new_public_symbols, 2);
+    assert_eq!(report.surface.new_tests, 1);
+    assert_eq!(report.surface.new_test_files, 1);
+    assert_eq!(report.surface.card_exported_symbols, Some(1));
+    assert_eq!(report.surface.undeclared_public_symbols, ["Sneaked"]);
+}
+
+#[test]
+fn the_shipped_card_fixture_is_a_card_and_an_unknown_field_is_not() {
+    let bytes =
+        std::fs::read(package_root().join("fixtures/keel-card/valid/card-full.json")).unwrap();
+    let card: graphhelm_policy::keel::Card = serde_json::from_slice(&bytes).unwrap();
+    assert!(!card.scope_paths.is_empty());
+    assert!(card.allowance.is_some());
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["scope"] = serde_json::json!(["src"]);
+    assert!(serde_json::from_value::<graphhelm_policy::keel::Card>(value).is_err());
 }

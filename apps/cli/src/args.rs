@@ -62,7 +62,7 @@ pub enum TopLevel {
     Backup(AdoptionBackupArgs),
     /// Preview or apply an exact reviewed, offline configuration restore.
     Restore(AdoptionRestoreArgs),
-    /// Build, verify, or query the source-bound Keel contract index.
+    /// Build, verify, or query the Keel contract index, or check a diff against its card.
     Keel(KeelArgs),
 }
 
@@ -96,6 +96,19 @@ pub enum KeelCommand {
         index: PathBuf,
         #[arg(long)]
         term: String,
+    },
+    /// Compare a git diff with its Keel card: card bounds, scope (`keel.scope.path_outside_card`)
+    /// and the surface the diff adds, under the shipped `keel.yaml`.
+    Check {
+        /// The git range to check, `<base>..<head>`.
+        #[arg(long)]
+        diff: String,
+        /// The card JSON (`keel-card.schema.json`). Without it the scope rule does not run.
+        #[arg(long)]
+        card: Option<PathBuf>,
+        /// The repository the range belongs to.
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
     },
 }
 

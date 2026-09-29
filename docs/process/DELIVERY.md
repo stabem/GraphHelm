@@ -22,7 +22,7 @@ Keel is proportional. Use only as much of it as the change needs.
 
 | The change | What goes in the PR body |
 |---|---|
-| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk. Runtime- or security-affecting config needs a full card and behavioral evidence. |
+| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk; a test removal also carries its deletion record (the `test-audit` skill), naming the observer that still covers its obligation. Runtime- or security-affecting config needs a full card and behavioral evidence. |
 | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
 | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
 | Persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
@@ -60,6 +60,14 @@ body.
   Reading the PR's own comments is part of the review, not a finding handed over in a brief.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
+- **The reviewer runs the Keel check on the head under review and pastes its output** in the
+  review: `graphhelm --json keel check --diff <base>..<head> --card <card.json>`, where `<base>` is
+  the merge base with `main` and the card is the one in the PR body saved as JSON
+  ([`docs/keel/KEEL_CHECK.md`](../keel/KEEL_CHECK.md) has the shape). Exit 2 with
+  `keel.scope.path_outside_card` means the change touches a path its card does not list: the
+  author widens the card in the PR body (and says why) or removes the change. The surface counts
+  and warnings are signals the reviewer weighs, not a verdict. A change whose row in §2 needs no
+  card is checked without `--card`, which reports the counts only.
 - **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
   alike: `cargo +1.97.1 fmt --all -- --check` and
   `cargo +1.97.1 clippy --locked -p <crate> --all-targets --all-features -- -D warnings` for each

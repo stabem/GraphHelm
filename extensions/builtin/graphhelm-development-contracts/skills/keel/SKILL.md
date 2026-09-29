@@ -16,7 +16,7 @@ A keel is laid before any plank and is the part of the hull that resists drift. 
 one of two things: laid before (the card, the budget, the named defect) or resists drift (the
 classifier, the ladder, the receipt).
 
-**Today Keel is guidance and measurement, not punishment** (rules file `1.1.0`). Its goal is
+**Today Keel is guidance and measurement, not punishment** (rules file `1.2.0`). Its goal is
 quality first, then the lowest total cost per proven delivery. Count findings are signals for the
 reviewer; only objective contracts refuse (an unparseable diff, a card scope that is not a list of
 paths). The rung ladder is computed and reported but applied only when `ladder.enabled` is true, and
@@ -75,7 +75,10 @@ id and the defect it would catch. A test that cannot fail on its own defect, tha
 the test itself constructed, or that matches a log message instead of a structured output is not
 proof and is refused by the meaningful-test policy this package already carries. Reuse an existing
 instrument when it already observes the contract; a second test over the same promise is a
-`newTest` charge with nothing bought.
+`newTest` charge with nothing bought. Skip tests for reversible, low-impact changes that only
+mirror the implementation. A new or changed test states its cost (run time, what it needs) and
+passes the four-question gate of the `test-audit` skill; removing a test needs that skill's
+deletion record naming the observer that still covers its obligation.
 
 Report passed, failed, skipped and unobserved separately. A skipped instrument is not a pass; an
 unobserved promise is unresolved.
@@ -101,7 +104,12 @@ code reads.
 If you see a check run that your change could not have affected — a full build for a Markdown edit,
 a crate's tests for a file no crate compiles — record it with the rule that caused it and propose the
 narrower path with a control that still runs the check when the change does reach it. Never narrow
-by guessing: every doubt runs everything.
+by guessing: every doubt runs everything. Reuse valid proof: a result already recorded for the same
+inputs is evidence; rerun only what a changed input can reach. Reuse applies within one lane and
+never replaces the reviewer's own run of the reached tests (`docs/process/DELIVERY.md` §4).
+
+**Stop when the behavior is proven and the required checks are green.** Finish there. Do not add
+optional proof polish: no extra test, rerun or wider build that no reachable risk asks for.
 
 ## Reads
 
@@ -122,6 +130,6 @@ allowance or a split), or when no instrument can decide a criterion (`OBSERVER_M
 
 ## Hands off to
 
-`code-contract` for the card, `context-retrieval` for the cited symbols, `memory-curator` when a
+`code-contract` for the card, `test-audit` to gate, audit or prune tests, `context-retrieval` for the cited symbols, `memory-curator` when a
 refusal taught something worth keeping, and the JPD `journey-contract` skill when the promise is a
 user journey rather than a code contract.

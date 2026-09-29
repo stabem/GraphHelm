@@ -24,6 +24,7 @@ import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
 import { isSubagentLifecycleSignal } from "../runtime/subagents";
+import { isClaudeTaskSignal } from "../runtime/team-tasks";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
@@ -638,7 +639,7 @@ export function Thread({
               {line === null ? (
                 <>
                   <p className="turn-text">{readable(event.kind)}</p>
-                  {!isSubagentLifecycleSignal(event) && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>}
+                  {!isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && <details className="turn-details"><summary>Technical details</summary><code>{JSON.stringify(event.payload)}</code></details>}
                 </>
               ) : (
                 <>
@@ -660,6 +661,7 @@ export function Thread({
               {executionId !== undefined &&
                 openEvidence !== undefined &&
                 !isSubagentLifecycleSignal(event) &&
+                !isClaudeTaskSignal(event) &&
                 event.evidenceRefs.map((evidenceId) => (
                   <Said
                     key={evidenceId}
@@ -810,7 +812,7 @@ export function useEnvelopes(
   useEffect(() => {
     if (executionId === undefined || openEvidence === undefined) return;
     const carriers = events.filter(
-      (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && event.evidenceRefs.length > 0,
+      (event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && event.evidenceRefs.length > 0,
     ).reverse();
     let live = true;
     void (async () => {
@@ -1441,7 +1443,7 @@ export function RunPanel({
   const askers: Array<{ id: string; at: string | null }> = [];
   for (let index = events.length - 1; index >= 0 && askers.length < 2; index -= 1) {
     const event = events[index];
-    if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event)) continue;
+    if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event)) continue;
     if (event.actorType !== "agent" || event.actorId === null) continue;
     if (askers.some((asker) => asker.id === event.actorId)) continue;
     askers.push({ id: event.actorId, at: event.occurredAt });
@@ -1464,12 +1466,12 @@ export function RunPanel({
   // a thread that silently hides turns reads exactly like a thread where nothing was said.
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
-  const spokenCount = events.filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event)).length;
+  const spokenCount = events.filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event)).length;
   const shown =
     needle === ""
-      ? events
+      ? events.filter((event) => !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event))
       : events.filter((event) => {
-          if (event.kind !== "signal_recorded") return false;
+          if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event)) return false;
           const envelope = runEnvelopes[event.sequence];
           return (
             (envelope?.text ?? "").toLowerCase().includes(needle) ||

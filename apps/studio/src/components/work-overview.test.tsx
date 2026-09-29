@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { WorkOverview, isFirstEntryNode } from "./work-overview";
 import type { GraphModel } from "../graph/model";
 import type { SubagentReadModel } from "../runtime/subagents";
+import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
 
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
@@ -281,6 +282,20 @@ describe("compact run handoff", () => {
     expect(tree).toHaveTextContent("No direct child action recorded");
     expect(tree).toHaveTextContent("Task result and acceptance not verified here");
     expect(tree).not.toHaveTextContent("completed");
+  });
+  it("shows Claude task lifecycle separately and never calls completion acceptance", () => {
+    const claudeTasks: ClaudeTaskReadModel = { executionId: "run-one", rejected: 0, tasks: [{
+      executionId: "run-one", nativeTaskId: "task-7", taskSubject: "Review the checkout flow", teammateName: "reviewer",
+      parentSessionId: "session-1", createdSequence: 11, createdAt: null, createdEvidenceId: "ev-created",
+      completedSequence: 15, completedAt: null, completedEvidenceId: "ev-completed",
+    }] };
+    render(<WorkOverview model={model} claudeTasks={claudeTasks} selectedNode={null} onSelectNode={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Claude tasks observed" });
+    expect(region).toHaveTextContent("Review the checkout flow");
+    expect(region).toHaveTextContent("Teammate name reported by Claude: reviewer");
+    expect(region).toHaveTextContent("Marked complete in Claude · event #15 · output review not observed");
+    expect(region).toHaveTextContent("not proof of assignment");
+    expect(region).not.toHaveTextContent("Output accepted");
   });
 });
 

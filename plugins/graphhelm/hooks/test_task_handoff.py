@@ -216,6 +216,156 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(replies[1]["error"]["code"], -32600)
         self.assertEqual(len(RuntimeHandler.requests), before)
 
+    def test_codex_metadata_is_per_call_and_missing_metadata_has_no_runtime_io(self):
+        env = os.environ.copy(); env.update(self.env)
+        env["GRAPHHELM_MCP_HOST"] = "codex"
+        env["GRAPHHELM_MCP_SESSION_SOURCE"] = "codex_metadata"
+        env.pop("GRAPHHELM_SESSION_ID", None)
+        missing = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": "status", "arguments": {}}}
+        missing_result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                        input=json.dumps(missing) + "\n",
+                                        capture_output=True, text=True)
+        self.assertEqual(missing_result.returncode, 0, missing_result.stderr)
+        self.assertTrue(json.loads(missing_result.stdout)["result"]["isError"])
+        self.assertEqual(RuntimeHandler.requests, [])
+        calls = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "status", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "offer", "arguments": {"recipientHost": "claude",
+                         "recipientSessionId": "receiver-a"},
+                        "_meta": {"threadId": "thread-a", "sessionId": "thread-a"}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+             "params": {"name": "offer", "arguments": {"recipientHost": "claude",
+                         "recipientSessionId": "receiver-b"},
+                        "_meta": {"threadId": "thread-b", "sessionId": "thread-b"}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+             "params": {"name": "status", "arguments": {}}},
+        ]
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input="\n".join(json.dumps(call) for call in calls) + "\n",
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertTrue(replies[2]["result"]["isError"])
+        self.assertTrue(replies[-1]["result"]["isError"])
+        posts = [item for item in RuntimeHandler.requests if item[0] == "POST"]
+        self.assertEqual([post[2]["X-Graphhelm-Actor-Session"] for post in posts],
+                         ["thread-a", "thread-b"])
+        self.assertNotEqual(posts[0][3]["signal"]["id"], posts[1][3]["signal"]["id"])
+
+    def test_codex_metadata_conflict_and_pin_fail_before_runtime_io(self):
+        env = os.environ.copy(); env.update(self.env)
+        env["GRAPHHELM_MCP_HOST"] = "codex"
+        env["GRAPHHELM_MCP_SESSION_SOURCE"] = "codex_metadata"
+        env["GRAPHHELM_SESSION_ID"] = "pinned-session"
+        calls = [
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "status", "arguments": {},
+                        "_meta": {"threadId": "one", "sessionId": "two"}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "status", "arguments": {},
+                        "_meta": {"threadId": "other", "sessionId": "other"}}},
+        ]
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input="\n".join(json.dumps(call) for call in calls) + "\n",
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertTrue(all(reply.get("result", {}).get("isError") or "error" in reply
+                            for reply in replies))
+        self.assertEqual(RuntimeHandler.requests, [])
+
+    def test_codex_metadata_server_can_list_unbound(self):
+        env = os.environ.copy()
+        env.update({"GRAPHHELM_MCP_HOST": "codex", "GRAPHHELM_MCP_SESSION_SOURCE": "codex_metadata"})
+        for key in ("GRAPHHELM_SESSION_ID", "GRAPHHELM_EXECUTION_ID", "GRAPHHELM_TOKEN_FILE"):
+            env.pop(key, None)
+        payload = "\n".join([
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        ]) + "\n"
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input=payload, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertIn("tools", replies[1]["result"])
+        self.assertEqual(RuntimeHandler.requests, [])
+
+    def test_metadata_receive_records_only_the_current_recipient_and_replays(self):
+        with patch.dict(os.environ, self.env, clear=False):
+            a = MODULE.offer("claude", "sender", "codex", "receiver-a")
+            b = MODULE.offer("claude", "sender", "codex", "receiver-b")
+        RuntimeHandler.requests = []
+        env = os.environ.copy(); env.update(self.env)
+        env.update(GRAPHHELM_MCP_HOST="codex", GRAPHHELM_MCP_SESSION_SOURCE="codex_metadata")
+        env.pop("GRAPHHELM_SESSION_ID", None)
+        pairs = [("receiver-a", a), ("receiver-b", a), ("receiver-b", b), ("receiver-a", a)]
+        calls = [{"jsonrpc": "2.0", "id": index, "method": "tools/call", "params": {
+            "name": "receive", "arguments": {"offerId": offered["offerId"]},
+            "_meta": {"threadId": session, "sessionId": session}}}
+            for index, (session, offered) in enumerate(pairs, 1)]
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input="\n".join(json.dumps(call) for call in calls) + "\n",
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line)["result"] for line in result.stdout.splitlines()]
+        self.assertTrue(replies[1]["isError"])
+        successful = [json.loads(reply["content"][0]["text"]) for reply in
+                      [replies[0], replies[2], replies[3]]]
+        self.assertEqual([value["state"] for value in successful],
+                         ["recorded", "recorded", "already_recorded"])
+        self.assertEqual(successful[0]["receiptId"], successful[2]["receiptId"])
+        self.assertTrue(all(value["accepted"] is False
+                            and value["activation"] == "unobserved" for value in successful))
+        posts = [item for item in RuntimeHandler.requests if item[0] == "POST"]
+        self.assertEqual([post[2]["X-Graphhelm-Actor-Session"] for post in posts],
+                         ["receiver-a", "receiver-b"])
+        self.assertEqual([post[3]["signal"]["replyTo"] for post in posts],
+                         [a["offerId"], b["offerId"]])
+
+    def test_metadata_invalid_ids_and_argument_overrides_do_not_contact_runtime(self):
+        env = os.environ.copy(); env.update(self.env)
+        env.update(GRAPHHELM_MCP_HOST="codex", GRAPHHELM_MCP_SESSION_SOURCE="codex_metadata")
+        env.pop("GRAPHHELM_SESSION_ID", None)
+        metadata_values = [{}, {"threadId": "a"}, {"threadId": "a", "sessionId": 1},
+                           {"threadId": "bad/id", "sessionId": "bad/id"}]
+        calls = [{"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {
+            "name": "status", "arguments": {}, "_meta": metadata}}
+            for i, metadata in enumerate(metadata_values, 1)]
+        for field in ("sessionId", "host", "executionId", "tokenFile", "runtimeUrl", "_meta"):
+            calls.append({"jsonrpc": "2.0", "id": len(calls)+1, "method": "tools/call", "params": {
+                "name": "status", "arguments": {field: "override"},
+                "_meta": {"threadId": "a", "sessionId": "a"}}})
+        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                input="\n".join(json.dumps(call) for call in calls) + "\n",
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(replies), len(calls))
+        self.assertTrue(all(reply["result"]["isError"] for reply in replies))
+        self.assertEqual(RuntimeHandler.requests, [])
+
+    def test_metadata_mode_rejects_wrong_host_and_legacy_still_requires_binding(self):
+        for host, source, unbound in [("claude", "codex_metadata", False),
+                                      ("codex", "unsupported", False),
+                                      ("codex", "environment", True)]:
+            with self.subTest(host=host, source=source):
+                env = os.environ.copy(); env.update(self.env)
+                env.update(GRAPHHELM_MCP_HOST=host, GRAPHHELM_MCP_SESSION_SOURCE=source,
+                           GRAPHHELM_SESSION_ID="receiver")
+                if unbound:
+                    env.pop("GRAPHHELM_EXECUTION_ID", None)
+                result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
+                                        input='{"jsonrpc":"2.0","id":1,"method":"initialize"}\n',
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(RuntimeHandler.requests, [])
+
     def test_oversized_frame_cannot_execute_a_json_suffix_as_another_request(self):
         env = os.environ.copy(); env.update(self.env)
         env["GRAPHHELM_MCP_HOST"] = "codex"

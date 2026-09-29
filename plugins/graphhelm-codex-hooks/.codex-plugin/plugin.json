@@ -1,6 +1,6 @@
 {
   "name": "graphhelm-codex-hooks",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Codex session hook compatibility companion for GraphHelm versions that skip hooks in the Agent Plugin manifest.",
   "author": {
     "name": "GraphHelm"
@@ -8,13 +8,14 @@
   "repository": "https://github.com/stabem/GraphHelm",
   "license": "MIT",
   "hooks": "./hooks/codex-hooks.json",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "GraphHelm Codex Hooks",
     "shortDescription": "Run GraphHelm session hooks on affected Codex versions.",
-    "longDescription": "A legacy compatibility companion for Codex versions whose Agent Plugin loader skips hook declarations. It contains the reviewed GraphHelm SessionStart and SessionEnd hooks and no skills, MCP server, or global settings registration.",
+    "longDescription": "A compatibility companion for Codex versions whose Agent Plugin loader skips hook declarations. It contains the reviewed GraphHelm SessionStart and SessionEnd hooks and the explicitly registered task handoff MCP server.",
     "developerName": "GraphHelm",
     "category": "Developer Tools",
-    "capabilities": ["hooks"],
+    "capabilities": ["hooks", "mcp"],
     "defaultPrompt": [
       "Review the GraphHelm Codex hook compatibility setup."
     ]

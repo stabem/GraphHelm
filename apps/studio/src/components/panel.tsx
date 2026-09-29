@@ -1488,9 +1488,11 @@ export function RunPanel({
               ? needsDirection ? "This run needs direction" : "This run needs you"
               : over
                  ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedResults > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
-                : verdict.key === "calm"
+                : verdict.key === "calm" && status.status === "running"
                   ? "Running by itself"
-                  : "Nothing to report yet"}
+                  : status.status !== null
+                    ? `This run is ${readable(status.status)}`
+                    : "Nothing to report yet"}
           </h2>
           <p className="lbl">
             {verdict.key === "needs" && debts.length > 0

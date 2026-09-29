@@ -165,6 +165,7 @@ line. A config parser accepting the value does not observe that behavior.
    time, what it needs) and passes the `test-audit` skill's four-question gate.
 5. Prove the promise with the smallest check that observes it. A proxy (another OS, a mock, an
    emulator, a cross-compile, a test compiled out on this host) is not an observation.
+   Report passed, failed, skipped and unobserved separately; a later green never erases an earlier red.
 6. When you cannot observe the promise on this host, change nothing, say what is missing, and end
    with `OBSERVER_MISSING: <what is missing>`. Never write "verified" for what you did not observe.
 7. Stop when the promise is proven. Do not refactor, reformat or sweep beyond it.

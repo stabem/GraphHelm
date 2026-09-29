@@ -33,7 +33,7 @@ KEEL_CONTEXT = ("Keel is guidance and measurement, not a pass/fail ritual. Start
 
 
 def hook_input() -> dict:
-    decoder = codecs.getincrementaldecoder("utf-8")()
+    decoder = codecs.getincrementaldecoder("utf-8-sig")()
     parser = json.JSONDecoder()
     text = ""
     size = 0
@@ -42,7 +42,7 @@ def hook_input() -> dict:
         if not chunk:
             try:
                 text += decoder.decode(b"", final=True)
-                start = len(text) - len(text.lstrip())
+                start = len(text) - len(text.lstrip(" \t\r\n"))
                 value, end = parser.raw_decode(text, start)
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise ValueError("invalid hook input") from error
@@ -58,13 +58,13 @@ def hook_input() -> dict:
             text += decoder.decode(chunk)
         except UnicodeDecodeError as error:
             raise ValueError("invalid hook input") from error
-        start = len(text) - len(text.lstrip())
+        start = len(text) - len(text.lstrip(" \t\r\n"))
         try:
             value, end = parser.raw_decode(text, start)
-        except json.JSONDecodeError as error:
-            if error.pos >= len(text) or "Unterminated string" in error.msg:
-                continue
-            raise ValueError("invalid hook input") from error
+        except json.JSONDecodeError:
+            continue
+        if decoder.getstate()[0]:
+            raise ValueError("invalid hook input")
         if text[end:].strip():
             raise ValueError("multiple hook inputs")
         if not isinstance(value, dict):

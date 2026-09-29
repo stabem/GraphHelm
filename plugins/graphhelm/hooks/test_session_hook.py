@@ -1,6 +1,7 @@
 """Contract tests for the two host hook boundaries, with an in-process Runtime."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).with_name("session_hook.py")
@@ -146,6 +148,32 @@ class SessionHookTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_hook_input_accepts_fragmented_json_without_waiting_for_eof(self):
+        spec = importlib.util.spec_from_file_location("session_hook_framing", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class ChunkedInput:
+            def __init__(self, chunks):
+                self.buffer = self
+                self.chunks = iter(chunks)
+
+            def read1(self, _size):
+                try:
+                    return next(self.chunks)
+                except StopIteration as error:
+                    raise AssertionError("framing read past complete object") from error
+
+        chunks = [b'\xef\xbb\xbf{"flag":tr', b'ue,"ratio":1e', b'-3,"text":"caf', b'\xc3', b'\xa9"}']
+        expected = {"flag": True, "ratio": 0.001, "text": "café"}
+        with patch.object(module.sys, "stdin", ChunkedInput(chunks)):
+            self.assertEqual(module.hook_input(), expected)
+
+        for suffix in (b'\xc3', b'\xc2\xa0'):
+            invalid_suffix = ChunkedInput([b'{"ok":true}' + suffix])
+            with self.subTest(suffix=suffix), patch.object(module.sys, "stdin", invalid_suffix), self.assertRaises(ValueError):
+                module.hook_input()
+
     def run_hook(self, phase, host="claude", **payload):
         event = "SessionStart" if phase == "start" else "SessionEnd"
         return subprocess.run(
@@ -238,12 +266,13 @@ class SessionHookTests(unittest.TestCase):
             text=True, env=self.env,
         )
         process.stdin.write(json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}))
-        process.stdin.close()
-        process.stdin = None
+        process.stdin.flush()
         release = threading.Timer(3.0, RuntimeHandler.get_release.set)
         try:
             self.assertTrue(RuntimeHandler.get_started.wait(timeout=3))
             release.start()
+            process.stdin.close()
+            process.stdin = None
             stdout, stderr = process.communicate(timeout=6)
         finally:
             release.cancel()

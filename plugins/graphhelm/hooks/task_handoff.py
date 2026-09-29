@@ -49,6 +49,28 @@ def _session(value: str) -> str:
     return _id(value, "session identity")
 
 
+def _mcp_session_source() -> str:
+    source = os.environ.get("GRAPHHELM_MCP_SESSION_SOURCE", "environment")
+    if source not in {"environment", "codex_metadata"}:
+        raise ValueError("unsupported MCP session source")
+    return source
+
+
+def _codex_metadata_session(metadata: object) -> str:
+    if not isinstance(metadata, dict):
+        raise ValueError("Codex session metadata is required")
+    thread_id = metadata.get("threadId")
+    session_id = metadata.get("sessionId")
+    thread_id = _id(thread_id, "Codex thread identity")
+    session_id = _id(session_id, "Codex session identity")
+    if thread_id != session_id:
+        raise ValueError("Codex thread and session identities conflict")
+    configured = os.environ.get("GRAPHHELM_SESSION_ID")
+    if configured and configured != session_id:
+        raise ValueError("session identity mismatch")
+    return session_id
+
+
 def _binding() -> tuple[str, str, str, str, str | None]:
     bound = binding()
     if bound is None:
@@ -450,11 +472,16 @@ def _mcp_tool_call(name: object, arguments: object, host: str, session: str) -> 
 def _mcp_stdio() -> int:
     """Serve newline-delimited MCP JSON-RPC with credentials held by this process."""
     host = os.environ.get("GRAPHHELM_MCP_HOST")
-    session = os.environ.get("GRAPHHELM_SESSION_ID")
     try:
         host = _host(host)
-        session = _id(session, "session identity")
-        _binding()  # Validate all fixed Runtime configuration without making a request.
+        source = _mcp_session_source()
+        if source == "environment":
+            session = _session(os.environ.get("GRAPHHELM_SESSION_ID"))
+            _binding()  # Legacy mode keeps its startup validation contract.
+        else:
+            if host != "codex":
+                raise ValueError("Codex metadata source requires the codex host")
+            session = None
     except (TypeError, ValueError, OSError):
         print("graphhelm-task-handoff: invalid MCP server configuration", file=sys.stderr)
         return 1
@@ -482,7 +509,7 @@ def _mcp_stdio() -> int:
                 continue
             if method == "initialize":
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.12"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.14"}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})
@@ -496,7 +523,18 @@ def _mcp_stdio() -> int:
                     raise ValueError("tools/call params contain an unsupported field")
                 if "_meta" in params and not isinstance(params["_meta"], dict):
                     raise ValueError("tools/call metadata must be an object")
-                response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+                try:
+                    call_session = (session if source == "environment"
+                                    else _codex_metadata_session(params.get("_meta")))
+                except (TypeError, ValueError):
+                    call_session = None
+                    response = _mcp_result(request_id, {
+                        "content": [{"type": "text", "text": "handoff tool failed; result is unobserved"}],
+                        "isError": True,
+                    })
+                    print(json.dumps(response, separators=(",", ":")), flush=True)
+                    continue
+                response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, call_session))
             else:
                 response = _mcp_error(request_id, -32601, "method not found")
         except (ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError):

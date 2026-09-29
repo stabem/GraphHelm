@@ -150,18 +150,29 @@ the caller must still impose its own whole-process deadline. A timeout remains u
 not retried automatically. `--handoff-id` distinguishes multiple offers between the same two
 sessions in one execution; repeating the same id replays the journal record after local state loss.
 
-The same adapter has an optional, explicitly configured stdio MCP mode. It is never registered by
-the plugin and makes no Runtime request while starting. Configure the trusted server process with
-`GRAPHHELM_MCP_HOST`, `GRAPHHELM_SESSION_ID`, `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_TOKEN_FILE`,
-and (when needed) `GRAPHHELM_RUNTIME_URL`, then run:
+The same adapter has an optional, explicitly configured stdio MCP mode. The Codex compatibility
+companion registers it with a `${PLUGIN_ROOT}` path; the main plugin does not register a second
+server. The server makes no Runtime request while starting. Its legacy environment session mode
+uses `GRAPHHELM_MCP_HOST`, `GRAPHHELM_SESSION_ID`, `GRAPHHELM_EXECUTION_ID`,
+`GRAPHHELM_TOKEN_FILE`, and (when needed) `GRAPHHELM_RUNTIME_URL`. For normal Codex calls, opt
+into native metadata mode with `GRAPHHELM_MCP_SESSION_SOURCE=codex_metadata`; it requires
+`GRAPHHELM_MCP_HOST=codex` and each `tools/call` `_meta` object to contain equal, valid
+`threadId` and `sessionId` values. `GRAPHHELM_SESSION_ID`, when set, pins that per-call identity.
+The server does not retain a session between calls. Initialize and tool discovery can run unbound;
+an actual tool call without fixed execution, Runtime, and token configuration remains unobserved.
+
+Configure the trusted server process and run directly when needed:
 
 ```powershell
 python <installed-plugin>/hooks/task_handoff.py --mcp-stdio
 ```
 
 The server exposes `offer`, `receive`, and `status` through standard newline-delimited MCP
-JSON-RPC. Host, session, execution, Runtime URL, and token path come only from the server
-environment. Tool arguments can name the recipient or offer, but cannot replace that binding.
+JSON-RPC. Host, execution, Runtime URL, and token path come only from trusted server
+configuration. In native Codex mode, the host supplies the session identity in per-call metadata;
+tool arguments can name the recipient or offer, but cannot replace any binding. Missing, malformed,
+conflicting, or pinned-mismatched metadata fails before Runtime I/O. In legacy mode, the
+environment session contract is unchanged.
 Requests are bounded and unknown fields fail closed. A tool failure returns MCP `isError: true`
 and an unobserved result. An oversized or unterminated frame closes the transport after a sanitized
 error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and

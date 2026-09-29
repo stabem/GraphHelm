@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "graphhelm_handoff": {
+      "command": "python",
+      "args": ["${PLUGIN_ROOT}/hooks/task_handoff.py", "--mcp-stdio"],
+      "env": {
+        "GRAPHHELM_MCP_HOST": "codex",
+        "GRAPHHELM_MCP_SESSION_SOURCE": "codex_metadata"
+      }
+    }
+  }
+}

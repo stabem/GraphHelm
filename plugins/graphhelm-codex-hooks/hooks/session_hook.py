@@ -19,6 +19,7 @@ MAX_INPUT = 64 * 1024
 MAX_REPLY = 256 * 1024
 MAX_STATE = 32 * 1024
 MAX_CONTEXT = 1600
+BRIEFING_TIMEOUT = 2.5
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 PORTABLE_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 NEXT_STEPS = {"resume_held", "answer", "diagnose", "dispatch", "finished", "nothing"}
@@ -279,7 +280,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         raise ValueError("compact briefing cache unavailable")
     freshness = "CACHED" if isinstance(digest, dict) else "FRESH"
     if not isinstance(digest, dict):
-        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET")
+        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET", timeout=BRIEFING_TIMEOUT)
         data = reply.get("data")
         if not isinstance(data, dict):
             raise ValueError("invalid briefing")

@@ -100,7 +100,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["command"], "keel");
-    assert_eq!(reply["data"]["policyVersion"], "1.2.0");
+    assert_eq!(reply["data"]["policyVersion"], "1.3.0");
     assert_eq!(reply["data"]["cardDeclared"], true);
     assert_eq!(reply["data"]["surface"]["changedFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newPublicSymbols"], 1);
@@ -167,4 +167,97 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
     let (code, reply) = run(repo.path(), Some(&bad));
     assert_eq!(code, 3, "{reply}");
     assert_eq!(codes(&reply), vec!["GHCLI031_KEEL_CHECK_INPUT"]);
+}
+
+/// #1333: `--prove-new-tests` on a fix whose inline `mod tests` adds one test that detects the bug
+/// and one that asserts its own arithmetic. Only the second is a signal, the checkout is untouched,
+/// and no proving worktree outlives the command.
+#[test]
+fn prove_new_tests_earns_the_regression_test_and_flags_the_one_green_on_the_parent() {
+    let repo = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let full = repo.path().join(path);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, text).unwrap();
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"subject\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+    );
+    write(".gitignore", "/target\nCargo.lock\n");
+    write(
+        "src/lib.rs",
+        "pub fn double(x: u32) -> u32 {\nx + x + 1\n}\n",
+    );
+    git(repo.path(), &["init", "-q"]);
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    write(
+        "src/lib.rs",
+        "pub fn double(x: u32) -> u32 {\nx + x\n}\n\n#[cfg(test)]\nmod tests {\nuse super::*;\n\n#[test]\nfn double_of_two_is_four() {\nassert_eq!(double(2), 4);\n}\n\n#[test]\nfn arithmetic_still_works() {\nassert_eq!(2 + 2, 4);\n}\n}\n",
+    );
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "fix"]);
+    let target = tempfile::tempdir().unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--prove-new-tests",
+            "--prove-timeout-secs",
+            "300",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .arg("--prove-target-dir")
+        .arg(target.path())
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{reply}");
+    let proofs = reply["data"]["testProof"]["proofs"].as_array().unwrap();
+    let verdict_of = |name: &str| {
+        proofs
+            .iter()
+            .find(|proof| proof["name"] == name)
+            .map(|proof| {
+                (
+                    proof["parent"]["outcome"].clone(),
+                    proof["head"]["outcome"].clone(),
+                    proof["verdict"].clone(),
+                )
+            })
+            .unwrap_or_else(|| panic!("{name} not proven: {reply}"))
+    };
+    assert_eq!(
+        verdict_of("double_of_two_is_four"),
+        ("failed".into(), "passed".into(), "earned".into()),
+        "{reply}"
+    );
+    assert_eq!(
+        verdict_of("arithmetic_still_works"),
+        ("passed".into(), "passed".into(), "green_on_parent".into()),
+        "{reply}"
+    );
+    assert_eq!(codes(&reply), vec!["keel.test.green_on_parent"], "{reply}");
+
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(status.stdout.is_empty(), "the checkout was written");
+    let worktrees = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    let listed = String::from_utf8_lossy(&worktrees.stdout);
+    assert_eq!(listed.matches("worktree ").count(), 1, "{listed}");
 }

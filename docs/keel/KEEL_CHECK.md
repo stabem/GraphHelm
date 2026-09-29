@@ -3,7 +3,7 @@
 `graphhelm keel check` is the command that runs Keel's scope counter on a real change (#1330). The
 counter itself is `core/policy/src/keel.rs` (`classify_write`, `check_card`, and `check`, which
 joins them with the scope rule). The rules and their version are in
-`extensions/builtin/graphhelm-development-contracts/policies/keel.yaml` (version `1.2.0`).
+`extensions/builtin/graphhelm-development-contracts/policies/keel.yaml` (version `1.3.0`).
 
 ```sh
 graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <dir>]
@@ -61,10 +61,66 @@ never refused).
 | 2 | A finding blocks. `ok` is false and the report is still in `data`. |
 | 3 | Input error `GHCLI031_KEEL_CHECK_INPUT`: the range is not a range, git failed, or the card is not a card. |
 
+## Proving new tests: `--prove-new-tests`
+
+Keel Law 3 says a test is born against a named defect. `--prove-new-tests` checks that for every new
+Rust `#[test]` the counter charges (#1333):
+
+```sh
+graphhelm --json keel check --diff origin/main..HEAD --card card.json --prove-new-tests   [--prove-target-dir <dir>] [--prove-timeout-secs 900]
+```
+
+1. The base and the head are checked out as two detached worktrees under a fresh directory in the
+   system temporary directory. The user's checkout is never written. Both worktrees and that
+   directory are removed, by exact path, when the command ends.
+2. The head's test code is put into the base tree: a changed file under a test path (`tests/`,
+   `*_test.rs`, ...) is copied whole; a test inside a production file (an inline `mod tests`) is
+   grafted alone, with its module's `use` lines, into a `#[cfg(test)] mod keel_prove_graft` appended
+   to the base's copy of that file.
+3. Each test runs once per side: `cargo test -p <package> <--lib|--bins|--test <name>> -- <test name>`,
+   bounded by `--prove-timeout-secs` (the build included; the process tree is killed on timeout).
+   Every run shares one target directory (`--prove-target-dir`, else `CARGO_TARGET_DIR`, else
+   `graphhelm-keel-prove-target` in the temporary directory), with a `parent` and a `head`
+   subdirectory: each crate builds once per side, and cargo cannot take one checkout's build as
+   fresh for the other.
+
+Each test is reported in `data.testProof.proofs` with `name`, `path`, `line`, `parent` and `head`
+(`outcome` and the `detail` line that shows it) and `verdict`:
+
+| Parent | Head | Verdict | Signal |
+|---|---|---|---|
+| failed | passed | `earned` | none |
+| did not compile (the subject is new) | passed | `new_subject` | none; the compiler line is in `parent.detail` |
+| passed | passed | `green_on_parent` | `keel.test.green_on_parent` |
+| any | failed or did not compile | `red_on_head` | `keel.test.red_on_head` |
+| timed out, not found, ignored, not run | | `unproven` | `keel.test.unproven` |
+
+All three signals are warnings; none changes the exit code. `new_subject` is not red-on-parent
+evidence: a test of a function that did not exist cannot fail on the parent, and the reviewer reads
+whether it would catch a defect. A TypeScript or Python test the diff adds is listed as `unproven`
+("no runner for this language yet"); only Rust is run today. A setup failure (a revision that does
+not resolve, a worktree that cannot be added) is input error `GHCLI031_KEEL_CHECK_INPUT`, exit 3.
+
+Cleanup is by exact path. The two worktrees live in `keel-prove-<pid>-<nanos>/parent` and `/head`
+under the temporary directory; on every exit the prover runs `git worktree remove --force` on each
+of those two paths (also when an add failed halfway) and deletes the directory. It never runs
+`git worktree prune`. A run killed before it can clean up (Ctrl-C, a killed terminal) leaves its
+records; the next run removes those whose directory is gone, again one exact path at a time, and
+leaves any record whose directory still exists, since another run may own it. To clear them by
+hand, `git worktree list` shows them and `git worktree prune` removes every record whose directory
+is gone (in any location, not only the prover's).
+
+The pathogen suite `tools/pathogens/src/keel_prove.rs` runs the prover for real on a two-commit
+crate: a tautological test and a test that asserts its own mock are refused as
+`keel.test.green_on_parent`, and a real regression test beside the same fix passes.
+
 ## Limits
 
 The counts come from a line grammar over the diff, not a parser; the limits are the ones
 `keel.rs` and `keel.yaml` name. The scope rule reads paths from the diff headers. It does not
 decode git's quoted form for unusual file names, so such a path is a warning to check by hand.
+The test prover finds a test's name on the first added `fn` line after its `#[test]`, its crate by
+the nearest `Cargo.toml` with a `[package]`, and grafts an inline test by counting braces; a test
+it cannot place is `unproven` or `new_subject` with the reason, never silently dropped.
 The pathogen suite `tools/pathogens/src/keel_scope.rs` holds two specimens the check must refuse:
 an edit to a file the card does not list, and an extra test file added outside the card.

@@ -109,6 +109,17 @@ pub enum KeelCommand {
         /// The repository the range belongs to.
         #[arg(long, default_value = ".")]
         repo: PathBuf,
+        /// Run each new Rust `#[test]` on the base (with the head's test grafted in) and on the
+        /// head, in temporary worktrees; a test green on the base is `keel.test.green_on_parent`.
+        #[arg(long)]
+        prove_new_tests: bool,
+        /// Cargo target directory shared by every proving run. Default: `CARGO_TARGET_DIR`, else
+        /// `graphhelm-keel-prove-target` under the system temporary directory.
+        #[arg(long, requires = "prove_new_tests")]
+        prove_target_dir: Option<PathBuf>,
+        /// Bound, in seconds, on one `cargo test` run (build included).
+        #[arg(long, default_value_t = 900, requires = "prove_new_tests")]
+        prove_timeout_secs: u64,
     },
 }
 

@@ -929,7 +929,7 @@
           "id": "policy/keel",
           "kind": "policy",
           "path": "policies/keel.yaml",
-          "sha256": "sha256:c882d1e8c12762ba6626cb70dea63f4ce21dfcea7361db0cd61f8c8b6573d129",
+          "sha256": "sha256:b767522e86b5ffc1378f230e369dddbc08075eac0d878692726a73c027f46f4a",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -943,7 +943,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:3b03afd96f0ca2ecd0a6816204e2b17a383f6a80f1b2367a7e5b8b33229366b0",
+          "sha256": "sha256:5093504e3f1cec4c09c6d46293b888e12481ddadb9e0780fccf38504dd2b39e8",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -968,7 +968,7 @@
           "id": "skill/test-audit",
           "kind": "skill",
           "path": "skills/test-audit/SKILL.md",
-          "sha256": "sha256:4c37c52517c8f7a9aaa5e8c9ada7b25a122cc7daa183c9457dc033bcd09aa248",
+          "sha256": "sha256:da0407bb985d7c2a375275cd8c7ebfc8c69b33b4be5a1450a7843171fba34771",
           "effects": [],
           "permissions": [
             "package.read"
@@ -983,7 +983,7 @@
           "id": "fixture/keel-valid-policy-shipped-shape",
           "kind": "fixture",
           "path": "fixtures/keel/valid/policy-shipped-shape.json",
-          "sha256": "sha256:dd9022c0ffe7ca51c7230bb2eeee2cf0d9f6a1b8ef146710f1b199545f0e8db9",
+          "sha256": "sha256:208c5f9396777acc8c141906d30cc1c8963763f17e427598a8d9219bca954289",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -996,7 +996,7 @@
           "id": "fixture/keel-invalid-ladder-strikes-per-rung-zero",
           "kind": "fixture",
           "path": "fixtures/keel/invalid/ladder-strikes-per-rung-zero.json",
-          "sha256": "sha256:10be6feb91b0f3b7950f4739fb7162766221da0223a5bb009d9ee691e2859fd3",
+          "sha256": "sha256:d54642a2e0f6ad370c880de22fdb16f642390593f83999d53c36af9cbefff7f7",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1009,7 +1009,7 @@
           "id": "fixture/keel-invalid-surface-unknown-kind",
           "kind": "fixture",
           "path": "fixtures/keel/invalid/surface-unknown-kind.json",
-          "sha256": "sha256:9951c9ea1df25109a14283a25ded94037f58b8f4df103b3cf27b23ddf609c5fc",
+          "sha256": "sha256:5f47232ef899c3d18c6b96bdc0b37c2bdb4be3b6f7858430c76aaab11bb57379",
           "effects": [],
           "permissions": [],
           "requires": {

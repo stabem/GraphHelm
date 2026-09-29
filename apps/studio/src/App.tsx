@@ -1723,6 +1723,14 @@ export default function App({
       : latest,
     null,
   ), [eventList]);
+  const latestEvent = useMemo(() => eventList.reduce<{
+    sequence: number; kind: string; actorId: string | null; actorType: string | null; occurredAt: string | null;
+  } | null>(
+    (latest, event) => latest === null || event.sequence > latest.sequence
+      ? { sequence: event.sequence, kind: event.kind, actorId: event.actorId, actorType: event.actorType, occurredAt: event.occurredAt }
+      : latest,
+    null,
+  ), [eventList]);
   const agentReports = useMemo(() => {
     const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
     for (const event of eventList) {
@@ -2639,6 +2647,7 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               activity={recentActivity}
+              latestEvent={latestEvent}
               attention={pendingOwnerReview ? "needs_you" : status.attention}
               nextAction={pendingOwnerReview ? {
                 label: "Review pending proposal",

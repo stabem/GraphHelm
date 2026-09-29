@@ -206,6 +206,54 @@ describe("organized work overview", () => {
   });
 });
 
+/** New issue #86 observers. Each test checks a visible operator contract that the prior view did
+ * not cover: state-first Now, event/report separation, honest flat team fallback, and completion
+ * that remains unverified. */
+describe("compact run handoff", () => {
+  it("puts recorded running and queued nodes first and keeps them selectable", () => {
+    const select = vi.fn();
+    const queued = { ...node("queued-step"), state: "queued" as const };
+    const done = { ...node("finished-step"), state: "succeeded" as const };
+    render(<WorkOverview model={{ ...model, nodes: [done, queued] }} runStatus="running" selectedNode={null} onSelectNode={select} />);
+    const now = screen.getByRole("region", { name: "Now, last, and next" });
+    expect(now).toHaveTextContent("running");
+    expect(now).toHaveTextContent("queued-step");
+    const cards = screen.getAllByRole("button", { name: /Open node/ });
+    expect(cards[0]).toHaveTextContent("queued-step");
+    fireEvent.click(cards[0]);
+    expect(select).toHaveBeenCalledWith("queued-step");
+  });
+
+  it("shows the latest event by sequence and keeps the latest chat report separate", () => {
+    render(<WorkOverview
+      model={model}
+      latestEvent={{ sequence: 44, kind: "node_outcome_recorded", actorId: "system-runtime", actorType: "system", occurredAt: "2026-09-29T12:00:00Z" }}
+      activity={[{ sequence: 41, actorId: "agent-old", occurredAt: null, text: "Older" }, { sequence: 43, actorId: "agent-new", occurredAt: null, text: "Latest report" }]}
+      selectedNode={null}
+      onSelectNode={vi.fn()}
+    />);
+    const now = screen.getByRole("region", { name: "Now, last, and next" });
+    expect(now).toHaveTextContent("Event #44");
+    expect(now).toHaveTextContent("system-runtime");
+    expect(screen.getByRole("region", { name: "Where this run stands" })).toHaveTextContent("agent-new");
+    expect(screen.getByRole("region", { name: "Where this run stands" })).toHaveTextContent("Latest report");
+  });
+
+  it("states that session relationships are unavailable without inventing parentage", () => {
+    render(<WorkOverview model={model} crew={[{ id: "builder", charter: null }]} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Team" })).toBeInTheDocument();
+    expect(screen.getByText("Session relationships unavailable · showing a flat team list.")).toBeInTheDocument();
+    expect(screen.queryByText(/parent|child|reports to/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps a completed node visibly unverified", () => {
+    const completed = { ...node("finished"), state: "succeeded" as const, resultSource: "model_reply" as const, touches: 1 };
+    render(<WorkOverview model={{ ...model, nodes: [completed] }} runStatus="completed" selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Open node finished/ })).toHaveTextContent("review needed");
+    expect(screen.getByRole("note")).toHaveTextContent("does not prove its goal passed");
+  });
+});
+
 /** #1083 F9: a completed demonstration run carried `Evidence needs attention · 6 findings` in
  * amber - an alarm on a run that needs nothing. A demonstration run gets a neutral note with the
  * same findings readable; a real run with the same findings keeps the alarm. */

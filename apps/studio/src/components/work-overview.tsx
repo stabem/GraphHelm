@@ -18,12 +18,14 @@ type Talk = { key: string; label: string; participants: string[]; count: number;
 type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
 type AgentReport = { sequence: number; occurredAt: string | null; text: string | null };
 type RecordedUpdate = { sequence: number; occurredAt: string | null };
+type LatestEvent = { sequence: number; kind: string; actorId: string | null; actorType: string | null; occurredAt: string | null };
 
 export interface WorkOverviewProps {
   model: GraphModel;
   projectName?: string | null;
   projectPath?: string | null;
   latestRecordedUpdate?: RecordedUpdate | null;
+  latestEvent?: LatestEvent | null;
   crew?: CrewMember[];
   talks?: Talk[];
   activity?: RecordedActivity[];
@@ -78,10 +80,9 @@ function latestObservationForAgent(model: GraphModel, agentId: string): { node: 
   let latest: { node: GraphNode; at: string | null; timestamp: number } | null = null;
   for (const node of model.nodes) {
     for (const event of node.history) {
-      // Runtime lifecycle events may be recorded by system-runtime while the durable assignment
-      // names the agent doing the work. Keep recorder and responsible actor separate, but let the
-      // collaboration card follow the assigned agent's actual node history.
-      if (event.actorId !== agentId && node.assignedActor?.id !== agentId) continue;
+      // The event actor is the only historical fact this event carries. Current assignment is a
+      // separate present-tense responsibility and must not rewrite who recorded old work.
+      if (event.actorId !== agentId) continue;
       const timestamp = event.sequence;
       if (latest === null || timestamp >= latest.timestamp) {
         latest = { node, at: event.occurredAt, timestamp };
@@ -101,6 +102,7 @@ export function WorkOverview({
   projectName = null,
   projectPath = null,
   latestRecordedUpdate = null,
+  latestEvent = null,
   crew = [],
   talks = [],
   activity = [],
@@ -157,6 +159,12 @@ export function WorkOverview({
   const orderedCrew = [...crew].sort((left, right) =>
     (agentReports[right.id]?.sequence ?? 0) - (agentReports[left.id]?.sequence ?? 0),
   );
+  const orderedNodes = [...model.nodes].sort((left, right) => {
+    const leftActive = ["running", "queued", "linting"].includes(left.state) ? 0 : 1;
+    const rightActive = ["running", "queued", "linting"].includes(right.state) ? 0 : 1;
+    return leftActive - rightActive;
+  });
+  const activeNodeNames = model.nodes.filter((node) => ["running", "queued", "linting"].includes(node.state)).map((node) => node.id);
 
   return (
     <main className="work-overview" aria-label="Work overview">
@@ -174,6 +182,12 @@ export function WorkOverview({
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
+
+      <section className="work-now-strip" aria-label="Now, last, and next">
+        <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong><small>{activeNodeNames.length > 0 ? `${activeNodeNames.slice(0, 3).join(", ")}${activeNodeNames.length > 3 ? ` +${activeNodeNames.length - 3}` : ""}` : "No active node recorded"}</small></div>
+        <div><span>Last</span><strong>{latestEvent ? `Event #${latestEvent.sequence} · ${readable(latestEvent.kind)}` : "No latest event recorded"}</strong><small>{latestEvent ? `${latestEvent.actorId ?? "Unknown actor"} · ${ago(latestEvent.occurredAt)}` : "Last chat report is shown below"}</small></div>
+        <div><span>Next</span><strong>{nextAction?.label ?? "No next action recorded"}</strong><small>{nextAction?.detail ?? "The Runtime has recorded no owner action."}</small></div>
+      </section>
 
       <section className="work-identity" aria-label="Active workspace">
         <div><span>Project</span><strong>{projectName ?? "Project name unavailable"}</strong></div>
@@ -210,15 +224,17 @@ export function WorkOverview({
         <aside className="work-sidebar" aria-label="Collaboration">
           <section className="work-section">
             <div className="work-section-heading">
-              <div><Users aria-hidden="true" size={17} /><h2>Collaboration</h2></div>
+              <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
               <span>{crew.length}</span>
             </div>
+            {crew.length > 0 && <p className="work-team-flat-note">Session relationships unavailable · showing a flat team list.</p>}
             {crew.length === 0 ? (
               <p className="work-empty">No agents have been observed in this run.</p>
             ) : (
               <div className="work-agent-list">
                 {orderedCrew.map((agent) => {
                   const observation = latestObservationForAgent(model, agent.id);
+                  const responsibilities = model.nodes.filter((node) => node.assignedActor?.id === agent.id);
                   const report = agentReports[agent.id];
                   const isSelected = selectedAgent === agent.id;
                   return (
@@ -232,6 +248,8 @@ export function WorkOverview({
                           <span>Last node update</span>
                           {observation ? (
                             <><strong>{observation.node.id}</strong><small>{ago(observation.at)}</small></>
+                          ) : responsibilities.length > 0 ? (
+                            <><strong>{responsibilities.map((node) => node.id).join(", ")}</strong><small>Current responsibility · no actor event recorded</small></>
                           ) : <strong className="work-muted">No node activity yet</strong>}
                         </span>
                         {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
@@ -297,7 +315,7 @@ export function WorkOverview({
             <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
           ) : (
             <div className="work-node-grid">
-              {model.nodes.map((node) => {
+              {orderedNodes.map((node) => {
                 const latest = latestNodeEvent(node);
                 const result = nodeResult(node);
                 const incoming = model.edgesKnown ? model.edges.filter((edge) => edge.to === node.id && nodeIds.has(edge.from)) : [];

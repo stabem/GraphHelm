@@ -2340,6 +2340,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-counts { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; color: #c5c5ce; font-size: 12px; }
 .work-counts > span { display: inline-flex; align-items: center; gap: 6px; }
 .work-count-attention { color: #ffb36b; }
+.work-now-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+.work-now-strip > div { display: grid; gap: 3px; min-width: 0; padding: 12px; border: 1px solid #494052; border-radius: 10px; background: #241f2b; }
+.work-now-strip span { color: #b9a6d2; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.work-now-strip strong { color: #f0eaf9; font-size: 13px; overflow-wrap: anywhere; }
+.work-now-strip small { color: #aaa2b4; font-size: 11px; overflow-wrap: anywhere; }
 .work-identity { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 24px; }
 .work-identity > div { display: grid; gap: 4px; min-width: 0; padding: 11px 12px; border: 1px solid #303035; border-radius: 9px; background: #1a1920; }
 .work-identity span { color: #a5a1b1; font-size: 11px; }
@@ -2360,6 +2365,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-layout { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(280px,.9fr); gap: 24px; align-items: start; }
 .work-sidebar { min-width: 0; display: grid; gap: 28px; }
 .work-section { min-width: 0; }
+.work-team-flat-note { margin: -4px 0 10px; color: #aaa2b4; font-size: 11px; }
 .work-muted { color: #a2a2ae; font-weight: 400; }
 .work-caution { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #705335; background: #30261e; color: #ecc99d; border-radius: 10px; font-size: 12px; }
 .work-caution ul { margin: 8px 0 0; padding-left: 18px; }
@@ -2448,6 +2454,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-verification button { flex-shrink: 0; color: #cbb7ff; border: 0; background: transparent; padding: 8px 0; }
 .work-overview button:focus-visible, .work-overview summary:focus-visible, .work-view-switch button:focus-visible { outline: 2px solid #c6afff; outline-offset: 3px; }
 @container (max-width: 800px) {
+  .work-now-strip { grid-template-columns: minmax(0,1fr); }
   .work-identity { grid-template-columns: minmax(0,1fr); }
   .work-snapshot-grid { grid-template-columns: minmax(0,1fr); }
   .work-overview-scroll { padding: 24px 18px calc(var(--dock-reserve, 112px) + 24px); }

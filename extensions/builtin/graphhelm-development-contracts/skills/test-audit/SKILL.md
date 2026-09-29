@@ -33,6 +33,12 @@ Before writing or changing a test, answer four questions in the PR body, one lin
    that no real caller uses? If yes, that seam is surface spent for the test alone; prefer driving
    the real entry point.
 
+Question 2 has an instrument for Rust: `graphhelm keel check --diff <base>..<head> --prove-new-tests`
+runs each new `#[test]` on the base and on the head (`docs/keel/KEEL_CHECK.md`). `earned` (red on the
+base, green on the head) answers it; `keel.test.green_on_parent` means the test would have passed
+before the fix, so it names no defect this change removes; `new_subject` means the base could not
+compile it, and the answer is still yours to give.
+
 If question 2 or 3 has no honest answer, do not write the test. Also state its **cost**: roughly how
 long it runs and what it needs (a process, a network port, a platform). A test that only mirrors
 the implementation of a reversible, low-impact change is skipped; the change's own observer, or

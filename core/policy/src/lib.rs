@@ -4,6 +4,7 @@ pub mod adoption;
 mod code_contract;
 mod evaluator;
 pub mod keel;
+pub mod keel_prove;
 
 pub use code_contract::{
     CodeRuleSpec, Dominance, ResolutionRefusal, ResolvedCodeContract, RuleRecord, dominance,

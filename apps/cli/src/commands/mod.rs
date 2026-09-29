@@ -549,7 +549,22 @@ pub fn run(command: TopLevel) -> Outcome {
             KeelCommand::Query { repo, index, term } => {
                 keel::run(keel_contract_index::Operation::Query { repo, index, term })
             }
-            KeelCommand::Check { diff, card, repo } => keel::check(&repo, &diff, card.as_deref()),
+            KeelCommand::Check {
+                diff,
+                card,
+                repo,
+                prove_new_tests,
+                prove_target_dir,
+                prove_timeout_secs,
+            } => keel::check(
+                &repo,
+                &diff,
+                card.as_deref(),
+                prove_new_tests.then_some(keel::ProveArgs {
+                    target_dir: prove_target_dir,
+                    timeout_secs: prove_timeout_secs,
+                }),
+            ),
         },
         TopLevel::Quality(args) => match args.command {
             QualityCommand::Certify {

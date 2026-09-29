@@ -4,7 +4,7 @@
 # `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
 # rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
 # Bump `version` in the same commit as any change below.
-version: "1.2.0"
+version: "1.3.0"
 
 # READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
 # is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
@@ -18,6 +18,13 @@ card:
 # A path that is neither a scope path nor under one is `keel.scope.path_outside_card`. It BLOCKS when
 # a card was declared and the path was read plainly; a quoted or escaped path the checker does not
 # decode is a signal. Without a card there is no scope rule, only the counts below as signals.
+
+# TEST PROOF (1.3.0, #1333). `graphhelm keel check ... --prove-new-tests` runs every new Rust `#[test]`
+# on the base (the head's test code grafted in) and on the head, each in a temporary worktree. Red on
+# the base and green on the head is `earned`; a base that does not compile is `new_subject`, reported
+# with the compiler line and raising nothing. `keel.test.green_on_parent` (green on the base),
+# `keel.test.red_on_head` and `keel.test.unproven` (timeout, not found, unsupported language) are
+# signals, never blocks.
 
 # WRITE ECONOMY. What one node may bring into existence without a declared allowance. Zero is a
 # budget: a new dependency is never free. Overrun is refused by NAME (`keel.surface.<kind>_over_budget`),

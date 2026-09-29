@@ -711,17 +711,17 @@ pub fn check(diff: &str, card: Option<(&Card, u64)>, policy: &KeelPolicy) -> Kee
     }
 }
 
-struct DiffFile {
-    path: String,
-    is_new: bool,
+pub(crate) struct DiffFile {
+    pub(crate) path: String,
+    pub(crate) is_new: bool,
     /// Added lines only (without the leading `+`).
-    added: Vec<String>,
+    pub(crate) added: Vec<String>,
     /// Added and context lines in order, with a leading marker `+` or ` ` so manifest section
     /// tracking can see headings that were not themselves added.
     added_with_context: Vec<String>,
 }
 
-fn parse(diff: &str) -> Vec<DiffFile> {
+pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
     let mut pending_new = false;
     let mut in_hunk = false;
@@ -992,7 +992,7 @@ impl Manifest {
     }
 }
 
-fn is_test_path(path: &str) -> bool {
+pub(crate) fn is_test_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
     lower.contains("/tests/")

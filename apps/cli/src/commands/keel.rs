@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use graphhelm_policy::keel::{self as policy_keel, Card, KeelPolicy};
+use graphhelm_policy::keel_prove::{self, ProveOptions};
 use graphhelm_protocols::Diagnostic;
 
 use crate::output::{CommandOutput, Outcome};
@@ -43,11 +45,24 @@ fn input_error(message: impl Into<String>, path: &str) -> Outcome {
     )
 }
 
-/// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]` (#1330).
+/// `--prove-new-tests` and its bounds (#1333).
+pub(super) struct ProveArgs {
+    pub(super) target_dir: Option<PathBuf>,
+    pub(super) timeout_secs: u64,
+}
+
+/// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]
+/// [--prove-new-tests]` (#1330, #1333).
 ///
 /// Exit 0 when nothing blocks (signals travel as warnings), 2 when a finding blocks (the report
-/// still travels in `data`), 3 when the range, the repository or the card cannot be read.
-pub(super) fn check(repo: &Path, range: &str, card_path: Option<&Path>) -> Outcome {
+/// still travels in `data`), 3 when the range, the repository or the card cannot be read, or the
+/// proving worktrees cannot be set up.
+pub(super) fn check(
+    repo: &Path,
+    range: &str,
+    card_path: Option<&Path>,
+    prove: Option<ProveArgs>,
+) -> Outcome {
     if range.starts_with('-') || !range.contains("..") {
         return input_error("--diff takes a git range `<base>..<head>`", "/diff");
     }
@@ -97,9 +112,38 @@ pub(super) fn check(repo: &Path, range: &str, card_path: Option<&Path>) -> Outco
         card.as_ref().map(|(card, bytes)| (card, *bytes)),
         &policy,
     );
+    let proof = match prove {
+        None => None,
+        Some(args) => {
+            let (base, head) = range
+                .split_once("...")
+                .or_else(|| range.split_once(".."))
+                .unwrap_or((range, "HEAD"));
+            let scratch_root = std::env::temp_dir();
+            let target_dir = args
+                .target_dir
+                .or_else(|| std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
+                .unwrap_or_else(|| scratch_root.join("graphhelm-keel-prove-target"));
+            let options = ProveOptions {
+                repo: repo.to_path_buf(),
+                base: if base.is_empty() { "HEAD" } else { base }.to_owned(),
+                head: if head.is_empty() { "HEAD" } else { head }.to_owned(),
+                target_dir,
+                scratch_root,
+                timeout: Duration::from_secs(args.timeout_secs),
+            };
+            match keel_prove::prove_new_tests(&diff, &options) {
+                Ok(proof) => Some(proof),
+                Err(error) => {
+                    return input_error(format!("--prove-new-tests: {error}"), "/diff");
+                }
+            }
+        }
+    };
     let diagnostics: Vec<Diagnostic> = report
         .findings
         .iter()
+        .chain(proof.iter().flat_map(|proof| proof.findings.iter()))
         .map(|finding| {
             let path = finding.path.as_deref().unwrap_or("/");
             let message = format!("{}: {}", finding.rule, finding.detail);
@@ -111,10 +155,18 @@ pub(super) fn check(repo: &Path, range: &str, card_path: Option<&Path>) -> Outco
         })
         .collect();
     let refused = report.refused;
-    let data = match serde_json::to_value(&report) {
+    let mut data = match serde_json::to_value(&report) {
         Ok(data) => data,
         Err(error) => return Outcome::internal(COMMAND, error.to_string()),
     };
+    if let (Some(proof), Some(object)) = (proof, data.as_object_mut()) {
+        match serde_json::to_value(proof) {
+            Ok(value) => {
+                object.insert("testProof".into(), value);
+            }
+            Err(error) => return Outcome::internal(COMMAND, error.to_string()),
+        }
+    }
     Outcome {
         output: CommandOutput {
             ok: !refused,

@@ -16,7 +16,7 @@ A keel is laid before any plank and is the part of the hull that resists drift. 
 one of two things: laid before (the card, the budget, the named defect) or resists drift (the
 classifier, the ladder, the receipt).
 
-**Today Keel is guidance and measurement, not punishment** (rules file `1.2.0`). Its goal is
+**Today Keel is guidance and measurement, not punishment** (rules file `1.3.0`). Its goal is
 quality first, then the lowest total cost per proven delivery. Count findings are signals for the
 reviewer; only objective contracts refuse (an unparseable diff, a card scope that is not a list of
 paths). The rung ladder is computed and reported but applied only when `ladder.enabled` is true, and
@@ -76,7 +76,8 @@ the test itself constructed, or that matches a log message instead of a structur
 proof and is refused by the meaningful-test policy this package already carries. Reuse an existing
 instrument when it already observes the contract; a second test over the same promise is a
 `newTest` charge with nothing bought. Skip tests for reversible, low-impact changes that only
-mirror the implementation. A new or changed test states its cost (run time, what it needs) and
+mirror the implementation. For Rust, `graphhelm keel check ... --prove-new-tests` runs each new test on the parent and the
+head; a test green on the parent is the signal `keel.test.green_on_parent`. A new or changed test states its cost (run time, what it needs) and
 passes the four-question gate of the `test-audit` skill; removing a test needs that skill's
 deletion record naming the observer that still covers its obligation.
 

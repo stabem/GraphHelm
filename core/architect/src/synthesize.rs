@@ -301,7 +301,7 @@ fn single_draft(
     let mut prompt_sha256s = Vec::new();
     let mut previous: Option<(String, Vec<Diagnostic>)> = None;
     let mut round: u8 = 1;
-    let mut judge_usage = Usage::default();
+    let mut judge_usage: Option<Usage> = None;
     loop {
         let repair = previous
             .as_ref()
@@ -317,7 +317,10 @@ fn single_draft(
                 if let Some(judge) = judge {
                     let request = judgment::nodes::request(profile, catalog, &compiled.graph);
                     let judged = judge.judge(&request)?;
-                    judge_usage = add_usage(judge_usage, judged.usage);
+                    // No judge call is an identity, not a call with unreported meters.
+                    let accumulated = judge_usage
+                        .map_or(judged.usage, |previous| add_usage(previous, judged.usage));
+                    judge_usage = Some(accumulated);
                     let (mut diagnostics, nodes, unresolved) =
                         judgment::nodes::read(&judged, &compiled.graph, catalog);
                     if !diagnostics.is_empty() {
@@ -335,7 +338,7 @@ fn single_draft(
                     judgments = Some(JudgmentReport {
                         nodes,
                         unresolved,
-                        usage: judge_usage,
+                        usage: accumulated,
                     });
                 }
                 return Ok((

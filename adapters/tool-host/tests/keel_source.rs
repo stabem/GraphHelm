@@ -247,7 +247,10 @@ fn runtime_capsule_reaches_a_tail_symbol_from_the_retained_snapshot() {
     // Regression: choosing every candidate's prefix loses the only relevant symbol. <1s, local Git/files.
     let dir = repository();
     let prefix = "// unrelated introductory material\n".repeat(700);
-    let tail = "pub fn reconcile_ballots() {\n    count_ballots();\n}\n";
+    let tail = r"pub fn reconcile_ballots() {
+    count_ballots();
+}
+";
     std::fs::write(dir.path().join("lib.rs"), format!("{prefix}{tail}")).unwrap();
     commit_all(dir.path());
     let KeelSnapshotSelection::Snapshot(ports) = KeelSnapshotPorts::try_open(dir.path()).unwrap()

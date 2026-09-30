@@ -120,6 +120,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
 
 fn reply(text: &str) -> ModelReply {
     ModelReply {
+        termination: None,
         text: text.to_owned(),
         usage: Usage {
             input_tokens: Some(12),
@@ -143,6 +144,7 @@ fn cognitive_work() -> NodeWork {
         execution_id: "exec-1".to_owned(),
         node_id: "implement".to_owned(),
         attempt: 1,
+        max_output_tokens: None,
         prompt: prompt(),
         kind: NodeWorkKind::Cognitive,
         tool_failure_semantics: Default::default(),
@@ -158,6 +160,7 @@ fn tool_work() -> NodeWork {
         execution_id: "exec-1".to_owned(),
         node_id: "tests".to_owned(),
         attempt: 1,
+        max_output_tokens: None,
         prompt: prompt(),
         kind: NodeWorkKind::Tool,
         tool_failure_semantics: Default::default(),
@@ -326,5 +329,75 @@ impl graphhelm_runtime::ports::GateRegistryPort for NoGates {
         _evidence: &serde_json::Value,
     ) -> Option<graphhelm_runtime::ports::GateEvaluation> {
         None
+    }
+}
+
+// Contract: a nonempty partial reply, even valid-looking judge JSON, never succeeds or retries
+// unchanged. Existing empty-reply/malformed-judge tests do not carry termination metadata.
+// Cost: in-process model I/O fixture; no production seam.
+#[test]
+fn issue178_incomplete_plain_and_judge_replies_are_terminal_with_sealed_reason() {
+    for reason in [
+        "output_limit",
+        "context_limit",
+        "tool_call",
+        "content_filter",
+        "refusal",
+        "paused",
+        "unknown",
+        "completed",
+    ] {
+        for judge in [false, true] {
+            let reply: ModelReply = serde_json::from_value(serde_json::json!({
+                "text": "{\"passed\":true,\"findings\":[]}",
+                "usage":{"inputTokens":12,"outputTokens":5},
+                "termination":{"reason":reason,"providerReason":"provider-reason"}
+            }))
+            .unwrap();
+            let executor = executor(Ok(reply), ToolDisposition::Completed { exit_code: 0 });
+            let mut work = cognitive_work();
+            if judge {
+                work.judge = Some(serde_json::from_value(serde_json::json!({
+                    "judgeId":"judge-output", "userStory":"a complete answer", "mcpSurface":"fixture"
+                })).unwrap());
+            }
+            let outcome = block_on(executor.execute(&work)).unwrap();
+            let completed = reason == "completed";
+            assert_eq!(
+                outcome.outcome,
+                if completed {
+                    NodeOutcome::Succeeded
+                } else {
+                    NodeOutcome::TerminalFailure
+                },
+                "{reason}, judge={judge}"
+            );
+            assert_eq!(
+                outcome.reason,
+                (!completed).then_some(NodeOutcomeReason::MalformedOutput)
+            );
+            assert_eq!(outcome.gate_verdict.is_some(), completed && judge);
+            assert_eq!(outcome.summary.output_tokens, Some(5));
+            let sealed = outcome
+                .sealables
+                .iter()
+                .find(|item| {
+                    item.local_ref_suffix
+                        == if completed && judge {
+                            "termination"
+                        } else {
+                            "reply"
+                        }
+                })
+                .unwrap();
+            let sealed: serde_json::Value = serde_json::from_slice(&sealed.bytes).unwrap();
+            let termination = if completed && judge {
+                &sealed
+            } else {
+                &sealed["termination"]
+            };
+            assert_eq!(termination["reason"], reason);
+            assert_eq!(termination["providerReason"], "provider-reason");
+        }
     }
 }

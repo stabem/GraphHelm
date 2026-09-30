@@ -261,6 +261,7 @@ fn a_typesafe_route_on_the_draft_door_is_unsupported_and_sends_nothing() {
     let call = ModelCall {
         prompt: "draft a graph".to_owned(),
         max_tokens: 16,
+        max_output_tokens: None,
     };
     assert_eq!(
         adapter.call(&sentinel_key(), &call).unwrap_err(),

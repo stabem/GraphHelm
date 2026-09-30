@@ -568,7 +568,21 @@ fn build_work(
     } else {
         crate::executor::ToolFailureSemantics::default()
     };
+    let max_output_tokens = if kind == crate::classify::NodeWorkKind::Cognitive {
+        graph_node
+            .properties
+            .get("model")
+            .and_then(|model| model.get("maxOutputTokens"))
+            .map(|cap| {
+                serde_json::from_value::<std::num::NonZeroU32>(cap.clone())
+                    .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     Ok(NodeWork {
+        max_output_tokens,
         execution_id: execution_id.to_string(),
         node_id: node.to_owned(),
         attempt,

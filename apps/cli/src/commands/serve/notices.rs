@@ -91,6 +91,7 @@ mod tests {
             execution_id: "exec-notices".to_owned(),
             node_id: "node-next".to_owned(),
             attempt: 1,
+            max_output_tokens: None,
             prompt: graphhelm_runtime::prompt::tool_placeholder(),
             kind,
             tool_failure_semantics: ToolFailureSemantics::default(),

@@ -380,6 +380,7 @@ impl DraftModel for GatewayDraftModel {
         let call = ModelCall {
             prompt: prompt.to_owned(),
             max_tokens: MAX_TOKENS,
+            max_output_tokens: None,
         };
         let reply = match &self.credential {
             Credential::Leased(key) => {
@@ -388,6 +389,13 @@ impl DraftModel for GatewayDraftModel {
             Credential::None => RuntimeAdapter::new(&self.route, Vec::new()).call(&call),
         };
         reply
+            .and_then(|reply| {
+                if reply.is_incomplete() {
+                    Err(graphhelm_gateway::taxonomy::GatewayError::MalformedOutput)
+                } else {
+                    Ok(reply)
+                }
+            })
             .map(|reply| DraftReply {
                 text: reply.text,
                 usage: Some(reply.usage),

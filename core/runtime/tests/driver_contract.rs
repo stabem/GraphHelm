@@ -107,6 +107,7 @@ fn cognitive_work() -> NodeWork {
         execution_id: "exec-1".to_owned(),
         node_id: "implement".to_owned(),
         attempt: 1,
+        max_output_tokens: None,
         prompt: prompt(),
         kind: NodeWorkKind::Cognitive,
         tool_failure_semantics: Default::default(),
@@ -122,6 +123,7 @@ fn tool_work() -> NodeWork {
         execution_id: "exec-1".to_owned(),
         node_id: "tests".to_owned(),
         attempt: 1,
+        max_output_tokens: None,
         prompt: prompt(),
         kind: NodeWorkKind::Tool,
         tool_failure_semantics: Default::default(),
@@ -179,6 +181,7 @@ fn executor_with_reuse(
 
 fn reply(text: &str) -> ModelReply {
     ModelReply {
+        termination: None,
         text: text.to_owned(),
         usage: Usage {
             input_tokens: Some(12),

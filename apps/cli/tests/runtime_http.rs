@@ -4022,3 +4022,344 @@ fn a_project_that_is_not_a_string_is_refused_rather_than_quietly_ignored() {
         "a mistyped project must be refused at the field, not folded into the default: {reply}"
     );
 }
+
+// Contract: the graph's explicit model cap reaches the provider over real HTTP and a partial
+// response ends after one attempt. Existing HTTP journeys omit caps and provider stop reasons;
+// an adapter-only request cannot catch a dropped node declaration. Cost: loopback HTTP and the
+// real CLI process, a temporary event store, only fixture keys; no new production seam.
+#[test]
+fn issue178_graph_output_cap_reaches_http_and_truncation_is_not_retried() {
+    for (node_cap, route_cap) in [(6000, None), (7000, Some(6000))] {
+        let directory = tempfile::tempdir().unwrap();
+        let project = plain_project(directory.path());
+        let events = directory.path().join("events");
+        let broker = directory.path().join("broker");
+        let keyring = directory.path().join("keyring");
+        std::fs::create_dir_all(&keyring).unwrap();
+        let staging = directory.path().join("staging");
+        let key_id = "output-cap-key";
+        let route_id = "output_cap_route";
+        credential_set(&broker, &keyring, key_id, "cred_output_cap", route_id);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let provider_base = format!("http://{}", listener.local_addr().unwrap());
+        let (captured_tx, captured_rx) = std::sync::mpsc::channel();
+        let provider = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "provider request was never sent"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("fixture listener: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            captured_tx
+                .send(serde_json::from_slice::<Value>(&body).unwrap())
+                .unwrap();
+            let reply = r#"{"content":[{"type":"text","text":"partial answer"}],"stop_reason":"max_tokens","usage":{"input_tokens":12,"output_tokens":6000}}"#;
+            write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+        });
+        let mut route = serde_json::json!({
+            "id":route_id, "provider":"anthropic", "transport":"direct_api",
+            "authentication":"api_key", "billingMode":"per_token", "baseUrl":provider_base,
+            "model":"fixture-model", "credentialRef":"cred_output_cap",
+            "profiles":["critical_reasoning"], "enabled":true, "timeoutSeconds":5
+        });
+        if let Some(cap) = route_cap {
+            route["maxOutputTokens"] = cap.into();
+        }
+        let manifest = write_json(
+            directory.path(),
+            "manifest.json",
+            &serde_json::json!({
+                "manifestVersion":1, "routes":[route]
+            }),
+        );
+        let execution = "exec-output-cap";
+        let graph = agent_chain_graph(directory.path(), execution);
+        let mut document: Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&graph).unwrap()).unwrap();
+        document["spec"]["nodes"]["step_one"]["model"] =
+            serde_json::json!({"maxOutputTokens":node_cap});
+        let graph = write_json(directory.path(), "capped-graph.json", &document);
+        let extra = ServeExtra {
+            args: vec![
+                "--manifest".into(),
+                manifest.to_str().unwrap().into(),
+                "--broker".into(),
+                broker.to_str().unwrap().into(),
+                "--keyring".into(),
+                keyring.to_str().unwrap().into(),
+                "--key-id".into(),
+                key_id.into(),
+                "--route".into(),
+                route_id.into(),
+                "--staging".into(),
+                staging.to_str().unwrap().into(),
+                "--allow-program".into(),
+                "git".into(),
+            ],
+            env: vec![
+                ("GRAPHHELM_GATEWAY_KEY".into(), gateway_key()),
+                ("GRAPHHELM_EVENTS_KEY".into(), gateway_key()),
+            ],
+        };
+        let (_guard, base, token) = serve_with(&events, &extra);
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/start"),
+            &token,
+            &[
+                ("Idempotency-Key", "output-cap-start"),
+                ("X-GraphHelm-Actor", "agent-output-cap"),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &serde_json::json!({"file":graph.to_str().unwrap(), "mode":"autopilot", "project":project.to_str().unwrap()}),
+        );
+        provider.join().unwrap();
+        let sent = captured_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            sent["max_tokens"], 6000,
+            "declared ceiling must survive every runtime layer"
+        );
+        assert_eq!(status, 200, "{reply}");
+        assert_ne!(reply["data"]["status"], "completed", "{reply}");
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap();
+        let (_, history) = store.read_unique_replay_stream().unwrap();
+        let outcomes: Vec<_> = history
+            .iter()
+            .filter_map(|event| match &event.kind {
+                graphhelm_protocols::EventKind::NodeOutcomeRecorded(record)
+                    if matches!(
+                        record.outcome,
+                        graphhelm_protocols::NodeOutcome::Succeeded
+                            | graphhelm_protocols::NodeOutcome::TerminalFailure
+                            | graphhelm_protocols::NodeOutcome::RetryableFailure
+                    ) =>
+                {
+                    Some(record)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "neither the partial attempt nor its dependent may run again"
+        );
+        assert_eq!(
+            outcomes[0].outcome,
+            graphhelm_protocols::NodeOutcome::TerminalFailure
+        );
+        assert_eq!(
+            outcomes[0].reason,
+            Some(graphhelm_protocols::NodeOutcomeReason::MalformedOutput)
+        );
+    }
+}
+
+// Contract: reply suggestions cannot judge or accept valid-looking text when its provider says
+// it stopped early. Existing suggestions coverage tests finished runs only, before model I/O.
+// Cost: one CLI fixture start, local HTTP services and fixture-only keys; no paid calls or seams.
+#[test]
+fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-incomplete-suggestions";
+    let graph = agent_chain_graph(directory.path(), execution);
+    let fixtures = write_json(
+        directory.path(),
+        "fixtures.json",
+        &serde_json::json!({
+            "nodeOutcomes":{"step_one":"unknown"}
+        }),
+    );
+    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "autopilot",
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap();
+    let started: Value = serde_json::from_slice(&start.stdout).unwrap();
+    assert_eq!(
+        started["data"]["nodeStateCounts"]["waiting_input"], 1,
+        "{started}"
+    );
+
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    credential_set(
+        &broker,
+        &keyring,
+        "suggest-key",
+        "chat-credential",
+        "chat_route",
+    );
+    let mut credential = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "credential",
+            "set",
+            "--broker",
+            broker.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "suggest-key",
+            "--ref",
+            "judge-credential",
+            "--provider",
+            "typesafe",
+            "--usable-by",
+            "judge_route",
+        ])
+        .env("GRAPHHELM_GATEWAY_KEY", gateway_key())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    credential
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"fixture-judge-key")
+        .unwrap();
+    assert!(credential.wait_with_output().unwrap().status.success());
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let provider_base = format!("http://{}", listener.local_addr().unwrap());
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let provider = std::thread::spawn(move || {
+        let mut chat_calls = 0;
+        let mut judge_calls = 0;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline && stop_rx.try_recv().is_err() {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("fixture listener: {error}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let reply = if let Some(questions) = request["questions"].as_object() {
+                judge_calls += 1;
+                let answers: serde_json::Map<String, Value> = questions.keys().map(|key| (key.clone(),
+                    serde_json::json!({"type":"score","score":3.0,"legend":{},"probabilities":{"0":0.0,"1":0.0,"2":0.0,"3":1.0},"confidence":1.0}))).collect();
+                serde_json::json!({"model":"jev-latest","answers":answers,"usage":{}})
+            } else {
+                chat_calls += 1;
+                let candidates = serde_json::json!([
+                    {"to":null,"draft":"Please continue the first step.","reason":"next action"},
+                    {"to":null,"draft":"Please clarify the required input.","reason":"next action"},
+                    {"to":null,"draft":"Please explain the waiting state.","reason":"next action"}
+                ]).to_string();
+                serde_json::json!({"content":[{"type":"text","text":candidates}],"stop_reason":"max_tokens"})
+            }.to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+        }
+        (chat_calls, judge_calls)
+    });
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion":1,"routes":[
+                {"id":"chat_route","provider":"anthropic","transport":"direct_api","authentication":"api_key","billingMode":"per_token","baseUrl":provider_base,"model":"fixture-chat","credentialRef":"chat-credential","profiles":[],"enabled":true},
+                {"id":"judge_route","provider":"typesafe","transport":"direct_api","authentication":"api_key","billingMode":"per_token","baseUrl":provider_base,"model":"jev-latest","credentialRef":"judge-credential","profiles":[],"enabled":true}
+            ]
+        }),
+    );
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            "suggest-key".into(),
+            "--route".into(),
+            "chat_route".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".into(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".into(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/reply-suggestions?judgeRoute=judge_route"),
+        Some(&token),
+    );
+    stop_tx.send(()).unwrap();
+    let calls = provider.join().unwrap();
+    assert_eq!(
+        calls,
+        (1, 0),
+        "incomplete candidates cannot be judged or retried: {reply}"
+    );
+    assert_eq!(reply["data"]["state"], "unavailable", "{reply}");
+    assert_eq!(reply["data"]["suggestions"], serde_json::json!([]));
+}

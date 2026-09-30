@@ -309,3 +309,114 @@ def test_the_report_and_chart_name_every_arm_and_the_frontier(tmp_path, monkeypa
     svg = chart.read_text(encoding="utf-8")
     assert svg.startswith("<svg") and 'class="on"' in svg and 'class="off"' in svg
     assert ">a<" in svg and ">k<" in svg and ">d<" not in svg
+
+
+def _oracle(name: str):
+    sys.path.insert(0, str(HERE / "doless" / "oracles"))
+    spec = importlib.util.spec_from_file_location(f"oracle_{name}", HERE / "doless" / "oracles" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+PARENT_LIGHT = "| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |"
+PARENT_HEAVY = "| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow. |"
+
+
+def test_config_risk_accepts_behavioural_evidence_on_the_expanded_row():
+    """Catches #139: the old grader demanded the evidence wording inside the light row, failing a
+    correct edit that put it on the expanded route, as the issue prompt reads."""
+    oracle = _oracle("docs_config_risk")
+    table = oracle.rows("\n".join([
+        "| Docs, comments, inert config (a display label), a one-line fix, a test-only fix | Nothing beyond the summary. |",
+        "| Persistence, permissions, compatibility, security, external effects, config that changes runtime or"
+        " security behaviour (a timeout, a permission) | The full card and the JPD flow, with behavioural evidence. |"]))
+    assert oracle.problems(table) == []
+
+
+def test_config_risk_still_fails_the_parent_table_and_a_missing_evidence_rule():
+    oracle = _oracle("docs_config_risk")
+    assert len(oracle.problems(oracle.rows(PARENT_LIGHT + "\n" + PARENT_HEAVY))) == 3
+    no_evidence = oracle.rows("\n".join([
+        "| Docs, comments, inert config values, a one-line fix | Nothing beyond the summary. |",
+        "| Persistence, permissions, security, runtime-affecting config | The full card and the JPD flow. |"]))
+    assert oracle.problems(no_evidence) == ["no routing row says runtime-affecting config needs behavioural evidence"]
+
+
+END_IMPL = '''
+{prelude}
+def request(url, token, method, body=None, headers=None, timeout: float = 1.0):
+    pass
+
+
+def _end_impl(payload: dict, host: str) -> None:
+    signal_id = "x"
+    reply = request(f"{{url}}/v1/executions/{{execution}}/signal", token, "POST", {{}}, {{"Idempotency-Key": signal_id}}{timeout})
+'''
+
+
+def test_sessionend_resolves_a_named_constant_on_the_codex_host():
+    """Catches #139: the old grader read only a literal `timeout=` and saw no wait at all."""
+    oracle = _oracle("py_sessionend_cap")
+    source = END_IMPL.format(prelude="CODEX_END_WAIT = 2.0",
+                             timeout=', timeout=CODEX_END_WAIT if host == "codex" else 3.0')
+    assert oracle.end_signal_waits(source) == [2.0]
+    assert oracle.end_signal_waits(source, host="claude") == [3.0]
+
+
+def test_sessionend_still_reads_literals_defaults_and_refuses_what_it_cannot_resolve():
+    oracle = _oracle("py_sessionend_cap")
+    assert oracle.end_signal_waits(END_IMPL.format(prelude="", timeout=", timeout=3.0")) == [3.0]
+    assert oracle.end_signal_waits(END_IMPL.format(prelude="", timeout=", timeout=2.5")) == [2.5]
+    assert oracle.end_signal_waits(END_IMPL.format(prelude="", timeout="")) == [1.0]
+    try:
+        oracle.end_signal_waits(END_IMPL.format(prelude="", timeout=", timeout=os_wait()"))
+    except oracle.Unresolved:
+        pass
+    else:
+        raise AssertionError("an unresolvable timeout must not pass silently")
+
+
+END_BODY = '''
+CODEX_END_WAIT = 2.0
+
+
+def request(url, token, method, body=None, headers=None, timeout: float = 5.0):
+    pass
+
+
+def _end_impl(payload: dict, host: str) -> None:
+{body}
+    reply = request(f"{{url}}/v1/executions/{{execution}}/signal", token, "POST", {{}}, {{}}, timeout={timeout})
+'''
+
+
+def _waits(body: str, timeout: str):
+    oracle = _oracle("py_sessionend_cap")
+    return oracle, lambda: oracle.end_signal_waits(END_BODY.format(body=body, timeout=timeout))
+
+
+def test_sessionend_fails_closed_on_ambiguous_bindings_and_unknown_operators():
+    """Catches the #140 BLOCK: flow-insensitive binding and an unknown operator read as False
+    accepted a Codex wait of 5 or 6 seconds as 1."""
+    cases = {
+        "branch assignment on host": ('    if host == "codex":\n        w = 5.0\n    else:\n        w = 1.0', "w"),
+        "augmented assignment": ("    w = 1.0\n    w += 5", "w"),
+        "host rebound": ('    host = "claude"', '1.0 if host == "codex" else 5.0'),
+        "is comparison": ("    pass", '5.0 if host is "codex" else 1.0'),
+        "rebinding": ("    w = 1.0\n    w = 5.0", "w"),
+    }
+    for label, (body, timeout) in cases.items():
+        oracle, run = _waits(body, timeout)
+        try:
+            waits = run()
+        except oracle.Unresolved:
+            continue
+        raise AssertionError(f"{label}: resolved to {waits} instead of failing closed")
+
+
+def test_sessionend_still_accepts_a_straight_line_local_and_a_module_constant():
+    _, run = _waits("    w = CODEX_END_WAIT if host == \"codex\" else 3.0", "w")
+    assert run() == [2.0]
+    _, run = _waits("    pass", "min(CODEX_END_WAIT, 2.5)")
+    assert run() == [2.0]

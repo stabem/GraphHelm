@@ -565,6 +565,12 @@ export function registerStudioTools(
             maxLength: 128,
             description: "Optional model route id from the Runtime's manifest. Omit for the server's default.",
           },
+          executionId: {
+            ...EXECUTION_ID_FIELD,
+            description:
+              "For an explicit retry only: the executionId returned by the uncertain start attempt. Supply it together with idempotencyKey; omit both for a new task.",
+          },
+          idempotencyKey: IDEMPOTENCY_KEY_FIELD,
         },
         ["objective"],
       ),
@@ -578,16 +584,27 @@ export function registerStudioTools(
             [],
           );
         }
-        // Minted here, never caller-supplied: two agents naming their own ids is how two tabs
-        // collide on one stream. Same mint the human composer uses.
-        const executionId = newExecutionId();
+        const hasExecutionId = input.executionId !== undefined;
+        const hasIdempotencyKey = input.idempotencyKey !== undefined;
+        if (hasExecutionId !== hasIdempotencyKey) {
+          throw new RuntimeError(
+            "executionId and idempotencyKey must be supplied together for a retry, or both omitted for a new task.",
+            0,
+            [],
+          );
+        }
+        // A caller-supplied pair is an explicit retry of the same start. Requiring both fields
+        // keeps an ordinary new task distinct and prevents a caller from choosing an execution id
+        // while silently minting a different mutation key.
+        const executionId = hasExecutionId ? requiredId(input) : newExecutionId();
+        const idempotencyKey = hasIdempotencyKey ? keyOf(input) : newIdempotencyKey();
         // The select comes AFTER the start, deliberately. The Runtime answers an id it has never
         // seen with an empty projection (200, status null), and selecting first put the page on
         // that shape - measured 2026-08-30 as a whole-page crash. By the time the start returns,
         // the execution exists and has a status to render.
         const evidence = await client.startTask(executionId, draftGraph(executionId, objective), {
           actor: WEBMCP_ACTOR,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey,
           // The mode the description PROMISES. The client's default is autopilot; relying on it
           // recorded agent-started runs under the wrong mode, and the Governor treats actionable
           // proposals differently there (PR #467 review).

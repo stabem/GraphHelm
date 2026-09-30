@@ -105,10 +105,12 @@ Cleanup is by exact path. The two worktrees live in `keel-prove-<pid>-<nanos>/pa
 under the temporary directory; on every exit the prover runs `git worktree remove --force` on each
 of those two paths (also when an add failed halfway) and deletes the directory. It never runs
 `git worktree prune`. A run killed before it can clean up (Ctrl-C, a killed terminal) leaves its
-records; the next run removes those whose directory is gone, again one exact path at a time, and
-leaves any record whose directory still exists, since another run may own it. To clear them by
-hand, `git worktree list` shows them and `git worktree prune` removes every record whose directory
-is gone (in any location, not only the prover's).
+records; the next run removes only stale `parent` and `head` records under its own scratch root,
+again one exact path at a time, and leaves any record whose directory still exists, since another
+run may own it. If manual recovery is necessary, use `git worktree list --porcelain`, confirm that
+each missing directory belongs to your interrupted `keel-prove-*` run, and remove only that exact
+path with `git worktree remove --force <path>`. Never run `git worktree prune`: it removes every
+prunable record, including worktrees owned by other sessions.
 
 The pathogen suite `tools/pathogens/src/keel_prove.rs` runs the prover for real on a two-commit
 crate: a tautological test and a test that asserts its own mock are refused as

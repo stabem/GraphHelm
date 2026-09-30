@@ -2,7 +2,7 @@
   "id": "graphhelm-development-contracts",
   "name": "graphhelm-development-contracts",
   "version": "0.1.1",
-  "description": "Three data-only entry skills that turn change requests into development contracts, assemble and cite evidence, and propose durable lessons — all through GraphHelm public read surfaces, proposing artifacts rather than writing them.",
+  "description": "Data-only entry skills for proposing development contracts, gathering and citing evidence, curating lessons, scoping changes with Keel, and auditing tests through public read surfaces and advisory artifacts.",
   "skills": "skills",
   "mcpServers": ".mcp.json",
   "author": {
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "GraphHelm Development Contracts",
     "shortDescription": "Contract the change, cite the evidence, propose the lesson.",
-    "longDescription": "Three entry skills for contract-first development. code-contract states scope, refusal cases and evidence obligations before code exists. context-retrieval assembles evidence, cites it by stable item identity, and declares what it did not retrieve. memory-curator proposes durable lessons as advisory candidates only. All three read through public surfaces and propose artifacts; none enforces, publishes, or mutates.",
+    "longDescription": "Entry skills for contract-first development. code-contract states scope, refusal cases and evidence obligations before code exists. context-retrieval assembles evidence, cites it by stable item identity, and declares what it did not retrieve. memory-curator proposes durable lessons as advisory candidates only. keel scopes the change, measures write surface, and names its proof. test-audit guides test authoring, suite audits, and deletion records that name a covering observer. These skills read through public surfaces and propose artifacts; none enforces, publishes, or mutates.",
     "developerName": "GraphHelm",
     "category": "Developer Tools",
     "capabilities": [

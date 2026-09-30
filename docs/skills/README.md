@@ -2,14 +2,17 @@
 
 This is the entry point for the skills shipped in GraphHelm's two built-in development extensions
 and the separately installable [GraphHelm plugin](../../plugins/graphhelm/README.md).
-The package manifests are the inventory: `graphhelm-development-contracts` contains four skills
-and `graphhelm-jpd` contains eight. A skill guides an agent; it does not grant permission, enforce
+The [development-contracts manifest](../../extensions/builtin/graphhelm-development-contracts/extension.json)
+and [JPD manifest](../../extensions/builtin/graphhelm-jpd/extension.json) are the inventory.
+Entry skills have `SKILL.md` paths; supporting assets such as
+[Keel's reference](../../extensions/builtin/graphhelm-development-contracts/skills/keel/REFERENCE.md)
+are not separate entry skills. A skill guides an agent; it does not grant permission, enforce
 policy, certify evidence, or publish a graph. The Runtime's typed contracts and deterministic
 controls retain those jobs.
 
 ## How they fit together
 
-The diagram reads **left to right**. It shows a typical route, not twelve mandatory steps. Select
+The diagram reads **left to right**. It shows a typical route. Select
 only the skills needed for the promise and its risk. A small, reversible change can use the direct
 route; unclear proof or higher-risk work can use the expanded Journey-Proven Development (JPD)
 route. An unavailable observer stops the proof claim.
@@ -44,6 +47,7 @@ the author and reviewer run the checks reached by the change.
 | Skill | Use it when | Output or boundary |
 |---|---|---|
 | [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | An agent is planning or writing a code change | A scoped card, declared write surface, and named proof; guidance and measurement, with no automatic penalty ladder |
+| [Test audit](../../extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md) | Before adding or changing tests, when a suite is slow or noisy, or when pruning tests | An authoring gate, suite audit, or deletion record naming the covering observer; guidance without enforcement |
 | [Code contract](../../extensions/builtin/graphhelm-development-contracts/skills/code-contract/SKILL.md) | Scope or acceptance criteria are still implicit | A proposed development contract, not enforcement |
 | [Context retrieval](../../extensions/builtin/graphhelm-development-contracts/skills/context-retrieval/SKILL.md) | The answer needs repository or execution evidence that has not been gathered | A cited context result with declared gaps, not a truth decision |
 | [Memory curator](../../extensions/builtin/graphhelm-development-contracts/skills/memory-curator/SKILL.md) | Landed work produced a durable lesson | An advisory memory candidate, never a direct memory write |
@@ -59,7 +63,7 @@ the author and reviewer run the checks reached by the change.
 The installable `graphhelm` plugin adds [GraphHelm guide](../../plugins/graphhelm/skills/graphhelm-guide/SKILL.md)
 for an overview of the method, [GraphHelm setup](../../plugins/graphhelm/skills/graphhelm-setup/SKILL.md)
 for reviewed host adoption, and [GraphHelm resume](../../plugins/graphhelm/skills/graphhelm-resume/SKILL.md)
-for exactly two evidence-based next actions. These are separate from the twelve skills in the
+for exactly two evidence-based next actions. These are separate from the entry skills in the
 two built-in extension manifests. Its [installation guide](../../plugins/graphhelm/README.md)
 lists the Codex and Claude commands and the host-specific invocation names.
 
@@ -67,7 +71,7 @@ The [development-contracts package](../../extensions/builtin/graphhelm-developme
 and [JPD package](../../extensions/builtin/graphhelm-jpd/README.md) explain permissions, manifests,
 host adapters, and validation limits. The separate
 [Keel contract-index skill](../../tools/keel-contract-index/SKILL.md) is a maintainer tool; it is
-not one of the twelve built-in extension skills. Example chat-surface operator skills live under
+not one of the built-in extension skills. Example chat-surface operator skills live under
 `examples/` and are not part of this catalog.
 
 ## Discovery is not activation

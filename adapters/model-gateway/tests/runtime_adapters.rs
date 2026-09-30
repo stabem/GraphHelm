@@ -90,6 +90,7 @@ fn call(prompt: &str) -> ModelCall {
     ModelCall {
         prompt: prompt.to_owned(),
         max_tokens: 64,
+        max_output_tokens: None,
     }
 }
 
@@ -775,5 +776,42 @@ fn the_child_environment_is_an_allowlist_and_never_carries_broker_material() {
             !dump.contains(leaked_value),
             "a sentinel value leaked into the child's environment: {dump}"
         );
+    }
+}
+
+// Contract: legacy native calls still work, explicit output ceilings cannot be silently ignored.
+// Gap: old native tests carry only the legacy maxTokens hint. Cost: two fixture subprocesses
+// for the compatibility controls; capped calls must refuse before spawning, no accounts.
+#[test]
+fn issue178_native_explicit_output_cap_refuses_and_legacy_call_remains_supported() {
+    for runtime in ["claude_code", "codex"] {
+        let manifest = native_manifest(runtime, None);
+        let adapter = RuntimeAdapter::new(&manifest.routes()[0], ok_env(runtime));
+        let request: ModelCall = serde_json::from_value(serde_json::json!({
+            "prompt":"task", "maxTokens":4096, "maxOutputTokens":32
+        }))
+        .unwrap();
+        assert_eq!(
+            adapter.call(&request),
+            Err(GatewayError::UnsupportedCapability)
+        );
+        assert!(adapter.call(&call("task")).is_ok());
+        let route_cap = RouteManifest::from_json(&serde_json::json!({
+            "manifestVersion":1, "routes":[{
+                "id":"route_cap", "provider":"anthropic", "transport":"native_runtime",
+                "runtime":runtime, "authentication":"account_subscription", "billingMode":"subscription_quota",
+                "command":{"program":fake_runtime_path(),"args":[]}, "profiles":[], "enabled":true,
+                "maxOutputTokens":32
+            }]
+        }).to_string()).unwrap();
+        let adapter = RuntimeAdapter::new(&route_cap.routes()[0], ok_env(runtime));
+        assert_eq!(
+            adapter.call(&call("task")),
+            Err(GatewayError::UnsupportedCapability)
+        );
+        assert!(matches!(
+            adapter.invoke("task"),
+            Err(GatewayError::UnsupportedCapability)
+        ));
     }
 }

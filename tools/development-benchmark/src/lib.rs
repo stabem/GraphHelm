@@ -1033,6 +1033,7 @@ pub fn live_arm_cost(
     let call = graphhelm_gateway::call::ModelCall {
         prompt: prompt.to_owned(),
         max_tokens,
+        max_output_tokens: None,
     };
     match adapter.call(key, &call) {
         Ok(reply) => Ok(usage_to_cost(reply.usage.input_tokens, route)),

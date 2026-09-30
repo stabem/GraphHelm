@@ -107,13 +107,10 @@ impl<'a> RuntimeAdapter<'a> {
     /// (or kills it at the route's deadline), and parses its stdout per the route's
     /// [`RuntimeKind`].
     ///
-    /// `request.max_tokens` is deliberately not forwarded anywhere: a native-runtime route's own
-    /// `command.args` (set once, in the manifest, by whoever configured the route) fully controls
-    /// how the spawned CLI is invoked, the same way Task 4's OpenAI adapter deliberately does not
-    /// forward it for reasons specific to that wire shape — here there is no per-call channel to
-    /// forward it through at all, since the prompt is the only thing that travels per call
-    /// (stdin), and neither host CLI's non-interactive invocation shape this milestone targets
-    /// takes a per-call output-length argument over stdin alongside the prompt.
+    /// The legacy `request.max_tokens` hint remains ignored: the route's command and args own
+    /// its invocation, with only the prompt on stdin. Explicit `max_output_tokens` on either
+    /// the request or route is refused before spawning, since these native formats have no
+    /// supported per-call output-length channel.
     ///
     /// # Errors
     /// See [`GatewayError`]; in particular [`GatewayError::UnsupportedCapability`] if
@@ -127,7 +124,12 @@ impl<'a> RuntimeAdapter<'a> {
     /// exit within `route.timeout_seconds()`, and [`GatewayError::MalformedOutput`] if it exits
     /// `0` but its stdout does not parse as its `RuntimeKind`'s happy shape.
     pub fn call(&self, request: &ModelCall) -> Result<ModelReply, GatewayError> {
-        if self.route.transport() != Transport::NativeRuntime {
+        if request.max_output_tokens.is_some() {
+            return Err(GatewayError::UnsupportedCapability);
+        }
+        if self.route.transport() != Transport::NativeRuntime
+            || self.route.max_output_tokens().is_some()
+        {
             return Err(GatewayError::UnsupportedCapability);
         }
         let kind = self
@@ -156,7 +158,9 @@ impl<'a> RuntimeAdapter<'a> {
     /// in the practically-unreachable case where the OS wait call itself fails, since at that
     /// point this function cannot tell whether the child is even still running.
     pub fn invoke(&self, prompt: &str) -> Result<RawInvocation, GatewayError> {
-        if self.route.transport() != Transport::NativeRuntime {
+        if self.route.transport() != Transport::NativeRuntime
+            || self.route.max_output_tokens().is_some()
+        {
             return Err(GatewayError::UnsupportedCapability);
         }
         let command_spec = self
@@ -702,7 +706,11 @@ impl ClaudeCodeReply {
             input_token_semantics: Some(InputTokenSemantics::ExcludesCache),
             source: Some(UsageSource::ClaudeCode),
         };
-        Some(ModelReply { text, usage })
+        Some(ModelReply {
+            text,
+            usage,
+            termination: None,
+        })
     }
 }
 
@@ -732,6 +740,7 @@ impl CodexLegacyTranscript {
         self.last_agent_message.map(|text| ModelReply {
             text,
             usage: Usage::default(),
+            termination: None,
         })
     }
 }
@@ -989,7 +998,11 @@ fn parse_current_codex_jsonl(lines: &[&str]) -> Result<ModelReply, CodexParseErr
                     input_token_semantics: Some(InputTokenSemantics::IncludesCache),
                     source: Some(UsageSource::Codex),
                 };
-                completed_reply = Some(ModelReply { text, usage });
+                completed_reply = Some(ModelReply {
+                    text,
+                    usage,
+                    termination: None,
+                });
             }
             CodexCurrentEvent::ThreadStarted { .. }
             | CodexCurrentEvent::ItemStarted { .. }

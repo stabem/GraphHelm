@@ -125,6 +125,41 @@ model_route:
     recommended_parallelism: 1
 ```
 
+### 4.1 Implemented explicit output ceilings and completion reporting
+
+The JSON route manifest accepts optional `maxOutputTokens` (a positive `u32`). A cognitive
+node, including a blind judge, may declare `model.maxOutputTokens` using the existing open
+`model` block in the Graph DSL. Runtime refuses an unreadable declared node ceiling before
+calling its model. When both node and route specify ceilings, the smaller wins. A lone
+explicit ceiling is not clamped to the legacy 4096-token hint.
+
+The direct Anthropic adapter sends the resolved ceiling as `max_tokens`. An OpenAI-compatible
+route must also declare `outputTokenParameter: "max_tokens"` or `"max_completion_tokens"`,
+according to the selected model's documented capability. No capability is guessed from a
+model name; an explicit OpenAI ceiling without the parameter declaration is refused before
+HTTP. `max_completion_tokens` includes reasoning tokens, not just visible text. See the
+[OpenAI token-counting contract](https://developers.openai.com/api/docs/guides/token-counting).
+Native CLI routes refuse explicit ceilings before spawning because their existing invocation
+contract cannot carry one. System One routes do not accept this text-generation control.
+
+No ceiling is introduced automatically: without an explicit ceiling, Anthropic keeps the
+call's legacy `maxTokens`, OpenAI omits output-limit parameters, and native commands remain
+unchanged. `ModelCall.maxTokens` remains required and old serialized call/reply shapes still
+decode; absent new optional fields stay absent when serialized.
+
+Replies preserve a normalized optional `termination` record. Known provider identifiers are
+retained as `providerReason`; unrecognized values become the literal `unknown` so arbitrary
+provider prose is never copied into metadata. Missing termination retains legacy behavior.
+An explicitly noncompleted reply (output/context limit, tool continuation, pause, filtering,
+refusal, or unknown reason) cannot become cognitive success, even if its text is nonempty or
+parses as a passing judge verdict. Runtime records terminal failure with the existing
+`malformed_output` event reason and seals the precise termination beside the reply and usage;
+it neither retries the unchanged request nor changes the model or quality. Draft generation
+and reply suggestions also refuse known incomplete text before dropping that metadata. The
+[Anthropic stop-reason contract](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)
+defines the provider identifiers; changing a ceiling or arranging continuation is an explicit
+caller decision, not an automatic fallback.
+
 ## 5. Capability discovery
 
 The adapter declares and tests:

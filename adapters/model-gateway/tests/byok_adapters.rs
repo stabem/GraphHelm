@@ -55,6 +55,7 @@ fn call(prompt: &str, max_tokens: u32) -> ModelCall {
     ModelCall {
         prompt: prompt.to_owned(),
         max_tokens,
+        max_output_tokens: None,
     }
 }
 
@@ -84,6 +85,7 @@ fn build_manifest(base_url: &str, provider: &str) -> RouteManifest {
 
 /// One HTTP request captured by [`fake_server`], for assertions.
 struct CapturedRequest {
+    body: serde_json::Value,
     method: String,
     path: String,
     headers: Vec<(String, String)>,
@@ -247,6 +249,7 @@ fn read_request(stream: &mut TcpStream) -> CapturedRequest {
         .collect();
 
     CapturedRequest {
+        body: serde_json::from_slice(&buffer[header_end + 4..]).unwrap(),
         method,
         path,
         headers,
@@ -661,6 +664,10 @@ fn provider_cache_usage_preserves_unknown_zero_and_input_semantics() {
     let legacy_call: ModelCall =
         serde_json::from_str(r#"{"prompt":"historical","maxTokens":4096}"#).unwrap();
     assert_eq!(legacy_call.max_tokens, 4096);
+    assert_eq!(
+        serde_json::to_value(legacy_call).unwrap(),
+        serde_json::json!({"prompt":"historical","maxTokens":4096})
+    );
 
     for (provider, body, read, write, semantics, source) in [
         (
@@ -707,5 +714,199 @@ fn provider_cache_usage_preserves_unknown_zero_and_input_semantics() {
         assert_eq!(usage["cacheWriteTokens"], serde_json::json!(write));
         assert_eq!(usage["inputTokenSemantics"], semantics);
         assert_eq!(usage["source"], source);
+    }
+}
+
+// Contract: actual provider finish reasons survive normalization and serialization. Existing
+// usage tests omit these fields. Defect: dropping length/max_tokens launders partial text.
+// Cost: bounded loopback HTTP requests, no accounts, credentials or production seams.
+#[test]
+fn issue178_provider_termination_is_preserved() {
+    for (provider, body, reason, raw) in [
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"partial"}],"stop_reason":"max_tokens"}"#,
+            "output_limit",
+            "max_tokens",
+        ),
+        (
+            "anthropic",
+            r#"{"content":[],"stop_reason":"max_tokens"}"#,
+            "output_limit",
+            "max_tokens",
+        ),
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"partial"}],"stop_reason":"model_context_window_exceeded"}"#,
+            "context_limit",
+            "model_context_window_exceeded",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":null},"finish_reason":"length"}]}"#,
+            "output_limit",
+            "length",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"partial"},"finish_reason":"sk-secret-like-untrusted-reason"}]}"#,
+            "unknown",
+            "unknown",
+        ),
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}"#,
+            "completed",
+            "end_turn",
+        ),
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"partial"}],"stop_reason":"pause_turn"}"#,
+            "paused",
+            "pause_turn",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}"#,
+            "output_limit",
+            "length",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"done"},"finish_reason":"stop"}]}"#,
+            "completed",
+            "stop",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"partial"},"finish_reason":"content_filter"}]}"#,
+            "content_filter",
+            "content_filter",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"partial"},"finish_reason":"tool_calls"}]}"#,
+            "tool_call",
+            "tool_calls",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"partial"},"finish_reason":"future_reason"}]}"#,
+            "unknown",
+            "unknown",
+        ),
+    ] {
+        let (base, captured) = fake_server(200, body);
+        let manifest = build_manifest(&base, provider);
+        let reply = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()))
+            .call(&sentinel_key(), &call("task", 4096))
+            .unwrap();
+        let reply = serde_json::to_value(reply).unwrap();
+        assert_eq!(reply["termination"]["reason"], reason);
+        assert_eq!(reply["termination"]["providerReason"], raw);
+        assert!(
+            !reply
+                .to_string()
+                .contains("sk-secret-like-untrusted-reason")
+        );
+        captured.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+}
+
+// Contract: explicit cap selection reaches the actual HTTP payload with the declared model
+// parameter, including ceilings greater than legacy 4096. The existing request test checks
+// headers only. Cost: loopback HTTP, no paid calls; no production seam.
+#[test]
+fn issue178_explicit_caps_reach_provider_payloads() {
+    for (provider, parameter, node, route_cap, expected) in [
+        ("anthropic", None, Some(6000), Some(7000), 6000),
+        ("anthropic", None, Some(7000), Some(6000), 6000),
+        ("anthropic", None, None, Some(7000), 7000),
+        ("openai", Some("max_tokens"), Some(123), None, 123),
+        (
+            "openai",
+            Some("max_completion_tokens"),
+            Some(900),
+            Some(700),
+            700,
+        ),
+        (
+            "openai",
+            Some("max_completion_tokens"),
+            None,
+            Some(7000),
+            7000,
+        ),
+    ] {
+        let body = if provider == "anthropic" {
+            r#"{"content":[{"type":"text","text":"done"}]}"#
+        } else {
+            r#"{"choices":[{"message":{"content":"done"}}]}"#
+        };
+        let (base, captured) = fake_server(200, body);
+        let mut route = serde_json::json!({
+            "id":"test_route", "provider":provider, "transport":"direct_api",
+            "authentication":"api_key", "billingMode":"per_token", "baseUrl":base,
+            "model":"operator-declared-model", "credentialRef":"secret_test",
+            "profiles":["balanced_reasoning"], "enabled":true
+        });
+        if let Some(cap) = route_cap {
+            route["maxOutputTokens"] = cap.into();
+        }
+        if let Some(parameter) = parameter {
+            route["outputTokenParameter"] = parameter.into();
+        }
+        let manifest = RouteManifest::from_json(
+            &serde_json::json!({"manifestVersion":1,"routes":[route]}).to_string(),
+        )
+        .unwrap();
+        let request: ModelCall = serde_json::from_value(serde_json::json!({
+            "prompt":"task", "maxTokens":4096, "maxOutputTokens":node
+        }))
+        .unwrap();
+        ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()))
+            .call(&sentinel_key(), &request)
+            .unwrap();
+        let sent = captured.recv_timeout(Duration::from_secs(5)).unwrap().body;
+        let expected_parameter = parameter.unwrap_or("max_tokens");
+        assert_eq!(sent[expected_parameter], expected);
+        let other = if expected_parameter == "max_tokens" {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        assert!(
+            sent.get(other).is_none(),
+            "must not send both token parameters: {sent}"
+        );
+        assert_eq!(sent["model"], "operator-declared-model");
+    }
+}
+
+// Contract: undeclared model capability refuses rather than silently dropping an explicit cap.
+// Gap: existing unsupported-provider tests never request output limits. Cost: no network I/O.
+#[test]
+fn issue178_openai_cap_without_parameter_refuses_before_http() {
+    let manifest = build_manifest("http://127.0.0.1:9", "openai");
+    let request: ModelCall = serde_json::from_value(serde_json::json!({
+        "prompt":"task", "maxTokens":4096, "maxOutputTokens":32
+    }))
+    .unwrap();
+    let result = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()))
+        .call(&sentinel_key(), &request);
+    assert_eq!(result, Err(GatewayError::UnsupportedCapability));
+    for invalid in [
+        serde_json::json!(0),
+        serde_json::json!(-1),
+        serde_json::json!("32"),
+        serde_json::json!(4_294_967_296_u64),
+    ] {
+        assert!(
+            serde_json::from_value::<ModelCall>(serde_json::json!({
+                "prompt":"task", "maxTokens":4096, "maxOutputTokens":invalid
+            }))
+            .is_err(),
+            "an unreadable explicit ceiling cannot silently become absence"
+        );
     }
 }

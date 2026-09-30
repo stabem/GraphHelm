@@ -13,6 +13,8 @@ pub struct NodeWork {
     pub execution_id: String,
     pub node_id: String,
     pub attempt: u32,
+    /// Explicit node ceiling, passed independently of the legacy provider hint.
+    pub max_output_tokens: Option<std::num::NonZeroU32>,
     pub prompt: crate::prompt::AssembledPrompt,
     pub kind: crate::classify::NodeWorkKind,
     /// Whether an honest completed non-zero tool exit is a verdict. Absence in the graph
@@ -166,8 +168,7 @@ pub trait AsyncNodeExecutor: Send + Sync {
     fn cancel_all(&self) {}
 }
 
-/// Default token budget for a model call. The node contract has no per-call budget channel
-/// until the manifest work arrives; one documented constant beats an invented field.
+/// Legacy request hint, unchanged for calls without an explicit node or route ceiling.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 /// The real executor: assemble → dispatch by kind through the ports → map the outcome
@@ -243,7 +244,11 @@ fn cognitive_outcome(
                 // machinery, landing in Blocked for an owner when persistent — never a
                 // success, and never NeedsInput (which would park the node waiting for input
                 // nothing in this milestone can deliver; the plan review's finding).
-                let outcome = if reply.text.trim().is_empty() {
+                let outcome = if reply.is_incomplete() {
+                    // The provider already reported why the answer stopped. Retrying the same
+                    // ceiling/continuation request cannot establish a complete answer.
+                    NodeOutcome::TerminalFailure
+                } else if reply.text.trim().is_empty() {
                     NodeOutcome::RetryableFailure
                 } else {
                     NodeOutcome::Succeeded
@@ -260,8 +265,11 @@ fn cognitive_outcome(
                     summary,
                     reuse: None,
                     gate_verdict: None,
-                    reason: (outcome != NodeOutcome::Succeeded)
-                        .then_some(NodeOutcomeReason::EmptyReply),
+                    reason: if reply.is_incomplete() {
+                        Some(NodeOutcomeReason::MalformedOutput)
+                    } else {
+                        (outcome != NodeOutcome::Succeeded).then_some(NodeOutcomeReason::EmptyReply)
+                    },
                     executor_kind: None,
                     model_route_id: None,
                 }
@@ -620,6 +628,7 @@ async fn cognitive_work(
     let call = graphhelm_gateway::call::ModelCall {
         prompt,
         max_tokens: DEFAULT_MAX_TOKENS,
+        max_output_tokens: work.max_output_tokens,
     };
     let reply = model.call(route_id, &call).await;
     match work.judge.as_ref() {
@@ -698,6 +707,7 @@ fn judge_outcome(
     reply: Result<graphhelm_gateway::call::ModelReply, graphhelm_gateway::taxonomy::GatewayError>,
 ) -> WorkOutcome {
     let reply = match reply {
+        Ok(reply) if reply.is_incomplete() => return cognitive_outcome(Ok(reply), None),
         Ok(reply) => reply,
         Err(error) => {
             return WorkOutcome {
@@ -727,7 +737,12 @@ fn judge_outcome(
         exit_code: None,
         provider_usage: Some(reply.usage),
     };
-    match crate::judge::parse_reply(&reply.text) {
+    let termination = reply.termination.as_ref().map(|termination| Sealable {
+        local_ref_suffix: "termination",
+        media_type: "application/json",
+        bytes: serde_json::to_vec(termination).expect("termination serializes"),
+    });
+    let mut outcome = match crate::judge::parse_reply(&reply.text) {
         Ok(verdict) => {
             let sealed = serde_json::json!({
                 "findings": verdict
@@ -782,7 +797,9 @@ fn judge_outcome(
             executor_kind: None,
             model_route_id: None,
         },
-    }
+    };
+    outcome.sealables.extend(termination);
+    outcome
 }
 
 fn gate_check_outcome(

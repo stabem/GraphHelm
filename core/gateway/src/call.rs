@@ -24,15 +24,58 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ModelCall {
     pub prompt: String,
+    /// Legacy hint: required by Anthropic, historically ignored by OpenAI and native runtimes.
     pub max_tokens: u32,
+    /// An explicit ceiling, separate from the legacy hint; absence preserves old wire behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<std::num::NonZeroU32>,
 }
 
-/// A successful reply: the model's text and whatever usage the provider reported.
+/// A transport-successful reply: text, usage and any reported completion state.
+/// Consumers must inspect termination before accepting the text as completed work.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelReply {
     pub text: String,
     pub usage: Usage,
+    /// Reported completion state. Missing means unknown legacy reporting, never invented success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination: Option<ModelTermination>,
+}
+
+/// The provider's reported reason, normalized without retaining arbitrary provider prose.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTermination {
+    pub reason: ModelStopReason,
+    /// Recognized provider identifier, or the literal `unknown` for any unrecognized value.
+    pub provider_reason: String,
+}
+
+/// Completion states understood by text-only cognitive consumers. Tool/pause continuations
+/// require a different protocol and must not masquerade as finished text here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStopReason {
+    Completed,
+    OutputLimit,
+    ContextLimit,
+    ToolCall,
+    ContentFilter,
+    Refusal,
+    Paused,
+    Unknown,
+}
+
+impl ModelReply {
+    /// Whether the provider explicitly reported an incomplete/non-text completion. An absent
+    /// termination field retains legacy behavior; it is not evidence of provider completion.
+    #[must_use]
+    pub fn is_incomplete(&self) -> bool {
+        self.termination
+            .as_ref()
+            .is_some_and(|termination| termination.reason != ModelStopReason::Completed)
+    }
 }
 
 /// Token counts for one call. §11.2: a figure the provider (or native-runtime CLI shape) did not

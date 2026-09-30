@@ -117,6 +117,15 @@ pub struct RuntimeCommand {
     pub args: Vec<String>,
 }
 
+/// The token-limit parameter supported by the operator-selected OpenAI-compatible model.
+/// Explicit declaration avoids inferring capabilities from a model's name or alias.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiOutputTokenParameter {
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
 /// One validated route. The only way to obtain one is through [`RouteManifest::from_json`], so a
 /// live `ModelRoute` has already satisfied every structural rule this module enforces.
 #[derive(Clone, Debug, Deserialize)]
@@ -141,6 +150,10 @@ pub struct ModelRoute {
     /// manifest shape change.
     #[serde(default = "default_timeout_seconds")]
     timeout_seconds: u64,
+    #[serde(default)]
+    max_output_tokens: Option<std::num::NonZeroU32>,
+    #[serde(default)]
+    output_token_parameter: Option<OpenAiOutputTokenParameter>,
 }
 
 const fn default_timeout_seconds() -> u64 {
@@ -211,6 +224,17 @@ impl ModelRoute {
     #[must_use]
     pub const fn timeout_seconds(&self) -> u64 {
         self.timeout_seconds
+    }
+
+    /// Explicit route ceiling; no implicit output default is introduced.
+    #[must_use]
+    pub const fn max_output_tokens(&self) -> Option<std::num::NonZeroU32> {
+        self.max_output_tokens
+    }
+
+    #[must_use]
+    pub const fn output_token_parameter(&self) -> Option<OpenAiOutputTokenParameter> {
+        self.output_token_parameter
     }
 }
 
@@ -429,6 +453,21 @@ fn parse_error_category(error: &serde_json::Error) -> &'static str {
 
 fn validate_route(route: &ModelRoute) -> Result<(), ManifestError> {
     validate_route_id(&route.id)?;
+
+    if route.output_token_parameter.is_some()
+        && (route.transport != Transport::DirectApi || route.provider != "openai")
+    {
+        return Err(ManifestError::StructuralViolation {
+            route_id: route.id.clone(),
+            rule: "outputTokenParameter is supported only on direct_api openai routes",
+        });
+    }
+    if route.max_output_tokens.is_some() && route.provider == "typesafe" {
+        return Err(ManifestError::StructuralViolation {
+            route_id: route.id.clone(),
+            rule: "typesafe routes do not support maxOutputTokens",
+        });
+    }
 
     if route.timeout_seconds > MAX_TIMEOUT_SECONDS {
         return Err(ManifestError::TimeoutTooLarge {

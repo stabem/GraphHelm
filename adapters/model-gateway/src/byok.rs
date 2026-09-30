@@ -24,8 +24,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use graphhelm_events::SecretBytes;
-use graphhelm_gateway::call::{InputTokenSemantics, ModelCall, ModelReply, Usage, UsageSource};
-use graphhelm_gateway::manifest::{ModelRoute, Transport};
+use graphhelm_gateway::call::{
+    InputTokenSemantics, ModelCall, ModelReply, ModelStopReason, ModelTermination, Usage,
+    UsageSource,
+};
+use graphhelm_gateway::manifest::{ModelRoute, OpenAiOutputTokenParameter, Transport};
 use graphhelm_gateway::taxonomy::GatewayError;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -104,7 +107,7 @@ impl<'a> ByokAdapter<'a> {
 
         let payload = AnthropicRequestBody {
             model,
-            max_tokens: call.max_tokens,
+            max_tokens: self.explicit_output_cap(call).unwrap_or(call.max_tokens),
             messages: vec![AnthropicMessage {
                 role: "user",
                 content: &call.prompt,
@@ -138,12 +141,19 @@ impl<'a> ByokAdapter<'a> {
             .model()
             .expect("direct_api routes carry model — enforced by manifest validation");
 
-        // §4/plan Task 4: the OpenAI request body this milestone sends is exactly {model,
-        // messages} — `call.max_tokens` is deliberately not forwarded here (OpenAI's chat
-        // completions API splits token-limit parameters by model family in ways this milestone
-        // does not yet resolve); Anthropic's `max_tokens` is a required top-level field instead.
+        let cap = self.explicit_output_cap(call);
+        if cap.is_some() && self.route.output_token_parameter().is_none() {
+            return Err(GatewayError::UnsupportedCapability);
+        }
         let payload = OpenAiRequestBody {
             model,
+            max_tokens: cap.filter(|_| {
+                self.route.output_token_parameter() == Some(OpenAiOutputTokenParameter::MaxTokens)
+            }),
+            max_completion_tokens: cap.filter(|_| {
+                self.route.output_token_parameter()
+                    == Some(OpenAiOutputTokenParameter::MaxCompletionTokens)
+            }),
             messages: vec![OpenAiRequestMessage {
                 role: "user",
                 content: &call.prompt,
@@ -164,6 +174,14 @@ impl<'a> ByokAdapter<'a> {
             parse_openai_success(&response.body).ok_or(GatewayError::MalformedOutput)
         } else {
             Err(map_openai_error(response.status, &response.body))
+        }
+    }
+
+    fn explicit_output_cap(&self, call: &ModelCall) -> Option<u32> {
+        match (call.max_output_tokens, self.route.max_output_tokens()) {
+            (Some(node), Some(route)) => Some(node.min(route).get()),
+            (Some(cap), None) | (None, Some(cap)) => Some(cap.get()),
+            (None, None) => None,
         }
     }
 
@@ -246,6 +264,8 @@ struct AnthropicMessage<'a> {
 
 #[derive(Deserialize)]
 struct AnthropicSuccessBody {
+    #[serde(default)]
+    stop_reason: Option<String>,
     content: Vec<AnthropicContentBlock>,
     #[serde(default)]
     usage: Option<AnthropicUsageBody>,
@@ -285,11 +305,18 @@ struct AnthropicUsageBody {
 /// [`GatewayError::MalformedOutput`].
 fn parse_anthropic_success(body: &[u8]) -> Option<ModelReply> {
     let parsed: AnthropicSuccessBody = serde_json::from_slice(body).ok()?;
+    let termination = normalize_termination("anthropic", parsed.stop_reason.as_deref());
     let text = parsed
         .content
         .into_iter()
-        .find(|block| block.kind.as_deref() == Some("text"))?
-        .text?;
+        .find(|block| block.kind.as_deref() == Some("text"))
+        .and_then(|block| block.text)
+        .or_else(|| {
+            termination
+                .as_ref()
+                .filter(|stop| stop.reason != ModelStopReason::Completed)
+                .map(|_| String::new())
+        })?;
     let reported = parsed.usage.unwrap_or_default();
     let usage = Usage {
         input_tokens: reported.input_tokens,
@@ -299,7 +326,11 @@ fn parse_anthropic_success(body: &[u8]) -> Option<ModelReply> {
         input_token_semantics: Some(InputTokenSemantics::ExcludesCache),
         source: Some(UsageSource::AnthropicMessages),
     };
-    Some(ModelReply { text, usage })
+    Some(ModelReply {
+        text,
+        usage,
+        termination,
+    })
 }
 
 /// Fixed status-code rules (plan Task 4): Anthropic's status codes are unambiguous on their own —
@@ -323,6 +354,10 @@ fn map_anthropic_error(status: u16) -> GatewayError {
 #[derive(Serialize)]
 struct OpenAiRequestBody<'a> {
     model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
     messages: Vec<OpenAiRequestMessage<'a>>,
 }
 
@@ -341,12 +376,14 @@ struct OpenAiSuccessBody {
 
 #[derive(Deserialize)]
 struct OpenAiChoice {
+    #[serde(default)]
+    finish_reason: Option<String>,
     message: OpenAiMessageBody,
 }
 
 #[derive(Deserialize)]
 struct OpenAiMessageBody {
-    content: String,
+    content: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -371,7 +408,14 @@ struct OpenAiPromptTokenDetails {
 /// [`parse_anthropic_success`]'s doc comment; the same reasoning applies here.
 fn parse_openai_success(body: &[u8]) -> Option<ModelReply> {
     let parsed: OpenAiSuccessBody = serde_json::from_slice(body).ok()?;
-    let text = parsed.choices.into_iter().next()?.message.content;
+    let choice = parsed.choices.into_iter().next()?;
+    let termination = normalize_termination("openai", choice.finish_reason.as_deref());
+    let text = choice.message.content.or_else(|| {
+        termination
+            .as_ref()
+            .filter(|stop| stop.reason != ModelStopReason::Completed)
+            .map(|_| String::new())
+    })?;
     let reported = parsed.usage.unwrap_or_default();
     let details = reported.prompt_tokens_details.unwrap_or_default();
     let usage = Usage {
@@ -382,7 +426,41 @@ fn parse_openai_success(body: &[u8]) -> Option<ModelReply> {
         input_token_semantics: Some(InputTokenSemantics::IncludesCache),
         source: Some(UsageSource::OpenaiChatCompletions),
     };
-    Some(ModelReply { text, usage })
+    Some(ModelReply {
+        text,
+        usage,
+        termination,
+    })
+}
+
+/// Only known bounded identifiers survive into sealed metadata. Unknown provider values may
+/// contain arbitrary text (including credentials), so retain their class without echoing them.
+fn normalize_termination(provider: &str, raw: Option<&str>) -> Option<ModelTermination> {
+    raw.map(|raw| {
+        let reason = match (provider, raw) {
+            ("anthropic", "end_turn" | "stop_sequence") | ("openai", "stop") => {
+                ModelStopReason::Completed
+            }
+            ("anthropic", "max_tokens") | ("openai", "length") => ModelStopReason::OutputLimit,
+            ("anthropic", "model_context_window_exceeded") => ModelStopReason::ContextLimit,
+            ("anthropic", "tool_use") | ("openai", "tool_calls" | "function_call") => {
+                ModelStopReason::ToolCall
+            }
+            ("anthropic", "pause_turn") => ModelStopReason::Paused,
+            ("anthropic", "refusal") => ModelStopReason::Refusal,
+            ("openai", "content_filter") => ModelStopReason::ContentFilter,
+            _ => ModelStopReason::Unknown,
+        };
+        ModelTermination {
+            reason,
+            provider_reason: if reason == ModelStopReason::Unknown {
+                "unknown"
+            } else {
+                raw
+            }
+            .to_owned(),
+        }
+    })
 }
 
 #[derive(Deserialize)]

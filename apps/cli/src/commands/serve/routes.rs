@@ -600,10 +600,18 @@ impl DraftModel for ServeDraftModel {
         let call = ModelCall {
             prompt: prompt.to_owned(),
             max_tokens: architect::MAX_TOKENS,
+            max_output_tokens: None,
         };
         let reply =
             tokio::runtime::Handle::current().block_on(self.port.call(&self.route_id, &call));
         reply
+            .and_then(|reply| {
+                if reply.is_incomplete() {
+                    Err(graphhelm_gateway::taxonomy::GatewayError::MalformedOutput)
+                } else {
+                    Ok(reply)
+                }
+            })
             .map(|reply| DraftReply {
                 text: reply.text,
                 usage: Some(reply.usage),
@@ -1001,8 +1009,9 @@ pub(super) async fn reply_suggestions(
             };
             let Ok(chat) = tokio::runtime::Handle::current().block_on(chat_port.call(
                 chat_route.id(),
-                &ModelCall { prompt: attempt_prompt, max_tokens: 1800 },
+                &ModelCall { prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None },
             )) else { continue };
+            if chat.is_incomplete() { break; }
             let Some(candidates) = parse_reply_candidates(&chat.text) else { continue };
             let mut questions = BTreeMap::new();
             for (index, _) in candidates.iter().enumerate() {
@@ -1334,6 +1343,101 @@ fn reply_suggestions_unavailable(execution_id: &str, head: u64, reason: &str) ->
 #[cfg(test)]
 mod reply_suggestion_tests {
     use super::*;
+
+    // Contract: both actual draft doors reject provider-truncated nonempty text before losing
+    // termination metadata. Existing gateway-refusal tests only cover failed transport.
+    // Cost: six bounded loopback requests, a Tokio blocking task, no accounts or test seams.
+    #[test]
+    fn issue178_both_draft_doors_refuse_truncated_text_and_preserve_legacy_replies() {
+        use std::io::{BufRead, Read, Write};
+        for served in [false, true] {
+            for stop_reason in [Some("max_tokens"), Some("end_turn"), None] {
+                let truncated = stop_reason == Some("max_tokens");
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let base = format!("http://{}", listener.local_addr().unwrap());
+                let provider = std::thread::spawn(move || {
+                    listener.set_nonblocking(true).unwrap();
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    let (mut stream, _) = loop {
+                        match listener.accept() {
+                            Ok(connection) => break connection,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(
+                                    std::time::Instant::now() < deadline,
+                                    "provider request was never sent"
+                                );
+                                std::thread::sleep(std::time::Duration::from_millis(5));
+                            }
+                            Err(error) => panic!("fixture listener: {error}"),
+                        }
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut length = 0;
+                    loop {
+                        let mut line = String::new();
+                        assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse::<usize>().unwrap();
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    reader.read_exact(&mut vec![0; length]).unwrap();
+                    let mut reply =
+                        serde_json::json!({"content":[{"type":"text","text":"draft text"}]});
+                    if let Some(reason) = stop_reason {
+                        reply["stop_reason"] = reason.into();
+                    }
+                    let reply = reply.to_string();
+                    write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+                });
+                let manifest = RouteManifest::from_json(&serde_json::json!({
+                    "manifestVersion":1, "routes":[{
+                        "id":"draft_route", "provider":"anthropic", "transport":"direct_api",
+                        "authentication":"api_key", "billingMode":"per_token", "baseUrl":base,
+                        "model":"fixture-model", "credentialRef":"fixture", "profiles":[], "enabled":true
+                    }]
+                }).to_string()).unwrap();
+                let route = manifest.routes()[0].clone();
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async move {
+                        tokio::task::spawn_blocking(move || {
+                            let key = SecretBytes::new(b"fixture-only".to_vec());
+                            if served {
+                                ServeDraftModel {
+                                    route_id: route.id().to_owned(),
+                                    port: ServeModelPort::DirectApi { route, key },
+                                }
+                                .draft("task")
+                            } else {
+                                architect::GatewayDraftModel::direct_api(route, key).draft("task")
+                            }
+                        })
+                        .await
+                        .unwrap()
+                    });
+                provider.join().unwrap();
+                if truncated {
+                    assert!(
+                        matches!(result, Err(ArchitectRefusal::ModelUnavailable { .. })),
+                        "served={served}: {result:?}"
+                    );
+                } else {
+                    assert_eq!(result.unwrap().text, "draft text");
+                }
+            }
+        }
+    }
 
     #[test]
     fn pending_question_uses_the_sealed_description_and_owner_settlement() {

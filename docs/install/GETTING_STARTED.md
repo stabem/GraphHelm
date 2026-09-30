@@ -85,7 +85,7 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
 
 ## 1. Build or install the binary
 
-The [0.1.0 CLI preview release](../releases/0.1.0.md) provides verified Windows and Ubuntu x86-64
+The [0.1.1 CLI preview release](../releases/0.1.1.md) provides verified Windows and Ubuntu x86-64
 archives, avoiding the Rust build. Download the matching archive and its `SHA256SUMS.txt`, check
 the digest, extract it, and add the binary's directory to `PATH`. You still need the repository
 for this guide's example graphs, Studio, and installation assets. On macOS or another platform,
@@ -111,7 +111,7 @@ graphhelm --version
 Expected last line:
 
 ```
-graphhelm 0.1.0
+graphhelm 0.1.1
 ```
 
 `cargo install` puts `graphhelm` on your PATH (`~/.cargo/bin`). If you would rather not install,

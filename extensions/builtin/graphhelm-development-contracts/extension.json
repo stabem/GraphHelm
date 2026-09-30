@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -661,7 +661,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-          "sha256": "sha256:a8b288018a0daf06b111ef616fb5035ef51676bed9c980d1fd5590a8a63918e1",
+      "sha256": "sha256:7d3da0382051318d7c2d427b5a67aa5fb8d27db5ff6dd0fd922554db9d090c4b",
           "effects": [
             "host.discover"
           ],
@@ -677,7 +677,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-          "sha256": "sha256:6732cf48159876839a01b65d4badd437d6be1e5b009e93e051ad06db97e33021",
+      "sha256": "sha256:3a99d030cd47559001b2ee405a6f07397909030f69a589f0f4f6d4d58660bfb1",
           "effects": [
             "host.discover"
           ],
@@ -993,7 +993,7 @@
           "id": "skill/test-audit",
           "kind": "skill",
           "path": "skills/test-audit/SKILL.md",
-          "sha256": "sha256:da0407bb985d7c2a375275cd8c7ebfc8c69b33b4be5a1450a7843171fba34771",
+      "sha256": "sha256:3f35707c5aff59f5baee9a7cadbf0672ce251c709f781c1a585ba01c981601d2",
           "effects": [],
           "permissions": [
             "package.read"

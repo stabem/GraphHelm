@@ -16,6 +16,9 @@ const COMMAND: &str = "keel";
 const KEEL_POLICY: &str = include_str!(
     "../../../../extensions/builtin/graphhelm-development-contracts/policies/keel.yaml"
 );
+const KEEL_CARD_SCHEMA: &str = include_str!(
+    "../../../../extensions/builtin/graphhelm-development-contracts/schemas/keel-card.schema.json"
+);
 
 /// A card is a few hundred bytes (`keel.yaml` `card.maxCardBytes`); this only stops an unbounded
 /// read. A card between the two is read and reported as `keel.card.too_large`.
@@ -189,7 +192,29 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
     }
     let bytes = std::fs::read(path)
         .map_err(|error| Box::new(input_error(format!("card unreadable: {error}"), "/card")))?;
-    let card: Card = serde_json::from_slice(&bytes).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        Box::new(input_error(
+            format!("card is not valid JSON: {error}"),
+            "/card",
+        ))
+    })?;
+    let schema: serde_json::Value = serde_json::from_str(KEEL_CARD_SCHEMA).map_err(|error| {
+        Box::new(Outcome::internal(
+            COMMAND,
+            format!("shipped keel-card.schema.json unreadable: {error}"),
+        ))
+    })?;
+    let diagnostics = graphhelm_schema::validate_inline_value(&schema, &value, "keel-card")
+        .map_err(|error| {
+            Box::new(input_error(
+                format!("card schema validation failed: {error}"),
+                "/card",
+            ))
+        })?;
+    if let Some(diagnostic) = diagnostics.into_iter().next() {
+        return Err(Box::new(Outcome::application(COMMAND, diagnostic)));
+    }
+    let card: Card = serde_json::from_value(value).map_err(|error| {
         Box::new(input_error(
             format!("card is not a keel card (keel-card.schema.json): {error}"),
             "/card",

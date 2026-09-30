@@ -1344,6 +1344,8 @@ export default function App({
     async (token: string, knownProject?: string | null, knownProjectPath?: string | null) => {
       connectionAttempted.current = true;
       const generation = ++connectionGeneration.current;
+      pollMisses.current = 0;
+      setStale(false);
       setConnecting(true);
       setError("");
       const client = createClient ? createClient(token) : new RuntimeClient(token);
@@ -1424,6 +1426,8 @@ export default function App({
   const disconnect = useCallback(() => {
     if (!closeProjectDocument()) return;
     connectionGeneration.current += 1;
+    pollMisses.current = 0;
+    setStale(false);
     setConnecting(false);
     toolsRef.current?.unregister();
     toolsRef.current = null;

@@ -3145,6 +3145,57 @@ describe("round-4: the instruments admit their own state", () => {
     });
   });
 
+  /** A failed Runtime left its health badge behind after reconnecting to a healthy empty Runtime.
+   * The empty list has no selected run to poll, so only the connection boundary can clear it. */
+  it("clears stale health after reconnecting to a healthy empty Runtime", async () => {
+    let firstHealthy = true;
+    const first = stubClient({
+      listExecutions: vi.fn(async () => ({
+        executions: [{
+          executionId: "demo-deploy",
+          mode: "supervised",
+          status: "running",
+          attention: "needs_you",
+          startedAt: null,
+          lastEventAt: null,
+          headSequence: 13,
+        }],
+        hasMore: false,
+        nextCursor: null,
+      })),
+      getStatus: vi.fn(async () => {
+        if (!firstHealthy) throw new Error("dead");
+        return { ...STATUS };
+      }),
+      getEvents: vi.fn(async () => {
+        if (!firstHealthy) throw new Error("dead");
+        return { head: 13, events: [] };
+      }),
+    });
+    const second = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [], hasMore: false, nextCursor: null })),
+    });
+    const makeClient = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    render(
+      <App
+        createClient={(token) => makeClient(token) as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={30}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    firstHealthy = false;
+    await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), { timeout: 2000 });
+
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });
+    await userEvent.type(await screen.findByLabelText(/bearer token/i), "local-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() => expect(screen.queryByText(/stale/i)).not.toBeInTheDocument());
+    expect(await screen.findByText(/No task yet/i)).toBeInTheDocument();
+  });
+
   /** A refused WebMCP tool call was invisible: the chip lit identically for success and
    * refusal, and the detail reached nobody. */
   it("shows a refused tool call as refused", async () => {

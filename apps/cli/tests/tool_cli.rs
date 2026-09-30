@@ -120,7 +120,7 @@ fn a_tier_0_read_reports_the_record_and_captures_the_bytes() {
 }
 
 #[test]
-fn a_tier_1_apply_leaves_project_and_staging_untouched_after_the_call() {
+fn a_tier_1_apply_preserves_project_and_removes_its_workspace() {
     let dirs = dirs();
     let patch = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n // scratch\n+// patched\n";
     let request_body = serde_json::json!({
@@ -144,7 +144,16 @@ fn a_tier_1_apply_leaves_project_and_staging_untouched_after_the_call() {
         .unwrap()
         .filter_map(Result::ok)
         .collect();
-    assert!(staging_left.is_empty(), "staging must be empty afterward");
+    // Ownership metadata survives so another call cannot lock a replacement inode; no live
+    // workspace or no-hooks scratch may remain beside it.
+    assert_eq!(staging_left.len(), 1, "only ownership metadata may remain");
+    let owners = &staging_left[0];
+    assert_eq!(owners.file_name(), ".graphhelm-workspace-owners");
+    let locks: Vec<_> = std::fs::read_dir(owners.path()).unwrap().collect();
+    assert_eq!(locks.len(), 1);
+    let metadata = locks[0].as_ref().unwrap().metadata().unwrap();
+    assert!(metadata.is_file());
+    assert_eq!(metadata.len(), 0);
 }
 
 /// #860, the CLI twin of #845's end-to-end cell: the operator-facing envelope names the NEW rule

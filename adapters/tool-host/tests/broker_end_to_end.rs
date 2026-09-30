@@ -92,7 +92,9 @@ fn staging_entries(staging: &Path) -> Vec<String> {
             // host's staging area") and persists across calls by design — it is host data,
             // not a leaked workspace. The empty-staging contract these tests pin is about
             // WORKSPACES (write capabilities) not outliving their call.
-            .filter(|name| name != "ghtool-read-cache")
+            // Stable empty lock files also persist: unlinking them could split an ownership
+            // claim across different inodes. Neither metadata directory is a live workspace.
+            .filter(|name| name != "ghtool-read-cache" && name != ".graphhelm-workspace-owners")
             .collect(),
         Err(_) => Vec::new(),
     }

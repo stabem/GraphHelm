@@ -180,24 +180,46 @@ fn a_malformed_call_id_is_refused_before_any_filesystem_action() {
 }
 
 #[test]
-fn provision_leaves_nothing_in_staging_but_the_workspace_itself() {
-    // Review finding 2: the no-hooks scratch dir must not outlive worktree add — the Task 7
-    // broker asserts staging is EMPTY after a completed call, so nothing here may linger.
+fn provision_removes_scratch_but_retains_the_stable_ownership_lock() {
+    // The no-hooks scratch must not outlive provisioning, and no workspace outlives remove.
+    // The empty ownership file remains stable so a second open cannot lock another inode.
     let (_dir, project) = scratch_repo();
     let staging = tempfile::tempdir().unwrap();
     let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
     let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
-    let entries: Vec<_> = std::fs::read_dir(staging.path())
+    let mut entries: Vec<_> = std::fs::read_dir(staging.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(entries, vec!["ghtool-call-1"], "stray entries: {entries:?}");
-    workspace.remove().unwrap();
+    entries.sort();
     assert_eq!(
-        std::fs::read_dir(staging.path()).unwrap().count(),
-        0,
-        "staging must be empty after remove"
+        entries,
+        vec![".graphhelm-workspace-owners", "ghtool-call-1"]
     );
+    let owner = staging
+        .path()
+        .join(".graphhelm-workspace-owners/call-1.lock");
+    let retained = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&owner)
+        .unwrap();
+    workspace.remove().unwrap();
+    assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_dir(owner.parent().unwrap()).unwrap().count(),
+        1
+    );
+    assert!(owner.is_file());
+    assert_eq!(retained.metadata().unwrap().len(), 0);
+    // A successful remove releases the claim, and reprovisioning locks the same retained file.
+    let next = Tier1Workspace::provision(&config, "call-1", None).unwrap();
+    assert!(
+        retained.try_lock().is_err(),
+        "the stable lock file was replaced"
+    );
+    next.remove().unwrap();
+    retained.try_lock().unwrap();
 }
 
 #[test]

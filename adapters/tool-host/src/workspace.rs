@@ -105,6 +105,9 @@ pub struct Tier1Workspace {
     /// Whether `provision_from` found a stale tree at this root and reclaimed it first (#1073):
     /// the leftover of a drive whose server died before `release`. Surfaces on the record.
     recovered: bool,
+    /// An OS-exclusive claim on the physical workspace name. Held through deferred cleanup,
+    /// even while the cancellation span is parked; process exit releases it for crash recovery.
+    ownership: std::fs::File,
     /// The counted span that makes `cancel` wait for this workspace's TEARDOWN (#617).
     ///
     /// Taken in `provision` and released when `remove` returns, so the in-flight count never
@@ -167,12 +170,26 @@ impl Tier1Workspace {
             });
         }
         let root = config.staging.join(format!("ghtool-{call_id}"));
-        // A tree already at this root is a LEFTOVER, never a live workspace: a live one is held
-        // by the host that provisioned it, and the host names its trees so two calls cannot
-        // share one. A server killed mid-drive leaves the tree and its `.git/worktrees/…`
-        // registration behind, and refusing here made every later drive of that execution
-        // refuse forever (Codex, on #1073). The root is under OUR staging by construction
-        // (`config.staging.join`), so reclaiming it removes nothing that is not ours.
+        // Claim the name BEFORE inspecting or reclaiming it. A released host can still have a
+        // blocked reader and deferred cleanup, so an existing directory is not proof of death.
+        // Keep the lock outside the removable tree and NEVER unlink it: unlink/reopen would let
+        // two owners lock different files for the same workspace. These empty files are stable
+        // coordination metadata, not workspaces or persisted authority; the OS releases the claim
+        // when its process dies. Independent workspace names retain independent locks.
+        let owners = config.staging.join(".graphhelm-workspace-owners");
+        std::fs::create_dir_all(&owners).map_err(|source| HostError::Prepare { source })?;
+        let ownership = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(owners.join(format!("{call_id}.lock")))
+            .map_err(|source| HostError::Prepare { source })?;
+        ownership.try_lock().map_err(|_| HostError::Config {
+            rule: "the workspace ownership lock is held or unavailable",
+        })?;
+        // With the exclusive claim held, an existing tree is an abandoned workspace. Reclaim it
+        // and its registration as before; a live owner's deferred cleanup cannot overlap this.
         let mut recovered = root.exists();
         if recovered {
             reclaim_stale(&config.project, &root)?;
@@ -280,8 +297,8 @@ impl Tier1Workspace {
             break status;
         };
         // The no-hooks directory's whole role ends when `worktree add` returns; removing it
-        // here keeps the staging area's contract simple — after a call completes, staging is
-        // empty again (the Task 7 broker asserts exactly that).
+        // here leaves no scratch capability behind. Only stable ownership metadata (and the
+        // separately managed read cache) may outlive a removed workspace.
         let _ = std::fs::remove_dir_all(&no_hooks);
         if !status.success() {
             return Err(HostError::Config {
@@ -296,6 +313,7 @@ impl Tier1Workspace {
             project: config.project.clone(),
             hold,
             recovered,
+            ownership,
         })
     }
 
@@ -398,6 +416,7 @@ impl Tier1Workspace {
         // Released HERE, explicitly, and after the last filesystem answer this function needs.
         // Letting it fall out of scope would work today and would break the moment anyone adds a
         // line below it, because the release is the thing that lets `cancel` return.
+        drop(self.ownership);
         drop(self.hold);
         if exists {
             return Err(HostError::Config {

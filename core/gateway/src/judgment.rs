@@ -108,6 +108,7 @@ mod usage_wire {
         Ok(Usage {
             input_tokens: wire.input_tokens,
             output_tokens: wire.output_tokens,
+            ..Usage::default()
         })
     }
 }

@@ -528,3 +528,24 @@ an honest unknown, not a clean bill of health.
 - Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the `signal_recorded`, `ghost_node_proposed`, and `mutation_accepted` event kinds to `event-envelope.schema.json`, closing a gap where the in-flight governance wire contract had no schema-validated representation.
 - Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the `execution_paused` and `execution_resumed` event kinds and widening the `nodeOutcome` and `simulationStatus` enums with `paused`, `interrupted`, and `cancelled` in `event-envelope.schema.json`, closing a gap where the pause, resume, and cancel lifecycle had no schema-validated representation.
 - Corrected the single pre-release `1.0.0` baseline in place under D-037 by bounding `completion.customs.budgets.{waitWithinSeconds,clearanceWithinSeconds,dlqWithinSeconds}` in `node.schema.json` to 315,576,000 seconds (ten years), matching the existing house limit used by persisted customs budgets. This makes an oversized authoring value fail at schema validation instead of passing authoring and failing later at persistence; it does not change optionality or add a tri-state runtime outcome.
+
+
+## execution-accounting-receipt 1.0.0 - optional provider usage (#175)
+
+The optional `providerUsage` object preserves provider/native cache-read and cache-write counts,
+input-token semantics, and the reporting boundary for one attempt. Its counts are reported tokens,
+not a local estimate or a billed monetary amount. Missing counters remain unknown; reported zero
+remains zero. OpenAI/Codex input counts already include cache reads; Anthropic/Claude Code input
+counts exclude cache reads and creation. A total for the latter needs all three counters, with
+checked addition; an absent counter cannot be replaced by zero.
+
+The thirteen existing positional lines and their notes are unchanged, including the unavailable
+provider-total line required by D-043. This optional property is comparator-compatible against
+main and stays at 1.0.0 because the receipt is absent from the frozen release, as described for
+context provenance above. Historical receipts without the property keep their exact byte shape.
+
+Each receipt is referenced by its node outcome event and has the existing execution/node/attempt
+Evidence identity. Consumers enumerate those accounting references once per attempt, including
+failed attempts, and exclude lifecycle hops. The duplicate input/output view in `providerUsage`
+is not an additional charge to add to the legacy fields. There is no new task total or paid-cost
+estimate in this change; unknown observations and subscription usage cannot become billed cost.

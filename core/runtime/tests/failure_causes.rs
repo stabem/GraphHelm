@@ -124,6 +124,7 @@ fn reply(text: &str) -> ModelReply {
         usage: Usage {
             input_tokens: Some(12),
             output_tokens: Some(5),
+            ..Usage::default()
         },
     }
 }

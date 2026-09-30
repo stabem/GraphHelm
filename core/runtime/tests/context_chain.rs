@@ -1559,6 +1559,7 @@ fn the_accounting_receipt_still_says_unavailable_where_its_frozen_contract_must(
         input_tokens: Some(1),
         output_tokens: Some(1),
         exit_code: None,
+        provider_usage: None,
     };
     let receipt =
         ExecutionAccountingReceipt::from_work_summary(&execution_start(), &summary).unwrap();

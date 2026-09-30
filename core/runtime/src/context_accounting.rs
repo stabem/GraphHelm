@@ -266,6 +266,7 @@ pub struct AccountingReceipt {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionAccountingReceipt {
     execution_binding: ExecutionBinding,
+    provider_usage: Option<graphhelm_gateway::call::Usage>,
     fields: Vec<(String, CostField)>,
 }
 
@@ -349,6 +350,8 @@ const ACCOUNTING_FIELD_NAMES: [&str; 13] = [
 struct AccountingReceiptWire<'a> {
     schema_version: &'static str,
     execution_binding: &'a ExecutionBinding,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_usage: Option<graphhelm_gateway::call::Usage>,
     fields: Vec<AccountingFieldWire<'a>>,
 }
 
@@ -364,7 +367,41 @@ struct AccountingFieldWire<'a> {
 struct OwnedAccountingReceiptWire {
     schema_version: String,
     execution_binding: ExecutionBinding,
+    #[serde(default, deserialize_with = "deserialize_provider_usage")]
+    provider_usage: Option<graphhelm_gateway::call::Usage>,
     fields: Vec<OwnedAccountingFieldWire>,
+}
+
+// The generic gateway wire remains forward-compatible. Persistent receipt metadata is closed:
+// no reply text, estimates, prices or arbitrary provider strings may enter its content-free shape.
+fn deserialize_provider_usage<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<graphhelm_gateway::call::Usage>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| serde::de::Error::custom("provider usage must be an object"))?;
+    if !object.contains_key("inputTokens")
+        || !object.contains_key("outputTokens")
+        || object.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "inputTokens"
+                    | "outputTokens"
+                    | "cacheReadTokens"
+                    | "cacheWriteTokens"
+                    | "inputTokenSemantics"
+                    | "source"
+            )
+        })
+    {
+        return Err(serde::de::Error::custom(
+            "provider usage has an invalid field set",
+        ));
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize)]
@@ -458,8 +495,9 @@ impl ExecutionAccountingReceipt {
             None => CostField::unavailable(PROVIDER_REPORTED_INPUT_UNAVAILABLE_NOTE),
         };
 
-        Ok(Self {
+        let receipt = Self {
             execution_binding,
+            provider_usage: summary.provider_usage,
             fields: vec![
                 (ORIENTATION_TOKENS_FIELD.to_owned(), unavailable()),
                 (ZERO_RESULT_QUERIES_FIELD.to_owned(), unavailable()),
@@ -481,7 +519,9 @@ impl ExecutionAccountingReceipt {
                 (INDEX_COST_COLD_FIELD.to_owned(), unavailable()),
                 (INDEX_COST_AMORTIZED_FIELD.to_owned(), unavailable()),
             ],
-        })
+        };
+        receipt.validate_wire_contract()?;
+        Ok(receipt)
     }
 
     /// The execution this persistent receipt belongs to.
@@ -506,6 +546,7 @@ impl ExecutionAccountingReceipt {
         Ok(serde_json::to_vec(&AccountingReceiptWire {
             schema_version: ACCOUNTING_RECEIPT_SCHEMA_VERSION,
             execution_binding: &self.execution_binding,
+            provider_usage: self.provider_usage,
             fields,
         })?)
     }
@@ -527,6 +568,7 @@ impl ExecutionAccountingReceipt {
         }
         let receipt = Self {
             execution_binding: wire.execution_binding,
+            provider_usage: wire.provider_usage,
             fields: wire
                 .fields
                 .into_iter()
@@ -559,6 +601,29 @@ impl ExecutionAccountingReceipt {
             || self.fields.len() != ACCOUNTING_FIELD_NAMES.len()
         {
             return Err(AccountingReceiptError::InvalidWireContract);
+        }
+        if let Some(usage) = self.provider_usage {
+            if usage
+                .input_tokens
+                .into_iter()
+                .chain(usage.output_tokens)
+                .chain(usage.cache_read_tokens)
+                .chain(usage.cache_write_tokens)
+                .any(|value| value > MAX_JSON_SAFE_INTEGER)
+            {
+                return Err(AccountingReceiptError::UnsafeTokenCount);
+            }
+            if usage.input_tokens
+                != self
+                    .field(PROVIDER_REPORTED_INPUT_TOKENS_FIELD)
+                    .and_then(CostField::observed)
+                || usage.output_tokens
+                    != self
+                        .field(OUTPUT_TOKENS_FIELD)
+                        .and_then(CostField::observed)
+            {
+                return Err(AccountingReceiptError::InvalidWireContract);
+            }
         }
         for ((name, field), expected_name) in self.fields.iter().zip(ACCOUNTING_FIELD_NAMES.iter())
         {

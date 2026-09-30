@@ -409,6 +409,7 @@ fn execution_usage_receipt_is_bound_and_byte_stable() {
         input_tokens: Some(12),
         output_tokens: Some(5),
         exit_code: None,
+        provider_usage: None,
     };
 
     let binding = execution_binding();
@@ -545,6 +546,7 @@ fn missing_model_usage_is_unavailable_and_never_zero() {
         input_tokens: None,
         output_tokens: None,
         exit_code: None,
+        provider_usage: None,
     };
     let receipt =
         ExecutionAccountingReceipt::from_work_summary(&execution_binding(), &summary).unwrap();
@@ -592,6 +594,7 @@ fn an_execution_receipt_refuses_a_binding_without_an_execution_scope() {
             input_tokens: Some(12),
             output_tokens: Some(5),
             exit_code: None,
+            provider_usage: None,
         },
     );
     assert!(result.is_err());
@@ -603,6 +606,7 @@ fn an_execution_receipt_refuses_a_mismatched_or_corrupt_execution_event() {
         input_tokens: Some(12),
         output_tokens: Some(5),
         exit_code: None,
+        provider_usage: None,
     };
     assert!(
         ExecutionAccountingReceipt::from_work_summary(
@@ -623,6 +627,7 @@ fn producer_actor_type_is_identity_even_when_actor_id_is_the_same() {
         input_tokens: Some(12),
         output_tokens: Some(5),
         exit_code: None,
+        provider_usage: None,
     };
     let system = ExecutionAccountingReceipt::from_work_summary(
         &execution_event_by_actor(Some(EXECUTION_ID), EXECUTION_ID, PersistedActorType::System),
@@ -650,6 +655,7 @@ fn execution_receipt_deserialization_rejects_tokens_above_json_safe_integer() {
             input_tokens: Some(12),
             output_tokens: Some(5),
             exit_code: None,
+            provider_usage: None,
         },
     )
     .unwrap();
@@ -675,6 +681,7 @@ fn execution_receipt_deserialization_rejects_wrong_binding_domain_kind_and_diges
             input_tokens: Some(12),
             output_tokens: Some(5),
             exit_code: None,
+            provider_usage: None,
         },
     )
     .unwrap();

@@ -374,6 +374,7 @@ fn reuse_fills_a_template_and_never_asks_the_draft_model() {
         Usage {
             input_tokens: Some(3 + 7),
             output_tokens: Some(5 + 11),
+            ..Usage::default()
         },
         "the decision's and the fill's usage are summed on the report"
     );

@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use graphhelm_gateway::call::{ModelCall, ModelReply, Usage};
+use graphhelm_gateway::call::{InputTokenSemantics, ModelCall, ModelReply, Usage, UsageSource};
 use graphhelm_gateway::manifest::{ModelRoute, RuntimeKind, Transport};
 use graphhelm_gateway::taxonomy::GatewayError;
 use serde::Deserialize;
@@ -656,12 +656,16 @@ struct ClaudeCodeReply {
     usage: Option<ClaudeCodeUsage>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct ClaudeCodeUsage {
     #[serde(default)]
     input_tokens: Option<u64>,
     #[serde(default)]
     output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
 }
 
 impl ClaudeCodeReply {
@@ -689,10 +693,15 @@ impl ClaudeCodeReply {
 
     fn into_model_reply(self) -> Option<ModelReply> {
         let text = self.result?;
-        let usage = self.usage.map_or(Usage::default(), |usage| Usage {
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-        });
+        let reported = self.usage.unwrap_or_default();
+        let usage = Usage {
+            input_tokens: reported.input_tokens,
+            output_tokens: reported.output_tokens,
+            cache_read_tokens: reported.cache_read_input_tokens,
+            cache_write_tokens: reported.cache_creation_input_tokens,
+            input_token_semantics: Some(InputTokenSemantics::ExcludesCache),
+            source: Some(UsageSource::ClaudeCode),
+        };
         Some(ModelReply { text, usage })
     }
 }
@@ -827,12 +836,14 @@ struct CodexCurrentItem {
     text: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct CodexCurrentUsage {
     #[serde(default)]
     input_tokens: Option<u64>,
     #[serde(default)]
     output_tokens: Option<u64>,
+    #[serde(default)]
+    cached_input_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -969,10 +980,15 @@ fn parse_current_codex_jsonl(lines: &[&str]) -> Result<ModelReply, CodexParseErr
                 let text = last_agent_message
                     .take()
                     .ok_or(CodexParseError::Malformed)?;
-                let usage = usage.map_or(Usage::default(), |usage| Usage {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                });
+                let reported = usage.unwrap_or_default();
+                let usage = Usage {
+                    input_tokens: reported.input_tokens,
+                    output_tokens: reported.output_tokens,
+                    cache_read_tokens: reported.cached_input_tokens,
+                    cache_write_tokens: None,
+                    input_token_semantics: Some(InputTokenSemantics::IncludesCache),
+                    source: Some(UsageSource::Codex),
+                };
                 completed_reply = Some(ModelReply { text, usage });
             }
             CodexCurrentEvent::ThreadStarted { .. }
@@ -1229,6 +1245,35 @@ mod tests {
         let reader = super::spawn_capped_reader(std::io::Cursor::new(prefix).chain(FailedPipe));
         assert!(!reader.handle.join().expect("reader thread"));
         assert_eq!(super::take_buffer(&reader.buffer), prefix);
+    }
+
+    // Both native transports already parse usage, but used to drop every cache counter.
+    // Cost: two in-memory parser calls; no subprocess or external service.
+    #[test]
+    fn native_usage_preserves_cache_counters_and_source() {
+        let claude = super::parse_claude_code_json(br#"{"result":"ok","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":50,"cache_creation_input_tokens":0}}"#)
+            .unwrap().into_model_reply().unwrap();
+        let codex = parse_codex_jsonl(
+            br#"{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":3,"cached_input_tokens":50}}
+"#,
+        )
+        .unwrap();
+        for (reply, source, semantics, write) in [
+            (
+                claude,
+                "claude_code",
+                "excludes_cache",
+                serde_json::json!(0),
+            ),
+            (codex, "codex", "includes_cache", serde_json::Value::Null),
+        ] {
+            let usage = serde_json::to_value(reply.usage).unwrap();
+            assert_eq!(usage["cacheReadTokens"], 50);
+            assert_eq!(usage["cacheWriteTokens"], write);
+            assert_eq!(usage["source"], source);
+            assert_eq!(usage["inputTokenSemantics"], semantics);
+        }
     }
 
     #[test]

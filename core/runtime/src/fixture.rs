@@ -47,6 +47,7 @@ impl AsyncNodeExecutor for FixtureAsyncExecutor {
                     input_tokens: None,
                     output_tokens: None,
                     exit_code: None,
+                    provider_usage: None,
                 },
                 reuse: None,
                 gate_verdict: None,

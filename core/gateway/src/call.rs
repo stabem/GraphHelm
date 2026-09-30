@@ -4,8 +4,8 @@
 //! `adapters/model-gateway`, so a later milestone (05d, the execution-side consumer) can depend on
 //! them without pulling in the adapter crate's `ureq`/subprocess machinery. Both the BYOK adapters
 //! (`adapters/model-gateway/src/byok.rs`) and the native-runtime adapters (Task 5) construct these
-//! from whatever provider- or CLI-specific shape they actually parsed; nothing here knows about
-//! Anthropic, OpenAI, Claude Code, or Codex.
+//! from whatever provider- or CLI-specific shape they actually parsed. Reporting-source labels
+//! retain provenance, but provider parsing, SDKs and I/O remain exclusively in adapters.
 //!
 //! Plain serde derives only: no validation, no smart constructor, no `deny_unknown_fields`. A
 //! `RouteManifest` is a hand-authored operator artifact worth refusing structurally (§4); a
@@ -43,4 +43,32 @@ pub struct ModelReply {
 pub struct Usage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// Provider/native counters, never local estimates or monetary charges. Missing stays unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_token_semantics: Option<InputTokenSemantics>,
+    /// The wire boundary that reported the counters; no provenance is invented for legacy replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<UsageSource>,
+}
+
+/// Whether the reported input already contains the separately reported cache counters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputTokenSemantics {
+    IncludesCache,
+    ExcludesCache,
+}
+
+/// Reporting boundary, not a claim that tokens were billed or money was charged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageSource {
+    AnthropicMessages,
+    OpenaiChatCompletions,
+    ClaudeCode,
+    Codex,
 }

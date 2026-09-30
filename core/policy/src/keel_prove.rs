@@ -47,7 +47,7 @@ pub struct NewTest {
 pub enum RunOutcome {
     Passed,
     Failed,
-    /// The crate did not build. On the parent this usually means the thing under test is new.
+    /// The crate did not build. The cause may be a new subject or an incomplete test graft.
     DidNotCompile,
     /// The build ran and no test by that name ran.
     NotFound,
@@ -72,8 +72,8 @@ pub struct RunResult {
 pub enum TestVerdict {
     /// Red on the parent, green on the head: the test detects the defect the change removes.
     Earned,
-    /// The parent does not compile with the test grafted in (the subject is new) and the head is
-    /// green. Not red-on-parent evidence; the reviewer reads the compiler line.
+    /// Reserved for a subject proven new independently of a failed parent build. The current
+    /// outcome-only prover cannot establish that distinction and does not emit this verdict.
     NewSubject,
     /// Green on the parent: the test does not detect anything this change fixed.
     GreenOnParent,
@@ -125,7 +125,9 @@ pub const fn verdict(parent: RunOutcome, head: RunOutcome) -> TestVerdict {
     match head {
         RunOutcome::Passed => match parent {
             RunOutcome::Failed => TestVerdict::Earned,
-            RunOutcome::DidNotCompile => TestVerdict::NewSubject,
+            // A failed graft can omit a test helper while the production subject already exists.
+            // Compilation failure alone does not prove that the subject is new.
+            RunOutcome::DidNotCompile => TestVerdict::Unproven,
             RunOutcome::Passed => TestVerdict::GreenOnParent,
             _ => TestVerdict::Unproven,
         },
@@ -904,7 +906,7 @@ mod tests {
     fn verdict_separates_every_outcome_pair_that_means_something() {
         use RunOutcome::{DidNotCompile, Failed, NotFound, Passed, TimedOut};
         assert_eq!(verdict(Failed, Passed), TestVerdict::Earned);
-        assert_eq!(verdict(DidNotCompile, Passed), TestVerdict::NewSubject);
+        assert_eq!(verdict(DidNotCompile, Passed), TestVerdict::Unproven);
         assert_eq!(verdict(Passed, Passed), TestVerdict::GreenOnParent);
         assert_eq!(verdict(Failed, Failed), TestVerdict::RedOnHead);
         assert_eq!(verdict(TimedOut, Passed), TestVerdict::Unproven);

@@ -261,3 +261,58 @@ fn prove_new_tests_earns_the_regression_test_and_flags_the_one_green_on_the_pare
     let listed = String::from_utf8_lossy(&worktrees.stdout);
     assert_eq!(listed.matches("worktree ").count(), 1, "{listed}");
 }
+
+#[test]
+fn an_incomplete_inline_graft_does_not_claim_the_subject_is_new() {
+    let repo = tempfile::tempdir().unwrap();
+    let write = |text: &str| {
+        fs::create_dir_all(repo.path().join("src")).unwrap();
+        fs::write(repo.path().join("src/lib.rs"), text).unwrap();
+    };
+    fs::write(
+        repo.path().join("Cargo.toml"),
+        "[package]\nname = \"keel_graft_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    git(repo.path(), &["init", "-q"]);
+    write("pub fn fixed() -> u32 { 1 }\n");
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    write(
+        "pub fn fixed() -> u32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    fn expected_value() -> u32 { 1 }\n    #[test]\n    fn fixed_is_one() { assert_eq!(fixed(), expected_value()); }\n}\n",
+    );
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "test"]);
+    let target = tempfile::tempdir().unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "keel", "check", "--repo"])
+        .arg(repo.path())
+        .args([
+            "--diff",
+            "HEAD~1..HEAD",
+            "--prove-new-tests",
+            "--prove-timeout-secs",
+            "30",
+            "--prove-target-dir",
+        ])
+        .arg(target.path())
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{reply}");
+    let proof = &reply["data"]["testProof"]["proofs"][0];
+    assert_eq!(proof["parent"]["outcome"], "did_not_compile");
+    assert!(
+        proof["parent"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("expected_value")
+    );
+    assert_eq!(proof["head"]["outcome"], "passed");
+    assert_eq!(proof["verdict"], "unproven");
+    assert_eq!(
+        reply["data"]["testProof"]["findings"][0]["rule"],
+        "keel.test.unproven"
+    );
+}

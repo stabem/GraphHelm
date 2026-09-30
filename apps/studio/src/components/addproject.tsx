@@ -17,16 +17,14 @@
 import { useState } from "react";
 import { Check, Copy, FolderPlus, X } from "lucide-react";
 
-/** The command that makes a folder into a project. `--events` is the only required argument: the
- * rest of the executor group is what a run needs to reach a model, and a folder is a project
- * before it can do that. */
+/** The command that makes a folder into a project. The Runtime needs an explicit loopback bind,
+ * and the documented discovery port is 8791. */
 function commandFor(folder: string): string {
   const target = folder.trim().length > 0 ? folder.trim() : "<path to the folder>";
-  // `;` rather than `&&`: the panel shows a Windows-style path, and Windows PowerShell 5.1
-  // rejects `&&` outright - the copied command has to run in the shell the example implies
-  // (PR #467 review). If the cd fails, serve then refuses on the missing events dir, which is
-  // the same stop one step later with a clearer message.
-  return `cd "${target}"; graphhelm serve --events .graphhelm/events`;
+  const escapedTarget = target.replaceAll("'", "''");
+  // PowerShell 5.1 does not support `&&`. Checking `$?` keeps the copied command safe when the
+  // folder does not exist, while `-LiteralPath` prevents wildcard expansion in the path.
+  return `Set-Location -LiteralPath '${escapedTarget}'; if ($?) { graphhelm serve --events .graphhelm/events --bind 127.0.0.1:8791 }`;
 }
 
 export function AddProject({ onClose }: { onClose: () => void }) {

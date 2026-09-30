@@ -1580,7 +1580,11 @@ describe("the shell's own layout", () => {
 
     const panel = await screen.findByLabelText("Add project folder");
     await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
-    expect(within(panel).getByText(/graphhelm serve --events \.graphhelm\/events/i)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791 \}/i,
+      ),
+    ).toBeInTheDocument();
     expect(within(panel).getByText(/F:\/projects\/example\/dale-api-base/)).toBeInTheDocument();
   });
 });

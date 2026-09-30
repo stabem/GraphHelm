@@ -221,6 +221,22 @@ describe("the models screen", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("requires an explicit discard before cancelling a partial save", async () => {
+    const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
+    mount({ onApply });
+    await userEvent.click(screen.getByRole("button", { name: "Edit deepseek_official" }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "cancel-retry-key");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm discard" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/API key/i)).toHaveValue("cancel-retry-key");
+    expect(screen.getByRole("form", { name: "Edit route" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "discard draft" }));
+    expect(screen.queryByRole("form", { name: "Edit route" })).toBeNull();
+  });
+
   it("does not let a partial retry change endpoint again", async () => {
     const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
     mount({ onApply });

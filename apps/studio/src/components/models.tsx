@@ -147,6 +147,7 @@ export function Models({
     { provider: string; baseUrl: string; credentialRef?: string } | null
   >(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discardPanel, setDiscardPanel] = useState(true);
 
   const routes = choice?.routes ?? [];
   const open = (route: ModelRouteSummary | null) => {
@@ -159,19 +160,34 @@ export function Models({
     );
     setPartialBaseline(null);
     setConfirmDiscard(false);
+    setDiscardPanel(true);
     setValidationError("");
     // The key box is cleared on every open. A value left in it from the card before would be one
     // keystroke away from landing on a different route's reference.
     setKey("");
   };
 
-  const close = () => {
+  const requestDiscard = (panel: boolean) => {
     if (partialBaseline !== null && !confirmDiscard) {
+      setDiscardPanel(panel);
       setConfirmDiscard(true);
       setValidationError("The route was saved, but the API key was not stored. Keep this panel open to retry, or confirm discard.");
       return;
     }
-    onClose();
+    if (panel) onClose();
+    else setEditing(null);
+  };
+
+  const close = () => requestDiscard(true);
+  const cancel = () => requestDiscard(false);
+  const discard = () => {
+    if (discardPanel) onClose();
+    else {
+      setConfirmDiscard(false);
+      setPartialBaseline(null);
+      setKey("");
+      setEditing(null);
+    }
   };
 
   const apply = async (event: FormEvent) => {
@@ -297,8 +313,8 @@ export function Models({
           <button type="button" className="ghost" onClick={() => setConfirmDiscard(false)}>
             keep editing
           </button>
-          <button type="button" className="ghost" onClick={onClose}>
-            discard and close
+          <button type="button" className="ghost" onClick={discard}>
+            {discardPanel ? "discard and close" : "discard draft"}
           </button>
         </div>
       )}
@@ -448,7 +464,7 @@ export function Models({
           )}
 
           <div className="model-actions">
-            <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>
+            <button type="button" className="ghost" disabled={busy} onClick={cancel}>
               cancel
             </button>
             <button

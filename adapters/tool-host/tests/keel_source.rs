@@ -240,3 +240,78 @@ fn scoped_factory_state_is_not_snapshot_evidence_and_unsafe_paths_are_refused() 
         Err(SourceReadError::Escape)
     );
 }
+
+#[test]
+fn runtime_capsule_reaches_a_tail_symbol_from_the_retained_snapshot() {
+    // Contract: the matching declaration after 16 KiB reaches actual capsule bytes with a range.
+    // Regression: choosing every candidate's prefix loses the only relevant symbol. <1s, local Git/files.
+    let dir = repository();
+    let prefix = "// unrelated introductory material\n".repeat(700);
+    let tail = r"pub fn reconcile_ballots() {
+    count_ballots();
+}
+";
+    std::fs::write(dir.path().join("lib.rs"), format!("{prefix}{tail}")).unwrap();
+    commit_all(dir.path());
+    let KeelSnapshotSelection::Snapshot(ports) = KeelSnapshotPorts::try_open(dir.path()).unwrap()
+    else {
+        panic!("tracked source should admit a snapshot")
+    };
+    // A later edit must not change the snippet selected from this generation.
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "pub fn unrelated_replacement() {}\n",
+    )
+    .unwrap();
+    let compiled = graphhelm_runtime::context::retrieve_and_compile(
+        &ports.search(),
+        &ports.reader(),
+        &["reconcile".to_owned(), "ballots".to_owned()],
+        "tail-evidence",
+        32 * 1024,
+    );
+    assert!(compiled.text.contains("pub fn reconcile_ballots()"));
+    assert!(!compiled.text.contains("unrelated_replacement"));
+    assert!(compiled.text.contains(&format!(
+        "bytes {}..{} of {}]",
+        prefix.len(),
+        prefix.len() + tail.len(),
+        prefix.len() + tail.len()
+    )));
+    assert!(compiled.text.len() <= 32 * 1024);
+    assert_eq!(compiled.summary.sources, ["lib.rs"]);
+    assert_eq!(compiled.summary.excerpted_sources, 1);
+    assert_eq!(
+        compiled.summary.source_snapshot_digest,
+        ports.reader().snapshot_digest()
+    );
+}
+
+#[test]
+fn relevant_tail_selection_refuses_source_whose_secret_boundary_is_outside_the_window() {
+    // Contract: selecting a late line cannot detach secret material from its protective marker.
+    // Regression: a safe prefix changes into a snippet of a credential block. <1s, local Git/files.
+    let dir = repository();
+    let mut source = "// ordinary introduction\n".repeat(800);
+    source.push_str(
+        "-----BEGIN PRIVATE KEY-----\nreconcile_ballots_secret_body\n-----END PRIVATE KEY-----\n",
+    );
+    std::fs::write(dir.path().join("notes.md"), source).unwrap();
+    commit_all(dir.path());
+    let KeelSnapshotSelection::Snapshot(ports) = KeelSnapshotPorts::try_open(dir.path()).unwrap()
+    else {
+        panic!("tracked source should admit a snapshot")
+    };
+    let compiled = graphhelm_runtime::context::retrieve_and_compile(
+        &ports.search(),
+        &ports.reader(),
+        &["reconcile".to_owned(), "ballots".to_owned()],
+        "tail-secret",
+        32 * 1024,
+    );
+    assert!(
+        compiled.text.is_empty(),
+        "a clipped credential source must not enter the capsule"
+    );
+    assert_eq!(compiled.summary.candidates_unreadable, 1);
+}

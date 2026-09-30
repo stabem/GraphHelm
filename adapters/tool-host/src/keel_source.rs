@@ -11,6 +11,7 @@ use graphhelm_protocols::RawSha256;
 use graphhelm_runtime::ports::{
     BoundedSourceReader, BoundedSourceSearch, SourceExcerpt, SourceReadError, SourceSearchBounds,
     SourceSearchError, SourceSearchProvenance, SourceSearchReason, SourceSearchResult,
+    SourceWindow,
 };
 use keel_contract_index::{
     Snapshot, SnapshotSearchBounds, SnapshotSearchError, SnapshotSourceError,
@@ -128,7 +129,7 @@ impl BoundedSourceSearch for KeelSnapshotSearch {
     }
 }
 
-/// Prefix reader over the same retained snapshot as [`KeelSnapshotSearch`].
+/// Relevant-window and prefix reader over the same retained snapshot as [`KeelSnapshotSearch`].
 pub struct KeelSnapshotReader {
     snapshot: Arc<Snapshot>,
     digest: RawSha256,
@@ -157,6 +158,106 @@ impl BoundedSourceReader for KeelSnapshotReader {
         Ok(SourceExcerpt {
             bytes: bytes[..take].to_vec(),
             file_len,
+        })
+    }
+
+    fn read_relevant(
+        &self,
+        relative_path: &str,
+        terms: &[String],
+        max_bytes: u64,
+    ) -> Result<SourceWindow, SourceReadError> {
+        use graphhelm_runtime::context::{MAX_TERM_CHARS, MAX_TERMS, secret_shaped_in};
+        if terms.len() > MAX_TERMS
+            || terms
+                .iter()
+                .any(|term| term.chars().count() > MAX_TERM_CHARS)
+        {
+            return Err(SourceReadError::Unreadable);
+        }
+        // Reuse the contained snapshot read, including the source-path policy. Source retrieval
+        // is bounded by the snapshot's existing 8 MiB/file ceiling and never reopens live files.
+        let prefix = self.read_prefix(relative_path, max_bytes)?;
+        if prefix.file_len <= max_bytes {
+            return Ok(SourceWindow {
+                start_byte: 0,
+                excerpt: prefix,
+            });
+        }
+        let bytes = self
+            .snapshot
+            .source(relative_path)
+            .map_err(|_| SourceReadError::Unreadable)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| SourceReadError::Unreadable)?;
+        // A window could otherwise omit a PEM or multiline assignment's opening marker. Refuse
+        // the candidate before selecting bytes, retaining the runtime's credential boundary.
+        if secret_shaped_in(relative_path, text) {
+            return Err(SourceReadError::Unreadable);
+        }
+        let needles: Vec<String> = terms
+            .iter()
+            .filter(|term| !term.is_empty())
+            .map(|term| term.to_lowercase())
+            .collect();
+        let declarations = self
+            .snapshot
+            .index()
+            .files
+            .iter()
+            .find(|file| file.path == relative_path)
+            .map(|file| file.declarations.as_slice())
+            .unwrap_or_default();
+        let symbols: Vec<&str> = declarations
+            .iter()
+            .filter(|declaration| {
+                let name = declaration.name.to_lowercase();
+                needles.iter().any(|term| name.contains(term))
+            })
+            .map(|declaration| declaration.name.as_str())
+            .take(MAX_TERMS)
+            .collect();
+        let mut selected = None;
+        let mut offset = 0usize;
+        for line in text.split_inclusive('\n') {
+            let lower = line.to_lowercase();
+            let score = needles
+                .iter()
+                .filter(|term| lower.contains(term.as_str()))
+                .count();
+            let declaration = symbols.iter().any(|symbol| line.contains(symbol));
+            if score > 0 && selected.is_none_or(|(_, best)| (declaration, score) > best) {
+                selected = Some((offset, (declaration, score)));
+            }
+            offset += line.len();
+        }
+        let Some((start, _)) = selected else {
+            return Ok(SourceWindow {
+                start_byte: 0,
+                excerpt: prefix,
+            });
+        };
+        // Keep complete lines from the most relevant hit forward; ties select the first hit.
+        // A line too large for the cap uses the explicitly ranged prefix fallback instead.
+        let limit = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+        let mut end = start;
+        for line in text[start..].split_inclusive('\n') {
+            if end - start + line.len() > limit {
+                break;
+            }
+            end += line.len();
+        }
+        if end == start {
+            return Ok(SourceWindow {
+                start_byte: 0,
+                excerpt: prefix,
+            });
+        }
+        Ok(SourceWindow {
+            start_byte: start as u64,
+            excerpt: SourceExcerpt {
+                bytes: bytes[start..end].to_vec(),
+                file_len: bytes.len() as u64,
+            },
         })
     }
 

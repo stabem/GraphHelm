@@ -1,6 +1,6 @@
 {
   "name": "graphhelm-development-contracts",
-  "description": "Three data-only entry skills that turn change requests into development contracts, assemble and cite evidence, and propose durable lessons — all through GraphHelm public read surfaces, proposing artifacts rather than writing them.",
+  "description": "Data-only entry skills for proposing development contracts, gathering and citing evidence, curating lessons, scoping changes with Keel, and auditing tests through public read surfaces and advisory artifacts.",
   "version": "0.1.1",
   "author": {
     "name": "GraphHelm"

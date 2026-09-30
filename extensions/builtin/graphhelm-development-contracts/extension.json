@@ -661,7 +661,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:7d3da0382051318d7c2d427b5a67aa5fb8d27db5ff6dd0fd922554db9d090c4b",
+      "sha256": "sha256:b9fb026f7ec9844d9eecde77138cee1388a5f6eeee31f17e7454db14818d1e30",
           "effects": [
             "host.discover"
           ],
@@ -677,7 +677,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:3a99d030cd47559001b2ee405a6f07397909030f69a589f0f4f6d4d58660bfb1",
+      "sha256": "sha256:a13271e93a18405b853f6623282f7949103b155cb6a64cc2fa82bbf32be95e14",
           "effects": [
             "host.discover"
           ],

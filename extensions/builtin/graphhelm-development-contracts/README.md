@@ -1,16 +1,20 @@
 # GraphHelm development contracts
 
-An Extension package of **data only**. It ships schemas, policies, fixtures, and four entry skills.
+An Extension package of **data only**. It ships schemas, policies, fixtures, and entry skills.
 It ships no binary, no provider, and no code that runs.
 
-## The four entry skills
+## Entry skills
+
+The inventory is declared in [extension.json](extension.json). Entry skills have `SKILL.md` paths;
+[Keel's reference](skills/keel/REFERENCE.md) is supporting material, not another entry skill.
 
 | skill | what it produces | what it may never do |
 |---|---|---|
-| `code-contract` | a proposed contract: scope as a file list, acceptance criteria naming their instrument, one refusal per failure mode | enforce any of it |
-| `context-retrieval` | a proposed context capsule and a result that cites it by stable item identity | decide what is true, or drop required evidence to fit a budget |
-| `memory-curator` | advisory candidates for durable lessons | record anything directly |
-| `keel` | a scoped contract card, measured write surface, and named proof | enforce its own rules or activate the penalty ladder |
+| [`code-contract`](skills/code-contract/SKILL.md) | a proposed contract: scope as a file list, acceptance criteria naming their instrument, one refusal per failure mode | enforce any of it |
+| [`context-retrieval`](skills/context-retrieval/SKILL.md) | a proposed context capsule and a result that cites it by stable item identity | decide what is true, or drop required evidence to fit a budget |
+| [`memory-curator`](skills/memory-curator/SKILL.md) | advisory candidates for durable lessons | record anything directly |
+| [`keel`](skills/keel/SKILL.md) | a scoped contract card, measured write surface, and named proof | enforce its own rules or activate the penalty ladder |
+| [`test-audit`](skills/test-audit/SKILL.md) | an authoring gate, suite audit, or deletion record naming the covering observer | enforce rules or remove a test without a covering-observer record |
 
 For the left-to-right overview of both built-in skill packages, see the
 [skills README](../../../docs/skills/README.md).

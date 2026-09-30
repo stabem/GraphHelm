@@ -718,7 +718,7 @@ pub(crate) struct DiffFile {
     pub(crate) added: Vec<String>,
     /// Added and context lines in order, with a leading marker `+` or ` ` so manifest section
     /// tracking can see headings that were not themselves added.
-    added_with_context: Vec<String>,
+    pub(crate) added_with_context: Vec<String>,
 }
 
 pub(crate) fn parse(diff: &str) -> Vec<DiffFile> {

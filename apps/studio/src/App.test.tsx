@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { fastUserEvent } from "./test/user-event";
 // Its own instance: see the helper for why this is not a shared const.
 const userEvent = fastUserEvent();
@@ -18,7 +18,7 @@ import { saveProjectName, saveRemovedRuns } from "./studio-preferences";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
-import type { MutationEvidence } from "./runtime/types";
+import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
 
@@ -1580,8 +1580,17 @@ describe("the shell's own layout", () => {
 
     const panel = await screen.findByLabelText("Add project folder");
     await userEvent.type(within(panel).getByLabelText(/^folder$/i), "F:/projects/example/dale-api-base");
-    expect(within(panel).getByText(/graphhelm serve --events \.graphhelm\/events/i)).toBeInTheDocument();
-    expect(within(panel).getByText(/F:\/projects\/example\/dale-api-base/)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791 \}/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791/i,
+      ),
+    ).toBeInTheDocument();
+    expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
   });
 });
 
@@ -3072,6 +3081,40 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
 });
 
 describe("round-4: the instruments admit their own state", () => {
+  it("lets a new connection poll while the old connection's read is still pending", async () => {
+    let releaseOldRead!: () => void;
+    const oldRead = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+    let statusReads = 0;
+    const first = stubClient({
+      getStatus: vi.fn(async () => {
+        statusReads += 1;
+        if (statusReads > 1) await oldRead;
+        return { ...STATUS };
+      }),
+    });
+    const second = stubClient();
+    const createClient = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    render(
+      <App
+        createClient={createClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={25}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await waitFor(() => expect(statusReads).toBeGreaterThan(1));
+
+    await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+    await userEvent.type(await screen.findByLabelText(/bearer token/i), "new-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await screen.findByRole("navigation", { name: "Projects" });
+    const readsAfterConnect = second.getStatus.mock.calls.length;
+    await waitFor(() => expect(second.getStatus.mock.calls.length).toBeGreaterThan(readsAfterConnect));
+    releaseOldRead();
+  });
+
   /** Every sealed item was opened twice (hooks + the Said bubble), and a second panel
    * re-fetched everything: the cache's own comment claimed sharing the code did not do. */
   it("opens each sealed item exactly once across the whole page", async () => {
@@ -3134,6 +3177,57 @@ describe("round-4: the instruments admit their own state", () => {
     await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), {
       timeout: 2000,
     });
+  });
+
+  /** A failed Runtime left its health badge behind after reconnecting to a healthy empty Runtime.
+   * The empty list has no selected run to poll, so only the connection boundary can clear it. */
+  it("clears stale health after reconnecting to a healthy empty Runtime", async () => {
+    let firstHealthy = true;
+    const first = stubClient({
+      listExecutions: vi.fn(async () => ({
+        executions: [{
+          executionId: "demo-deploy",
+          mode: "supervised",
+          status: "running",
+          attention: "needs_you",
+          startedAt: null,
+          lastEventAt: null,
+          headSequence: 13,
+        }],
+        hasMore: false,
+        nextCursor: null,
+      })),
+      getStatus: vi.fn(async () => {
+        if (!firstHealthy) throw new Error("dead");
+        return { ...STATUS };
+      }),
+      getEvents: vi.fn(async () => {
+        if (!firstHealthy) throw new Error("dead");
+        return { head: 13, events: [] };
+      }),
+    });
+    const second = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [], hasMore: false, nextCursor: null })),
+    });
+    const makeClient = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    render(
+      <App
+        createClient={(token) => makeClient(token) as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={30}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    firstHealthy = false;
+    await waitFor(() => expect(screen.getByText(/stale/i)).toBeInTheDocument(), { timeout: 2000 });
+
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });
+    await userEvent.type(await screen.findByLabelText(/bearer token/i), "local-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() => expect(screen.queryByText(/stale/i)).not.toBeInTheDocument());
+    expect(await screen.findByText(/No task yet/i)).toBeInTheDocument();
   });
 
   /** A refused WebMCP tool call was invisible: the chip lit identically for success and
@@ -3284,6 +3378,64 @@ describe("the log is searchable and addressable", () => {
 
 describe("the board remembers its graph file", () => {
   afterEach(() => localStorage.removeItem("graphhelm.studio.board.demo-deploy"));
+
+  it("does not accept a topology response for a path that was edited while the read waited", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    let answer!: (value: GraphTopology) => void;
+    const pending = new Promise<GraphTopology>((resolve) => { answer = resolve; });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 1, events: [{
+        sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: hash },
+        occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system",
+        idempotencyKey: "k1", eventId: "event-1", evidenceRefs: [],
+      }] })),
+      getTopology: vi.fn(() => pending),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    const field = screen.getByLabelText(/graph file path on the runtime host/i);
+    await userEvent.type(field, "/graphs/A.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(client.getTopology).toHaveBeenCalledWith("/graphs/A.yaml");
+    await userEvent.clear(field);
+    await userEvent.type(field, "/graphs/B.yaml");
+    await act(async () => answer({ graphId: "g", graphVersion: 1, executionId: "demo-deploy", semanticHash: hash,
+      entrypoints: [], nodes: [], edges: [] }));
+    expect(field).toHaveValue("/graphs/B.yaml");
+    expect(screen.queryByText(/Connections verified:/i)).not.toBeInTheDocument();
+  });
+
+  it("an old topology failure cannot erase a newer path's proof or busy state", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    let rejectOld!: (reason: Error) => void;
+    let answerNew!: (value: GraphTopology) => void;
+    const oldRead = new Promise<GraphTopology>((_, reject) => { rejectOld = reject; });
+    const newRead = new Promise<GraphTopology>((resolve) => { answerNew = resolve; });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 1, events: [{
+        sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: hash },
+        occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system",
+        idempotencyKey: "k1", eventId: "event-1", evidenceRefs: [],
+      }] })),
+      getTopology: vi.fn((file: string) => file === "/graphs/A.yaml" ? oldRead : newRead),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    const field = screen.getByLabelText(/graph file path on the runtime host/i);
+    await userEvent.type(field, "/graphs/A.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await userEvent.clear(field);
+    await userEvent.type(field, "/graphs/B.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await act(async () => rejectOld(new Error("Old path failed")));
+    expect(screen.queryByText(/Old path failed/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^connect$/i })).toBeDisabled();
+    await act(async () => answerNew({ graphId: "g", graphVersion: 1, executionId: "demo-deploy",
+      semanticHash: hash, entrypoints: [], nodes: [], edges: [] }));
+    expect(screen.getByText(/Connections verified:/i)).toBeInTheDocument();
+  });
 
   it("re-verifies from the remembered path on open, without being asked", async () => {
     localStorage.setItem(

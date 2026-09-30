@@ -166,7 +166,26 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
     fs::write(&bad, br#"{"scopePaths":["src"],"unknown":1}"#).unwrap();
     let (code, reply) = run(repo.path(), Some(&bad));
     assert_eq!(code, 3, "{reply}");
-    assert_eq!(codes(&reply), vec!["GHCLI031_KEEL_CHECK_INPUT"]);
+    assert_eq!(codes(&reply), vec!["GHS002_SCHEMA"]);
+}
+
+#[test]
+fn a_schema_invalid_card_is_rejected_with_the_failing_field_path() {
+    let repo = repository(&[]);
+    let scratch = tempfile::tempdir().unwrap();
+    let bad = scratch.path().join("card.json");
+    fs::write(
+        &bad,
+        br#"{"promise":"","scopePaths":["src"],"proof":"cargo test"}"#,
+    )
+    .unwrap();
+
+    let (code, reply) = run(repo.path(), Some(&bad));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["ok"], false);
+    assert_eq!(codes(&reply), vec!["GHS002_SCHEMA"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "/promise");
+    assert_eq!(reply["diagnostics"][0]["source"], "keel-card");
 }
 
 /// #1333: `--prove-new-tests` on a fix whose inline `mod tests` adds one test that detects the bug
@@ -260,4 +279,59 @@ fn prove_new_tests_earns_the_regression_test_and_flags_the_one_green_on_the_pare
         .unwrap();
     let listed = String::from_utf8_lossy(&worktrees.stdout);
     assert_eq!(listed.matches("worktree ").count(), 1, "{listed}");
+}
+
+#[test]
+fn an_incomplete_inline_graft_does_not_claim_the_subject_is_new() {
+    let repo = tempfile::tempdir().unwrap();
+    let write = |text: &str| {
+        fs::create_dir_all(repo.path().join("src")).unwrap();
+        fs::write(repo.path().join("src/lib.rs"), text).unwrap();
+    };
+    fs::write(
+        repo.path().join("Cargo.toml"),
+        "[package]\nname = \"keel_graft_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    git(repo.path(), &["init", "-q"]);
+    write("pub fn fixed() -> u32 { 1 }\n");
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    write(
+        "pub fn fixed() -> u32 { 1 }\n\n#[cfg(test)]\nmod tests {\nuse super::*;\nfn expected_value() -> u32 { 1 }\n#[test]\nfn fixed_is_one() { assert_eq!(fixed(), expected_value()); }\n}\n",
+    );
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "test"]);
+    let target = tempfile::tempdir().unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "keel", "check", "--repo"])
+        .arg(repo.path())
+        .args([
+            "--diff",
+            "HEAD~1..HEAD",
+            "--prove-new-tests",
+            "--prove-timeout-secs",
+            "30",
+            "--prove-target-dir",
+        ])
+        .arg(target.path())
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{reply}");
+    let proof = &reply["data"]["testProof"]["proofs"][0];
+    assert_eq!(proof["parent"]["outcome"], "did_not_compile");
+    assert!(
+        proof["parent"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("expected_value")
+    );
+    assert_eq!(proof["head"]["outcome"], "passed");
+    assert_eq!(proof["verdict"], "unproven");
+    assert_eq!(
+        reply["data"]["testProof"]["findings"][0]["rule"],
+        "keel.test.unproven"
+    );
 }

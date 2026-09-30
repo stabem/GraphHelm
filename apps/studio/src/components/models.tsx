@@ -146,6 +146,8 @@ export function Models({
   const [partialBaseline, setPartialBaseline] = useState<
     { provider: string; baseUrl: string; credentialRef?: string } | null
   >(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discardPanel, setDiscardPanel] = useState(true);
 
   const routes = choice?.routes ?? [];
   const open = (route: ModelRouteSummary | null) => {
@@ -157,10 +159,37 @@ export function Models({
         : { provider: route.provider, baseUrl: route.baseUrl ?? "", credentialRef: route.credentialRef ?? undefined },
     );
     setPartialBaseline(null);
+    setConfirmDiscard(false);
+    setDiscardPanel(true);
     setValidationError("");
     // The key box is cleared on every open. A value left in it from the card before would be one
     // keystroke away from landing on a different route's reference.
     setKey("");
+  };
+
+  const requestDiscard = (panel: boolean) => {
+    if (partialBaseline !== null) {
+      if (!confirmDiscard) {
+        setDiscardPanel(panel);
+        setConfirmDiscard(true);
+        setValidationError("The route was saved, but the API key was not stored. Keep this panel open to retry, or confirm discard.");
+      }
+      return;
+    }
+    if (panel) onClose();
+    else setEditing(null);
+  };
+
+  const close = () => requestDiscard(true);
+  const cancel = () => requestDiscard(false);
+  const discard = () => {
+    if (discardPanel) onClose();
+    else {
+      setConfirmDiscard(false);
+      setPartialBaseline(null);
+      setKey("");
+      setEditing(null);
+    }
   };
 
   const apply = async (event: FormEvent) => {
@@ -274,10 +303,23 @@ export function Models({
           <h2>Models</h2>
           <p className="lbl">the providers this Runtime can reach</p>
         </div>
-        <button type="button" className="ghost close" onClick={onClose} aria-label="Close models">
+        <button type="button" className="ghost close" onClick={close} aria-label="Close models">
           close
         </button>
       </header>
+
+      {confirmDiscard && partialBaseline !== null && (
+        <div className="notice bad" role="alertdialog" aria-label="Confirm discard">
+          <TriangleAlert aria-hidden="true" />
+          <span>The API key retry will be lost when this panel closes.</span>
+          <button type="button" className="ghost" onClick={() => setConfirmDiscard(false)}>
+            keep editing
+          </button>
+          <button type="button" className="ghost" onClick={discard}>
+            {discardPanel ? "discard and close" : "discard draft"}
+          </button>
+        </div>
+      )}
 
       {choice !== null && !choice.configured && (
         <p className="hint" role="status">
@@ -424,7 +466,7 @@ export function Models({
           )}
 
           <div className="model-actions">
-            <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>
+            <button type="button" className="ghost" disabled={busy} onClick={cancel}>
               cancel
             </button>
             <button

@@ -90,14 +90,14 @@ Each test is reported in `data.testProof.proofs` with `name`, `path`, `line`, `p
 | Parent | Head | Verdict | Signal |
 |---|---|---|---|
 | failed | passed | `earned` | none |
-| did not compile (the subject is new) | passed | `new_subject` | none; the compiler line is in `parent.detail` |
+| did not compile | passed | `unproven` | `keel.test.unproven`; the compiler line is in `parent.detail` |
 | passed | passed | `green_on_parent` | `keel.test.green_on_parent` |
 | any | failed or did not compile | `red_on_head` | `keel.test.red_on_head` |
 | timed out, not found, ignored, not run | | `unproven` | `keel.test.unproven` |
 
-All three signals are warnings; none changes the exit code. `new_subject` is not red-on-parent
-evidence: a test of a function that did not exist cannot fail on the parent, and the reviewer reads
-whether it would catch a defect. A TypeScript or Python test the diff adds is listed as `unproven`
+All three signals are warnings; none changes the exit code. A parent compilation failure alone
+cannot establish that the production subject is new: an inline graft can omit a sibling test
+helper. The reviewer reads `parent.detail` and treats that experiment as unproven. A TypeScript or Python test the diff adds is listed as `unproven`
 ("no runner for this language yet"); only Rust is run today. A setup failure (a revision that does
 not resolve, a worktree that cannot be added) is input error `GHCLI031_KEEL_CHECK_INPUT`, exit 3.
 
@@ -105,10 +105,12 @@ Cleanup is by exact path. The two worktrees live in `keel-prove-<pid>-<nanos>/pa
 under the temporary directory; on every exit the prover runs `git worktree remove --force` on each
 of those two paths (also when an add failed halfway) and deletes the directory. It never runs
 `git worktree prune`. A run killed before it can clean up (Ctrl-C, a killed terminal) leaves its
-records; the next run removes those whose directory is gone, again one exact path at a time, and
-leaves any record whose directory still exists, since another run may own it. To clear them by
-hand, `git worktree list` shows them and `git worktree prune` removes every record whose directory
-is gone (in any location, not only the prover's).
+records; the next run removes only stale `parent` and `head` records under its own scratch root,
+again one exact path at a time, and leaves any record whose directory still exists, since another
+run may own it. If manual recovery is necessary, use `git worktree list --porcelain`, confirm that
+each missing directory belongs to your interrupted `keel-prove-*` run, and remove only that exact
+path with `git worktree remove --force <path>`. Never run `git worktree prune`: it removes every
+prunable record, including worktrees owned by other sessions.
 
 The pathogen suite `tools/pathogens/src/keel_prove.rs` runs the prover for real on a two-commit
 crate: a tautological test and a test that asserts its own mock are refused as
@@ -121,6 +123,6 @@ The counts come from a line grammar over the diff, not a parser; the limits are 
 decode git's quoted form for unusual file names, so such a path is a warning to check by hand.
 The test prover finds a test's name on the first added `fn` line after its `#[test]`, its crate by
 the nearest `Cargo.toml` with a `[package]`, and grafts an inline test by counting braces; a test
-it cannot place is `unproven` or `new_subject` with the reason, never silently dropped.
+it cannot place is `unproven` with the reason, never silently dropped.
 The pathogen suite `tools/pathogens/src/keel_scope.rs` holds two specimens the check must refuse:
 an edit to a file the card does not list, and an extra test file added outside the card.

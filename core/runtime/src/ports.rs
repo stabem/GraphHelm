@@ -403,6 +403,24 @@ pub trait BoundedSourceReader: Send + Sync {
         max_bytes: u64,
     ) -> Result<SourceExcerpt, SourceReadError>;
 
+    /// Read a relevant, bounded source window when supported. Nonzero windows start and end
+    /// on complete lines so selecting a snippet cannot split a credential token. Implementors
+    /// must retain this reader's snapshot identity and inspect omitted source for secret-block
+    /// boundaries before selecting a non-prefix window. The default is the exact prefix fallback;
+    /// existing readers keep their containment and byte-bound behavior without new filesystem I/O.
+    fn read_relevant(
+        &self,
+        relative_path: &str,
+        _terms: &[String],
+        max_bytes: u64,
+    ) -> Result<SourceWindow, SourceReadError> {
+        self.read_prefix(relative_path, max_bytes)
+            .map(|excerpt| SourceWindow {
+                start_byte: 0,
+                excerpt,
+            })
+    }
+
     /// The immutable content identity behind this reader, when the provider can prove one.
     /// Live providers intentionally return `None`.
     fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
@@ -416,6 +434,14 @@ pub trait BoundedSourceReader: Send + Sync {
 pub struct SourceExcerpt {
     pub bytes: Vec<u8>,
     pub file_len: u64,
+}
+
+/// An exact range in a source file. The capsule records this offset and the source length;
+/// prefix-only readers use zero. No source bytes are added to content-free provenance records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceWindow {
+    pub start_byte: u64,
+    pub excerpt: SourceExcerpt,
 }
 
 /// Why a bounded read refused. Local to the runtime — it never reaches a wire vocabulary; the

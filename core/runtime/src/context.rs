@@ -5,15 +5,17 @@
 //! the bounded search port, the source reader, `context_compiler::fit_within_budget` and
 //! `compile_capsule`, the accounting receipt — and nothing called them in sequence for a running
 //! node. What lives here is that sequence and nothing else: objective → terms → bounded search →
-//! bounded prefix reads → budget fit → capsule bytes → prompt field + receipt numbers.
+//! bounded relevant windows → budget fit → capsule bytes → prompt field + receipt numbers.
 //!
 //! **Bounded work before expensive work, in this order.** The term list is capped before the
 //! search runs; the search runs within [`SEARCH_BOUNDS`]; at most [`MAX_CANDIDATES`] candidates are
-//! read, each as a prefix of at most [`MAX_BYTES_PER_CANDIDATE`], and the shipped total never
+//! read, each as a source window of at most [`MAX_BYTES_PER_CANDIDATE`], and the shipped total never
 //! crosses [`MAX_TOTAL_CANDIDATE_BYTES`]; then the node's own budget decides what fits. A ceiling
-//! REFUSES the item it would cut and COUNTS it — nothing is trimmed to fit. The one declared
-//! partial is the prefix read itself, and it is declared in the item text (`bytes 0..n of len`)
-//! rather than hidden.
+//! REFUSES the item it would cut and COUNTS it — nothing is trimmed to fit. The declared
+//! partial is the source window itself, and it is declared in the item text (`bytes start..end of len`)
+//! rather than hidden. Snapshot readers select complete-line windows from the already bounded
+//! retained source; legacy readers keep explicit prefix fallback. These return/shipping ceilings
+//! do not claim to measure index construction or the snapshot's in-memory source scan cost.
 //!
 //! **Content-free accounting.** [`NodeContextSummary`] carries paths, counts, an estimator id
 //! and a digest — never a byte of what was read. It is what the drive reply publishes and what
@@ -103,7 +105,7 @@ pub const STOP_WORDS: [&str; 40] = [
 /// channel that returns more sees the surplus REFUSED and counted, never silently ignored.
 pub const MAX_CANDIDATES: usize = 8;
 
-/// Bytes read from the start of one candidate.
+/// Maximum bytes returned from one candidate source window.
 pub const MAX_BYTES_PER_CANDIDATE: u64 = 16 * 1024;
 
 /// Bytes shipped across all candidates before the node's own budget is consulted.
@@ -575,7 +577,7 @@ pub fn declared_budget(node: &GraphNode) -> Result<usize, ExecutorRefusal> {
     Ok(bytes)
 }
 
-/// The producer: search within bounds, read prefixes within bounds, fit, compile.
+/// The producer: search within bounds, read relevant windows or prefix fallbacks, fit, compile.
 ///
 /// Never fails. A refused search, an empty result, an unreadable candidate — each is a counted
 /// fallback in the summary and the node still runs with whatever was shipped (possibly nothing).
@@ -696,13 +698,24 @@ pub fn retrieve_and_compile_in(
             summary.candidates_secret_shaped += 1;
             continue;
         }
-        let excerpt = match reader.read_prefix(path, MAX_BYTES_PER_CANDIDATE) {
+        let window = match reader.read_relevant(path, terms, MAX_BYTES_PER_CANDIDATE) {
             Ok(excerpt) => excerpt,
             Err(SourceReadError::Escape | SourceReadError::Unreadable) => {
                 summary.candidates_unreadable += 1;
                 continue;
             }
         };
+        let excerpt = window.excerpt;
+        let read_len = excerpt.bytes.len() as u64;
+        if read_len > MAX_BYTES_PER_CANDIDATE
+            || window
+                .start_byte
+                .checked_add(read_len)
+                .is_none_or(|end| end > excerpt.file_len)
+        {
+            summary.candidates_dropped += 1;
+            continue;
+        }
         // The record is sealed under `context-provenance@1`, whose integers stop at
         // `MAX_RECORDED_INTEGER`. A declared length the record cannot carry — or one that
         // would push the running total past what it can carry — is refused whole and counted
@@ -721,7 +734,7 @@ pub fn retrieve_and_compile_in(
             summary.candidates_unreadable += 1;
             continue;
         };
-        let partial = (text.len() as u64) < excerpt.file_len;
+        let partial = window.start_byte != 0 || (text.len() as u64) < excerpt.file_len;
         // A clipped prefix is checked twice: for a whole secret shape, and for a shape that
         // BEGINS inside the excerpt and is cut by the boundary — 63 of a 64-hex key's characters
         // pass the whole-shape rule and leak 63/64 of the key.
@@ -734,7 +747,14 @@ pub fn retrieve_and_compile_in(
         // framing (`executor::wire_prompt`) applies the same idempotent quote and changes
         // nothing. The declared range stays the bytes READ, not the quoted length.
         let quoted = crate::executor::neutralise_capsule_markers(text);
-        let item = render_item(path, &quoted, text.len(), excerpt.file_len, partial);
+        let item = render_item(
+            path,
+            &quoted,
+            window.start_byte,
+            text.len(),
+            excerpt.file_len,
+            partial,
+        );
         let item_len = item.len() as u64;
         if shipped_total.saturating_add(item_len) > MAX_TOTAL_CANDIDATE_BYTES {
             summary.candidates_dropped += 1;
@@ -1342,9 +1362,19 @@ fn digest_prefixed(text: &str, hex_start: usize, hex_run: usize) -> bool {
 /// One evidence item: a `source://` citation, the declared range, the text. `read_len` is the
 /// number of bytes read from the file — the range declared — which the quoted `text` may
 /// exceed by its marker quotes.
-fn render_item(path: &str, text: &str, read_len: usize, file_len: u64, partial: bool) -> String {
+fn render_item(
+    path: &str,
+    text: &str,
+    start: u64,
+    read_len: usize,
+    file_len: u64,
+    partial: bool,
+) -> String {
     if partial {
-        format!("source://{path} [bytes 0..{read_len} of {file_len}]\n{text}")
+        format!(
+            "source://{path} [bytes {start}..{} of {file_len}]\n{text}",
+            start + read_len as u64
+        )
     } else {
         format!("source://{path} [{file_len} bytes]\n{text}")
     }

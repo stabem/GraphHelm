@@ -1585,6 +1585,11 @@ describe("the shell's own layout", () => {
         /Set-Location -LiteralPath 'F:\/projects\/example\/dale-api-base'; if \(\$\?\) \{ graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791 \}/i,
       ),
     ).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        /cd 'F:\/projects\/example\/dale-api-base' && graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791/i,
+      ),
+    ).toBeInTheDocument();
     expect(within(panel).getByText(/F:\/projects\/example\/dale-api-base/)).toBeInTheDocument();
   });
 });

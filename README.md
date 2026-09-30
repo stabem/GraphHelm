@@ -1,64 +1,131 @@
 # GraphHelm
 
-**Build and run AI-agent workflows with explicit control and evidence.** GraphHelm turns a request into a typed execution graph, runs it through a local-first Runtime, and records what happened so a person can inspect, pause, approve, or resume the work. [Journey-Proven Development](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) and [Keel](docs/keel/KEEL_SPEC.md) guide how agents change code and prove the result.
+**Run AI-agent workflows with a clear view of the work and control over what happens next.**
 
-GraphHelm is **experimental**. This repository contains a working CLI, Runtime, MCP server, host-setup flow, and a local operator Studio. It also contains specifications for a larger product; [the visual graph editor, embedded chat, Context Compiler, and Dreams Engine are not built yet](docs/product/ROADMAP_AND_ACCEPTANCE.md). There is no stable release or hosted CI service. A [CLI preview release](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) offers tested Windows and Linux x86-64 downloads; the Studio still runs from source.
+GraphHelm is a local-first runtime for AI-agent workflows. Define the work as a typed execution graph, follow its progress, and see when it needs your attention. Inspect the evidence, approve a blocked step, or pause and resume through the CLI, MCP, or local Studio.
 
-**Handing this repository to an AI agent?** Point it at [`INSTALL.md`](INSTALL.md): an ordered checklist that installs every part (CLI, Runtime, plugin, MCP, instructions) with a check after each step.
+[Try a local run](#try-a-local-run) · [Install in your project](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) · [Explore the Studio](https://github.com/stabem/GraphHelm/blob/main/apps/studio/README.md) · [Documentation](https://github.com/stabem/GraphHelm/blob/main/docs/INDEX.md)
 
-**Choose a path:** [Download the CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) · [Install the agent plugin](plugins/graphhelm/README.md) · [Run a local example](#try-it-locally) · [Install the Runtime and Studio](docs/install/GETTING_STARTED.md) · [Explore the code](#repository-map) · [Read the methodology](#development-method) · [Contribute](CONTRIBUTING.md)
+**Experimental · Local-first · MIT licensed.** The CLI, Runtime, MCP server, and operator Studio work today. Expect a developer-oriented setup and evolving interfaces; there is no stable release yet.
 
-## Install the agent plugin
+## Why GraphHelm
 
-The `graphhelm` plugin provides a [methodology guide](plugins/graphhelm/README.md), a setup skill, and a resume skill that offers two evidence-based next actions. Install it from this repository's marketplace:
+Delegating a multi-step task raises practical questions: what is running, what is waiting, and what evidence supports the result?
 
-**Claude Code**
+- **Know when to step in.** An attention verdict names the blocked work or missing information. Uncertainty stays visible instead of becoming an all-clear.
+- **Keep decisions explicit.** Typed graphs describe dependencies, completion requirements, and budgets. Supported controls let you pause, approve, resume, or cancel an execution.
+- **Pick up with context.** Execution briefings and event history give a later session a recorded account of the work and pending decisions.
+- **Inspect the result.** Append-only event history, evidence, and replay make a run reviewable beyond a chat transcript.
 
-```sh
-claude plugin marketplace add stabem/GraphHelm
-claude plugin install graphhelm@graphhelm
+Use it for agent workflows with several steps, human review points, or work that continues across sessions. Start locally, learn the control model, then connect the model and tool routes your project needs.
+
+<a id="try-it-locally"></a>
+## Try a local run
+
+This demo deliberately fails the implementation step so you can see how GraphHelm asks for intervention. **It uses fixture outcomes: it does not call a model, edit a repository, or deploy anything.**
+
+Prerequisites: Git, the pinned **Rust 1.97.1** toolchain, and your platform's build dependencies. See [prerequisites](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md#prerequisites). Cargo may download dependencies during the first build.
+
+Run in Bash on Linux or macOS:
+
+```bash
+git clone https://github.com/stabem/GraphHelm.git
+cd GraphHelm
+
+DEMO_DIR="$(mktemp -d)"
+printf '%s\n' '{"nodeOutcomes":{"implementation":"failure"}}' > "$DEMO_DIR/fixtures.json"
+
+cargo run --locked -p graphhelm-cli -- execution start \
+  --file examples/graphs/manual-override-deploy.yaml \
+  --events "$DEMO_DIR/events" \
+  --fixtures "$DEMO_DIR/fixtures.json" \
+  --mode supervised --execution demo --pretty
+
+cargo run --locked -p graphhelm-cli -- execution status \
+  --events "$DEMO_DIR/events" --execution demo
 ```
 
-Open a new Claude session and use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, or `/graphhelm:graphhelm-resume`. Claude namespaces installed plugin skills, so the setup command is not bare `/graphhelm-setup`.
+Look for `data.attention: "needs_you"` and a `blocked_node` reason naming `implementation`. The event store stays in the temporary directory printed by `echo "$DEMO_DIR"`.
 
-**Codex CLI**
+| Attention | What it tells you |
+| --- | --- |
+| `needs_you` | A named condition requires human attention |
+| `can_sleep` | Nothing needs attention, and in-flight work has been checked |
+| `unknown` | There is not enough information to judge in-flight silence |
+| `calmed_by_amendment` | An explicit silence-budget amendment accounts for the quiet |
 
-```sh
-codex plugin marketplace add stabem/GraphHelm
-codex plugin add graphhelm@graphhelm
-codex plugin add graphhelm-codex-hooks@graphhelm
-```
+For automation, read the JSON field: a successful `execution status` command can exit `0` while reporting `needs_you`. Treat unfamiliar attention values conservatively.
 
-Open a new Codex session and use `$graphhelm-guide`, `$graphhelm-setup`, or `$graphhelm-resume`. The separate `graphhelm-codex-hooks` package is required on Codex versions whose Agent Plugin loader skips hooks. The setup skill guides the separate `graphhelm setup` CLI through preview and reviewed application; installing the plugin does not install the CLI, start the Runtime, configure MCP, or change existing host instructions. See the [full plugin guide](plugins/graphhelm/README.md) for companion packages and setup requirements.
+Continue with the [offline quickstart](https://github.com/stabem/GraphHelm/blob/main/QUICKSTART.md), or follow the [full local walkthrough](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md) for the Runtime and Studio, including Windows commands. Real model execution requires separately configured gateway routes and credentials; [provider-less mode](https://github.com/stabem/GraphHelm/blob/main/docs/product/PROVIDER_LESS_MODE.md) explains the boundary.
 
-## Make Claude always use GraphHelm + Keel
+<a id="install-the-agent-plugin"></a>
+## Use GraphHelm in your project
 
-Two steps: one for Claude Code on your machine, one for claude.ai.
+Follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) for the ordered, host-specific checklist. It covers:
 
-**1. Claude Code: register the MCP and write the instruction block.** `graphhelm setup` previews first and changes nothing until you accept an exact plan digest. It needs a `graphhelm` built from this repository (`cargo +1.97.1 install --locked --path apps/cli`); the v0.1.0 preview binary predates the `register-mcp` and `graphhelm-block` decisions.
+1. Build and install the current CLI from source
+2. Initialize the project for the host you choose
+3. Start its authenticated local Runtime with the same project identity
+4. Install the plugin and register MCP in that host
+5. Open a fresh host session and verify an actual Runtime tool call
 
-```sh
-# Preview. Lists unresolved items and, under suggestedResolutions, the decisions below.
-graphhelm setup --project <project> --home <your-home-dir> --dry-run --json
+**Give an agent INSTALL.md when asking it to install GraphHelm.** Installing the plugin alone does not install the CLI, start the Runtime, or complete MCP registration.
 
-# Register the graphhelm MCP at user scope and upsert the marked GraphHelm + Keel block
-# into ~/.claude/CLAUDE.md. Answer every other unresolved item with <item>=keep.
-graphhelm setup --project <project> --home <your-home-dir> \
-  --resolve home/.claude.json=register-mcp \
-  --resolve home/.claude/CLAUDE.md=graphhelm-block \
-  --out <private-dir>/plan.json
+| Integration | Available path |
+| --- | --- |
+| Claude Code | Guide, setup, and resume skills; project-aware MCP registration |
+| Codex CLI | Guide, setup, and resume skills; hook compatibility companion and a reviewed MCP configuration snippet |
+| Local Studio | Browser-based execution and evidence inspection, attention views, and supported control actions; Node 22+ required |
 
-# Review the plan (redacted: digest, scopes, operations).
-graphhelm setup --project <project> --home <your-home-dir> --plan <private-dir>/plan.json
+See the [plugin guide](https://github.com/stabem/GraphHelm/blob/main/plugins/graphhelm/README.md) for commands, host trust, and optional hooks. Configuration and local tests do not establish native host activation: check each selected host in a fresh session.
 
-# Apply exactly the digest you reviewed. A backup is kept under --state-root.
-graphhelm setup --project <project> --home <your-home-dir> --state-root <private-dir>/state \
-  --apply <private-dir>/plan.json --accept 'sha256:<reviewed-digest>'
-```
+The [v0.1.0 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) provides Windows x86-64 and Ubuntu x86-64 binaries. They predate the current adoption flow; **use current source for the installation above**. macOS and other platforms use the source path, with less platform validation. Studio also runs from source.
 
-Only `mcpServers.graphhelm` changes in `~/.claude.json`. In `CLAUDE.md`, only the text between `<!-- graphhelm:begin -->` and `<!-- graphhelm:end -->` changes; running it again refreshes that block. Open a new Claude session afterwards. For the whole install in order (CLI, Runtime, plugin, then this step), follow [`INSTALL.md`](INSTALL.md). The full walkthrough, including restore, is the [adoption rehearsal](docs/acceptance/adoption-rehearsal.md).
+<a id="what-works-today"></a>
+<a id="repository-map"></a>
+## How it fits together
 
-**2. claude.ai: paste personal preferences.** No tool can edit this box, so paste it yourself: claude.ai → Settings → "Instructions for Claude".
+The Rust core owns typed contracts, graph validation, and execution rules. Adapters connect models, tools, and local or PostgreSQL event storage. CLI and MCP expose execution controls; Studio operates through the public Runtime API. Graph versions, transactional drafts, and event history keep changes inspectable.
+
+Explore [`core/`](https://github.com/stabem/GraphHelm/tree/main/core), [`adapters/`](https://github.com/stabem/GraphHelm/tree/main/adapters), [`apps/`](https://github.com/stabem/GraphHelm/tree/main/apps), and the [example graphs](https://github.com/stabem/GraphHelm/tree/main/examples/graphs).
+
+<a id="development-method"></a>
+## Evidence before completion
+
+GraphHelm includes two complementary development methods:
+
+- [Journey-Proven Development](https://github.com/stabem/GraphHelm/blob/main/docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) defines what an observer must verify about the user's actual journey. Missing proof remains `OBSERVER_MISSING`.
+- [Keel](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md) keeps scope, context, and new code proportional to the change, with quality first and the total cost of a proven delivery in view.
+
+The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
+
+## Control and trust
+
+- Runtime endpoints bind to loopback; protected API operations use bearer-token authentication
+- `graphhelm setup` previews supported host changes and requires an exact reviewed plan digest before applying them, with backups and a restore flow
+- Model proposals do not grant permissions; deterministic validation governs supported graph changes
+- Local-first orchestration does not mean every connected provider stays local. Review model and tool routes before sending project data
+- The local event store is not encrypted at rest. Protect credentials and execution evidence accordingly
+
+## Project status and direction
+
+The local Studio is an operator MVP. A visual graph editor, embedded AI chat, the full Context Compiler, and Dreams Engine remain future work. The [roadmap](https://github.com/stabem/GraphHelm/blob/main/docs/product/ROADMAP_AND_ACCEPTANCE.md) describes targets, not a list of shipped features. There is no hosted CI service; validation is run locally.
+
+<a id="contributing-and-trust"></a>
+## Contribute
+
+Try the documented journey and report where it breaks. Include your version, operating system, host, command, and observed result, with secrets removed.
+
+[Contribution guide](https://github.com/stabem/GraphHelm/blob/main/CONTRIBUTING.md) · [Issues](https://github.com/stabem/GraphHelm/issues) · [Support](https://github.com/stabem/GraphHelm/blob/main/.github/SUPPORT.md) · [Code of conduct](https://github.com/stabem/GraphHelm/blob/main/.github/CODE_OF_CONDUCT.md)
+
+Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem/GraphHelm/blob/main/SECURITY.md). GraphHelm is [MIT licensed](https://github.com/stabem/GraphHelm/blob/main/LICENSE); bundled Studio fonts retain their [OFL notices](https://github.com/stabem/GraphHelm/blob/main/apps/studio/src/fonts/README.md).
+
+<a id="make-claude-always-use-graphhelm--keel"></a>
+<details>
+<summary>Optional: GraphHelm + Keel instructions for Claude</summary>
+
+1. **Claude Code:** follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) for MCP and optional instruction blocks
+2. **claude.ai:** review and paste the preference below into Settings → Instructions for Claude. This instruction applies to that separate product; it does not connect it to your local Runtime
 
 ```text
 Use GraphHelm and Keel for software work.
@@ -70,76 +137,4 @@ Use GraphHelm and Keel for software work.
 - A project's own AGENTS.md or CLAUDE.md overrides these defaults.
 ```
 
-## Try it locally
-
-Install the [pinned Rust toolchain](rust-toolchain.toml), then validate an example graph:
-
-```sh
-git clone https://github.com/stabem/GraphHelm.git
-cd GraphHelm
-cargo run --locked -p graphhelm-cli -- graph validate examples/graphs/software-feature.yaml
-```
-
-This command needs no model account, API key, database, or running service. Cargo may download build dependencies on the first run. To **start an execution and see when it needs you**, follow the [offline quickstart](QUICKSTART.md). To connect a real project, Runtime, Studio, and chat harness, use the [getting-started guide](docs/install/GETTING_STARTED.md).
-
-## What works today
-
-| Surface | Current capability | Start here |
-| --- | --- | --- |
-| Graph CLI | Validate and lint graphs; compute semantic hashes; create immutable versions and transactional drafts. | [Graph examples](examples/graphs/) · [Graph DSL](docs/graph-engineer/GRAPH_DSL_SPEC.md) |
-| Runtime | Start, monitor, pause, approve, resume, and cancel executions; use fixtures without a provider or configure model and tool routes. | [Offline quickstart](QUICKSTART.md) · [provider-less mode](docs/product/PROVIDER_LESS_MODE.md) |
-| Evidence | Append-only local and PostgreSQL event stores, replay, and execution briefings. | [Architecture](docs/architecture/SYSTEM_ARCHITECTURE.md) · [operations](docs/operations/OBSERVABILITY_AND_RECOVERY.md) |
-| Local Studio | Inspect executions and evidence, see what needs attention (`attention` is `needs_you`, `can_sleep`, `unknown`, or `calmed_by_amendment`), and perform supported control actions through the public Runtime API. | [Studio README](apps/studio/README.md) |
-| MCP and setup | Expose Runtime operations to a chat client; inventory host configuration, preview adoption, back it up, and restore it. | [Getting started](docs/install/GETTING_STARTED.md) · [setup specification](docs/agents/AGENTS_SKILLS_PLUGINS.md) |
-
-The Studio above is an **operator MVP**, not the planned visual graph editor. The [roadmap](docs/product/ROADMAP_AND_ACCEPTANCE.md) separates implemented behavior from product goals. The [documentation index](docs/INDEX.md) leads to the full specifications, examples, and historical evidence.
-
-## Development method
-
-GraphHelm treats an observable user promise as the unit of work. JPD asks what evidence would prove that promise. Keel keeps the change and its context scoped, then counts the **total cost of a proven delivery**, including repairs and review. An unavailable observer remains `OBSERVER_MISSING`; a later pass does not erase an earlier failure.
-
-```mermaid
-flowchart LR
-  A[User promise] --> B[JPD: define observable proof]
-  B --> C{Adequate observer?}
-  C -- No --> D[OBSERVER_MISSING]
-  C -- Yes --> E[Keel: scoped change]
-  E --> F[Run reached checks]
-  F --> G[Independent review]
-  G --> H[Merge and verify]
-```
-
-Read the [JPD specification](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md), [Keel specification](docs/keel/KEEL_SPEC.md), [left-to-right skills guide](docs/skills/README.md), and [current delivery process](docs/process/DELIVERY.md). These documents distinguish guidance from controls the software actually enforces.
-
-### Measured pilot, with limits
-
-A [three-arm pilot on one frozen Unicode bug](docs/keel/benchmark-evidence/task-1279-v11/README.md) measured the same requested model route and runner version:
-
-| Workflow | Agent time | Estimated model cost | Automated checks | Blind review |
-| --- | ---: | ---: | --- | --- |
-| Ordinary coding | 585 s | USD 0.773 | Passed | Found a Linux-breaking test |
-| GraphHelm | 401 s | USD 0.848 | Passed | No material code defect |
-| GraphHelm + Keel | 415 s | USD 0.734 | Passed | No material code defect |
-
-On **this task**, Keel cost 13.4% less than GraphHelm alone with the same automated outcome. This does **not** establish a general saving or a quality-matched win over ordinary coding: the ordinary arm had a review finding, the costs are CLI estimates rather than invoices, and setup, review, machine time, and earlier attempts were not priced. The [full report](docs/keel/benchmark-evidence/task-1279-v11/README.md) and [benchmark protocol](docs/keel/BENCHMARK_PROTOCOL.md) show the inputs and remaining work.
-
-## Repository map
-
-| Path | Purpose |
-| --- | --- |
-| [`core/`](core/) · [`adapters/`](adapters/) | Typed contracts and deterministic rules; provider, persistence, and host boundaries. |
-| [`apps/`](apps/) | CLI and local Studio. |
-| [`schemas/`](schemas/) · [`examples/`](examples/) · [`conformance/`](conformance/) | Wire contracts, runnable examples, and compatibility fixtures. |
-| [`extensions/`](extensions/) | Built-in agent skills and extension packages. |
-| [`plugins/`](plugins/graphhelm/README.md) | Installable Codex and Claude plugin guide and resume skills. |
-| [`install/`](install/) · [`deploy/`](deploy/) | Installation and deployment assets. |
-| [`ci/`](ci/) · [`scripts/`](scripts/) · [`tools/`](tools/) · [`tests/`](tests/) | Local validation, maintainer tools, and test fixtures. |
-| [`docs/`](docs/INDEX.md) | Product specifications, architecture, methodology, evidence, and decisions. |
-
-The root keeps standard entry points (`README`, `CONTRIBUTING`, `SECURITY`, `LICENSE`, Rust and container manifests) and the [normative master PRD](MASTER_PRD.md). `.claude/` contains host-specific project integration. Moving these paths solely to shorten the GitHub listing would break documented links or tool discovery.
-
-## Contributing and trust
-
-Start with [CONTRIBUTING.md](CONTRIBUTING.md). It explains issues, branches, local checks, review, and the absence of GitHub Actions CI. For usage questions, see [support](.github/SUPPORT.md); participation follows the [community conduct policy](.github/CODE_OF_CONDUCT.md). Report vulnerabilities through the **private form** in [SECURITY.md](SECURITY.md), never a public issue. GraphHelm code is [MIT licensed](LICENSE); the bundled Studio fonts retain their [OFL notices](apps/studio/src/fonts/README.md).
-
-This public repository began with [one reviewed source import](docs/open-source/SOURCE_PROVENANCE.md). Older issue numbers and commit hashes in design or acceptance documents refer to a private development archive, not to this repository. Historical records are context, not fresh validation of the current commit.
+</details>

@@ -9,6 +9,7 @@
   "properties": {
     "schemaVersion": {"const": "1.0.0"},
     "executionBinding": {"$ref": "#/$defs/executionBinding"},
+    "providerUsage": {"$ref": "#/$defs/providerUsage"},
     "fields": {
       "type": "array",
       "minItems": 13,
@@ -33,6 +34,20 @@
     }
   },
   "$defs": {
+    "providerUsage": {
+      "description": "Per-attempt reported counters and their reporting boundary, not billed currency or local token estimates. Cache counters are already included in inputTokens only for includes_cache. Missing cache counters remain unknown. The containing event and attempt-scoped evidence identity own retry lineage; enumerate each receipt once rather than adding this duplicate input/output view to the legacy fields.",
+      "type": "object",
+      "required": ["inputTokens", "outputTokens"],
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991},
+        "outputTokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991},
+        "cacheReadTokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991},
+        "cacheWriteTokens": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991},
+        "inputTokenSemantics": {"enum": ["includes_cache", "excludes_cache", null]},
+        "source": {"enum": ["anthropic_messages", "openai_chat_completions", "claude_code", "codex", null]}
+      }
+    },
     "opaqueId": {
       "type": "string",
       "minLength": 1,

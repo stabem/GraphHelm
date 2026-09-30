@@ -225,6 +225,7 @@ fn is_accounted_attempt(work: &WorkOutcome) -> bool {
         || work.summary.input_tokens.is_some()
         || work.summary.output_tokens.is_some()
         || work.summary.exit_code.is_some()
+        || work.summary.provider_usage.is_some()
         || work.reuse.is_some()
         || work.gate_verdict.is_some())
 }
@@ -324,6 +325,7 @@ fn bare(outcome: NodeOutcome) -> WorkOutcome {
             input_tokens: None,
             output_tokens: None,
             exit_code: None,
+            provider_usage: None,
         },
         reuse: None,
         gate_verdict: None,

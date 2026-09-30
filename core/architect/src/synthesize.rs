@@ -301,7 +301,7 @@ fn single_draft(
     let mut prompt_sha256s = Vec::new();
     let mut previous: Option<(String, Vec<Diagnostic>)> = None;
     let mut round: u8 = 1;
-    let mut judge_usage = Usage::default();
+    let mut judge_usage: Option<Usage> = None;
     loop {
         let repair = previous
             .as_ref()
@@ -317,7 +317,10 @@ fn single_draft(
                 if let Some(judge) = judge {
                     let request = judgment::nodes::request(profile, catalog, &compiled.graph);
                     let judged = judge.judge(&request)?;
-                    judge_usage = add_usage(judge_usage, judged.usage);
+                    // No judge call is an identity, not a call with unreported meters.
+                    let accumulated = judge_usage
+                        .map_or(judged.usage, |previous| add_usage(previous, judged.usage));
+                    judge_usage = Some(accumulated);
                     let (mut diagnostics, nodes, unresolved) =
                         judgment::nodes::read(&judged, &compiled.graph, catalog);
                     if !diagnostics.is_empty() {
@@ -335,7 +338,7 @@ fn single_draft(
                     judgments = Some(JudgmentReport {
                         nodes,
                         unresolved,
-                        usage: judge_usage,
+                        usage: accumulated,
                     });
                 }
                 return Ok((
@@ -389,6 +392,20 @@ fn add_usage(left: Usage, right: Usage) -> Usage {
     Usage {
         input_tokens: add(left.input_tokens, right.input_tokens),
         output_tokens: add(left.output_tokens, right.output_tokens),
+        // Cache totals are complete only when every contributing call reported the field.
+        // Overflow is unknown, never a saturated number presented as a measured counter.
+        cache_read_tokens: left
+            .cache_read_tokens
+            .zip(right.cache_read_tokens)
+            .and_then(|(left, right)| left.checked_add(right)),
+        cache_write_tokens: left
+            .cache_write_tokens
+            .zip(right.cache_write_tokens)
+            .and_then(|(left, right)| left.checked_add(right)),
+        input_token_semantics: left
+            .input_token_semantics
+            .filter(|value| Some(*value) == right.input_token_semantics),
+        source: left.source.filter(|value| Some(*value) == right.source),
     }
 }
 
@@ -834,5 +851,30 @@ mod tests {
                 .len(),
             MAX_NAME_CHARS
         );
+    }
+    // Existing synthesis tests sum only input/output. This guards cache erasure and an unknown
+    // addend becoming a complete total. Cost: in-memory parsing and addition, no external effects.
+    #[test]
+    fn aggregate_usage_preserves_cache_counts_without_inventing_missing_observations() {
+        let left = serde_json::from_value(serde_json::json!({"inputTokens":10,"outputTokens":2,
+            "cacheReadTokens":50,"cacheWriteTokens":0,"inputTokenSemantics":"excludes_cache",
+            "source":"anthropic_messages"}))
+        .unwrap();
+        let right = serde_json::from_value(serde_json::json!({"inputTokens":5,"outputTokens":1,
+            "cacheReadTokens":20,"cacheWriteTokens":3,"inputTokenSemantics":"excludes_cache",
+            "source":"anthropic_messages"}))
+        .unwrap();
+        let sum = serde_json::to_value(super::add_usage(left, right)).unwrap();
+        assert_eq!(sum["cacheReadTokens"], 70);
+        assert_eq!(sum["cacheWriteTokens"], 3);
+        assert_eq!(sum["source"], "anthropic_messages");
+        assert_eq!(sum["inputTokenSemantics"], "excludes_cache");
+        let unknown =
+            serde_json::from_value(serde_json::json!({"inputTokens":5,"outputTokens":1})).unwrap();
+        let sum = serde_json::to_value(super::add_usage(left, unknown)).unwrap();
+        assert!(sum["cacheReadTokens"].is_null());
+        assert!(sum["cacheWriteTokens"].is_null());
+        assert!(sum["source"].is_null());
+        assert!(sum["inputTokenSemantics"].is_null());
     }
 }

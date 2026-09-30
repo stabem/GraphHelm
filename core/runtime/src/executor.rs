@@ -124,13 +124,16 @@ pub struct Sealable {
 }
 
 /// Digest-only, event-safe accounting. No free-form text can live here: the type has only
-/// numbers, and the Task 5 test pins that a serialized summary never contains reply content.
+/// numbers and closed reporting labels, and the Task 5 test pins that a serialized summary never contains reply content.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkSummary {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub exit_code: Option<i32>,
+    /// Exact per-attempt reporting metadata. Estimates stay in context provenance instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_usage: Option<graphhelm_gateway::call::Usage>,
 }
 
 /// A refusal to attempt at all — never a work failure (those are failure-shaped
@@ -234,6 +237,7 @@ fn cognitive_outcome(
                     input_tokens: reply.usage.input_tokens,
                     output_tokens: reply.usage.output_tokens,
                     exit_code: None,
+                    provider_usage: Some(reply.usage),
                 };
                 // An empty reply is a provider defect: retryable, bounded by the attempt
                 // machinery, landing in Blocked for an owner when persistent — never a
@@ -283,6 +287,7 @@ fn cognitive_outcome(
                         input_tokens: None,
                         output_tokens: None,
                         exit_code: None,
+                        provider_usage: None,
                     },
                     reuse: None,
                     gate_verdict: None,
@@ -357,6 +362,7 @@ fn tool_outcome(
                 input_tokens: None,
                 output_tokens: None,
                 exit_code,
+                provider_usage: None,
             },
             reuse: result.reuse,
             gate_verdict: None,
@@ -705,6 +711,7 @@ fn judge_outcome(
                     input_tokens: None,
                     output_tokens: None,
                     exit_code: None,
+                    provider_usage: None,
                 },
                 reuse: None,
                 gate_verdict: None,
@@ -718,6 +725,7 @@ fn judge_outcome(
         input_tokens: reply.usage.input_tokens,
         output_tokens: reply.usage.output_tokens,
         exit_code: None,
+        provider_usage: Some(reply.usage),
     };
     match crate::judge::parse_reply(&reply.text) {
         Ok(verdict) => {
@@ -817,6 +825,7 @@ fn gate_check_outcome(
             input_tokens: None,
             output_tokens: None,
             exit_code: None,
+            provider_usage: None,
         },
         reuse: None,
         gate_verdict: Some(GateVerdictSummary {

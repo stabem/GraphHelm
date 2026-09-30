@@ -135,7 +135,8 @@ fn the_documented_response_parses_to_typed_answers() {
         reply.usage,
         Usage {
             input_tokens: Some(312),
-            output_tokens: Some(48)
+            output_tokens: Some(48),
+            ..Usage::default()
         }
     );
     match &reply.answers["department"] {
@@ -268,6 +269,7 @@ fn a_null_rubric_and_the_usage_serializer_are_pinned() {
         usage: Usage {
             input_tokens: Some(7),
             output_tokens: None,
+            ..Usage::default()
         },
     };
     let wire = serde_json::to_value(&reply).unwrap();

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use graphhelm_events::SecretBytes;
-use graphhelm_gateway::call::{ModelCall, ModelReply, Usage};
+use graphhelm_gateway::call::{InputTokenSemantics, ModelCall, ModelReply, Usage, UsageSource};
 use graphhelm_gateway::manifest::{ModelRoute, Transport};
 use graphhelm_gateway::taxonomy::GatewayError;
 use serde::{Deserialize, Serialize};
@@ -264,12 +264,16 @@ struct AnthropicContentBlock {
     text: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct AnthropicUsageBody {
     #[serde(default)]
     input_tokens: Option<u64>,
     #[serde(default)]
     output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
 }
 
 /// `None` on anything that does not shape up as a successful reply: invalid JSON, no content
@@ -286,10 +290,15 @@ fn parse_anthropic_success(body: &[u8]) -> Option<ModelReply> {
         .into_iter()
         .find(|block| block.kind.as_deref() == Some("text"))?
         .text?;
-    let usage = parsed.usage.map_or(Usage::default(), |usage| Usage {
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-    });
+    let reported = parsed.usage.unwrap_or_default();
+    let usage = Usage {
+        input_tokens: reported.input_tokens,
+        output_tokens: reported.output_tokens,
+        cache_read_tokens: reported.cache_read_input_tokens,
+        cache_write_tokens: reported.cache_creation_input_tokens,
+        input_token_semantics: Some(InputTokenSemantics::ExcludesCache),
+        source: Some(UsageSource::AnthropicMessages),
+    };
     Some(ModelReply { text, usage })
 }
 
@@ -340,12 +349,22 @@ struct OpenAiMessageBody {
     content: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct OpenAiUsageBody {
     #[serde(default)]
     prompt_tokens: Option<u64>,
     #[serde(default)]
     completion_tokens: Option<u64>,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokenDetails>,
+}
+
+#[derive(Default, Deserialize)]
+struct OpenAiPromptTokenDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+    #[serde(default)]
+    cache_write_tokens: Option<u64>,
 }
 
 /// `None` on anything that does not shape up as a successful reply — see
@@ -353,10 +372,16 @@ struct OpenAiUsageBody {
 fn parse_openai_success(body: &[u8]) -> Option<ModelReply> {
     let parsed: OpenAiSuccessBody = serde_json::from_slice(body).ok()?;
     let text = parsed.choices.into_iter().next()?.message.content;
-    let usage = parsed.usage.map_or(Usage::default(), |usage| Usage {
-        input_tokens: usage.prompt_tokens,
-        output_tokens: usage.completion_tokens,
-    });
+    let reported = parsed.usage.unwrap_or_default();
+    let details = reported.prompt_tokens_details.unwrap_or_default();
+    let usage = Usage {
+        input_tokens: reported.prompt_tokens,
+        output_tokens: reported.completion_tokens,
+        cache_read_tokens: details.cached_tokens,
+        cache_write_tokens: details.cache_write_tokens,
+        input_token_semantics: Some(InputTokenSemantics::IncludesCache),
+        source: Some(UsageSource::OpenaiChatCompletions),
+    };
     Some(ModelReply { text, usage })
 }
 

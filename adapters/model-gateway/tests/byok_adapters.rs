@@ -648,3 +648,64 @@ fn the_api_key_never_appears_in_errors_or_debug() {
         "redaction must still name the header: {request_debug}"
     );
 }
+
+// Contract: provider cache fields and semantics survive the real HTTP adapter. Existing
+// success tests assert only input/output totals. Cost: four loopback calls, under a second.
+#[test]
+fn provider_cache_usage_preserves_unknown_zero_and_input_semantics() {
+    let legacy =
+        serde_json::json!({"text":"historical","usage":{"inputTokens":12,"outputTokens":3}});
+    let reply: graphhelm_gateway::call::ModelReply =
+        serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(reply).unwrap(), legacy);
+    let legacy_call: ModelCall =
+        serde_json::from_str(r#"{"prompt":"historical","maxTokens":4096}"#).unwrap();
+    assert_eq!(legacy_call.max_tokens, 4096);
+
+    for (provider, body, read, write, semantics, source) in [
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":50,"cache_creation_input_tokens":0}}"#,
+            Some(50),
+            Some(0),
+            "excludes_cache",
+            "anthropic_messages",
+        ),
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":12,"output_tokens":3}}"#,
+            None,
+            None,
+            "excludes_cache",
+            "anthropic_messages",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":50,"cache_write_tokens":0}}}"#,
+            Some(50),
+            Some(0),
+            "includes_cache",
+            "openai_chat_completions",
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"content":"ok"}}]}"#,
+            None,
+            None,
+            "includes_cache",
+            "openai_chat_completions",
+        ),
+    ] {
+        let (base_url, _receiver) = fake_server(200, body);
+        let manifest = build_manifest(&base_url, provider);
+        let adapter = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()));
+        let reply = adapter
+            .call(&sentinel_key(), &call("fixture", 100))
+            .unwrap();
+        let usage = serde_json::to_value(reply.usage).unwrap();
+        assert_eq!(usage["cacheReadTokens"], serde_json::json!(read));
+        assert_eq!(usage["cacheWriteTokens"], serde_json::json!(write));
+        assert_eq!(usage["inputTokenSemantics"], semantics);
+        assert_eq!(usage["source"], source);
+    }
+}

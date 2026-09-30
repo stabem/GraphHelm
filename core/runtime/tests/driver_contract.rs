@@ -183,6 +183,7 @@ fn reply(text: &str) -> ModelReply {
         usage: Usage {
             input_tokens: Some(12),
             output_tokens: Some(5),
+            ..Usage::default()
         },
     }
 }
@@ -608,6 +609,7 @@ fn succeeded_work(reuse: Option<ReuseSummary>) -> WorkOutcome {
             input_tokens: Some(12),
             output_tokens: Some(5),
             exit_code: None,
+            provider_usage: None,
         },
         reuse,
         gate_verdict: None,
@@ -925,6 +927,7 @@ fn an_unsafe_provider_token_count_refuses_before_sealing_or_append() {
             input_tokens: Some(9_007_199_254_740_992),
             output_tokens: Some(5),
             exit_code: None,
+            provider_usage: None,
         },
         sealables: Vec::new(),
         reuse: None,
@@ -970,6 +973,7 @@ fn a_no_observation_fixture_outcome_does_not_require_evidence_sealing() {
             input_tokens: None,
             output_tokens: None,
             exit_code: None,
+            provider_usage: None,
         },
         reuse: None,
         gate_verdict: None,
@@ -1015,6 +1019,7 @@ fn sealed_work_without_provider_usage_still_emits_an_unavailable_receipt() {
             input_tokens: None,
             output_tokens: None,
             exit_code: None,
+            provider_usage: None,
         },
         reuse: None,
         gate_verdict: None,
@@ -3621,5 +3626,183 @@ fn a_cleared_claim_completes_a_parked_node_without_running_its_work_again() {
     assert!(
         !after.open_waits.contains_key("gated"),
         "the wait is closed once cleared"
+    );
+}
+
+// Contract: a retry's reported cache usage survives executor -> sealed receipt, once per
+// attempt. Previous receipt tests observe only input/output. Cost: a local journal and sealer.
+#[test]
+fn retry_receipts_retain_cache_usage_without_counting_lifecycle_hops() {
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let scope = driver_scope();
+    let stream = OpaqueId::parse(DRIVER_STREAM).unwrap();
+    let protector = EvidenceProtector::new(InMemoryKeyProvider::default());
+    let ids = SequenceIds::default();
+    let mut evidence_ids = Vec::new();
+    for (text, cache_read, cache_write) in [("", 50, Some(0)), ("ok", 75, None)] {
+        let reply: ModelReply = serde_json::from_value(serde_json::json!({
+            "text": text,
+            "usage": {"inputTokens":12,"outputTokens":3,"cacheReadTokens":cache_read,
+                "cacheWriteTokens":cache_write,"inputTokenSemantics":"excludes_cache",
+                "source":"anthropic_messages"}
+        }))
+        .unwrap();
+        let executor = executor(Ok(reply), ToolDisposition::Completed { exit_code: 0 });
+        let work = block_on(executor.execute(&cognitive_work())).unwrap();
+        let recorded = block_on(record_outcome_with_evidence(
+            &repository,
+            &protector,
+            &ids,
+            &scope,
+            &stream,
+            &execution_id,
+            &driver_actor(),
+            NODE,
+            &work,
+        ))
+        .unwrap();
+        let receipt = recorded
+            .sealed
+            .iter()
+            .find(|item| item.media_type().as_str() == ACCOUNTING_RECEIPT_MEDIA_TYPE)
+            .unwrap();
+        evidence_ids.push(receipt.reference().evidence_id().to_string());
+        let opened = block_on(graphhelm_events::EvidenceOpener::open(
+            &protector,
+            scope.clone(),
+            receipt,
+        ))
+        .unwrap();
+        let bytes = opened.expose(|bytes| bytes.to_vec());
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["providerUsage"]["cacheReadTokens"], cache_read);
+        assert_eq!(
+            json["providerUsage"]["cacheWriteTokens"],
+            serde_json::json!(cache_write)
+        );
+        assert_eq!(json["providerUsage"]["source"], "anthropic_messages");
+        assert_eq!(
+            json["providerUsage"]["inputTokenSemantics"],
+            "excludes_cache"
+        );
+        assert_eq!(json["fields"].as_array().unwrap().len(), 13);
+        assert_eq!(json["fields"][7]["value"], serde_json::Value::Null);
+        let history = repository
+            .read_replay_stream(&scope, DRIVER_STREAM)
+            .unwrap();
+        let started = history
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::ExecutionStarted(_)))
+            .unwrap();
+        let decoded =
+            graphhelm_runtime::context_accounting::ExecutionAccountingReceipt::from_stable_bytes(
+                &bytes, started,
+            )
+            .unwrap();
+        assert_eq!(decoded.stable_bytes().unwrap(), bytes);
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../schemas/execution-accounting-receipt.schema.json"
+        ))
+        .unwrap();
+        let validators =
+            graphhelm_schema::OfflineSchemaSet::compile(std::collections::BTreeMap::from([(
+                "https://p50.dev/schemas/execution-accounting-receipt.schema.json".to_owned(),
+                schema,
+            )]))
+            .unwrap();
+        assert!(
+            validators
+                .validate(
+                    "https://p50.dev/schemas/execution-accounting-receipt.schema.json",
+                    &json,
+                    "receipt"
+                )
+                .is_empty()
+        );
+        for (key, value) in [
+            (
+                "cacheReadTokens",
+                serde_json::json!(9_007_199_254_740_992_u64),
+            ),
+            ("source", serde_json::json!("local_estimate")),
+            ("prompt", serde_json::json!("UNTRUSTED-CONTENT")),
+            ("inputTokens", serde_json::json!(999)),
+        ] {
+            let mut invalid = json.clone();
+            invalid["providerUsage"][key] = value;
+            assert!(graphhelm_runtime::context_accounting::ExecutionAccountingReceipt::from_stable_bytes(
+                &serde_json::to_vec(&invalid).unwrap(), started).is_err(), "{key}");
+        }
+
+        if text.is_empty() {
+            let mut hop = succeeded_work(None);
+            hop.outcome = NodeOutcome::Started;
+            hop.sealables.clear();
+            for _ in 0..2 {
+                let result = block_on(record_outcome_with_evidence(
+                    &repository,
+                    &protector,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &execution_id,
+                    &driver_actor(),
+                    NODE,
+                    &hop,
+                ))
+                .unwrap();
+                assert!(result.sealed.is_empty());
+                if result.next_state == graphhelm_protocols::NodeState::Running {
+                    break;
+                }
+            }
+        }
+    }
+    assert_ne!(evidence_ids[0], evidence_ids[1]);
+    let history = repository
+        .read_replay_stream(&scope, DRIVER_STREAM)
+        .unwrap();
+    let receipts = history
+        .iter()
+        .flat_map(|event| &event.evidence_refs)
+        .filter(|reference| {
+            reference
+                .evidence_id()
+                .as_str()
+                .ends_with("-accounting-receipt")
+        })
+        .count();
+    assert_eq!(receipts, 2);
+
+    // Writing the same unsafe metadata is refused before sealing or appending, not only on read.
+    let directory = tempfile::tempdir().unwrap();
+    let (repository, execution_id) = running_node_repository(directory.path());
+    let before = repository.next_sequence(&scope, DRIVER_STREAM).unwrap();
+    let reply: ModelReply = serde_json::from_value(serde_json::json!({
+        "text":"ok", "usage":{"inputTokens":12,"outputTokens":3,
+            "cacheReadTokens":9_007_199_254_740_992_u64,
+            "source":"anthropic_messages","inputTokenSemantics":"excludes_cache"}
+    }))
+    .unwrap();
+    let executor = executor(Ok(reply), ToolDisposition::Completed { exit_code: 0 });
+    let work = block_on(executor.execute(&cognitive_work())).unwrap();
+    assert!(
+        block_on(record_outcome_with_evidence(
+            &repository,
+            &protector,
+            &ids,
+            &scope,
+            &stream,
+            &execution_id,
+            &driver_actor(),
+            NODE,
+            &work
+        ))
+        .is_err()
+    );
+    assert_eq!(
+        repository.next_sequence(&scope, DRIVER_STREAM).unwrap(),
+        before
     );
 }

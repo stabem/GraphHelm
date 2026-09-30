@@ -374,6 +374,7 @@ fn reuse_fills_a_template_and_never_asks_the_draft_model() {
         Usage {
             input_tokens: Some(3 + 7),
             output_tokens: Some(5 + 11),
+            ..Usage::default()
         },
         "the decision's and the fill's usage are summed on the report"
     );
@@ -585,4 +586,84 @@ fn an_empty_library_with_a_judge_costs_no_judge_request_and_says_nothing() {
     assert!(out.reuse.is_none());
     assert!(serde_json::to_value(&out).unwrap().get("reuse").is_none());
     assert!(out.judgments.is_some(), "the per-node site still ran");
+}
+
+#[test]
+fn real_judge_report_starts_with_the_first_observed_usage_and_keeps_unknown_calls_unknown() {
+    // Contract: the public synthesis report counts real judge calls, never a synthetic unknown
+    // zero-call seed. Existing add_usage unit coverage cannot observe this initialization defect.
+    // Cost: three offline fixture-backed synthesis runs, no provider or process, under one second.
+    struct MeteredJudge {
+        inner: RecordedJudgeModel,
+        usage: Usage,
+        omit_one: bool,
+        calls: std::cell::Cell<u32>,
+    }
+    impl graphhelm_architect::JudgeModel for MeteredJudge {
+        fn judge(
+            &self,
+            request: &graphhelm_gateway::judgment::JudgeRequest,
+        ) -> Result<JudgeReply, ArchitectRefusal> {
+            let mut reply = graphhelm_architect::JudgeModel::judge(&self.inner, request)?;
+            reply.usage = self.usage;
+            if self.omit_one && self.calls.get() == 0 {
+                reply.usage.cache_read_tokens = None;
+            }
+            self.calls.set(self.calls.get() + 1);
+            Ok(reply)
+        }
+    }
+    for (draft_path, judge_path, rounds, omit_one) in [
+        (
+            "first-compile/replies.json",
+            "judge/nodes-below-threshold.json",
+            1,
+            false,
+        ),
+        (
+            "judge/nodes-off-goal-replies.json",
+            "judge/nodes-off-goal.json",
+            2,
+            false,
+        ),
+        (
+            "judge/nodes-off-goal-replies.json",
+            "judge/nodes-off-goal.json",
+            2,
+            true,
+        ),
+    ] {
+        let model = RecordedDraftModel::from_file(&fixtures().join(draft_path)).unwrap();
+        let observed: Usage = serde_json::from_value(serde_json::json!({
+            "inputTokens": 10, "outputTokens": 2, "cacheReadTokens": 50,
+            "cacheWriteTokens": 3, "source": "anthropic_messages",
+            "inputTokenSemantics": "excludes_cache"
+        }))
+        .unwrap();
+        let judge = MeteredJudge {
+            inner: RecordedJudgeModel::from_file(&fixtures().join(judge_path)).unwrap(),
+            usage: observed,
+            omit_one,
+            calls: std::cell::Cell::new(0),
+        };
+        let result = synthesize_with(
+            &profile(),
+            &catalog_with_cargo(),
+            &model,
+            &Extras {
+                judge: Some(&judge),
+                ..Extras::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.rounds, rounds);
+        let usage = result.judgments.unwrap().usage;
+        assert_eq!(
+            usage.cache_read_tokens,
+            (!omit_one).then_some(50 * u64::from(rounds))
+        );
+        assert_eq!(usage.cache_write_tokens, Some(3 * u64::from(rounds)));
+        assert_eq!(usage.input_token_semantics, observed.input_token_semantics);
+        assert_eq!(usage.source, observed.source);
+    }
 }

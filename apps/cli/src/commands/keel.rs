@@ -204,6 +204,7 @@ mod tests {
     use super::*;
     use std::process::Stdio;
     use std::thread;
+    use std::time::Instant;
 
     #[test]
     fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
@@ -234,18 +235,22 @@ mod tests {
         let worker = thread::spawn(move || {
             graphhelm_process_tree::run_bounded(command, Duration::from_millis(100))
         });
-        let identity = (0..200).find_map(|_| {
-            let pid = std::fs::read_to_string(&pid_path)
-                .ok()?
-                .trim()
-                .parse()
-                .ok()?;
-            graphhelm_process_tree::ProcessIdentity::capture(pid).ok()
-        });
+        let observation_deadline = Instant::now() + Duration::from_secs(5);
+        let mut identity = None;
+        while identity.is_none() && !worker.is_finished() && Instant::now() < observation_deadline {
+            identity = std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|contents| contents.trim().parse().ok())
+                .and_then(|pid| graphhelm_process_tree::ProcessIdentity::capture(pid).ok());
+            if identity.is_none() {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
         let result = worker.join().unwrap().unwrap();
 
         assert!(result.is_none(), "inherited pipe bypassed the deadline");
-        let identity = identity.expect("descendant identity was not observed");
+        let identity =
+            identity.expect("descendant identity was not observed before bounded cleanup");
         assert!(
             identity.wait_until_gone(Duration::from_secs(1)).unwrap(),
             "timed out process tree still has a live descendant"

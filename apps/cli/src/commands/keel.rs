@@ -240,7 +240,7 @@ mod tests {
             command.args([
                 "-NoProfile",
                 "-Command",
-                "$p=Start-Process ping -ArgumentList '-n','30','127.0.0.1' -PassThru; Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
+                "$i=New-Object Diagnostics.ProcessStartInfo; $i.FileName='ping'; $i.Arguments='-n 30 127.0.0.1'; $i.UseShellExecute=$false; $p=[Diagnostics.Process]::Start($i); Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
             ]);
             command
         } else {
@@ -258,7 +258,7 @@ mod tests {
             .stderr(Stdio::piped());
 
         let worker = thread::spawn(move || {
-            graphhelm_process_tree::run_bounded(command, Duration::from_millis(100))
+            graphhelm_process_tree::run_bounded(command, Duration::from_secs(2))
         });
         let observation_deadline = Instant::now() + Duration::from_secs(5);
         let mut identity = None;

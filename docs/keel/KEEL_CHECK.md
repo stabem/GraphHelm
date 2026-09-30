@@ -90,14 +90,14 @@ Each test is reported in `data.testProof.proofs` with `name`, `path`, `line`, `p
 | Parent | Head | Verdict | Signal |
 |---|---|---|---|
 | failed | passed | `earned` | none |
-| did not compile (the subject is new) | passed | `new_subject` | none; the compiler line is in `parent.detail` |
+| did not compile | passed | `unproven` | `keel.test.unproven`; the compiler line is in `parent.detail` |
 | passed | passed | `green_on_parent` | `keel.test.green_on_parent` |
 | any | failed or did not compile | `red_on_head` | `keel.test.red_on_head` |
 | timed out, not found, ignored, not run | | `unproven` | `keel.test.unproven` |
 
-All three signals are warnings; none changes the exit code. `new_subject` is not red-on-parent
-evidence: a test of a function that did not exist cannot fail on the parent, and the reviewer reads
-whether it would catch a defect. A TypeScript or Python test the diff adds is listed as `unproven`
+All three signals are warnings; none changes the exit code. A parent compilation failure alone
+cannot establish that the production subject is new: an inline graft can omit a sibling test
+helper. The reviewer reads `parent.detail` and treats that experiment as unproven. A TypeScript or Python test the diff adds is listed as `unproven`
 ("no runner for this language yet"); only Rust is run today. A setup failure (a revision that does
 not resolve, a worktree that cannot be added) is input error `GHCLI031_KEEL_CHECK_INPUT`, exit 3.
 
@@ -123,6 +123,6 @@ The counts come from a line grammar over the diff, not a parser; the limits are 
 decode git's quoted form for unusual file names, so such a path is a warning to check by hand.
 The test prover finds a test's name on the first added `fn` line after its `#[test]`, its crate by
 the nearest `Cargo.toml` with a `[package]`, and grafts an inline test by counting braces; a test
-it cannot place is `unproven` or `new_subject` with the reason, never silently dropped.
+it cannot place is `unproven` with the reason, never silently dropped.
 The pathogen suite `tools/pathogens/src/keel_scope.rs` holds two specimens the check must refuse:
 an edit to a file the card does not list, and an extra test file added outside the card.

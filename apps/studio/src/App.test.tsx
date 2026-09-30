@@ -3312,6 +3312,37 @@ describe("the board remembers its graph file", () => {
     expect(screen.queryByText(/Connections verified:/i)).not.toBeInTheDocument();
   });
 
+  it("an old topology failure cannot erase a newer path's proof or busy state", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    let rejectOld!: (reason: Error) => void;
+    let answerNew!: (value: GraphTopology) => void;
+    const oldRead = new Promise<GraphTopology>((_, reject) => { rejectOld = reject; });
+    const newRead = new Promise<GraphTopology>((resolve) => { answerNew = resolve; });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 1, events: [{
+        sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: hash },
+        occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system",
+        idempotencyKey: "k1", eventId: "event-1", evidenceRefs: [],
+      }] })),
+      getTopology: vi.fn((file: string) => file === "/graphs/A.yaml" ? oldRead : newRead),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    const field = screen.getByLabelText(/graph file path on the runtime host/i);
+    await userEvent.type(field, "/graphs/A.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await userEvent.clear(field);
+    await userEvent.type(field, "/graphs/B.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await act(async () => rejectOld(new Error("Old path failed")));
+    expect(screen.queryByText(/Old path failed/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^connect$/i })).toBeDisabled();
+    await act(async () => answerNew({ graphId: "g", graphVersion: 1, executionId: "demo-deploy",
+      semanticHash: hash, entrypoints: [], nodes: [], edges: [] }));
+    expect(screen.getByText(/Connections verified:/i)).toBeInTheDocument();
+  });
+
   it("re-verifies from the remembered path on open, without being asked", async () => {
     localStorage.setItem(
       "graphhelm.studio.board.demo-deploy",

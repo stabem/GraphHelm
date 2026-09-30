@@ -79,7 +79,7 @@ Follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) fo
 
 See the [plugin guide](https://github.com/stabem/GraphHelm/blob/main/plugins/graphhelm/README.md) for commands, host trust, and optional hooks. Configuration and local tests do not establish native host activation: check each selected host in a fresh session.
 
-The [v0.1.0 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.0) provides Windows x86-64 and Ubuntu x86-64 binaries. They predate the current adoption flow; **use current source for the installation above**. macOS and other platforms use the source path, with less platform validation. Studio also runs from source.
+The [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) provides Windows x86-64 and Ubuntu x86-64 binaries with the current project adoption flow. macOS and other platforms use the source path, with less platform validation. Studio also runs from source.
 
 <a id="what-works-today"></a>
 <a id="repository-map"></a>

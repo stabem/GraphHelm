@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acceptance-map"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "ci-canary"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "sha2 0.11.0",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-architect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-gateway",
  "graphhelm-graph",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "assert_cmd",
  "axum",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-codebase-memory-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-protocols",
  "graphhelm-runtime",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-development-benchmark"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-events",
  "graphhelm-gateway",
@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-events"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-execution"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-extension-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs2",
  "graphhelm-schema",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-gateway"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-protocols",
  "hex",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-governor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-graph"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-protocols",
@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-host-adoption"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs2",
  "graphhelm-extension-host",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-model-gateway"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs2",
  "graphhelm-events",
@@ -1156,7 +1156,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-policy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-postgres-event-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-protocols"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -1215,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-quality"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-protocols",
  "pathogens",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-schema"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-protocols",
  "hex",
@@ -1263,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-schema-evolution"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-protocols",
  "graphhelm-schema",
@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-sealed-key-provider"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chacha20poly1305",
  "fs2",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-simulation"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "graphhelm-events",
@@ -1316,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-tool-broker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-graph",
  "graphhelm-protocols",
@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "graphhelm-tool-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "graphhelm-process-tree",
  "graphhelm-protocols",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "pathogens"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "filetime",
  "graphhelm-policy",

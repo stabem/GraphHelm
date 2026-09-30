@@ -26,7 +26,7 @@ pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
         .map_err(|_| invalid())?
         .parent()
         .ok_or_else(invalid)?
-        .join("extensions/releases/adoption-0.1.0.json");
+        .join("extensions/releases/adoption-0.1.1.json");
     let bundle = if local.is_file() {
         local
     } else {
@@ -34,13 +34,13 @@ pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
             .ancestors()
             .nth(2)
             .ok_or_else(invalid)?
-            .join("extensions/releases/adoption-0.1.0.json")
+            .join("extensions/releases/adoption-0.1.1.json")
     };
     let release = Root::observe(bundle.parent().ok_or_else(invalid)?)?;
     let bytes =
-        storage::read_child(&release.file, "adoption-0.1.0.json", 16384)?.ok_or_else(invalid)?;
+        storage::read_child(&release.file, "adoption-0.1.1.json", 16384)?.ok_or_else(invalid)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if value["version"] != "0.1.0" {
+    if value["version"] != "0.1.1" {
         return Err(invalid());
     }
     let mut packages: Vec<PinnedPackage> =

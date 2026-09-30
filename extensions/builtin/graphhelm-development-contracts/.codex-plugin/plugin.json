@@ -1,7 +1,7 @@
 {
   "id": "graphhelm-development-contracts",
   "name": "graphhelm-development-contracts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Three data-only entry skills that turn change requests into development contracts, assemble and cite evidence, and propose durable lessons — all through GraphHelm public read surfaces, proposing artifacts rather than writing them.",
   "skills": "skills",
   "mcpServers": ".mcp.json",

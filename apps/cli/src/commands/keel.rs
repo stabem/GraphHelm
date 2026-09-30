@@ -1,9 +1,12 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 
 use graphhelm_policy::keel::{self as policy_keel, Card, KeelPolicy};
 use graphhelm_policy::keel_prove::{self, ProveOptions};
+use graphhelm_process_tree::{ProcessGroup, TerminationOutcome};
 use graphhelm_protocols::Diagnostic;
 
 use crate::output::{CommandOutput, Outcome};
@@ -132,7 +135,7 @@ pub(super) fn check(
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),
             };
-            match keel_prove::prove_new_tests(&diff, &options) {
+            match keel_prove::prove_new_tests(&diff, &options, run_bounded) {
                 Ok(proof) => Some(proof),
                 Err(error) => {
                     return input_error(format!("--prove-new-tests: {error}"), "/diff");
@@ -178,6 +181,109 @@ pub(super) fn check(
     }
 }
 
+type ProveOutput = keel_prove::ProveOutput;
+
+/// Runs one proof command with a process group/job and one execution deadline. Cleanup has its
+/// own bounded observer because terminating a Windows job is asynchronous.
+fn run_bounded(mut command: Command, timeout: Duration) -> Result<Option<ProveOutput>, String> {
+    graphhelm_process_tree::configure(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("cargo did not start: {error}"))?;
+    let mut group = match graphhelm_process_tree::create(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("process tree setup failed: {error}"));
+        }
+    };
+    let readers = [child.stdout.take(), child.stderr.take()].map(|pipe| {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        receiver
+    });
+    let deadline = Instant::now() + timeout;
+    loop {
+        match graphhelm_process_tree::leader_exited(&mut child) {
+            Ok(true) => {
+                let read_to_deadline = |reader: &Receiver<String>| match reader
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(output) => Some(output),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => Some(String::new()),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                };
+                let out = read_to_deadline(&readers[0]);
+                let err = out.as_ref().and_then(|_| read_to_deadline(&readers[1]));
+                if let (Some(out), Some(err)) = (out, err) {
+                    let succeeded = cleanup_process_tree(&mut child, &mut group, true)?;
+                    return Ok(Some((succeeded, out, err)));
+                }
+                cleanup_process_tree(&mut child, &mut group, true)?;
+                return Ok(None);
+            }
+            Ok(false) if Instant::now() >= deadline => {
+                cleanup_process_tree(&mut child, &mut group, false)?;
+                return Ok(None);
+            }
+            Ok(false) => std::thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                cleanup_process_tree(&mut child, &mut group, false)?;
+                return Err(format!("waiting on cargo failed: {error}"));
+            }
+        }
+    }
+}
+
+fn cleanup_process_tree(
+    child: &mut std::process::Child,
+    group: &mut ProcessGroup,
+    leader_already_exited: bool,
+) -> Result<bool, String> {
+    let outcome = graphhelm_process_tree::terminate(child.id(), *group);
+    graphhelm_process_tree::close(group);
+    let succeeded = reap_leader(child, leader_already_exited)?;
+    match outcome {
+        TerminationOutcome::Complete => Ok(succeeded),
+        other => Err(format!("process-tree cleanup inconclusive: {other:?}")),
+    }
+}
+
+fn reap_leader(
+    child: &mut std::process::Child,
+    leader_already_exited: bool,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    if leader_already_exited {
+        return Ok(true);
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if graphhelm_process_tree::leader_exited(child)
+            .map_err(|error| format!("reaping cargo failed: {error}"))?
+        {
+            #[cfg(unix)]
+            return child
+                .wait()
+                .map(|status| status.success())
+                .map_err(|error| format!("reaping cargo failed: {error}"));
+            #[cfg(windows)]
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Err("process-tree cleanup could not reap cargo within 1s".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| Box::new(input_error(format!("card unreadable: {error}"), "/card")))?;
@@ -196,4 +302,55 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
         ))
     })?;
     Ok((card, bytes.len() as u64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    #[test]
+    fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
+        let scratch = tempfile::tempdir().unwrap();
+        let pid_path = scratch.path().join("descendant.pid");
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-Command",
+                "$p=Start-Process ping -ArgumentList '-n','30','127.0.0.1' -PassThru; Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "sleep 30 & echo $! > \"$GRAPHHELM_TEST_PID_FILE\"; exit 0",
+            ]);
+            command
+        };
+        command
+            .env("GRAPHHELM_TEST_PID_FILE", &pid_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let worker = thread::spawn(move || run_bounded(command, Duration::from_millis(100)));
+        let identity = (0..200).find_map(|_| {
+            let pid = std::fs::read_to_string(&pid_path)
+                .ok()?
+                .trim()
+                .parse()
+                .ok()?;
+            graphhelm_process_tree::ProcessIdentity::capture(pid).ok()
+        });
+        let result = worker.join().unwrap().unwrap();
+
+        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        let identity = identity.expect("descendant identity was not observed");
+        assert!(
+            identity.wait_until_gone(Duration::from_secs(1)).unwrap(),
+            "timed out process tree still has a live descendant"
+        );
+    }
 }

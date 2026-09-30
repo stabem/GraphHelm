@@ -582,3 +582,154 @@ fn generated_decisions_are_refused_outside_their_surfaces() {
     }
     assert!(!out.exists());
 }
+
+/// The project registration produced by init must cross the same preview/apply guard as the
+/// user-scope entry, while preserving unrelated settings and never printing their secrets.
+#[test]
+fn setup_applies_and_restores_the_init_project_registration() {
+    let (p, h) = seeded();
+    let s = private_dir();
+    let original = br#"{"note":7,"mcpServers":{"mine":{"command":"my-server","env":{"API_KEY":"PRIVATE-OTHER-SERVER-SENTINEL"}}}}"#;
+    let mcp = p.path().join(".mcp.json");
+    let settings = h.path().join(".claude/settings.json");
+    let original_settings = std::fs::read(&settings).unwrap();
+    std::fs::write(&mcp, original).unwrap();
+    let mut init = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let (ok, initialized) = json(
+        init.args(["init", "--project"])
+            .arg(p.path())
+            .args(["--harness", "claude-code"])
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{initialized}");
+    let initialized_mcp: Value = serde_json::from_slice(&std::fs::read(&mcp).unwrap()).unwrap();
+    let entry = &initialized_mcp["mcpServers"]["graphhelm"];
+    assert_eq!(
+        entry["args"],
+        serde_json::json!([
+            "mcp",
+            "--discover",
+            "--project",
+            std::path::absolute(p.path()).unwrap(),
+            "--actor",
+            "agent-chat"
+        ])
+    );
+    // Rehearse setup from the pre-registration bytes in private temporary roots.
+    std::fs::write(&mcp, original).unwrap();
+    let out = s.path().join("plan.json");
+    let resolve = |out: &Path| {
+        json(
+            setup(p.path(), h.path())
+                .args([
+                    "--resolve",
+                    "project/AGENTS.md=keep",
+                    "--resolve",
+                    "project/.mcp.json=register-mcp",
+                ])
+                .arg("--out")
+                .arg(out)
+                .output()
+                .unwrap(),
+        )
+    };
+    let (ok, resolved) = resolve(&out);
+    assert!(ok, "{resolved}");
+    let digest = resolved["data"]["acceptance"]["digest"].as_str().unwrap();
+    let (ok, reviewed) = json(
+        setup(p.path(), h.path())
+            .arg("--plan")
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{reviewed}");
+    let operations = reviewed["data"]["plan"]["spec"]["operations"]
+        .as_array()
+        .unwrap();
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0]["path"], ".mcp.json");
+    assert_eq!(&operations[0]["registration"], entry);
+    let apply = || {
+        json(
+            setup(p.path(), h.path())
+                .arg("--state-root")
+                .arg(s.path())
+                .arg("--apply")
+                .arg(&out)
+                .arg("--accept")
+                .arg(digest)
+                .output()
+                .unwrap(),
+        )
+    };
+    let (ok, applied) = apply();
+    assert!(ok, "{applied}");
+    let (ok, repeated) = apply();
+    assert!(ok, "{repeated}");
+    assert_eq!(applied["data"]["receipt"], repeated["data"]["receipt"]);
+    let registered: Value = serde_json::from_slice(&std::fs::read(&mcp).unwrap()).unwrap();
+    let mut expected: Value = serde_json::from_slice(original).unwrap();
+    expected["mcpServers"]["graphhelm"] = entry.clone();
+    assert_eq!(registered, expected);
+    assert_eq!(std::fs::read(&settings).unwrap(), original_settings);
+    assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
+    let (ok, again) = resolve(&s.path().join("again.json"));
+    assert!(!ok, "{again}");
+    assert_eq!(
+        again["diagnostics"][0]["path"],
+        "/adoption/invalid_configuration"
+    );
+    assert!(!s.path().join("again.json").exists());
+
+    let mut restore = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let (ok, preview) = json(
+        restore
+            .arg("restore")
+            .arg("--state-root")
+            .arg(s.path())
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{preview}");
+    let plan = &preview["data"]["plan"];
+    let restore_file = s.path().join("restore.json");
+    std::fs::write(&restore_file, serde_json::to_vec(plan).unwrap()).unwrap();
+    let mut restore = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let (ok, restored) = json(
+        restore
+            .arg("restore")
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&restore_file)
+            .arg("--accept")
+            .arg(plan["digest"].as_str().unwrap())
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{restored}");
+    assert_eq!(restored["data"]["receipt"]["spec"]["state"], "restored");
+    assert_eq!(std::fs::read(&mcp).unwrap(), original);
+    assert_eq!(std::fs::read(&settings).unwrap(), original_settings);
+    assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
+    let token = std::fs::read_to_string(p.path().join(".graphhelm/events.token")).unwrap();
+    let key = std::fs::read_to_string(p.path().join(".graphhelm/serve.key")).unwrap();
+    for envelope in [
+        &initialized,
+        &resolved,
+        &reviewed,
+        &applied,
+        &repeated,
+        &again,
+        &preview,
+        &restored,
+    ] {
+        let public = envelope.to_string();
+        for secret in ["PRIVATE-OTHER-SERVER-SENTINEL", token.trim(), key.trim()] {
+            assert!(!secret.is_empty());
+            assert!(!public.contains(secret), "public response leaked a secret");
+        }
+    }
+}

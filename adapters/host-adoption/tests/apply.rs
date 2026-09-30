@@ -313,8 +313,7 @@ fn a_new_claude_instruction_surface_still_keeps_its_security_lines() {
     );
 }
 
-/// What `graphhelm init` writes (`init.rs` `ensure_claude_code`): the absolute path of the
-/// binary, and `mcp --url <url> --token-file <path> --actor agent-chat`.
+/// The legacy direct registration remains supported alongside project discovery.
 fn graphhelm_program() -> &'static str {
     if cfg!(windows) {
         r"C:\tools\graphhelm\graphhelm.exe"
@@ -495,6 +494,81 @@ fn mcp_registration_accepts_one_discover_flag_in_place_of_the_token_file() {
             "refused: {refused}"
         );
         assert_mcp_refused(&mcp_document(mine(), Some(args(refused)), 1));
+    }
+}
+
+/// Current init entries bind discovery to an absolute project. The guard must parse flags at
+/// their actual positions, not remove `--discover` from a value slot and accept another argv.
+#[test]
+fn mcp_registration_accepts_project_discovery_without_relaxing_flags() {
+    let args = |args: Value| json!({"command": graphhelm_program(), "args": args});
+    let project = if cfg!(windows) {
+        "C:/work/my project"
+    } else {
+        "/work/my project"
+    };
+    let url = "http://127.0.0.1:8791";
+    let accepted = [
+        json!([
+            "mcp",
+            "--discover",
+            "--project",
+            project,
+            "--actor",
+            "agent-chat"
+        ]),
+        json!([
+            "mcp",
+            "--project",
+            project,
+            "--actor",
+            "agent-chat",
+            "--discover"
+        ]),
+        json!(["mcp", "--discover", "--actor", "agent-chat"]),
+    ];
+    let refused = [
+        json!(["mcp", "--project", project]),
+        json!(["mcp", "--discover", "--project", project, "--url", url]),
+        json!([
+            "mcp",
+            "--discover",
+            "--project",
+            project,
+            "--token-file",
+            "/p/t"
+        ]),
+        json!([
+            "mcp",
+            "--discover",
+            "--project",
+            project,
+            "--project",
+            project
+        ]),
+        json!(["mcp", "--discover", "--project"]),
+        json!(["mcp", "--discover", "--project", ""]),
+        json!(["mcp", "--discover", "--project", "relative/project"]),
+        json!(["mcp", "--actor", "--discover", "agent-chat"]),
+        json!(["mcp", "--url", "--discover", url]),
+        json!(["mcp", "--discover", "--actor", "--unknown"]),
+        json!(["mcp"]),
+        json!(["mcp", "--token-file", "/p/t"]),
+    ];
+    let rejected: Vec<_> = accepted
+        .iter()
+        .filter(|argv| !graphhelm_host_adoption::is_graphhelm_registration(&args((*argv).clone())))
+        .collect();
+    let admitted: Vec<_> = refused
+        .iter()
+        .filter(|argv| graphhelm_host_adoption::is_graphhelm_registration(&args((*argv).clone())))
+        .collect();
+    assert!(
+        rejected.is_empty() && admitted.is_empty(),
+        "valid registrations refused: {rejected:?}; invalid registrations accepted: {admitted:?}"
+    );
+    for argv in refused {
+        assert_mcp_refused(&mcp_document(mine(), Some(args(argv)), 1));
     }
 }
 

@@ -714,9 +714,10 @@ fn protect_mcp_registration(before: &[u8], after: &[u8]) -> Result<(), AdoptionE
 /// The host spawns this entry when it opens the project, and the plan preview redacts the
 /// after-bytes, so only the shape `graphhelm init` writes is accepted: exactly `command` and
 /// `args`; `command` an absolute path to a `graphhelm` binary (`graphhelm.exe` on Windows);
-/// `args` = `mcp` followed only by the `--url`, `--token-file` and `--actor` pairs, each at most
-/// once and each value non-empty, `--url` a loopback Runtime URL ([`is_loopback_runtime_url`]),
-/// plus at most one valueless `--discover` in place of `--token-file` (#1325).
+/// `args` = `mcp` followed by project discovery (`--discover`, optionally `--project` with an
+/// absolute path), or a legacy loopback `--url` with optional `--token-file` or `--discover`.
+/// `--actor` is optional in either form. Each flag occurs at most once, each pair has a non-empty
+/// value, and `--url` is a loopback Runtime URL ([`is_loopback_runtime_url`]).
 /// Anything else (an interpreter, `env`, another subcommand, an
 /// unknown flag) needs a review the redacted preview cannot give. Public so the `--plan` preview
 /// shows a registration only when this same check accepts it (#1208).
@@ -751,26 +752,36 @@ pub fn is_graphhelm_registration(entry: &Value) -> bool {
     let Some((&"mcp", rest)) = args.split_first() else {
         return false;
     };
-    // #1325: `--discover` is the one valueless flag, at most once, and never beside
-    // `--token-file` (the bridge refuses that pair too): the token then comes from the discovery
-    // record of whichever Runtime serves `--url`'s port.
-    let discover = rest.iter().filter(|arg| **arg == "--discover").count();
-    let pairs: Vec<&str> = rest
-        .iter()
-        .copied()
-        .filter(|arg| *arg != "--discover")
-        .collect();
-    if discover > 1 || (discover == 1 && pairs.contains(&"--token-file")) {
-        return false;
-    }
+    // Parse in place: removing `--discover` first could turn a missing pair value into a
+    // different, accepted command. Keep the CLI's connection-mode conflicts fail-closed.
     let mut seen = std::collections::BTreeSet::new();
-    pairs.len().is_multiple_of(2)
-        && pairs.chunks(2).all(|pair| {
-            matches!(pair[0], "--url" | "--token-file" | "--actor")
-                && seen.insert(pair[0])
-                && !pair[1].is_empty()
-                && (pair[0] != "--url" || is_loopback_runtime_url(pair[1]))
-        })
+    let mut arguments = rest.iter().copied();
+    while let Some(flag) = arguments.next() {
+        if !seen.insert(flag) {
+            return false;
+        }
+        if flag == "--discover" {
+            continue;
+        }
+        if !matches!(flag, "--url" | "--token-file" | "--actor" | "--project") {
+            return false;
+        }
+        let Some(value) = arguments.next() else {
+            return false;
+        };
+        if value.is_empty()
+            || value.starts_with('-')
+            || (flag == "--url" && !is_loopback_runtime_url(value))
+            || (flag == "--project" && !Path::new(value).is_absolute())
+        {
+            return false;
+        }
+    }
+    let discover = seen.contains("--discover");
+    let url = seen.contains("--url");
+    (discover || url)
+        && !(discover && seen.contains("--token-file"))
+        && (!seen.contains("--project") || (discover && !url))
 }
 /// The `--url` the bridge dials with the token. `init` writes `http://{bind}` with `bind` a
 /// loopback socket address (`parse_bind`: any loopback IP, a fixed port), so accepted is: scheme

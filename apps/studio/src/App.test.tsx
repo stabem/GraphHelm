@@ -1590,7 +1590,7 @@ describe("the shell's own layout", () => {
         /cd 'F:\/projects\/example\/dale-api-base' && graphhelm serve --events \.graphhelm\/events --bind 127\.0\.0\.1:8791/i,
       ),
     ).toBeInTheDocument();
-    expect(within(panel).getByText(/F:\/projects\/example\/dale-api-base/)).toBeInTheDocument();
+    expect(within(panel).getByLabelText(/^folder$/i)).toHaveValue("F:/projects/example/dale-api-base");
   });
 });
 

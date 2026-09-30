@@ -137,6 +137,131 @@ pub enum ProcessTreeError {
     ChildNotSuspended,
 }
 
+/// Output returned by [`run_bounded`] when the contained process completed and cleanup was
+/// observed.
+pub type BoundedOutput = (bool, String, String);
+
+/// Run a command with one execution deadline and bounded process-tree cleanup.
+///
+/// The execution deadline covers leader observation and both output streams. Cleanup has its own
+/// bounded observer because terminating a Windows job is asynchronous. A cleanup bound is reported
+/// as an error rather than being mistaken for a contained timeout.
+pub fn run_bounded(
+    mut command: std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<Option<BoundedOutput>, String> {
+    configure(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("cargo did not start: {error}"))?;
+    let mut group = match create(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("process tree setup failed: {error}"));
+        }
+    };
+    let readers = [
+        child
+            .stdout
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>),
+    ]
+    .map(|pipe| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        receiver
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match leader_exited(&mut child) {
+            Ok(true) => {
+                let read_to_deadline = |reader: &std::sync::mpsc::Receiver<String>| match reader
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                {
+                    Ok(output) => Some(output),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(String::new()),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                };
+                let out = read_to_deadline(&readers[0]);
+                let err = out.as_ref().and_then(|_| read_to_deadline(&readers[1]));
+                if let (Some(out), Some(err)) = (out, err) {
+                    let succeeded = cleanup_bounded(&mut child, &mut group, true)?;
+                    return Ok(Some((succeeded, out, err)));
+                }
+                cleanup_bounded(&mut child, &mut group, true)?;
+                return Ok(None);
+            }
+            Ok(false) if std::time::Instant::now() >= deadline => {
+                cleanup_bounded(&mut child, &mut group, false)?;
+                return Ok(None);
+            }
+            Ok(false) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(error) => {
+                cleanup_bounded(&mut child, &mut group, false)?;
+                return Err(format!("waiting on cargo failed: {error}"));
+            }
+        }
+    }
+}
+
+fn cleanup_bounded(
+    child: &mut std::process::Child,
+    group: &mut ProcessGroup,
+    leader_already_exited: bool,
+) -> Result<bool, String> {
+    let outcome = terminate(child.id(), *group);
+    close(group);
+    let succeeded = reap_bounded(child, leader_already_exited)?;
+    match outcome {
+        TerminationOutcome::Complete => Ok(succeeded),
+        other => Err(format!("process-tree cleanup inconclusive: {other:?}")),
+    }
+}
+
+fn reap_bounded(
+    child: &mut std::process::Child,
+    leader_already_exited: bool,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    if leader_already_exited {
+        return child
+            .wait()
+            .map(|status| status.success())
+            .map_err(|error| format!("reaping cargo failed: {error}"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if leader_exited(child).map_err(|error| format!("reaping cargo failed: {error}"))? {
+            #[cfg(unix)]
+            return child
+                .wait()
+                .map(|status| status.success())
+                .map_err(|error| format!("reaping cargo failed: {error}"));
+            #[cfg(windows)]
+            return child
+                .wait()
+                .map(|status| status.success())
+                .map_err(|error| format!("reaping cargo failed: {error}"));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("process-tree cleanup could not reap cargo within 1s".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 impl std::fmt::Display for ProcessTreeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

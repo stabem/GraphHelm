@@ -23,6 +23,7 @@ graphhelm-gateway = { path = "../../core/gateway" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }
 graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
+graphhelm-process-tree = { path = "../../adapters/process-tree" }
 graphhelm-policy = { path = "../../core/policy" }
 graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store" }
 graphhelm-protocols = { path = "../../core/protocols" }
@@ -61,7 +62,6 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32
 [dev-dependencies]
 toml.workspace = true
 graphhelm-development-benchmark = { path = "../../tools/development-benchmark" }
-graphhelm-process-tree = { path = "../../adapters/process-tree" }
 tokio = { workspace = true, features = ["net", "rt", "time", "io-util"] }
 hex.workspace = true
 sha2.workspace = true

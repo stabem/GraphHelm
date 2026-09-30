@@ -135,7 +135,8 @@ pub(super) fn check(
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),
             };
-            match keel_prove::prove_new_tests(&diff, &options) {
+            match keel_prove::prove_new_tests(&diff, &options, graphhelm_process_tree::run_bounded)
+            {
                 Ok(proof) => Some(proof),
                 Err(error) => {
                     return input_error(format!("--prove-new-tests: {error}"), "/diff");
@@ -221,4 +222,63 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
         ))
     })?;
     Ok((card, bytes.len() as u64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+    use std::thread;
+    use std::time::Instant;
+
+    #[test]
+    fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
+        let scratch = tempfile::tempdir().unwrap();
+        let pid_path = scratch.path().join("descendant.pid");
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-Command",
+                "$i=New-Object Diagnostics.ProcessStartInfo; $i.FileName='ping'; $i.Arguments='-n 30 127.0.0.1'; $i.UseShellExecute=$false; $p=[Diagnostics.Process]::Start($i); Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "sleep 30 & echo $! > \"$GRAPHHELM_TEST_PID_FILE\"; exit 0",
+            ]);
+            command
+        };
+        command
+            .env("GRAPHHELM_TEST_PID_FILE", &pid_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let worker = thread::spawn(move || {
+            graphhelm_process_tree::run_bounded(command, Duration::from_secs(2))
+        });
+        let observation_deadline = Instant::now() + Duration::from_secs(5);
+        let mut identity = None;
+        while identity.is_none() && !worker.is_finished() && Instant::now() < observation_deadline {
+            identity = std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|contents| contents.trim().parse().ok())
+                .and_then(|pid| graphhelm_process_tree::ProcessIdentity::capture(pid).ok());
+            if identity.is_none() {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let result = worker.join().unwrap().unwrap();
+
+        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        let identity =
+            identity.expect("descendant identity was not observed before bounded cleanup");
+        assert!(
+            identity.wait_until_gone(Duration::from_secs(1)).unwrap(),
+            "timed out process tree still has a live descendant"
+        );
+    }
 }

@@ -17,10 +17,9 @@
 //! reason, never silently skipped; `Language` is where a runner for it would plug in.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -275,6 +274,11 @@ pub struct ProveOptions {
     pub timeout: Duration,
 }
 
+/// The process runner is supplied by the CLI so policy stays independent of operating-system
+/// process adapters.
+pub type ProveOutput = (bool, String, String);
+pub type ProveRunner = fn(Command, Duration) -> Result<Option<ProveOutput>, String>;
+
 /// The two worktrees and their directory. Dropping it removes exactly what it created.
 struct Scratch {
     repo: PathBuf,
@@ -392,7 +396,11 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
 /// # Errors
 /// When a revision does not resolve, the scratch directory cannot be made, or a worktree cannot be
 /// added.
-pub fn prove_new_tests(diff: &str, options: &ProveOptions) -> Result<ProofReport, String> {
+pub fn prove_new_tests(
+    diff: &str,
+    options: &ProveOptions,
+    runner: ProveRunner,
+) -> Result<ProofReport, String> {
     let resolve = |rev: &str| {
         git(
             &options.repo,
@@ -409,7 +417,7 @@ pub fn prove_new_tests(diff: &str, options: &ProveOptions) -> Result<ProofReport
     let tests = new_rust_tests(diff);
     let mut proofs = Vec::new();
     if !tests.is_empty() {
-        proofs.extend(prove_rust(diff, &tests, &base, &head, options)?);
+        proofs.extend(prove_rust(diff, &tests, &base, &head, options, runner)?);
     }
     for (name, path) in unsupported_new_tests(diff) {
         let not_run = RunResult {
@@ -457,6 +465,7 @@ fn prove_rust(
     base: &str,
     head: &str,
     options: &ProveOptions,
+    runner: ProveRunner,
 ) -> Result<Vec<TestProof>, String> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -493,14 +502,14 @@ fn prove_rust(
                 outcome: RunOutcome::DidNotCompile,
                 detail: reason.clone(),
             },
-            _ => run_test(&parent_tree, "parent", test, options),
+            _ => run_test(&parent_tree, "parent", test, options, runner),
         })
         .collect();
     let proofs = tests
         .iter()
         .zip(parent_runs)
         .map(|(test, parent)| {
-            let head_run = run_test(&head_tree, "head", test, options);
+            let head_run = run_test(&head_tree, "head", test, options, runner);
             TestProof {
                 name: test.name.clone(),
                 path: test.path.clone(),
@@ -699,7 +708,13 @@ fn package_name(manifest: &str) -> Option<String> {
 /// Runs one test in one tree. Each side builds into its own subdirectory of the shared target:
 /// cargo's freshness check can take one checkout's build as fresh for another checkout of the same
 /// package, which would run the parent's binary as the head's (seen on the #1333 specimens).
-fn run_test(tree: &Path, side: &str, test: &NewTest, options: &ProveOptions) -> RunResult {
+fn run_test(
+    tree: &Path,
+    side: &str,
+    test: &NewTest,
+    options: &ProveOptions,
+    runner: ProveRunner,
+) -> RunResult {
     let (package, selector) = match cargo_target(tree, &test.path) {
         Ok(found) => found,
         Err(detail) => {
@@ -719,7 +734,7 @@ fn run_test(tree: &Path, side: &str, test: &NewTest, options: &ProveOptions) -> 
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    match run_bounded(command, options.timeout) {
+    match runner(command, options.timeout) {
         Ok(Some((succeeded, stdout, stderr))) => {
             classify_run(&test.name, succeeded, &stdout, &stderr)
         }
@@ -779,62 +794,6 @@ fn classify_run(name: &str, succeeded: bool, stdout: &str, stderr: &str) -> RunR
         outcome: RunOutcome::NotFound,
         detail: format!("no test named {name} ran"),
     }
-}
-
-type Finished = (bool, String, String);
-
-/// Runs `command` with piped output, killing the process tree after `timeout`. `Ok(None)` is a
-/// timeout.
-fn run_bounded(mut command: Command, timeout: Duration) -> Result<Option<Finished>, String> {
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cargo did not start: {error}"))?;
-    let readers = [
-        child
-            .stdout
-            .take()
-            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
-        child
-            .stderr
-            .take()
-            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
-    ]
-    .map(|pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
-    });
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let [out, err] = readers.map(|reader| reader.join().unwrap_or_default());
-                return Ok(Some((status.success(), out, err)));
-            }
-            Ok(None) if started.elapsed() >= timeout => {
-                kill_tree(&mut child);
-                // The readers are not joined: a straggling grandchild holding a pipe must not hold
-                // this call open past its bound.
-                return Ok(None);
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(error) => return Err(format!("waiting on cargo failed: {error}")),
-        }
-    }
-}
-
-fn kill_tree(child: &mut std::process::Child) {
-    if cfg!(windows) {
-        let _ = Command::new("taskkill")
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .output();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(test)]

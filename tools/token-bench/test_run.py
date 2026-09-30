@@ -317,3 +317,17 @@ def test_methodology_observer_requires_calls_card_and_persisted_signal(tmp_path,
     card.write_text(runner.json.dumps({"paths": ["C:\\outside\\gate.ps1"], "promise": "x",
                                        "defect": "y", "proofCommand": "test"}), encoding="utf-8")
     assert runner.methodology_observer("session", runtime, card, signal, "c")["status"] == "INCOMPLETE"
+
+
+def test_explicit_effort_reaches_cli_without_changing_legacy_commands(tmp_path, monkeypatch):
+    """Catches silently dropping requested effort; offline process-boundary fixture (<1s)."""
+    calls = []
+    def launch(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"result":"ok"}', stderr="")
+    monkeypatch.setattr(runner.subprocess, "run", launch)
+    args = (tmp_path, "task", "a", "claude-test-exact", 1, {}, 1.0, None, {"path": "claude"})
+    runner.run_agent(*args, effort="high")
+    assert calls[0][calls[0].index("--effort") + 1] == "high"
+    runner.run_agent(*args)
+    assert "--effort" not in calls[1]

@@ -38,6 +38,7 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -51,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 DOLESS = HERE / "doless"
 MANIFEST = DOLESS / "tasks.json"
 RESULTS = DOLESS / "results.jsonl"
-DOLESS_VERSION = 1
+DOLESS_VERSION = 2
 
 _spec = importlib.util.spec_from_file_location("token_bench_runner", HERE / "run.py")
 runner = importlib.util.module_from_spec(_spec)
@@ -408,9 +409,59 @@ def cmd_qualify(a: argparse.Namespace) -> None:
     raise SystemExit(1 if failures else 0)
 
 
+def load_inference_config(path: Path, requested_model: str | None) -> dict:
+    """Freeze an operator-declared host/model capability contract; no model-name inference."""
+    config = json.loads(path.read_text(encoding="utf-8"))
+    fields = {"version", "host", "provider", "model", "effort", "supportedEfforts", "capabilitySource"}
+    if not isinstance(config, dict) or set(config) != fields:
+        raise ValueError("inference config must contain exactly the documented fields")
+    if type(config["version"]) is not int or config["version"] != 1 or config["host"] != "claude_code":
+        raise ValueError("unsupported inference config version or host")
+    for name in ("provider", "model", "effort", "capabilitySource"):
+        if not isinstance(config[name], str) or not config[name].strip() or len(config[name]) > 2048:
+            raise ValueError(f"inference config requires a bounded nonempty {name}")
+    if config["model"] in {"default", "best", "sonnet", "opus", "haiku", "fable", "opusplan"} or "[" in config["model"]:
+        raise ValueError("inference comparison requires an exact model ID, not an alias")
+    efforts = config["supportedEfforts"]
+    if (not isinstance(efforts, list) or not efforts or len(efforts) > 16
+            or any(not isinstance(e, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", e) for e in efforts)
+            or len(set(efforts)) != len(efforts) or config["effort"] not in efforts):
+        raise ValueError("requested effort is not explicitly supported by the declared capability contract")
+    if requested_model is not None and requested_model != config["model"]:
+        raise ValueError("--model conflicts with the frozen inference configuration")
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"configuration": config, "digest": runner.digest_bytes(canonical)}
+
+
+def observe_effort_flag(claude_cli: dict) -> dict:
+    """Observe only local CLI flag support; provider acceptance/effective effort remain unobserved."""
+    probe = subprocess.run([claude_cli["path"], "--help"], check=True, text=True, encoding="utf-8",
+                           capture_output=True, timeout=10)
+    if not re.search(r"(?m)^\s*--effort(?:\s|[=,])", probe.stdout):
+        raise RuntimeError("pinned Claude CLI does not advertise --effort")
+    return {"flag": "--effort", "source": "cli_help",
+            "helpDigest": runner.digest_bytes(probe.stdout.encode("utf-8"))}
+
+
+def comparison_arm(row: dict) -> str:
+    """Never pool a model/effort treatment into its legacy methodology arm."""
+    config = row.get("inferenceConfig")
+    return f"{row['arm']}@{config['digest']}" if config else row["arm"]
+
+
+def observed_cost(row: dict) -> float | None:
+    cost = row.get("costUsd")
+    return float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
+
+
 def cmd_run(a: argparse.Namespace) -> None:
     task = load_tasks()[a.task]
+    config_path = getattr(a, "inference_config", None)
+    inference = load_inference_config(Path(config_path), a.model) if config_path else None
+    model = inference["configuration"]["model"] if inference else a.model
+    effort = inference["configuration"]["effort"] if inference else None
     claude_cli = runner.validate_prerequisites("a")
+    effort_capability = observe_effort_flag(claude_cli) if inference else None
     surface_dir = Path(a.surface_dir).resolve() if a.surface_dir else REPO
     prompt, surface_digests = compose_prompt(task, a.arm, surface_dir, a.prompt_style)
     task_digest = runner.digest_bytes(b"\0".join((DOLESS / task[k]).read_bytes()
@@ -419,8 +470,8 @@ def cmd_run(a: argparse.Namespace) -> None:
         wt = runner.make_worktree(f"dl-{a.task}", a.arm, task["parentSha"])
         result, wall, row = {"agentError": "agent_not_started"}, 0.0, {}
         try:
-            result, _stderr, wall = runner.run_agent(wt, prompt, "a", a.model, a.timeout_min, {},
-                                                     a.max_budget_usd, None, claude_cli)
+            result, _stderr, wall = runner.run_agent(wt, prompt, "a", model, a.timeout_min, {},
+                                                     a.max_budget_usd, None, claude_cli, effort=effort)
             row = score_checkout(wt, task, str(result.get("result") or ""), a.prove)
         except Exception as exc:  # the row still records what was observed
             row["evaluatorError"] = f"{type(exc).__name__}: {exc}"[:500]
@@ -433,7 +484,10 @@ def cmd_run(a: argparse.Namespace) -> None:
             "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "dolessVersion": DOLESS_VERSION, "task": a.task, "split": task["split"],
             "category": task["category"], "arm": a.arm, "promptStyle": a.prompt_style, "run": index + 1,
-            "requestedModel": a.model, "models": usage.get("models"),
+            "requestedModel": model, "models": usage.get("models"),
+            "inferenceConfig": inference, "requestedEffort": effort, "observedEffort": None,
+            "effortObservation": "unobserved", "effortCapability": effort_capability,
+            "costProvenance": "cli_estimate" if observed_cost({"costUsd": result.get("total_cost_usd")}) is not None else "unavailable",
             "claudeCli": claude_cli, "surfaceDigests": surface_digests,
             "promptDigest": runner.digest_bytes(prompt.encode("utf-8")), "taskDigest": task_digest,
             "agentError": agent_error, "sessionId": result.get("session_id"),
@@ -445,6 +499,21 @@ def cmd_run(a: argparse.Namespace) -> None:
             row["verdict"], row["verdictReasons"] = "INCOMPLETE", ["evaluator_error"]
         else:
             row["verdict"], row["verdictReasons"] = do_less_verdict(row)
+        if inference:
+            row["usageAudit"] = runner.usage_audit(usage, result)
+            row["claudeCliPostDigest"] = runner.digest_file(Path(claude_cli["path"]))
+            missing = []
+            if usage.get("models") != [model]:
+                missing.append("configured_model_unobserved_or_mixed")
+            if row["usageAudit"]["status"] != "PASS":
+                missing.append("usage_incomplete")
+            if observed_cost(row) is None:
+                missing.append("cost_unobserved")
+            if row["claudeCliPostDigest"] != claude_cli["sha256"]:
+                missing.append("cli_identity_changed")
+            if missing:
+                row["verdict"] = "INCOMPLETE"
+                row["verdictReasons"].extend(missing)
         with RESULTS.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(json.dumps({k: row.get(k) for k in ("task", "arm", "run", "verdict", "verdictReasons", "oracle",
@@ -455,10 +524,11 @@ def summarise(rows: list[dict]) -> dict:
     """Per (task, arm): runs, do-less passes over scored runs, total cost. INCOMPLETE is counted, not scored."""
     out: dict = {}
     for r in rows:
-        cell = out.setdefault((r["task"], r["arm"]), {"runs": 0, "scored": 0, "pass": 0, "cost": 0.0,
+        cell = out.setdefault((r["task"], comparison_arm(r)), {"runs": 0, "scored": 0, "pass": 0, "cost": 0.0,
                                                       "split": r.get("split"), "reasons": {}})
         cell["runs"] += 1
-        cell["cost"] += r.get("costUsd") or 0.0
+        cost = observed_cost(r)
+        cell["cost"] = cell["cost"] + cost if cell["cost"] is not None and cost is not None else None
         for reason in r.get("verdictReasons", []):
             cell["reasons"][reason] = cell["reasons"].get(reason, 0) + 1
         if r["verdict"] == "INCOMPLETE":
@@ -476,7 +546,7 @@ def cmd_table(a: argparse.Namespace) -> None:
     rows = read_rows(a)
     print("task | split | arm | runs | do-less pass/scored | USD total | reasons (count)")
     for (task, arm), c in sorted(summarise(rows).items()):
-        print(f"{task} | {c['split']} | {arm} | {c['runs']} | {c['pass']}/{c['scored']} | {c['cost']:.2f} | "
+        print(f"{task} | {c['split']} | {arm} | {c['runs']} | {c['pass']}/{c['scored']} | {_usd(c['cost'])} | "
               + ", ".join(f"{k} x{v}" for k, v in sorted(c["reasons"].items())))
 
 
@@ -502,12 +572,12 @@ def arm_scores(rows: list[dict]) -> dict:
     cost unplaceable rather than silently cheaper."""
     out: dict = {}
     for r in rows:
-        cell = out.setdefault(r["arm"], {"runs": 0, "scored": 0, "passes": 0, "incomplete": 0,
+        cell = out.setdefault(comparison_arm(r), {"runs": 0, "scored": 0, "passes": 0, "incomplete": 0,
                                          "costs": [], "costMissing": 0})
         cell["runs"] += 1
-        cost = r.get("costUsd")
-        if isinstance(cost, (int, float)):
-            cell["costs"].append(float(cost))
+        cost = observed_cost(r)
+        if cost is not None:
+            cell["costs"].append(cost)
         else:
             cell["costMissing"] += 1
         if r.get("verdict") == "INCOMPLETE":
@@ -633,6 +703,7 @@ def main() -> None:
     r.add_argument("--prompt-style", choices=sorted(PROMPT_KEYS), default="explicit")
     r.add_argument("--runs", type=int, default=3)
     r.add_argument("--model")
+    r.add_argument("--inference-config", help="frozen exact model/effort capability JSON; no automatic downgrade")
     r.add_argument("--timeout-min", type=int, default=15)
     r.add_argument("--max-budget-usd", type=float, default=1.0)
     r.add_argument("--surface-dir", help="directory holding the candidate Keel surfaces (a hillclimb copy)")

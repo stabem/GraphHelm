@@ -203,6 +203,56 @@ describe("the models screen", () => {
     expect(retryDraft.credentialRef).toBe(firstDraft.credentialRef);
   });
 
+  it("requires an explicit discard before closing after a partial save", async () => {
+    const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
+    const props = mount({ onApply });
+    await userEvent.click(screen.getByRole("button", { name: "Edit deepseek_official" }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "retry-only-key");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Close models" }));
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog", { name: "Confirm discard" })).toHaveTextContent(
+      /retry will be lost/i,
+    );
+    expect(screen.getByLabelText(/API key/i)).toHaveValue("retry-only-key");
+
+    await userEvent.click(screen.getByRole("button", { name: "discard and close" }));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires an explicit discard before cancelling a partial save", async () => {
+    const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
+    mount({ onApply });
+    await userEvent.click(screen.getByRole("button", { name: "Edit deepseek_official" }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "cancel-retry-key");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm discard" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/API key/i)).toHaveValue("cancel-retry-key");
+    expect(screen.getByRole("form", { name: "Edit route" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "discard draft" }));
+    expect(screen.queryByRole("form", { name: "Edit route" })).toBeNull();
+  });
+
+  it("does not let header close bypass a cancel confirmation", async () => {
+    const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
+    const props = mount({ onApply });
+    await userEvent.click(screen.getByRole("button", { name: "Edit deepseek_official" }));
+    await userEvent.type(screen.getByLabelText(/API key/i), "cancel-close-retry-key");
+    await userEvent.click(screen.getByRole("button", { name: "apply" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close models" }));
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/API key/i)).toHaveValue("cancel-close-retry-key");
+
+    await userEvent.click(screen.getByRole("button", { name: "discard draft" }));
+    expect(screen.queryByRole("form", { name: "Edit route" })).toBeNull();
+  });
+
   it("does not let a partial retry change endpoint again", async () => {
     const onApply = vi.fn().mockResolvedValue("route_saved_key_failed");
     mount({ onApply });

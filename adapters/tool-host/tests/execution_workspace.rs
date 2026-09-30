@@ -317,6 +317,170 @@ fn a_release_never_waits_on_an_abandoned_scan_and_the_tree_goes_when_the_scan_en
     assert!(host.live_executions().is_empty());
 }
 
+/// Contract: a successful bounded release cannot let its deferred reader erase a successor.
+/// Regression: a second host reclaims the same path while the first still holds cleanup ownership.
+/// Gap: the earlier deferred-release test never starts a successor before unblocking the scan.
+/// Cost: two local hosts, a blocked-reader channel, and the existing two-second release bound.
+#[test]
+fn a_resumed_drive_refuses_a_workspace_until_deferred_cleanup_finishes() {
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let previous = std::sync::Arc::new(host(&project, staging.path(), false));
+    let execution = "exec-deferred-owner";
+    let lease = writer_lease();
+    let (original, _) = previous.invoke_for_execution(execution, &apply(), &lease, "agent-writer");
+    assert!(completed(&original.disposition));
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    let (scan, unblock) = blocked_scan(&previous, execution, &cancel);
+    cancel.cancel();
+    previous.release(execution).unwrap();
+
+    let next = host(&project, staging.path(), false);
+    let successor_patch = ToolCall::Repository(RepositoryAction::ApplyPatch {
+        patch: PATCH.replace("FIXED", "SUCCESSOR"),
+    });
+    let (while_owned, _) =
+        next.invoke_for_execution(execution, &successor_patch, &lease, "agent-writer");
+    let workspace = staging.path().join(&workspaces_in(staging.path())[0]);
+    let before_cleanup = std::fs::read_to_string(workspace.join("src/lib.rs")).unwrap();
+    // Always finish the reader before assertions: a failing regression must not leave a blocked
+    // background scan holding the temporary tree after the test unwinds.
+    unblock.send(()).unwrap();
+    scan.join().unwrap().unwrap();
+    assert!(
+        matches!(&while_owned.disposition, ToolDisposition::HostError { code } if code == "GHTOOL004_CONFIG"),
+        "a live owner must refuse the successor before accepting a patch: {while_owned:?}"
+    );
+    assert!(before_cleanup.contains("FIXED") && !before_cleanup.contains("SUCCESSOR"));
+    assert!(workspaces_in(staging.path()).is_empty());
+
+    let (retried, _) =
+        next.invoke_for_execution(execution, &successor_patch, &lease, "agent-writer");
+    assert!(completed(&retried.disposition), "{retried:?}");
+    let (landed, _) =
+        next.invoke_for_execution(execution, &commit("successor"), &lease, "agent-writer");
+    assert!(completed(&landed.disposition), "{landed:?}");
+    let reference = execution_ref(execution);
+    let blob = git(&project, &["show", &format!("{reference}:src/lib.rs")]);
+    assert!(
+        blob.contains("SUCCESSOR") && !blob.contains("FIXED"),
+        "{blob}"
+    );
+    next.release(execution).unwrap();
+    assert!(workspaces_in(staging.path()).is_empty());
+}
+
+/// Contract: lifetime exclusion crosses process boundaries and releases after a real process exit.
+/// Regression: an in-process-only guard permits a second process to reclaim a live workspace.
+/// Gap: the dead-server test drops a host in one process; it cannot observe an OS ownership claim.
+/// Cost: one child copy of this test executable and two bounded local Git workspaces; no new seam.
+#[test]
+fn execution_workspace_ownership_survives_until_process_exit() {
+    const CHILD_ROOT: &str = "GRAPHHELM_TEST_WORKSPACE_OWNER_ROOT";
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        use std::io::Read as _;
+        let root = PathBuf::from(root);
+        let owner = host(&root.join("project"), &root.join("staging"), false);
+        let lease = writer_lease();
+        let (patched, _) =
+            owner.invoke_for_execution("exec-process-owner", &apply(), &lease, "agent-writer");
+        assert!(completed(&patched.disposition));
+        let (landed, _) = owner.invoke_for_execution(
+            "exec-process-owner",
+            &commit("owner"),
+            &lease,
+            "agent-writer",
+        );
+        assert!(completed(&landed.disposition));
+        std::fs::write(root.join("ready"), b"owner holds workspace").unwrap();
+        let _ = std::io::stdin().read(&mut [0_u8]);
+        return;
+    }
+    let (dir, project) = scratch_repo();
+    let staging = dir.path().join("staging");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "execution_workspace_ownership_survives_until_process_exit",
+            "--nocapture",
+        ])
+        .env(CHILD_ROOT, dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !dir.path().join("ready").is_file() {
+        if child.try_wait().unwrap().is_some() || std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!("owner did not become ready: {output:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let before = git(
+        &project,
+        &["rev-parse", &execution_ref("exec-process-owner")],
+    );
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let attempt = {
+        let project = project.clone();
+        let staging = staging.clone();
+        std::thread::spawn(move || {
+            let contender = host(&project, &staging, false);
+            let record = contender
+                .invoke_for_execution(
+                    "exec-process-owner",
+                    &commit("contender"),
+                    &writer_lease(),
+                    "agent-writer",
+                )
+                .0;
+            done_tx.send(record).unwrap();
+        })
+    };
+    let result = done_rx.recv_timeout(Duration::from_secs(20));
+    child.kill().unwrap();
+    child.wait().unwrap();
+    attempt.join().unwrap();
+    let refused =
+        result.expect("a live workspace must refuse without waiting for its owner to exit");
+    assert!(
+        matches!(&refused.disposition, ToolDisposition::HostError { code } if code == "GHTOOL004_CONFIG"),
+        "the live child must keep exclusive ownership: {refused:?}"
+    );
+    assert_eq!(
+        git(
+            &project,
+            &["rev-parse", &execution_ref("exec-process-owner")]
+        ),
+        before
+    );
+
+    let next = host(&project, &staging, false);
+    let (recovered, _) = next.invoke_for_execution(
+        "exec-process-owner",
+        &commit("recovered"),
+        &writer_lease(),
+        "agent-writer",
+    );
+    assert!(completed(&recovered.disposition), "{recovered:?}");
+    assert!(recovered.recovered_workspace);
+    assert_eq!(
+        git(
+            &project,
+            &[
+                "rev-parse",
+                &format!("{}^", execution_ref("exec-process-owner"))
+            ]
+        ),
+        before
+    );
+    next.release("exec-process-owner").unwrap();
+    assert!(workspaces_in(&staging).is_empty());
+}
+
 /// A scan whose drive gave it up while it WAITS for the tree never takes the tree: it answers
 /// `Cancelled` while the holder still holds it.
 #[test]

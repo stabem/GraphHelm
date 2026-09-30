@@ -626,6 +626,7 @@ async fn cognitive_work(
 ) -> WorkOutcome {
     let prompt = wire_prompt(&work.prompt);
     let call = graphhelm_gateway::call::ModelCall {
+        stable_prefix: Some(format!("{}\n", work.prompt.system)),
         prompt,
         max_tokens: DEFAULT_MAX_TOKENS,
         max_output_tokens: work.max_output_tokens,

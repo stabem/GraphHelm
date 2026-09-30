@@ -105,12 +105,27 @@ impl<'a> ByokAdapter<'a> {
             .model()
             .expect("direct_api routes carry model — enforced by manifest validation");
 
+        let content = match self.cache_parts(call)? {
+            Some((prefix, variable)) => AnthropicMessageContent::Blocks(vec![
+                AnthropicTextBlock {
+                    kind: "text",
+                    text: prefix,
+                    cache_control: Some(CacheControl { kind: "ephemeral" }),
+                },
+                AnthropicTextBlock {
+                    kind: "text",
+                    text: variable,
+                    cache_control: None,
+                },
+            ]),
+            None => AnthropicMessageContent::Text(&call.prompt),
+        };
         let payload = AnthropicRequestBody {
             model,
             max_tokens: self.explicit_output_cap(call).unwrap_or(call.max_tokens),
             messages: vec![AnthropicMessage {
                 role: "user",
-                content: &call.prompt,
+                content,
             }],
         };
         let body = serde_json::to_vec(&payload)
@@ -145,6 +160,22 @@ impl<'a> ByokAdapter<'a> {
         if cap.is_some() && self.route.output_token_parameter().is_none() {
             return Err(GatewayError::UnsupportedCapability);
         }
+        let messages = match self.cache_parts(call)? {
+            Some((prefix, variable)) => vec![
+                OpenAiRequestMessage {
+                    role: "user",
+                    content: prefix,
+                },
+                OpenAiRequestMessage {
+                    role: "user",
+                    content: variable,
+                },
+            ],
+            None => vec![OpenAiRequestMessage {
+                role: "user",
+                content: &call.prompt,
+            }],
+        };
         let payload = OpenAiRequestBody {
             model,
             max_tokens: cap.filter(|_| {
@@ -154,10 +185,7 @@ impl<'a> ByokAdapter<'a> {
                 self.route.output_token_parameter()
                     == Some(OpenAiOutputTokenParameter::MaxCompletionTokens)
             }),
-            messages: vec![OpenAiRequestMessage {
-                role: "user",
-                content: &call.prompt,
-            }],
+            messages,
         };
         let body = serde_json::to_vec(&payload)
             .expect("OpenAiRequestBody is plain data and always serializes");
@@ -175,6 +203,27 @@ impl<'a> ByokAdapter<'a> {
         } else {
             Err(map_openai_error(response.status, &response.body))
         }
+    }
+
+    fn cache_parts<'b>(
+        &self,
+        call: &'b ModelCall,
+    ) -> Result<Option<(&'b str, &'b str)>, GatewayError> {
+        if self.route.prompt_cache().is_none() {
+            return Ok(None);
+        }
+        let Some(prefix) = call
+            .stable_prefix
+            .as_deref()
+            .filter(|prefix| !prefix.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let variable = call
+            .prompt
+            .strip_prefix(prefix)
+            .ok_or(GatewayError::UnsupportedCapability)?;
+        Ok((!variable.is_empty()).then_some((prefix, variable)))
     }
 
     fn explicit_output_cap(&self, call: &ModelCall) -> Option<u32> {
@@ -259,7 +308,29 @@ struct AnthropicRequestBody<'a> {
 #[derive(Serialize)]
 struct AnthropicMessage<'a> {
     role: &'a str,
-    content: &'a str,
+    content: AnthropicMessageContent<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum AnthropicMessageContent<'a> {
+    Text(&'a str),
+    Blocks(Vec<AnthropicTextBlock<'a>>),
+}
+
+#[derive(Serialize)]
+struct AnthropicTextBlock<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+#[derive(Serialize)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
 }
 
 #[derive(Deserialize)]

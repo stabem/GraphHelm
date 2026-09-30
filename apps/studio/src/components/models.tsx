@@ -146,6 +146,7 @@ export function Models({
   const [partialBaseline, setPartialBaseline] = useState<
     { provider: string; baseUrl: string; credentialRef?: string } | null
   >(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const routes = choice?.routes ?? [];
   const open = (route: ModelRouteSummary | null) => {
@@ -157,10 +158,20 @@ export function Models({
         : { provider: route.provider, baseUrl: route.baseUrl ?? "", credentialRef: route.credentialRef ?? undefined },
     );
     setPartialBaseline(null);
+    setConfirmDiscard(false);
     setValidationError("");
     // The key box is cleared on every open. A value left in it from the card before would be one
     // keystroke away from landing on a different route's reference.
     setKey("");
+  };
+
+  const close = () => {
+    if (partialBaseline !== null && !confirmDiscard) {
+      setConfirmDiscard(true);
+      setValidationError("The route was saved, but the API key was not stored. Keep this panel open to retry, or confirm discard.");
+      return;
+    }
+    onClose();
   };
 
   const apply = async (event: FormEvent) => {
@@ -274,10 +285,23 @@ export function Models({
           <h2>Models</h2>
           <p className="lbl">the providers this Runtime can reach</p>
         </div>
-        <button type="button" className="ghost close" onClick={onClose} aria-label="Close models">
+        <button type="button" className="ghost close" onClick={close} aria-label="Close models">
           close
         </button>
       </header>
+
+      {confirmDiscard && partialBaseline !== null && (
+        <div className="notice bad" role="alertdialog" aria-label="Confirm discard">
+          <TriangleAlert aria-hidden="true" />
+          <span>The API key retry will be lost when this panel closes.</span>
+          <button type="button" className="ghost" onClick={() => setConfirmDiscard(false)}>
+            keep editing
+          </button>
+          <button type="button" className="ghost" onClick={onClose}>
+            discard and close
+          </button>
+        </div>
+      )}
 
       {choice !== null && !choice.configured && (
         <p className="hint" role="status">

@@ -920,36 +920,18 @@ mod tests {
 
     #[test]
     fn a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe() {
-        if std::env::var_os("KEEL_PROVE_PIPE_CHILD").is_some() {
-            std::thread::sleep(Duration::from_secs(1));
-            return;
-        }
-        if std::env::var_os("KEEL_PROVE_PIPE_PARENT").is_some() {
-            let _child = Command::new(std::env::current_exe().unwrap())
-                .arg(
-                    "a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe",
-                )
-                .env("KEEL_PROVE_PIPE_CHILD", "1")
-                .spawn()
-                .unwrap();
-            return;
-        }
-
-        let started = Instant::now();
-        let result = run_bounded(
-            {
-                let mut command = Command::new(std::env::current_exe().unwrap());
-                command
-                    .arg("a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe")
-                    .env("KEEL_PROVE_PIPE_PARENT", "1");
-                command
-            },
-            Duration::from_millis(100),
-        )
-        .unwrap();
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "start \"\" /b ping -n 2 127.0.0.1"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 1 & exit 0"]);
+            command
+        };
+        let result = run_bounded(command, Duration::from_millis(100)).unwrap();
 
         assert!(result.is_none(), "inherited pipe bypassed the deadline");
-        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

@@ -335,3 +335,44 @@ fn an_incomplete_inline_graft_does_not_claim_the_subject_is_new() {
         "keel.test.unproven"
     );
 }
+
+/// #144: parameterized TypeScript tests are counted by the surface classifier and must remain
+/// visible in the proof report when no TypeScript runner is available.
+#[test]
+fn prove_new_tests_reports_parameterized_typescript_tests_as_unproven() {
+    let repo = repository(&[(
+        "studio/example.test.ts",
+        "it.each([[1]])('parameterized it', () => {});\ntest.each([[2]])(\"parameterized test\", () => {});\n",
+    )]);
+    let target = tempfile::tempdir().unwrap();
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--prove-new-tests",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .arg("--prove-target-dir")
+        .arg(target.path())
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["surface"]["newTests"], 2, "{reply}");
+    let proofs = reply["data"]["testProof"]["proofs"].as_array().unwrap();
+    assert_eq!(proofs.len(), 2, "{reply}");
+    for name in ["parameterized it", "parameterized test"] {
+        let proof = proofs
+            .iter()
+            .find(|proof| proof["name"] == name)
+            .unwrap_or_else(|| panic!("{name} not reported: {reply}"));
+        assert_eq!(proof["verdict"], "unproven", "{reply}");
+        assert_eq!(proof["parent"]["outcome"], "not_run", "{reply}");
+        assert_eq!(proof["head"]["outcome"], "not_run", "{reply}");
+    }
+}

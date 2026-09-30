@@ -219,15 +219,17 @@ impl Language {
     fn test_name(self, line: &str) -> Option<String> {
         let trimmed = line.trim_start();
         match self {
-            Self::TypeScript => {
-                (trimmed.starts_with("it(") || trimmed.starts_with("test(")).then(|| {
-                    trimmed
-                        .split(['"', '\'', '`'])
-                        .nth(1)
-                        .unwrap_or("")
-                        .to_owned()
-                })
-            }
+            Self::TypeScript => (trimmed.starts_with("it(")
+                || trimmed.starts_with("test(")
+                || trimmed.starts_with("it.each(")
+                || trimmed.starts_with("test.each("))
+            .then(|| {
+                trimmed
+                    .split(['"', '\'', '`'])
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_owned()
+            }),
             Self::Python => trimmed
                 .strip_prefix("def test_")
                 .map(|rest| format!("test_{}", ident(rest))),

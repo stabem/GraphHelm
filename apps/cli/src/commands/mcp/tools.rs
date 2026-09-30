@@ -286,6 +286,8 @@ fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json
 fn mutating_schema(mut properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
     properties["ifMatch"] = serde_json::json!({
         "type": "integer",
+        "minimum": 0,
+        "maximum": u64::MAX,
         "description": "Optional head-sequence pin (the If-Match header): the mutation is \
                         refused with 409 and the current head when the store moved past it.",
     });
@@ -327,6 +329,7 @@ fn compile_context_schema() -> serde_json::Value {
             "budget": {
                 "type": "integer",
                 "minimum": 0,
+                "maximum": u64::MAX,
                 "description": "Token budget the capsule must fit within. Required context that \
                                 does not fit is refused, never trimmed.",
             },
@@ -459,8 +462,8 @@ fn events_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({
             "executionId": {"type": "string"},
-            "after": {"type": "integer"},
-            "limit": {"type": "integer"},
+            "after": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
+            "limit": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
         }),
         &["executionId"],
     )
@@ -530,7 +533,7 @@ fn document_request(
     key: &str,
 ) -> Result<(String, serde_json::Value), HandlerOutcome> {
     let invalid = || {
-        HandlerOutcome::Error { code: INVALID_PARAMS, message: "document tools require a bounded registered reference and edit; If-Match and caller-supplied idempotency keys are not accepted".to_owned() }
+        HandlerOutcome::Error { data: None, code: INVALID_PARAMS, message: "document tools require a bounded registered reference and edit; If-Match and caller-supplied idempotency keys are not accepted".to_owned() }
     };
     let fields: &[&str] = if name == "document_read" {
         &["executionId", "document"]
@@ -631,7 +634,7 @@ fn claim_schema() -> serde_json::Value {
             "file": {"type": "string"},
             "graph": {"type": "object"},
             "node": {"type": "string"},
-            "waitSeq": {"type": "integer"},
+            "waitSeq": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
             "evidence": {"type": "array", "items": {"type": "object"}},
             "asserter": {"type": "string"},
             "mode": {"type": "string"},
@@ -648,7 +651,7 @@ fn clear_schema() -> serde_json::Value {
             "graph": {"type": "object"},
             "fixtures": {"type": "string"},
             "route": {"type": "string"},
-            "claimSeq": {"type": "integer"},
+            "claimSeq": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
             "manifestHash": {"type": "string"},
             "evidence": {"type": "array", "items": {"type": "object"}},
             "verifier": {"type": "string"},
@@ -691,7 +694,7 @@ fn wake_arm_schema() -> serde_json::Value {
             "rendezvousId": {"type": "string",
                 "description": "Opaque rendezvous identity — never a filesystem path; the \
                                 sidecar derives the platform rendezvous from it."},
-            "cursor": {"type": "integer",
+            "cursor": {"type": "integer", "minimum": 0, "maximum": u64::MAX,
                 "description": "Ring for appends AFTER this sequence; defaults to the head."},
             "maturesInSeconds": {"type": "integer", "minimum": 1, "maximum": 315576000,
                 "description": "How long quiet may last before the wait ends by itself. Omit it and nothing promises to end the wait: the lease rings on an append or not at all."},
@@ -718,9 +721,9 @@ fn amend_budget_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "node": {"type": "string"},
-            "seconds": {"type": "integer", "minimum": 1,
+            "seconds": {"type": "integer", "minimum": 1, "maximum": u64::MAX,
                 "description": "The bound YOU decide. Nothing here suggests one."},
-            "computedAtSequence": {"type": "integer", "minimum": 0,
+            "computedAtSequence": {"type": "integer", "minimum": 0, "maximum": u64::MAX,
                 "description": "The frontier the verdict you are answering was computed at. A stale amendment is refused with the current one."},
         }),
         &["executionId", "node", "seconds", "computedAtSequence"],
@@ -831,6 +834,7 @@ fn probe_schema() -> serde_json::Value {
 fn wake_wait_tool(api: &ApiClient, nonce: &str, arguments: &serde_json::Value) -> HandlerOutcome {
     let Some(execution) = str_arg(arguments, "executionId") else {
         return HandlerOutcome::Error {
+            data: None,
             code: INVALID_PARAMS,
             message: "wake_wait needs executionId".to_owned(),
         };
@@ -974,6 +978,7 @@ fn require<'a>(
     name: &'static str,
 ) -> Result<&'a str, HandlerOutcome> {
     str_arg(arguments, name).ok_or(HandlerOutcome::Error {
+        data: None,
         code: INVALID_PARAMS,
         message: format!("the tool requires a string {name:?} argument"),
     })
@@ -1101,12 +1106,15 @@ fn placeholder(tool: &str, field: &str, declared: &str) -> serde_json::Value {
 fn with_example(name: &str, outcome: HandlerOutcome) -> HandlerOutcome {
     let example = minimal_example(name);
     match outcome {
-        HandlerOutcome::Error { code, message } if code == INVALID_PARAMS => {
-            HandlerOutcome::Error {
-                code,
-                message: format!("{message}; minimal valid call for {name:?}: {example}"),
-            }
-        }
+        HandlerOutcome::Error {
+            code,
+            message,
+            data,
+        } if code == INVALID_PARAMS => HandlerOutcome::Error {
+            code,
+            data,
+            message: format!("{message}; minimal valid call for {name:?}: {example}"),
+        },
         HandlerOutcome::Result(mut result) => {
             let shape_refusal = result
                 .get("isError")
@@ -1223,6 +1231,64 @@ fn runtime_denies_execution(status: u16, envelope: &serde_json::Value) -> bool {
     answered && denies
 }
 
+/// Enforce the same closed schema we advertise before any lossy optional projection or HTTP.
+/// Runtime semantic and authorization checks remain on the Runtime; this is wire validation only.
+fn validated_arguments(
+    tool: &ToolSpec,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, HandlerOutcome> {
+    let refuse = |diagnostics: Vec<graphhelm_protocols::Diagnostic>| HandlerOutcome::Error {
+        code: INVALID_PARAMS,
+        message: "tool arguments do not match the input schema".to_owned(),
+        data: Some(serde_json::json!({"diagnostics": diagnostics})),
+    };
+    let schema = (tool.schema)();
+    let diagnostics = graphhelm_schema::validate_inline_value(&schema, arguments, "mcp-arguments")
+        .unwrap_or_else(|error| {
+            vec![graphhelm_protocols::Diagnostic::error(
+                "GHS002_SCHEMA",
+                error.to_string(),
+                "/",
+                "mcp-arguments",
+            )]
+        });
+    if !diagnostics.is_empty() {
+        return Err(refuse(diagnostics));
+    }
+
+    let mut arguments = arguments.clone();
+    for (field, property) in schema["properties"].as_object().expect("tool properties") {
+        // JSON Schema regards 7.0 as an integer too. Normalize that numeric representation
+        // before as_u64 projections; never coerce strings, fractions, negatives or null.
+        // Signed, pass-through fields such as memory expiry keep their original representation.
+        if property["type"] != "integer" || property["minimum"].as_u64().is_none() {
+            continue;
+        }
+        let Some(value) = arguments.get_mut(field) else {
+            continue;
+        };
+        let integer = value.as_u64().or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| {
+                    // u64::MAX rounds to 2^64 as f64, so this upper bound must be exclusive.
+                    *number >= 0.0 && number.fract() == 0.0 && *number < u64::MAX as f64
+                })
+                .map(|number| number as u64)
+        });
+        let Some(integer) = integer else {
+            return Err(refuse(vec![graphhelm_protocols::Diagnostic::error(
+                "GHS002_SCHEMA",
+                "document is not an unsigned 64-bit integer",
+                format!("/{field}"),
+                "mcp-arguments",
+            )]));
+        };
+        *value = serde_json::json!(integer);
+    }
+    Ok(arguments)
+}
+
 /// One tool call: the secret guard first, then exactly one API request; the tool result is
 /// the API envelope verbatim as text content, `isError` mirroring the envelope's `ok`.
 pub(crate) fn call(
@@ -1232,20 +1298,28 @@ pub(crate) fn call(
     name: &str,
     arguments: &serde_json::Value,
 ) -> HandlerOutcome {
-    if !TOOLS.iter().any(|tool| tool.name == name) {
+    let Some(tool) = TOOLS.iter().find(|tool| tool.name == name) else {
         return HandlerOutcome::Error {
+            data: None,
             code: INVALID_PARAMS,
             message: format!("no tool named {name:?} is part of this server"),
         };
-    }
+    };
     if contains_secret_shaped(arguments) {
         return HandlerOutcome::Error {
+            data: None,
             code: INVALID_PARAMS,
             message: "a secret-shaped value was refused; use the broker's stdin path — \
                       credentials never travel the chat"
                 .to_owned(),
         };
     }
+
+    let arguments = match validated_arguments(tool, arguments) {
+        Ok(arguments) => arguments,
+        Err(refusal) => return with_example(name, refusal),
+    };
+    let arguments = &arguments;
 
     // `wake_wait` is the one tool whose work is NOT an API request: it blocks on the local
     // rendezvous. It is handled before the request table rather than inside it, because
@@ -1354,6 +1428,7 @@ pub(crate) fn call(
         }),
         "start" => require(arguments, "executionId")
             .map_err(|_| HandlerOutcome::Error {
+                data: None,
                 code: INVALID_PARAMS,
                 // The bare "requires executionId" cost a bench session three calls before its
                 // first accepted start (token-bench, task 1044): the contract is named whole.
@@ -1979,10 +2054,10 @@ mod envelope_tests {
             "wake_wait",
             &serde_json::json!({}),
         ) {
-            HandlerOutcome::Error { code, message } => {
+            HandlerOutcome::Error { code, message, .. } => {
                 assert_eq!(code, INVALID_PARAMS);
                 assert!(
-                    message.starts_with("wake_wait needs executionId"),
+                    message.starts_with("tool arguments do not match the input schema"),
                     "{message}"
                 );
                 assert!(
@@ -2001,12 +2076,13 @@ mod envelope_tests {
         let refused = with_example(
             "evidence",
             HandlerOutcome::Error {
+                data: None,
                 code: INVALID_PARAMS,
                 message: "the tool requires a string \"evidenceId\" argument".to_owned(),
             },
         );
         match refused {
-            HandlerOutcome::Error { code, message } => {
+            HandlerOutcome::Error { code, message, .. } => {
                 assert_eq!(code, INVALID_PARAMS);
                 assert!(message.starts_with("the tool requires a string \"evidenceId\" argument"));
                 assert!(message.contains("minimal valid call for \"evidence\""));

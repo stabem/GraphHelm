@@ -632,6 +632,263 @@ const MCP_TOOL_NAMES: [&str; 32] = [
     "assign",
 ];
 
+/// Contract: declared argument errors never reach HTTP; accepted intents, retries and transport
+/// metadata retain their wire mapping. Regression: lossy optional projections treat invalid values
+/// as absence. Gap: mapping tests exercise valid values, while document validation is tool-local.
+/// Cost: one MCP subprocess and one bounded loopback recorder; no Runtime, credentials or provider.
+#[test]
+fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents() {
+    use std::collections::BTreeMap;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let finished = Arc::new(AtomicBool::new(false));
+    let stop = Arc::clone(&finished);
+    let observer = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut captured = Vec::new();
+        loop {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop.load(Ordering::Acquire) {
+                        return captured;
+                    }
+                    assert!(Instant::now() < deadline, "MCP session did not finish");
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("listener failed: {error}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let mut headers = BTreeMap::new();
+            loop {
+                let mut line = String::new();
+                assert!(
+                    reader.read_line(&mut line).unwrap() > 0,
+                    "truncated headers"
+                );
+                if line == "\r\n" {
+                    break;
+                }
+                let (name, value) = line.split_once(':').expect("a request header");
+                headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
+            }
+            let length: usize = headers
+                .get("content-length")
+                .map_or(0, |v| v.parse().unwrap());
+            assert!(length < 8192);
+            let mut bytes = vec![0; length];
+            reader.read_exact(&mut bytes).unwrap();
+            let body = if bytes.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::from_slice(&bytes).unwrap()
+            };
+            let response = r#"{"ok":true,"data":{},"diagnostics":[]}"#;
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+            captured.push((request_line, headers, body));
+        }
+    });
+
+    let start =
+        serde_json::json!({"executionId":"run-shape","mode":"supervised","file":"graph.yaml"});
+    let mut invalid = Vec::new();
+    for (field, values) in [
+        (
+            "held",
+            vec![
+                serde_json::json!("true"),
+                serde_json::json!(1),
+                serde_json::Value::Null,
+            ],
+        ),
+        (
+            "ifMatch",
+            vec![
+                serde_json::json!("7"),
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::Value::Null,
+                serde_json::json!(18446744073709551616.0_f64),
+            ],
+        ),
+        (
+            "route",
+            vec![serde_json::json!(false), serde_json::Value::Null],
+        ),
+        (
+            "graph",
+            vec![serde_json::json!([]), serde_json::Value::Null],
+        ),
+    ] {
+        for value in values {
+            let mut args = start.clone();
+            args[field] = value;
+            invalid.push(("start", args, format!("/{field}")));
+        }
+    }
+    for value in [
+        serde_json::json!("20"),
+        serde_json::json!(-1),
+        serde_json::json!(0),
+        serde_json::json!(1.5),
+        serde_json::json!(101),
+        serde_json::Value::Null,
+    ] {
+        invalid.push((
+            "list",
+            serde_json::json!({"limit":value}),
+            "/limit".to_owned(),
+        ));
+    }
+    for (name, args, path) in [
+        (
+            "start",
+            serde_json::json!({"executionId":"run-shape","mode":"supervised","held":true,"ifMacth":7}),
+            "/",
+        ),
+        (
+            "list",
+            serde_json::json!({"_meta":{"progressToken":7}}),
+            "/",
+        ),
+        ("list", serde_json::Value::Null, "/"),
+        ("list", serde_json::json!([]), "/"),
+        (
+            "events",
+            serde_json::json!({"executionId":"run-shape","after":-1}),
+            "/after",
+        ),
+        ("routes", serde_json::json!({"manifest":false}), "/manifest"),
+        (
+            "wake_wait",
+            serde_json::json!({"executionId":"run-shape","timeoutSeconds":1}),
+            "/",
+        ),
+        (
+            "compile_context",
+            serde_json::json!({"require":[1]}),
+            "/require/0",
+        ),
+        (
+            "document_read",
+            serde_json::json!({"executionId":"run-shape","document":{"evidenceId":"evidence-doc-1","index":0,"extra":true}}),
+            "/document",
+        ),
+    ] {
+        invalid.push((name, args, path.to_owned()));
+    }
+    let mut lines = vec![
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+    ];
+    for (index, (name, args, _)) in invalid.iter().enumerate() {
+        lines.push(tool_call(serde_json::json!(index + 10), name, args.clone()));
+    }
+    let mut held = start.clone();
+    held["held"] = serde_json::json!(true);
+    held["ifMatch"] = serde_json::json!(7);
+    let mut with_metadata = tool_call(serde_json::json!(100), "start", held);
+    with_metadata["params"]["_meta"] = serde_json::json!({"progressToken":"trace-1"});
+    lines.push(with_metadata.clone());
+    lines.push(with_metadata);
+    let mut unheld = start.clone();
+    unheld["held"] = serde_json::json!(false);
+    unheld["ifMatch"] = serde_json::json!(0);
+    lines.push(tool_call(serde_json::json!(101), "start", unheld));
+    lines.push(tool_call(serde_json::json!(102), "start", start.clone()));
+    let mut integral = start.clone();
+    integral["ifMatch"] = serde_json::json!(7.0);
+    lines.push(tool_call(serde_json::json!(103), "start", integral));
+    let mut maximum = start;
+    maximum["ifMatch"] = serde_json::json!(u64::MAX);
+    lines.push(tool_call(serde_json::json!(104), "start", maximum));
+    lines.push(tool_call(
+        serde_json::json!(105),
+        "list",
+        serde_json::json!({"limit":100}),
+    ));
+    lines.push(serde_json::json!({"jsonrpc":"2.0","id":106,"method":"tools/call","params":{"name":"routes","_meta":{"progressToken":2}}}));
+    let session = mcp_session_with(
+        &["--url", &base, "--actor", "agent-chat"],
+        &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &lines,
+    );
+    finished.store(true, Ordering::Release);
+    let captured = observer.join().unwrap();
+    assert!(session.output.status.success(), "{:?}", session.output);
+    assert_eq!(
+        captured.len(),
+        8,
+        "only valid calls may reach HTTP: {captured:?}"
+    );
+    assert_eq!(session.replies.len(), invalid.len() + 9);
+    for ((name, _, path), reply) in invalid.iter().zip(&session.replies[1..]) {
+        assert_eq!(reply["error"]["code"], -32602, "{name}: {reply}");
+        let diagnostics = reply["error"]["data"]["diagnostics"]
+            .as_array()
+            .expect("structured diagnostics");
+        assert!(
+            diagnostics.iter().any(|d| d["code"] == "GHS002_SCHEMA"
+                && d["path"] == *path
+                && d["severity"] == "error"
+                && d["source"] == "mcp-arguments"),
+            "{name}: {reply}"
+        );
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("minimal valid call")
+        );
+        assert!(reply.get("result").is_none());
+    }
+    for reply in &session.replies[invalid.len() + 1..] {
+        assert!(!tool_envelope(reply).0, "{reply}");
+    }
+    for (line, headers, _) in &captured[..6] {
+        assert!(
+            line.starts_with("POST /v1/executions/run-shape/start "),
+            "{line}"
+        );
+        assert_eq!(headers["x-graphhelm-actor"], "agent-chat");
+    }
+    assert_eq!(
+        captured[0].2,
+        serde_json::json!({"mode":"supervised","file":"graph.yaml","held":true})
+    );
+    assert_eq!(captured[0].1["if-match"], "7");
+    assert_eq!(
+        captured[0], captured[1],
+        "same RPC id preserves retry intent and key"
+    );
+    assert_eq!(captured[2].2["held"], false);
+    assert_eq!(captured[2].1["if-match"], "0");
+    assert!(captured[3].2.get("held").is_none());
+    assert!(!captured[3].1.contains_key("if-match"));
+    assert_eq!(
+        captured[4].1["if-match"], "7",
+        "JSON Schema integers include integral numbers"
+    );
+    assert_eq!(captured[5].1["if-match"], u64::MAX.to_string());
+    assert!(captured[6].0.starts_with("GET /v1/executions?limit=100 "));
+    assert!(captured[7].0.starts_with("GET /v1/gateway/routes "));
+}
+
 #[test]
 fn document_tools_forward_exact_bodies_actor_and_file_concurrency() {
     use std::collections::BTreeMap;
@@ -2164,10 +2421,10 @@ fn the_list_tool_reaches_the_execution_index_and_relays_it_verbatim() {
     );
 }
 
-/// The tool's bounds are the API's bounds: an over-large limit is refused through the tool with
-/// the route's own diagnostic, never clamped into a plausible short page.
+/// The advertised list bound is now enforced before HTTP. The Runtime keeps its independent
+/// bound for direct callers; neither surface clamps an over-large limit into a short page.
 #[test]
-fn the_list_tool_relays_the_routes_refusal_rather_than_clamping() {
+fn the_list_tool_and_route_reject_out_of_bounds_limits_rather_than_clamping() {
     let harness = wired("exec-mcp-list-bounds");
 
     let session = harness.session(&[
@@ -2179,7 +2436,14 @@ fn the_list_tool_relays_the_routes_refusal_rather_than_clamping() {
             serde_json::json!({"limit": 500}),
         ),
     ]);
-    let (_is_error, envelope) = tool_envelope(&session.replies[1]);
+    let reply = &session.replies[1];
+    assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    assert_eq!(
+        reply["error"]["data"]["diagnostics"][0]["code"],
+        "GHS002_SCHEMA"
+    );
+    assert_eq!(reply["error"]["data"]["diagnostics"][0]["path"], "/limit");
+    let envelope = http_get_json(&harness.base, &harness.token, "/v1/executions?limit=500");
     assert_eq!(envelope["ok"], serde_json::json!(false), "{envelope}");
     assert_eq!(
         envelope["diagnostics"][0]["code"],

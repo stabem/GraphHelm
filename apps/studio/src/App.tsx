@@ -242,6 +242,8 @@ export default function App({
   const briefingRouteMissing = useRef(false);
 
   const [graphFile, setGraphFile] = useState("");
+  const graphFileRef = useRef("");
+  const verificationGeneration = useRef(0);
   /** #1083 F2: a fixture file on the Runtime host for a demonstration run's `resume`. Never
    * remembered with the board: it is a one-off input to one verb, not a note about the run. */
   const [fixtureFile, setFixtureFile] = useState("");
@@ -717,6 +719,7 @@ export default function App({
       setFocus({ kind: "none" });
       setTopology(null);
       setTopologyError("");
+      verificationGeneration.current += 1;
       // A recipient chosen in one run must not address a message in another — nor may a send
       // failure, an in-flight send's busy display, an act-note, or a pending answer's signalId
       // follow the operator across runs. `saying` in particular: cleared HERE, and the old
@@ -739,6 +742,7 @@ export default function App({
       // HERE, from the REMEMBERED path only — arming it from the live field made the first
       // typed character fire a verify on a one-letter path.
       setGraphFile(stored.graphFile);
+      graphFileRef.current = stored.graphFile;
       setFixtureFile("");
       autoVerify.current =
         stored.graphFile.trim().length > 0 ? { id, path: stored.graphFile.trim() } : null;
@@ -1090,18 +1094,21 @@ export default function App({
       // drawn edge reads as evidence, so a stale one is the worst thing this could commit
       // (PR #467 review, same family as the selectedRef guard on loadExecution).
       const forRun = selectedRef.current;
+      const generation = ++verificationGeneration.current;
+      const isCurrent = () => clientRef.current === client && selectedRef.current === forRun
+        && verificationGeneration.current === generation && graphFileRef.current.trim() === file;
       setBusy(true);
       setTopologyError("");
       try {
         const read = await client.getTopology(file);
-        if (clientRef.current !== client || selectedRef.current !== forRun) return;
+        if (!isCurrent()) return;
         setTopology(verifyTopology(eventList, read, file));
       } catch (reason) {
-        if (clientRef.current !== client || selectedRef.current !== forRun) return;
+        if (!isCurrent()) return;
         setTopology(null);
         setTopologyError(messageOf(reason, "That graph file could not be read."));
       } finally {
-        if (clientRef.current === client && selectedRef.current === forRun) setBusy(false);
+        if (isCurrent()) setBusy(false);
       }
     },
     [eventList],
@@ -1314,6 +1321,8 @@ export default function App({
         setBoard(stored);
         setBriefing(null);
         setGraphFile(stored.graphFile);
+        graphFileRef.current = stored.graphFile;
+        verificationGeneration.current += 1;
         autoVerify.current =
           stored.graphFile.trim().length > 0
             ? { id: first.executionId, path: stored.graphFile.trim() }
@@ -1464,6 +1473,8 @@ export default function App({
     setTools([]);
     setWebmcp("unavailable");
     setGraphFile("");
+    graphFileRef.current = "";
+    verificationGeneration.current += 1;
     setFixtureFile("");
     setTopology(null);
     setTopologyError("");
@@ -2676,7 +2687,12 @@ export default function App({
               connectionTone={connectionTone}
               graphFile={graphFile}
               onGraphFileChange={(value) => {
+                graphFileRef.current = value;
+                verificationGeneration.current += 1;
                 setGraphFile(value);
+                setTopology(null);
+                setTopologyError("");
+                setBusy(false);
                 // The path is the operator's own note about this run, remembered with the
                 // board marks so re-opening the run re-verifies without re-typing.
                 updateBoard({ ...board, graphFile: value });

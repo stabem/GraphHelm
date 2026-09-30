@@ -234,6 +234,8 @@ fn reap_bounded(
     child: &mut std::process::Child,
     leader_already_exited: bool,
 ) -> Result<bool, String> {
+    #[cfg(not(windows))]
+    let _ = leader_already_exited;
     #[cfg(windows)]
     if leader_already_exited {
         return child

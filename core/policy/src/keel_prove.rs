@@ -920,7 +920,7 @@ mod tests {
 
     #[test]
     fn a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe() {
-        let mut command = if cfg!(windows) {
+        let command = if cfg!(windows) {
             let mut command = Command::new("cmd");
             command.args(["/C", "start \"\" /b ping -n 2 127.0.0.1"]);
             command

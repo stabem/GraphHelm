@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { fastUserEvent } from "./test/user-event";
 // Its own instance: see the helper for why this is not a shared const.
 const userEvent = fastUserEvent();
@@ -18,7 +18,7 @@ import { saveProjectName, saveRemovedRuns } from "./studio-preferences";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
 import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
-import type { MutationEvidence } from "./runtime/types";
+import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
 
@@ -3284,6 +3284,33 @@ describe("the log is searchable and addressable", () => {
 
 describe("the board remembers its graph file", () => {
   afterEach(() => localStorage.removeItem("graphhelm.studio.board.demo-deploy"));
+
+  it("does not accept a topology response for a path that was edited while the read waited", async () => {
+    const hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    let answer!: (value: GraphTopology) => void;
+    const pending = new Promise<GraphTopology>((resolve) => { answer = resolve; });
+    const client = stubClient({
+      getEvents: vi.fn(async () => ({ head: 1, events: [{
+        sequence: 1, kind: "execution_started", payload: { executionId: "demo-deploy", graphHash: hash },
+        occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system",
+        idempotencyKey: "k1", eventId: "event-1", evidenceRefs: [],
+      }] })),
+      getTopology: vi.fn(() => pending),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    const field = screen.getByLabelText(/graph file path on the runtime host/i);
+    await userEvent.type(field, "/graphs/A.yaml");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(client.getTopology).toHaveBeenCalledWith("/graphs/A.yaml");
+    await userEvent.clear(field);
+    await userEvent.type(field, "/graphs/B.yaml");
+    await act(async () => answer({ graphId: "g", graphVersion: 1, executionId: "demo-deploy", semanticHash: hash,
+      entrypoints: [], nodes: [], edges: [] }));
+    expect(field).toHaveValue("/graphs/B.yaml");
+    expect(screen.queryByText(/Connections verified:/i)).not.toBeInTheDocument();
+  });
 
   it("re-verifies from the remembered path on open, without being asked", async () => {
     localStorage.setItem(

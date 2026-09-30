@@ -420,3 +420,95 @@ def test_sessionend_still_accepts_a_straight_line_local_and_a_module_constant():
     assert run() == [2.0]
     _, run = _waits("    pass", "min(CODEX_END_WAIT, 2.5)")
     assert run() == [2.0]
+
+
+def inference_config():
+    return {"version": 1, "host": "claude_code", "provider": "anthropic",
+            "model": "claude-test-exact", "effort": "high",
+            "supportedEfforts": ["low", "high"],
+            "capabilitySource": "https://code.claude.com/docs/en/model-config"}
+
+
+def test_inference_configuration_is_frozen_and_refuses_unsupported_controls(tmp_path):
+    """Catches aliases, unsupported effort or conflicting CLI model reaching a paid run; <1s, files only."""
+    import pytest
+    path = tmp_path / "inference.json"
+    config = inference_config()
+    path.write_text(json.dumps(config), encoding="utf-8")
+    first = doless.load_inference_config(path, None)
+    path.write_text(json.dumps(config, indent=4), encoding="utf-8")
+    assert doless.load_inference_config(path, None) == first
+    assert first["configuration"] == config and first["digest"].startswith("sha256:")
+    for changed in ({"effort": "max"}, {"model": "sonnet"}, {"host": "unknown"},
+                    {"supportedEfforts": []}, {"version": 2}, {"capabilitySource": ""}):
+        path.write_text(json.dumps(config | changed), encoding="utf-8")
+        with pytest.raises(ValueError):
+            doless.load_inference_config(path, None)
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError):
+        doless.load_inference_config(path, "another-model")
+
+
+def test_cli_effort_capability_probe_refuses_before_agent_session(monkeypatch):
+    """Catches passing a flag unsupported by the pinned executable; local --help I/O fixture, <1s."""
+    import pytest
+    seen = []
+    def help_text(cmd, **kw):
+        seen.append(cmd)
+        assert kw["timeout"] == 10
+        return subprocess.CompletedProcess(cmd, 0, stdout="  --effort <level>  Reasoning effort", stderr="")
+    monkeypatch.setattr(doless.subprocess, "run", help_text)
+    observation = doless.observe_effort_flag({"path": "pinned-claude"})
+    assert observation["flag"] == "--effort" and observation["source"] == "cli_help"
+    assert seen == [["pinned-claude", "--help"]]
+    monkeypatch.setattr(doless.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "", ""))
+    with pytest.raises(RuntimeError):
+        doless.observe_effort_flag({"path": "pinned-claude"})
+
+
+def test_reports_separate_inference_configurations_and_keep_unknown_cost_unknown():
+    """Catches cheaper model/effort rows being pooled with a methodology arm; no I/O, <1s."""
+    rows = [row("a", "PASS", 0.2) | {"task": "t", "inferenceConfig": {"digest": "sha256:one"}},
+            row("a", "FAIL", 0.1) | {"task": "t", "inferenceConfig": {"digest": "sha256:two"}},
+            row("a", "INCOMPLETE", None) | {"task": "t"}]
+    scores = doless.arm_scores(rows)
+    assert set(scores) == {"a@sha256:one", "a@sha256:two", "a"}
+    assert scores["a@sha256:one"]["passRate"] == 1
+    assert scores["a@sha256:two"]["passRate"] == 0
+    assert scores["a"]["costMean"] is None
+    summary = doless.summarise(rows)
+    assert summary[("t", "a")]["cost"] is None
+    assert summary[("t", "a@sha256:one")]["cost"] == 0.2
+
+
+def test_configured_run_records_requested_effort_and_incomplete_usage(tmp_path, monkeypatch):
+    """Catches unobserved usage/model being published as a configured PASS; mocked process/file I/O, <1s."""
+    import argparse
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(inference_config()), encoding="utf-8")
+    result_path = tmp_path / "rows.jsonl"
+    cli = tmp_path / "claude"
+    cli.write_bytes(b"pinned")
+    cli_identity = {"path": str(cli), "sha256": doless.runner.digest_file(cli), "version": "fixture"}
+    monkeypatch.setattr(doless, "RESULTS", result_path)
+    monkeypatch.setattr(doless.runner, "validate_prerequisites", lambda _arm: cli_identity)
+    monkeypatch.setattr(doless, "observe_effort_flag", lambda _cli: {"flag": "--effort", "source": "cli_help"})
+    monkeypatch.setattr(doless.runner, "make_worktree", lambda *_a: tmp_path)
+    monkeypatch.setattr(doless, "score_checkout", lambda *_a: green_row())
+    monkeypatch.setattr(doless.runner, "transcript_usage", lambda _id: {"models": ["claude-test-exact"]})
+    seen = []
+    def agent(*args, **kw):
+        seen.append((args[3], kw))
+        return {"session_id": "fixture", "result": "done", "total_cost_usd": 0.3}, "", 1.0
+    monkeypatch.setattr(doless.runner, "run_agent", agent)
+    args = argparse.Namespace(task=next(iter(doless.load_tasks())), inference_config=str(config),
+                              model=None, surface_dir=None, arm="a", prompt_style="issue", runs=1,
+                              timeout_min=1, max_budget_usd=1.0, prove=False, keep=True)
+    doless.cmd_run(args)
+    recorded = json.loads(result_path.read_text())
+    assert seen == [("claude-test-exact", {"effort": "high"})]
+    assert recorded["requestedEffort"] == "high" and recorded["observedEffort"] is None
+    assert recorded["inferenceConfig"]["configuration"] == inference_config()
+    assert recorded["costProvenance"] == "cli_estimate"
+    assert recorded["verdict"] == "INCOMPLETE"
+    assert "usage_incomplete" in recorded["verdictReasons"]

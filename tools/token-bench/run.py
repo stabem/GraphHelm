@@ -275,13 +275,15 @@ def bench_env(task: dict) -> dict:
 
 def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: int, task: dict,
               max_budget_usd: float | None, mcp_config: Path | None,
-              claude_cli: dict) -> tuple[dict, str, float]:
+              claude_cli: dict, *, effort: str | None = None) -> tuple[dict, str, float]:
     session_id = str(uuid.uuid4())
     cmd = [claude_cli["path"], "-p", "--output-format", "json", "--dangerously-skip-permissions",
            "--session-id", session_id, "--setting-sources", "", "--strict-mcp-config",
            "--disallowedTools", "Bash(gh *)", "WebFetch", "WebSearch"]
     if model:
         cmd += ["--model", model]
+    if effort is not None:
+        cmd += ["--effort", effort]
     if arm in {"b", "c"}:
         if mcp_config is None or not mcp_config.is_file():
             raise RuntimeError(f"arm {arm} needs a per-run MCP config")

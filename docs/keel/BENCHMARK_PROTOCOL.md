@@ -354,3 +354,54 @@ workflow overhead, not a causal cost or quality verdict.
 The next calibrated task should be small enough to finish under the shared cap, then be followed
 by the frozen diverse corpus, complete accounting, and blind patch review specified above. Full
 run details and failed rows are retained in #1276; the broader study is tracked by #1282.
+
+## Explicit model and effort comparisons
+
+The do-less runner accepts `run --inference-config <file.json>` for a separately declared
+inference treatment. It does not pick a cheaper model, infer capability from a model family,
+or lower effort after a failure. Existing `--model` runs retain their previous command shape.
+A configured run uses this closed version-1 shape (replace the example model with an exact
+model ID and verify its supported levels before running):
+
+```json
+{
+  "version": 1,
+  "host": "claude_code",
+  "provider": "anthropic",
+  "model": "exact-provider-model-id",
+  "effort": "high",
+  "supportedEfforts": ["low", "medium", "high"],
+  "capabilitySource": "https://code.claude.com/docs/en/model-config"
+}
+```
+
+`provider`, the supported effort list and its evidence source are operator declarations, not
+observations of the provider. Pin a dated capability document or experiment receipt in
+`capabilitySource` when freezing an actual comparison; this illustrative URL is mutable.
+The runner refuses aliases, an unsupported requested effort, an unknown host/config version,
+and a conflicting `--model`. It observes the pinned local executable's `--help` before any
+session and refuses if `--effort` is absent. This proves flag availability only. The current
+runner supports the Claude Code host; it does not claim BYOK or other host support.
+
+The row records the canonical configuration and SHA-256, requested model and effort, the CLI
+help digest, executable identity before and after the run, actual transcript models, full-session
+usage audit, and cost provenance. The requested effort is forwarded with `--effort`; effective
+provider effort remains `observedEffort: null` and `effortObservation: unobserved`. In particular,
+[Claude Code can cap an unsupported effort level](https://code.claude.com/docs/en/model-config#adjust-effort-level),
+so command acceptance is never proof of effective effort. No live adherence or savings claim is
+established by the offline fixtures.
+
+A missing/mixed/unexpected transcript model, incomplete usage, missing cost, or changed CLI
+identity makes a configured run `INCOMPLETE` while retaining its evidence and spend. Dollar
+values from the CLI are labeled `cli_estimate`, including subscriptions; they are not billed
+charges. Table and Pareto reports group configured rows by arm plus complete configuration
+digest so a model/effort change cannot disappear inside the same methodology arm. Legacy rows
+remain separate and unpinned. Missing or invalid cost leaves total/mean cost unknown, not zero.
+
+Freeze the task set, capability evidence, model/effort configurations, spending caps, evaluators,
+and arm order before paid execution. Hold methodology constant when comparing inference
+settings; hold inference constant when comparing methodology. Any factorial comparison must
+report both dimensions. Use the quality and total-cost rules above, including failed attempts
+and independent acceptance. A requested-effort comparison cannot be presented as an observed
+reasoning-budget comparison until an adequate provider observer exists. These controls are
+instruments for an explicitly authorized experiment, not automatic runtime routing policy.

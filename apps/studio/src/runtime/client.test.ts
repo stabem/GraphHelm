@@ -76,6 +76,23 @@ function statusData(overrides: Record<string, unknown> = {}) {
 }
 
 describe("RuntimeClient reads", () => {
+  it("bounds a fetch that never resolves headers", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const read = client.listExecutions();
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      await expect(read).rejects.toMatchObject({
+        code: "GHSTUDIO_REQUEST_TIMEOUT",
+        httpStatus: 0,
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("bounds a response body that never settles", async () => {
     vi.useFakeTimers();
     try {

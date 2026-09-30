@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 31143)
-Total output lines: 2480
-
 //! Killing a process AND everything it spawned, on both platforms.
 //!
 //! An adapter to the operating system's process API, which is why it lives beside the other
@@ -615,7 +612,1161 @@ pub enum TerminationOutcome {
 /// The negative pid `kill` needs, or the outcome to return instead.
 ///
 /// EXTRACTED SO IT CAN BE TESTED WHERE THE TESTS RUN. Both producers of the overloaded variant are
-/// `#[cfg(uni…15143 tokens truncated…ntity {
+/// `#[cfg(unix)]`, so no cell on a Windows host could reach either -- #815 said as much and expected
+/// a Unix-gated cell or an argument at the construction site. A pure conversion has no platform in
+/// it, so the decision that used to hide inside a `let ... else` is a value this crate's own suite
+/// pins on any host, and the unix arm below simply asks it.
+///
+/// It returns the OUTCOME rather than a bool, because the caller's only honest answer for a pid it
+/// cannot signal is to say what it did: nothing.
+/// DEAD ON NON-UNIX, DELIBERATELY, AND THE ALLOW SAYS WHICH PLATFORM. The only production caller is
+/// the `#[cfg(unix)]` `terminate` below; the function itself carries no platform so that the cell can
+/// run on this host, which is the whole reason it exists as a function at all. Scoping the allow to
+/// `not(unix)` keeps it dead-code-checked where it does have a caller -- a bare `allow(dead_code)`
+/// would hide the day the unix arm stops calling it.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn group_signal_target(process_id: u32) -> Result<i32, TerminationOutcome> {
+    match i32::try_from(process_id) {
+        Ok(signed) => Ok(signed),
+        Err(_) => Err(TerminationOutcome::NotAttempted),
+    }
+}
+
+/// Kill the process and everything it spawned **that is still in its process group** (#717).
+///
+/// The qualifier is the whole of the Unix/Windows difference. `kill(-pgid)` reaches the group, and a
+/// descendant that called `setsid` or `setpgid` is no longer in it — one syscall, no privileges
+/// required, and nothing here can observe that it happened. The Windows body has no equivalent hole:
+/// a job object holds everything its members create unless the job itself permits breakaway, and
+/// this one does not.
+///
+/// **It fails toward a false GREEN.** The escapee survives; if it also redirected its streams the
+/// readers see a clean EOF, and the record then says the tree is gone while it is not. That is the
+/// dangerous direction, and it is why the gap is declared here rather than left for a reader to
+/// infer from the absence of a comment.
+#[cfg(unix)]
+pub fn terminate(process_id: u32, _group: ProcessGroup) -> TerminationOutcome {
+    // #815: NOT `SweepUnavailable`. This returns before `subtree_snapshot` and before `kill`, so
+    // nothing is signalled and the tree is untouched -- the opposite of what that variant's own
+    // documentation promises a reader.
+    let signed = match group_signal_target(process_id) {
+        Ok(signed) => signed,
+        Err(outcome) => return outcome,
+    };
+    // The group signal FIRST, unchanged: it reaches everything that did not escape, in one
+    // syscall, and the sweep below then has almost nothing to find on the ordinary path.
+    //
+    // NEGATIVE pid: the signal goes to the whole process group, which is the difference between
+    // this and `Child::kill`.
+    // THE SNAPSHOT COMES FIRST, AND THE ORDER IS THE WHOLE FIX (measured, #748).
+    //
+    // The obvious sequence -- signal the group, then walk for escapees -- does not work, and the
+    // reason is the subreaper that makes the walk possible at all. The group signal kills the
+    // CHILD; the escapee is then reparented to US; and its ancestry no longer reaches the child's
+    // pid, so a walk rooted there finds nothing. The kill that precedes the sweep is what breaks
+    // the chain the sweep needs.
+    //
+    // Measured: with the sweep after the signal, the escaping-grandchild cell still failed at 30s
+    // with the descendant alive. Snapshotting before the signal makes it pass.
+    let condemned = subtree_snapshot(process_id);
+    unsafe {
+        libc::kill(-signed, libc::SIGKILL);
+    }
+    sweep_subtree(process_id, condemned)
+}
+
+/// Kill what the group signal could not reach: descendants that left it (#748).
+///
+/// **Why this is possible at all, measured rather than assumed.** `setsid` changes a process's
+/// session and group and leaves its PARENT link untouched, so `/proc` ancestry still reaches the
+/// escapee. Measured on Linux 6.6: a grandchild that called `setsid` had `sid` and `pgid` of its
+/// own and `ppid` still naming its parent.
+///
+/// **The walk's one hole is closed by the subreaper.** If the middle process dies first the
+/// escapee is reparented, classically to pid 1, where nothing distinguishes it from any other
+/// stray. [`configure`] sets `PR_SET_CHILD_SUBREAPER` so orphaned descendants reparent to US
+/// instead — measured: `prctl` returns 0 with no privileges, and after killing the middle process
+/// the grandchild's `ppid` became this process rather than 1.
+///
+/// **The kill is by IDENTITY, not by number.** Between reading a pid's ancestry and signalling it,
+/// that pid can exit and be recycled onto an unrelated process — and this runs with whatever reach
+/// the runner has. Every candidate is re-read immediately before the signal and its start time
+/// compared: same pid with a different start time is a DIFFERENT process, and is left alone. That
+/// is #624's slot-liveness comparison, pointed at a subtree.
+#[cfg(all(unix, target_os = "linux"))]
+fn sweep_subtree(root: u32, condemned: Vec<(u32, u64)>) -> TerminationOutcome {
+    /// Deliberately small. Each pass signals everything it found, so a tree that is merely deep
+    /// converges in a pass or two; only a process spawning faster than the sweep reaches this,
+    /// and for that the honest answer is `BoundReached` rather than a bigger number.
+    const MAX_PASSES: u32 = 8;
+
+    let mut passes = 0;
+    let mut condemned = condemned;
+    loop {
+        // The snapshot taken before the signal, plus anything that appeared since and is STILL
+        // traceable to the root -- a late spawn whose parent had not yet died. Both are needed:
+        // the snapshot survives the reparenting, and the walk catches what the snapshot missed.
+        let mut descendants = descendants_of(root);
+        descendants.append(&mut condemned);
+        descendants.sort_unstable();
+        descendants.dedup();
+        descendants.retain(|(pid, started_at)| process_start_time(*pid) == Some(*started_at));
+        if descendants.is_empty() {
+            return TerminationOutcome::Complete;
+        }
+        if passes >= MAX_PASSES {
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: descendants.len(),
+            };
+        }
+        for (pid, started_at) in &descendants {
+            // Re-read at the moment of the signal. A candidate that exited between the walk and
+            // here is either gone or has been replaced by a stranger, and a stranger must not be
+            // killed because it inherited a number.
+            if process_start_time(*pid) != Some(*started_at) {
+                continue;
+            }
+            if let Ok(signed) = i32::try_from(*pid) {
+                unsafe {
+                    libc::kill(signed, libc::SIGKILL);
+                }
+            }
+        }
+        passes += 1;
+    }
+}
+
+/// The sweep is Linux-shaped: it needs `/proc` ancestry and `PR_SET_CHILD_SUBREAPER`, and neither
+/// exists on macOS or the BSDs. Saying so is the point — a fallback that walked something weaker
+/// would report `Complete` on a platform where the escape still works.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn sweep_subtree(_root: u32, _condemned: Vec<(u32, u64)>) -> TerminationOutcome {
+    TerminationOutcome::SweepUnavailable
+}
+
+/// The subtree as it stands RIGHT NOW, captured before anything is signalled.
+///
+/// Separate from [`descendants_of`] only in name: the distinction it carries is WHEN it is called,
+/// and that is the load-bearing part of the fix.
+#[cfg(all(unix, target_os = "linux"))]
+fn subtree_snapshot(root: u32) -> Vec<(u32, u64)> {
+    descendants_of(root)
+}
+
+/// The snapshot is not available where the sweep is not.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn subtree_snapshot(_root: u32) -> Vec<(u32, u64)> {
+    Vec::new()
+}
+
+/// `(pid, start time)` for every live process whose ancestry reaches `root`, `root` excluded.
+#[cfg(all(unix, target_os = "linux"))]
+fn descendants_of(root: u32) -> Vec<(u32, u64)> {
+    let mut parents: std::collections::BTreeMap<u32, (u32, u64)> =
+        std::collections::BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Ok(pid) = name.parse::<u32>() else {
+            continue;
+        };
+        if let Some(record) = read_stat(pid) {
+            parents.insert(pid, (record.parent, record.started_at));
+        }
+    }
+
+    let mut found = Vec::new();
+    for (&pid, &(_, started_at)) in &parents {
+        if pid == root {
+            continue;
+        }
+        // Walk up, bounded by the map's own size: a cycle cannot exist in a real process table,
+        // but this reads one, and a loop here would hang the kill path.
+        let mut cursor = pid;
+        for _ in 0..parents.len().saturating_add(1) {
+            let Some(&(parent, _)) = parents.get(&cursor) else {
+                break;
+            };
+            if parent == root {
+                found.push((pid, started_at));
+                break;
+            }
+            if parent <= 1 {
+                break;
+            }
+            cursor = parent;
+        }
+    }
+    found
+}
+
+/// `(ppid, start time)` from `/proc/<pid>/stat`.
+///
+/// The fields are read AFTER the last `)`, because a process name can contain spaces and
+/// parentheses and splitting the whole line would put the parse at the mercy of whatever a child
+/// called itself.
+/// What `/proc/<pid>/stat` says: the state letter, the parent, and when it began.
+///
+/// ONE reader for all three. The sweep wants the parent and the start time;
+/// [`process_is_running`] wants the state -- and the state was already being SKIPPED here
+/// before anything needed it (#715). Two readers of one file drift; this is the file agreeing
+/// with itself.
+#[cfg(all(unix, target_os = "linux"))]
+struct ProcStat {
+    state: char,
+    parent: u32,
+    started_at: u64,
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn read_stat(pid: u32) -> Option<ProcStat> {
+    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let tail = raw.get(raw.rfind(')')? + 2..)?;
+    let mut fields = tail.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let parent = fields.next()?.parse().ok()?;
+    // `starttime` is field 22 of the whole line; state and ppid are consumed above, so it sits
+    // at offset 17 from here.
+    let started_at = fields.nth(17)?.parse().ok()?;
+    Some(ProcStat {
+        state,
+        parent,
+        started_at,
+    })
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn process_start_time(pid: u32) -> Option<u64> {
+    read_stat(pid).map(|stat| stat.started_at)
+}
+
+/// Start the child suspended, so that `create` can put it in a job before it runs.
+///
+/// **The suspension is load-bearing, not a tidiness flag.** A job can only be assigned to a process
+/// that already exists, so there is necessarily a window between spawn and
+/// `AssignProcessToJobObject`. A child that runs during that window can spawn descendants of its
+/// own, and those descendants are **outside** the job: `terminate` will not reach them, which is
+/// the entire property this crate exists to provide. `CREATE_SUSPENDED` closes the window, and
+/// `create` reopens it deliberately by resuming the process only after the assignment succeeds.
+///
+/// Removing this flag looks harmless — the child still starts, the tests that count processes still
+/// pass — and leaves the job with silent holes. (Mechanism named by D while working #618, which
+/// consumes this crate from the tool host.)
+#[cfg(windows)]
+pub fn configure(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+    command.creation_flags(CREATE_SUSPENDED);
+}
+
+/// Put the suspended child in a kill-on-close job object, then resume it.
+///
+/// # Handle ownership, which is only visible by tracing control flow
+///
+/// Two handles are opened here and they are owned differently. Neither is an RAII type, so the
+/// discipline lives in the exits rather than in a `Drop`.
+///
+/// **`job` — owned by this function until, and only until, the `Ok`.** There are four ways out
+/// after `CreateJobObjectW` is called:
+///
+/// | exit | `job` |
+/// |---|---|
+/// | the create returned null | never existed; nothing to close |
+/// | `SetInformationJobObject` or `AssignProcessToJobObject` failed | closed here |
+/// | `resume_suspended_process` failed | closed here |
+/// | success | **NOT closed** — it is handed to the caller inside `ProcessGroup` |
+///
+/// **The handing over is not RAII, and the difference is the caller's problem.** `ProcessGroup` is
+/// `Copy` and has no `Drop`: dropping one closes nothing, and copying one does not track anything.
+/// The handle is released only when the caller calls [`close`], which is why that function exists.
+/// A caller that drops the value and moves on leaks the job handle — and because of the flag below,
+/// leaking it means the process tree it was meant to bound **stays alive**, which is the opposite
+/// failure from the one this crate is for.
+///
+/// So the success path is the one that looks like a leak and is not: closing `job` there would
+/// *kill the process tree immediately*, at the exact moment the caller was told the group was
+/// ready, and leave the caller's later [`close`] closing a handle that is no longer theirs.
+///
+/// **`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the handle's lifetime the kill policy.** The job
+/// dies when its last handle closes, and everything in it dies with it. So `job` is not
+/// bookkeeping that can be tidied up: holding it open IS the process group, and closing it IS
+/// `terminate`. A future refactor that adds an early `CloseHandle(job)` "for symmetry" would be
+/// killing the tree, not freeing a resource.
+///
+/// **`process` — a second handle this function OWNS, closed as soon as the assignment is done.**
+/// `OpenProcess` creates a new handle; assigning the process to the job gives the *job* its own
+/// reference to the process object, and that does **not** demote this one to a borrow. The
+/// `CloseHandle` here is therefore mandatory rather than tidy: without it every group creation
+/// leaks one process handle. It is closed immediately because nothing after the assignment needs
+/// it — the job holds the process, not us.
+///
+/// Its close sits **above** every error branch, so by the time any exit is reached it has already
+/// been released; and when `OpenProcess` returns null the `&&` short-circuits, so `assigned` is
+/// false and the assignment is never attempted.
+///
+/// The bound this crate provides stops at the job. A descendant that escaped before assignment is
+/// not in it — see `configure` for why the child is started suspended.
+#[cfg(windows)]
+#[allow(clippy::missing_errors_doc)]
+pub fn create(child: &std::process::Child) -> Result<ProcessGroup, ProcessTreeError> {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::{
+            JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+                SetInformationJobObject,
+            },
+            Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
+        },
+    };
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(ProcessTreeError::JobSetup);
+    }
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            u32::try_from(std::mem::size_of_val(&limits)).unwrap(),
+        )
+    } != 0;
+    let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, child.id()) };
+    let assigned = !process.is_null() && unsafe { AssignProcessToJobObject(job, process) } != 0;
+    if !process.is_null() {
+        unsafe { CloseHandle(process) };
+    }
+    if !configured || !assigned {
+        unsafe { CloseHandle(job) };
+        return Err(ProcessTreeError::JobSetup);
+    }
+    let previous_suspend_count = match resume_suspended_process(child.id()) {
+        Ok(count) => count,
+        Err(error) => {
+            unsafe { CloseHandle(job) };
+            return Err(error);
+        }
+    };
+    // #878, DETECTED RATHER THAN DOCUMENTED. Zero means nothing had suspended this thread, so
+    // [`configure`] was never called and the child has been running since the spawn -- free, for
+    // that whole interval, to start descendants that this job will never contain. Returning a
+    // group here would promise a containment it cannot deliver, and a caller that believes it
+    // can kill the tree stops looking.
+    //
+    // THIS REFUSAL KILLS THE CHILD, and an earlier version of this comment claimed the opposite.
+    // By the time the suspend count is known the child is ALREADY a member of a job carrying
+    // `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and a process cannot leave a job -- Windows offers no
+    // removal, which is the same property that makes the container worth having. So closing the
+    // handle on this path terminates it. Leaving the handle open to spare the child would leak
+    // it and keep the kill pending on a value nobody holds, which is worse (Codex P2 on #1027).
+    //
+    // Refusing destructively is also the right direction on its merits: this child has been
+    // running unconfined since the spawn and may already have started descendants outside the
+    // job. Killing it does not reach those -- nothing here can -- but leaving it running would
+    // add a process nobody is tracking to a hole nobody knew about. The contract is stated on
+    // the error and asserted by a cell, so a caller reads it rather than discovers it.
+    if previous_suspend_count == 0 {
+        unsafe { CloseHandle(job) };
+        return Err(ProcessTreeError::ChildNotSuspended);
+    }
+    Ok(ProcessGroup(job as usize))
+}
+
+#[cfg(windows)]
+/// Resume the child and report its thread's PREVIOUS suspend count.
+///
+/// The count is the whole of #878's answer and it was being discarded. `ResumeThread` returns
+/// how many times the thread had been suspended BEFORE this call: one for a child spawned with
+/// `CREATE_SUSPENDED`, and ZERO for a child that has been running since the spawn -- which is
+/// exactly the condition under which descendants can be started outside the job.
+fn resume_suspended_process(process_id: u32) -> Result<u32, ProcessTreeError> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
+                Thread32Next,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(ProcessTreeError::ProcessResume);
+    }
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>()).unwrap(),
+        ..THREADENTRY32::default()
+    };
+    // EVERY THREAD, and the MINIMUM of their counts. The first version resumed the first thread
+    // it could open and stopped: for a `CREATE_SUSPENDED` child that is the only thread and the
+    // answer is exact, but for a child that was never configured the snapshot can hand back a
+    // suspended WORKER while the primary runs, and a non-zero count from it would report a
+    // containment that never held (Codex P2 on #1027). A process is suspended only if all of its
+    // threads are, so the minimum is the honest reading. Resuming a thread that was not
+    // suspended is a no-op that returns 0, which is exactly the value that must refuse.
+    //
+    // NOT COVERED BY A CELL, and said so rather than covered by one that cannot discriminate.
+    // Telling MINIMUM from FIRST needs a child with a suspended non-primary thread, and nothing
+    // this suite can spawn arranges that: a cooperative process has no suspended threads, so a
+    // cell built from one passes under both readings and would be evidence of nothing. The
+    // existing pair still covers the property that matters -- configured is accepted,
+    // unconfigured is refused -- and this line is the narrower claim it does not reach.
+    let mut found = unsafe { Thread32First(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
+    let mut previous_suspend_count: Option<u32> = None;
+    while found {
+        if entry.th32OwnerProcessID == process_id {
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !thread.is_null() {
+                let count = unsafe { ResumeThread(thread) };
+                unsafe { CloseHandle(thread) };
+                if count != u32::MAX {
+                    previous_suspend_count = Some(match previous_suspend_count {
+                        Some(lowest) => lowest.min(count),
+                        None => count,
+                    });
+                }
+            }
+        }
+        found = unsafe { Thread32Next(snapshot, std::ptr::addr_of_mut!(entry)) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    previous_suspend_count.ok_or(ProcessTreeError::ProcessResume)
+}
+
+/// Release the job handle — **which KILLS the job's remaining members**.
+///
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the handle's lifetime the kill policy, so this is not
+/// merely cleanup: it is a second kill, and callers order it after their readers for that reason.
+///
+/// **The Unix counterpart now does the same thing by a different mechanism** (#714). There a
+/// process group has no handle, so the release is an explicit `SIGKILL` to the group -- and
+/// because a pgid is only its leader's pid, that platform also asks its caller to keep the leader
+/// unreaped until the release has run. Written on BOTH bodies deliberately: each is invisible in
+/// the other's rendered documentation, and the reader who most needs to know how the two differ is
+/// the one reading only the platform they are on. What is still NOT symmetric is escape (#717): a
+/// descendant that called `setsid` has left the Unix group and survives this call; nothing leaves
+/// a job object.
+///
+/// The measured consequence is #726: when a capture abandons its readers, `close` still runs. Here
+/// the job's remaining members die, their inherited pipe handles close, and the blocked reader thread
+/// returns within microseconds. On Unix that now happens too, for members that did not leave.
+///
+/// **"Members", not "everything that ran" — the distinction is real and this doc overstated it once**
+/// (Codex, on #746). Nothing in this API forces [`configure`] to be called before the spawn, and a
+/// child spawned without it runs immediately: anything IT starts before [`create`] assigns the job is
+/// outside the job, and `KILL_ON_JOB_CLOSE` never touches it. Such a process can keep an inherited
+/// pipe end and its reader will not return here either. The funnel in `adapters/tool-host` does call
+/// [`configure`], which is what closes that window for the case #726 measured.
+#[cfg(windows)]
+pub fn close(group: &mut ProcessGroup) {
+    if group.0 != 0 {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(group.0 as _) };
+        *group = ProcessGroup::EMPTY;
+    }
+}
+
+/// Kill the process and everything it spawned.
+///
+/// **No qualifier is needed on this platform, and that is the asymmetry** (#717). A job object holds
+/// every process its members create; leaving one requires `CREATE_BREAKAWAY_FROM_JOB` *and* a job
+/// that permits breakaway, and this job does not set `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
+///
+/// **The Unix counterpart is escapable**: it sends `SIGKILL` to a process group, and one `setsid` or
+/// `setpgid` call takes a descendant out of it — no privileges, and nothing observable. Its
+/// guarantee is therefore "everything it spawned THAT IS STILL IN THE GROUP", and it fails toward a
+/// false GREEN. Said here as well as there because neither body appears in the other's rendered
+/// documentation.
+///
+/// **`TerminateJobObject` REQUESTS termination and returns without waiting for it**, so this used to
+/// answer [`TerminationOutcome::Complete`] unconditionally -- a value documented as *"signalled
+/// everything reachable, and a final pass found nothing new"* on a path where no pass was ever made.
+/// The kernel guarantees CONTAINMENT, not that containment has finished by the time the call
+/// returns. Measured on main before this changed (#824): the parent, which `Drop` explicitly waits
+/// for, was gone in 20 of 20 runs; the descendant, which nothing waited for, was still alive in 6 of
+/// 20 and died 1.03-1.30 ms later -- never escaping, merely not yet drained.
+///
+/// So this OBSERVES the drain before saying `Complete`, and answers
+/// [`TerminationOutcome::BoundReached`] when the ceiling arrives first. That variant's existing
+/// meaning -- still appearing, there may be more -- is right here, and reusing it is deliberate so
+/// that [`TerminationOutcome::SweepUnavailable`], which already carries two meanings (#815), does not
+/// acquire a third.
+#[cfg(windows)]
+pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::{
+            JobObjects::TerminateJobObject,
+            Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
+        },
+    };
+    if group.0 != 0 {
+        // THE IDS ARE READ BEFORE THE KILL, and that order is the whole of it. Measured (#824):
+        // `JobObjectBasicAccountingInformation.ActiveProcesses` reads ZERO on the very first query
+        // after `TerminateJobObject` -- pass 1, every run -- while the descendant is still answering
+        // "running" to the caller. Job accounting stops counting a process before its handle
+        // signals, so it cannot be the completion predicate. Enumerate first, then wait on what was
+        // enumerated.
+        //
+        // AND THE LIST IS OLDER THAN THE KILL. A process a listed member spawns between the
+        // enumeration and `TerminateJobObject` is in the job -- the kernel kills it -- but is not in
+        // `members`, and THIS is not closed (#846, found in review of #826 by the GraphHelm ISSUES
+        // lane). A re-read after the kill was tried and removed: measured 2026-09-08, a
+        // `job_member_ids` query taken immediately, at 5ms and at 55ms after `TerminateJobObject`
+        // against a real job holding two real members all answered an empty list -- the job's own
+        // accounting empties before or with the kill, the same way `ActiveProcesses` does (#824), so a
+        // post-kill re-read cannot observe the thing it would exist to catch. `Complete` on this arm
+        // means "every member THIS enumeration named has been observed gone", not "the whole job is
+        // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
+        // #846 for the measurement.
+        let members = job_member_ids(group);
+        unsafe { TerminateJobObject(group.0 as _, 1) };
+        // `passes: 0` IS THE SIGNATURE of "membership could not be read", and it is distinguishable
+        // from a real ceiling, which always reports at least one pass. Both are `BoundReached`
+        // because both mean the same thing to a caller: this did not observe the tree go.
+        let Some(members) = members else {
+            return TerminationOutcome::BoundReached {
+                passes: 0,
+                remaining: 0,
+            };
+        };
+        return drain_terminated_job(&members);
+    }
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+    if !handle.is_null() {
+        unsafe {
+            TerminateProcess(handle, 1);
+            CloseHandle(handle);
+        }
+    }
+    TerminationOutcome::Complete
+}
+
+/// How long [`terminate`] waits for a terminated job to empty before answering
+/// [`TerminationOutcome::BoundReached`].
+///
+/// **A CEILING, NOT AN EXPECTED COST.** Measured drain on an idle host is 1.03-1.30 ms (#824), so the
+/// loop below normally exits on its second pass and this is some four thousand times the observed
+/// figure. It is set that far above because the gate runs the workspace in parallel and the same
+/// ficha measured a cell taking 20.60 s under gate load against 0.43 s isolated -- a 48x stretch. A
+/// bound chosen from idle numbers would turn a slow machine into a `BoundReached`, which reads as
+/// "descendants are still appearing": a false alarm about the product caused by the host.
+///
+/// The loop needs a ceiling more than a clever condition. Without one, a job that never empties makes
+/// `terminate` HANG, and a hang has no colour -- the gate has no per-test timeout, so it would stop
+/// rather than redden.
+#[cfg(windows)]
+const JOB_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The most job members this will enumerate before it stops claiming to have seen them all.
+///
+/// A job holding more than this is not a case this crate can answer `Complete` for honestly, so the
+/// overflow is reported as `BoundReached` with the unlisted count in `remaining` rather than silently
+/// waiting on a prefix and calling it the whole.
+#[cfg(windows)]
+const JOB_MEMBER_LIST_CAP: usize = 1024;
+
+/// The process ids currently assigned to the job.
+///
+/// **Must be called BEFORE `TerminateJobObject`.** Afterwards the list empties as fast as the
+/// accounting does, and an empty list would read as "nothing to wait for" -- the exact false green
+/// this whole path exists to remove.
+///
+/// Returns the ids seen and how many were assigned but did not fit, or `None` when the membership
+/// could not be READ at all.
+///
+/// **`None` is not an empty job**, and collapsing the two is the failure this signature exists to
+/// prevent: an unreadable job would yield no ids, the wait would have nothing to wait for, and the
+/// answer would be `Complete` -- a confident "the tree is gone" derived from having failed to look.
+/// The caller turns `None` into `BoundReached` instead, so the unobservable case fails toward the
+/// same colour as the observed-incomplete one.
+#[cfg(windows)]
+fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList, QueryInformationJobObject,
+    };
+
+    let header = std::mem::size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+    let slot = std::mem::size_of::<usize>();
+    let bytes = header + slot * JOB_MEMBER_LIST_CAP;
+    let mut buffer = vec![0u8; bytes];
+    // SAFETY: `group.0` is a live job handle this process created and owns; the buffer is at least
+    // the size of the structure and is written only up to the length passed. The return value is
+    // checked before anything is read out of it.
+    let queried = unsafe {
+        QueryInformationJobObject(
+            group.0 as _,
+            JobObjectBasicProcessIdList,
+            buffer.as_mut_ptr().cast(),
+            u32::try_from(bytes).unwrap_or(u32::MAX),
+            std::ptr::null_mut(),
+        )
+    };
+    if queried == 0 {
+        return None;
+    }
+    // SAFETY: a successful query wrote a valid header followed by `NumberOfProcessIdsInList` slots,
+    // and the buffer was allocated with room for the header plus `JOB_MEMBER_LIST_CAP` of them.
+    let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+    let listed = (list.NumberOfProcessIdsInList as usize).min(JOB_MEMBER_LIST_CAP);
+    let assigned = list.NumberOfAssignedProcesses as usize;
+    let mut ids = Vec::with_capacity(listed);
+    for index in 0..listed {
+        // SAFETY: `ProcessIdList` is a flexible array of `listed` valid entries inside the buffer.
+        let id = unsafe { *list.ProcessIdList.as_ptr().add(index) };
+        if let Ok(id) = u32::try_from(id) {
+            ids.push(id);
+        }
+    }
+    Some((ids, assigned.saturating_sub(listed)))
+}
+
+/// Wait for the processes that were in a job when it was terminated to actually be gone.
+///
+/// Waits only on the membership `terminate` enumerated BEFORE calling `TerminateJobObject` --
+/// nothing here re-reads the job afterward. A member assigned to the job between that enumeration
+/// and the kill is terminated by the job -- containment is real -- but is not named by `members`,
+/// and this function has no way to learn about it: `job_member_ids`'s own doc already says the list
+/// empties as fast as the accounting does, and measuring it directly (2026-09-08, #846) confirmed
+/// there is no post-kill instant where a re-read still names a genuinely-late member -- immediately,
+/// at 5ms and at 55ms after `TerminateJobObject`, against a real job holding two real assigned
+/// members, the answer was an empty list every time. A re-read branch lived here briefly to try to
+/// close that window and was removed for this reason: code that cannot observe what it exists to
+/// catch is not a fix, it is a claim with no consumer. The window stays open and is named here
+/// instead of hidden behind a branch that never fires. See issue #846 for the measurement and a
+/// candidate mechanism (pre-kill fixpoint enumeration) that would narrow it, left for a later PR.
+///
+/// **The predicate is the one the CALLER uses**, and that is the correction this function exists to
+/// carry (#824): `Complete` means every member THIS enumeration named was observed gone, checked by
+/// `process_is_running` rather than by polling job accounting, which stops counting a member before
+/// its handle signals. The first version polled the job's `ActiveProcesses` and returned `Complete`
+/// on pass 1, every run, while `process_is_running` still answered true for the descendant -- so the
+/// flake was unchanged and the fix looked applied. Two instruments disagreeing about the same
+/// instant; the one that decides is the one a caller can observe.
+#[cfg(windows)]
+fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
+    let mut ids = members.0.clone();
+    let unlisted = members.1;
+    let started = std::time::Instant::now();
+    let mut passes: u32 = 0;
+    loop {
+        passes = passes.saturating_add(1);
+        ids.retain(|id| process_is_running(*id));
+        if ids.is_empty() {
+            if unlisted == 0 {
+                return TerminationOutcome::Complete;
+            }
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: unlisted,
+            };
+        }
+        if started.elapsed() >= JOB_DRAIN_CEILING {
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: ids.len() + unlisted,
+            };
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod post_enumeration_join_window {
+    use super::{
+        ProcessGroup, ProcessIdentity, TerminationOutcome, drain_terminated_job, job_member_ids,
+        process_is_running,
+    };
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CREATE_SUSPENDED, OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE, TerminateProcess,
+    };
+
+    /// A process that never runs is still a process: `CREATE_SUSPENDED` leaves it alive
+    /// (`process_is_running` checks the process handle's signal state, not its threads), so this is a
+    /// real, assignable job member without needing it to execute any code. The arguments name a test
+    /// that does not exist; they are never read, because this is never resumed.
+    fn spawn_suspended_member() -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_tree::post_enumeration_join_window::never_run",
+                "--nocapture",
+            ])
+            .creation_flags(CREATE_SUSPENDED)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("ARRANGEMENT: suspended fixture process spawns")
+    }
+
+    // `Child::wait()` has no independent timeout. A successful termination request makes the
+    // process handle expected to signal, but a request that failed is not a reason to block here:
+    // the test has no per-test timeout that could turn such a wait into a useful red. Cleanup below
+    // therefore waits only after a confirmed request and otherwise makes one non-blocking `try_wait`
+    // observation.
+
+    /// Owns the raw test job and gives it the same kill-on-close policy as production `create`.
+    ///
+    /// The fixture deliberately creates this job by hand so it can arrange a member that joins
+    /// after the stale membership read. Keeping the handle in an owner makes the panic path safe:
+    /// dropping it kills every fixture process that was successfully assigned, including one left
+    /// behind by a failed assertion before the normal cleanup reaches it.
+    struct OwnedKillOnCloseJob(ProcessGroup);
+
+    impl OwnedKillOnCloseJob {
+        fn new() -> Self {
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            assert!(!handle.is_null(), "ARRANGEMENT: CreateJobObjectW failed");
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    std::ptr::from_ref(&limits).cast(),
+                    u32::try_from(std::mem::size_of_val(&limits)).unwrap(),
+                )
+            } != 0;
+            if !configured {
+                unsafe { CloseHandle(handle) };
+                panic!("ARRANGEMENT: could not configure kill-on-close for the fixture job");
+            }
+            Self(ProcessGroup(handle as usize))
+        }
+
+        fn group(&self) -> ProcessGroup {
+            self.0
+        }
+    }
+
+    impl Drop for OwnedKillOnCloseJob {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0.0 as _) };
+        }
+    }
+
+    fn terminate_directly(process_id: u32) {
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+        assert!(
+            !handle.is_null(),
+            "ARRANGEMENT: could not open the fixture process to end it"
+        );
+        let requested = unsafe { TerminateProcess(handle, 1) };
+        unsafe { CloseHandle(handle) };
+        assert_ne!(
+            requested, 0,
+            "ARRANGEMENT: could not terminate the fixture process"
+        );
+    }
+
+    /// End a retained fixture child using its owned handle, then reap only after the request was
+    /// accepted. A child that already exited needs only the non-blocking observation; a failed kill
+    /// must never turn cleanup into an unbounded wait. The job owner is the second line of defense
+    /// for children that were assigned before an assertion failed.
+    fn cleanup_child(child: &mut Option<std::process::Child>) {
+        let Some(mut child) = child.take() else {
+            return;
+        };
+        if child.kill().is_ok() {
+            let _ = child.wait();
+        } else {
+            let _ = child.try_wait();
+        }
+    }
+
+    fn assign_to_job(job: super::ProcessGroup, process_id: u32) {
+        let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, process_id) };
+        assert!(
+            !process.is_null(),
+            "ARRANGEMENT: could not open the fixture process to assign it"
+        );
+        let assigned = unsafe { AssignProcessToJobObject(job.0 as _, process) };
+        unsafe { CloseHandle(process) };
+        assert_ne!(
+            assigned, 0,
+            "ARRANGEMENT: could not assign the fixture process to the job"
+        );
+    }
+
+    /// #846 (redesigned 2026-09-08): a member the FIRST enumeration missed -- because it joined the
+    /// job after that read, in the window `terminate` does not control -- is genuinely killed by the
+    /// job, but the drain has no way to learn about it and does not claim to have waited for it.
+    /// `drain_terminated_job`'s own doc names why: a post-kill re-read was measured against a real
+    /// terminated job and always came back empty, so there is nothing to re-read.
+    ///
+    /// **Deterministic by construction, not by racing a live spawn against a live kill.** `late` joins
+    /// the SAME real job `stale` was read from, so the job genuinely holds a member the snapshot does
+    /// not name -- exactly #846's shape -- but `late`'s liveness for the rest of this test is left
+    /// alone, not raced against anything. Nothing here depends on how fast Windows happens to tear a
+    /// process down.
+    ///
+    /// **Cleanup runs even when an assertion panics.** A first draft of this cell left a suspended
+    /// fixture process running on a panic path -- it holds no lock on anything of ITS OWN, but it is a
+    /// live copy of THIS CRATE'S OWN TEST BINARY, and that file being open is exactly what made the
+    /// next `cargo test` fail to link (measured while writing this test: `LNK1104`, the previous
+    /// process still holding `graphhelm_process_tree-*.exe`). So the arrangement below happens before
+    /// any assertion that can fail, and everything that can panic is wrapped so the two fixture
+    /// processes and the job handle are always ended, panic or not.
+    #[test]
+    fn a_member_assigned_after_enumeration_is_not_waited_for() {
+        // EVERY FIXTURE LIVES BEHIND THIS GUARD FROM THE MOMENT IT EXISTS (Codex, second pass): the
+        // first draft created `enumerated` (and assigned it to the job) and `late` BEFORE
+        // `catch_unwind` began, so a panic in that first `assign_to_job`'s own assertion, or in the
+        // second `spawn_suspended_member()`, skipped the unconditional cleanup below entirely --
+        // `enumerated` was created suspended and `Child` does not terminate on drop, so a panic there
+        // leaked a live copy of this crate's own test binary, exactly the `LNK1104` failure the
+        // comment on this test already names. Nothing is created outside the closure now; each
+        // `Option` starts empty and the unconditional cleanup after `catch_unwind` acts only on
+        // whatever actually got made before the panic (if any).
+        let mut job = None;
+        let mut enumerated: Option<std::process::Child> = None;
+        let mut late: Option<std::process::Child> = None;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let owned_job = OwnedKillOnCloseJob::new();
+            let group = owned_job.group();
+            job = Some(owned_job);
+
+            let enumerated_child = spawn_suspended_member();
+            let enumerated_id = enumerated_child.id();
+            enumerated = Some(enumerated_child);
+            assign_to_job(group, enumerated_id);
+
+            let late_child = spawn_suspended_member();
+            let late_id = late_child.id();
+            late = Some(late_child);
+
+            let stale =
+                job_member_ids(group).expect("ARRANGEMENT: the job's membership could be read");
+            assert_eq!(
+                stale.0,
+                vec![enumerated_id],
+                "ARRANGEMENT: the stale snapshot names only the first member, or this cell tests \
+                 nothing -- `late` must not be assigned to the job before this read"
+            );
+
+            // JOINS AFTER THE SNAPSHOT, exactly like a member's grandchild would (#846). Real job
+            // membership, real liveness -- `stale` simply never heard about it, and nothing from here
+            // on re-reads the job to find out.
+            assign_to_job(group, late_id);
+
+            // Only the TRACKED member dies. `late` is left alive and untouched -- the drain must not
+            // wait for it.
+            terminate_directly(enumerated_id);
+
+            let drain = std::thread::spawn(move || drain_terminated_job(&stale));
+
+            // EXPLICIT SYNCHRONIZATION, NOT A WALL-CLOCK RACE (Codex, second pass): a bounded poll
+            // here would compare THIS thread's elapsed time against a margin over
+            // `JOB_DRAIN_CEILING`, but that margin describes this thread's own scheduling, not the
+            // drain thread's -- under the documented 48x gate-load stretch (#750) the two can drift
+            // far enough apart for the poll to expire before the drain thread was ever scheduled,
+            // reddening a correct implementation. `drain_terminated_job` already carries its own
+            // bound, measured from INSIDE that thread with a roughly 4000x margin over the idle case
+            // (#824) -- so this joins and trusts it, rather than laying a second, weaker bound on top
+            // from a different thread's clock.
+            let outcome = drain.join().expect("the drain thread did not panic");
+            assert_eq!(
+                outcome,
+                TerminationOutcome::Complete,
+                "the drain only waits on the pre-kill enumeration, so it must report Complete once \
+                 `enumerated` is gone -- regardless of `late`"
+            );
+
+            // THE HONEST CLAIM, MADE OBSERVABLE: `late` is still alive. `Complete` above did not mean
+            // "the whole job emptied" -- it means "everything this drain was told to wait for is
+            // gone" -- and this is what tells the two apart. If this ever fails, the window this test
+            // exists to document has closed and both this cell and the doc above need revisiting.
+            assert!(
+                process_is_running(late_id),
+                "HARNESS-BROKE (or the documented gap closed): `late` should still be alive here, or \
+                 the Complete assertion above proves nothing about the window"
+            );
+
+            terminate_directly(late_id);
+
+            // `.wait()`, NOT A FIXED-DEADLINE POLL (Codex, third pass): `Child::wait` has no timeout
+            // of its own. The direct termination calls above assert that the OS accepted both
+            // requests, so these waits reap the two known-terminated children; cleanup below never
+            // waits after an unconfirmed request.
+            if let Some(child) = enumerated.as_mut() {
+                child
+                    .wait()
+                    .expect("the terminated `enumerated` fixture process could be waited on");
+            }
+            if let Some(child) = late.as_mut() {
+                child
+                    .wait()
+                    .expect("the terminated `late` fixture process could be waited on");
+            }
+        }));
+
+        // ALWAYS: drop the owned job first so its kill-on-close policy reaches every assigned
+        // member, even when setup panicked before the normal termination calls. Then use each
+        // retained `Child` handle for an unassigned fixture; opening a fresh handle by PID was the
+        // bug because a failed open skipped both kill and wait while `Child` itself does not kill
+        // on drop. `cleanup_child` never performs an unbounded wait after a failed request.
+        drop(job);
+        cleanup_child(&mut enumerated);
+        cleanup_child(&mut late);
+
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// The cleanup boundary itself: a child created before an assignment failure is not in the
+    /// job, so kill-on-close cannot reach it. The retained `Child` handle must still end and reap
+    /// that child after the assignment assertion panics.
+    #[test]
+    fn failed_assignment_cleanup_reaps_the_retained_child() {
+        let mut job = None;
+        let mut child: Option<std::process::Child> = None;
+        let mut child_identity = None;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let owned_job = OwnedKillOnCloseJob::new();
+            job = Some(owned_job);
+            let child_process = spawn_suspended_member();
+            let id = child_process.id();
+            child = Some(child_process);
+            // Bind the identity before cleanup consumes and reaps the Child. The bare PID can be
+            // reassigned after that reap, so it is not an adequate observation target.
+            child_identity =
+                Some(ProcessIdentity::capture(id).expect(
+                    "ARRANGEMENT: the live failed-assignment child must bind to an identity",
+                ));
+
+            // An impossible process id makes the assignment fail before the child joins the job.
+            // This is the path the job guard cannot cover, and the retained handle must cover.
+            assign_to_job(
+                job.as_ref().expect("the fixture job exists").group(),
+                u32::MAX,
+            );
+        }));
+
+        drop(job);
+        cleanup_child(&mut child);
+        assert!(
+            result.is_err(),
+            "ARRANGEMENT: the forced assignment must panic"
+        );
+        assert!(
+            !child_identity
+                .as_ref()
+                .expect("the child identity must survive cleanup")
+                .is_running()
+                .expect("the retained identity must remain observable after cleanup"),
+            "a child retained across failed assignment cleanup must not survive the test"
+        );
+    }
+}
+
+/// `SYNCHRONIZE` (`0x0010_0000`): the access right that permits WAITING on a handle.
+///
+/// Declared here rather than imported: `windows-sys` exposes it only under
+/// `Win32_Storage_FileSystem`, as a FILE access right, and pulling that feature in for one constant
+/// would widen this crate's surface for no other reason. The value is the documented Win32 one.
+#[cfg(windows)]
+const SYNCHRONIZE: u32 = 0x0010_0000;
+
+/// `WAIT_OBJECT_0`: the handle is SIGNALED, which for a process handle means it has exited.
+#[cfg_attr(not(windows), allow(dead_code))]
+const WAIT_SIGNALED: u32 = 0;
+/// `WAIT_TIMEOUT`: nothing happened in the interval, so the process is still running.
+#[cfg_attr(not(windows), allow(dead_code))]
+const WAIT_STILL_RUNNING: u32 = 258;
+
+/// What a zero-timeout wait on a process handle says about liveness, or `None` when the wait failed.
+///
+/// **This replaces reading the exit code, and the reason is a real ambiguity rather than tidiness**
+/// (Codex, on #680). `GetExitCodeProcess` returns 259 both for a process that has NOT exited and for
+/// one that exited WITH 259 — so a child legitimately exiting with that value reads as running
+/// forever. Guarding `fake_tool` against 259 protected that fixture and nothing else: this crate
+/// binds arbitrary executables, and the operator picks the tests runner.
+///
+/// A handle's signaled state has no such overlap. No exit code can imitate it.
+///
+/// **A pure match over `u32`, nothing Windows in the body** (C's review of #877): unlike
+/// `SYNCHRONIZE`, its only production caller is `#[cfg(windows)]`, but the function itself is not,
+/// which is exactly what makes it testable off the platform. `#[cfg(windows)]` here would have
+/// removed that -- the same `#[cfg_attr(not(windows), allow(dead_code))]` shape as
+/// `windows_wait_milliseconds` below silences the dead-code lint without removing the code (or its
+/// cells) from Linux.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[must_use]
+fn liveness_from_wait(waited: u32) -> Option<bool> {
+    match waited {
+        WAIT_SIGNALED => Some(false),
+        WAIT_STILL_RUNNING => Some(true),
+        _ => None,
+    }
+}
+
+/// A `WaitForSingleObject` timeout that can never be `INFINITE`.
+///
+/// `0xFFFFFFFF` is not "the longest wait", it is **no bound at all** -- so a saturating conversion
+/// turns a very large patience into a wait that never returns (Codex, on #703). That is the third
+/// colour this change exists to remove: neither pass nor fail, and no `cargo test` timeout to catch
+/// it. A caller asking for an absurd bound gets the longest FINITE one instead, because being one
+/// millisecond short of a 49-day wait cannot matter to anyone, and hanging forever can.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[must_use]
+fn windows_wait_milliseconds(patience: std::time::Duration) -> u32 {
+    const INFINITE: u32 = u32::MAX;
+    u32::try_from(patience.as_millis())
+        .unwrap_or(INFINITE)
+        .min(INFINITE - 1)
+}
+
+/// The decision the Unix query feeds.
+///
+/// **`EPERM` means the process EXISTS**: the signal was refused rather than undelivered, which is
+/// only possible against something that is running. `sent` alone would answer NOT-RUNNING for a
+/// process owned by another user — the same false-dead direction as the Windows case, on the
+/// platform that comment did not name.
+#[cfg_attr(not(unix), allow(dead_code))]
+#[must_use]
+fn decide_liveness_from_signal(sent: bool, permission_denied: bool) -> bool {
+    sent || permission_denied
+}
+
+/// Whether a process id belongs to something still running.
+///
+/// **Public, and it was the second-most duplicated thing in this move.** It lived in `backup.rs`
+/// behind `cfg(test)`, and `adapters/tool-host` grew an identical pair while #621 was being written
+/// -- the author had searched for the precedent of the FIX and not for the precedent of the
+/// INSTRUMENT. One helper, every suite.
+///
+/// **An id is not a process.** Once a child is reaped its id may be recycled, so this answers
+/// "something with this id is running", not "that child is running". A recycle reads as ALIVE, so a
+/// guard built on it fails toward red rather than toward green -- which is the only reason it is
+/// usable as an oracle at all. A caller that needs process IDENTITY rather than id liveness has to
+/// hold something the reap cannot invalidate; that is not this function.
+#[cfg(unix)]
+#[must_use]
+pub fn process_is_running(process_id: u32) -> bool {
+    // An id that does not fit a `pid_t` is not a query that failed, it is a value no Unix process
+    // can have -- so it reads as absent, and the invariant above is about queries rather than about
+    // malformed input. Said here rather than left as an unstated exception.
+    let Ok(process_id) = i32::try_from(process_id) else {
+        return false;
+    };
+    let sent = unsafe { libc::kill(process_id, 0) } == 0;
+    let permission_denied =
+        !sent && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    if !decide_liveness_from_signal(sent, permission_denied) {
+        return false;
+    }
+    // A PID TABLE ENTRY IS NOT A RUNNING PROCESS (#715). `kill(pid, 0)` succeeds against a
+    // ZOMBIE -- exited, and not yet reaped by its parent -- so a correctly killed descendant
+    // reads as ALIVE until its adopter gets round to it. Measured on Linux 6.6: a child that
+    // exited unreaped has state `Z` and `kill(pid, 0)` returns 0; after `waitpid` the same call
+    // fails with ESRCH.
+    //
+    // THE DIRECTION IS WHY THIS IS WORTH FIXING AND WHY IT WAS NOT A BLOCKER. The Windows twin
+    // (#680) read a dead process as alive and a CALLER PASSED -- a false green. This reads a
+    // dead process as alive and a cell asserting the tree is gone FAILS -- a false red, on a
+    // host whose pid 1 reaps slowly, containers especially. Noisy fails safe; silent does not,
+    // and nobody should later "fix" this by loosening the check.
+    //
+    // ONLY the zombie state is subtracted. `T` (stopped) and `D` (uninterruptible sleep) are
+    // processes that exist and will run again; calling them dead would invent the false green
+    // this exists to avoid.
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(pid) = u32::try_from(process_id) else {
+            return true;
+        };
+        if read_stat(pid).is_some_and(|stat| stat.state == 'Z') {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a process id belongs to something still running.
+///
+/// **Public, and it was the second-most duplicated thing in this move.** It lived in `backup.rs`
+/// behind `cfg(test)`, and `adapters/tool-host` grew an identical pair while #621 was being written
+/// -- the author had searched for the precedent of the FIX and not for the precedent of the
+/// INSTRUMENT. One helper, every suite.
+///
+/// **An id is not a process.** Once a child is reaped its id may be recycled, so this answers
+/// "something with this id is running", not "that child is running". A recycle reads as ALIVE, so a
+/// guard built on it fails toward red rather than toward green -- which is the only reason it is
+/// usable as an oracle at all. A caller that needs process IDENTITY rather than id liveness has to
+/// hold something the reap cannot invalidate; that is not this function.
+#[cfg(windows)]
+#[must_use]
+pub fn process_is_running(process_id: u32) -> bool {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, WaitForSingleObject},
+    };
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, process_id) };
+    if handle.is_null() {
+        // No handle is the ONE undecidable case that reads as absent, and it earns that: the id is
+        // gone, or it belongs to something this process may not even ask about -- and on Windows a
+        // reaped id stops being openable. Distinguishing further would need a privilege this helper
+        // must not require.
+        return false;
+    }
+    let waited = unsafe { WaitForSingleObject(handle, 0) };
+    unsafe { CloseHandle(handle) };
+    // A wait that could not decide reads as RUNNING -- the direction rule, unchanged from the
+    // exit-code form it replaces. Wrong toward "still there" costs a red; wrong toward "gone" would
+    // let a caller pass on a failure to observe.
+    liveness_from_wait(waited).unwrap_or(true)
+}
+
+/// A handle on a process that the reap cannot invalidate.
+///
+/// **Why an id is not enough**, and why the answer is not "the window is small": once a child is
+/// reaped its id may be reassigned, so a check against a bare id can observe an unrelated process
+/// and read it as the child still running. That is a FALSE RED, and a false red on an authoritative
+/// gate is still a nondeterministic gate — being wrong in the comfortable direction is a mitigation,
+/// not a property (Codex, on #680).
+///
+/// What removes the nondeterminism is holding something the OS binds to the process rather than to
+/// the number:
+///
+/// - **Windows** — an open handle RESERVES the id: the system will not reassign it while any handle
+///   to that process is held. So the id cannot come to mean something else while this value lives.
+/// - **Linux** — a `pidfd` refers to the process itself. It reports the original's exit and never a
+///   successor's.
+///
+/// # Refusal rather than fallback
+///
+/// Below either floor — a kernel without `pidfd_open`, a Windows process this one may not open, a
+/// Unix that is not Linux — [`ProcessIdentity::capture`] REFUSES. It does not fall back to the bare
+/// id, because a fallback is the `unwrap_or` that turns a known gap into silent drift: the caller
+/// would go on believing it held identity while holding a number. A caller that cannot ask must be
+/// told it cannot ask.
+#[derive(Debug)]
+pub struct ProcessIdentity {
+    process_id: u32,
+    #[cfg(any(windows, target_os = "linux"))]
+    handle: OwnedIdentity,
+}
+
+impl ProcessIdentity {
     /// The id this identity is bound to. Useful in diagnostics; never as the thing to check.
     #[must_use]
     pub fn process_id(&self) -> u32 {

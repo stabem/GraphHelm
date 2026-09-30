@@ -40,9 +40,12 @@ const SET_ELSEWHERE: Record<string, string> = {
   "--dock-reserve": "App.tsx writes it inline on .scene from the docks' measured height (#1083 F9); the CSS reads it with a fallback",
 };
 
-/** Classes the components render that intentionally have no rule of their own. Empty today, and
- * kept so that adding one is a deliberate line in a diff rather than a silent omission. */
-const NO_RULE_NEEDED: Record<string, string> = {};
+/** Classes the components render that intentionally have no rule of their own. Each entry names
+ * why the wrapper remains readable through its styled descendants or an ancestor rule. */
+const NO_RULE_NEEDED: Record<string, string> = {
+  "work-session-tasks":
+    "semantic wrapper for the Claude task list; .work-session and .work-session li provide its layout and typography",
+};
 
 /**
  * Every component's source, as text.

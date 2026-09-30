@@ -17,33 +17,38 @@
 import { useState } from "react";
 import { Check, Copy, FolderPlus, X } from "lucide-react";
 
-/** The command that makes a folder into a project. `--events` is the only required argument: the
- * rest of the executor group is what a run needs to reach a model, and a folder is a project
- * before it can do that. */
-function commandFor(folder: string): string {
+type Shell = "powershell" | "posix";
+
+/** The command that makes a folder into a project. The Runtime needs an explicit loopback bind,
+ * and the documented discovery port is 8791. */
+function commandFor(folder: string, shell: Shell): string {
   const target = folder.trim().length > 0 ? folder.trim() : "<path to the folder>";
-  // `;` rather than `&&`: the panel shows a Windows-style path, and Windows PowerShell 5.1
-  // rejects `&&` outright - the copied command has to run in the shell the example implies
-  // (PR #467 review). If the cd fails, serve then refuses on the missing events dir, which is
-  // the same stop one step later with a clearer message.
-  return `cd "${target}"; graphhelm serve --events .graphhelm/events`;
+  if (shell === "powershell") {
+    const escapedTarget = target.replaceAll("'", "''");
+    // PowerShell 5.1 does not support `&&`. Checking `$?` keeps the copied command safe when the
+    // folder does not exist, while `-LiteralPath` prevents wildcard expansion in the path.
+    return `Set-Location -LiteralPath '${escapedTarget}'; if ($?) { graphhelm serve --events .graphhelm/events --bind 127.0.0.1:8791 }`;
+  }
+  const escapedTarget = target.replaceAll("'", "'\\''");
+  return `cd '${escapedTarget}' && graphhelm serve --events .graphhelm/events --bind 127.0.0.1:8791`;
 }
 
 export function AddProject({ onClose }: { onClose: () => void }) {
   const [folder, setFolder] = useState("");
-  const [copied, setCopied] = useState(false);
-  const command = commandFor(folder);
+  const [copied, setCopied] = useState<Shell | null>(null);
+  const powershellCommand = commandFor(folder, "powershell");
+  const posixCommand = commandFor(folder, "posix");
 
-  const copy = () => {
+  const copy = (command: string, shell: Shell) => {
     void navigator.clipboard
       ?.writeText(command)
       .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1600);
+        setCopied(shell);
+        window.setTimeout(() => setCopied(null), 1600);
       })
       // A clipboard the browser refuses is not an error worth a banner: the command is on screen
       // and selectable, which is the fallback every operator already knows.
-      .catch(() => setCopied(false));
+      .catch(() => setCopied(null));
   };
 
   return (
@@ -79,16 +84,31 @@ export function AddProject({ onClose }: { onClose: () => void }) {
           onChange={(event) => setFolder(event.target.value)}
         />
 
-        <label className="lbl" htmlFor="add-project-command">
-          Run this there
+        <label className="lbl" htmlFor="add-project-command-powershell">
+          Run this in PowerShell
         </label>
-        <code id="add-project-command" className="command">
-          {command}
+        <code id="add-project-command-powershell" className="command">
+          {powershellCommand}
         </code>
 
-        <button type="button" className="send" onClick={copy}>
-          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          {copied ? "copied" : "copy the command"}
+        <button
+          type="button"
+          className="send"
+          onClick={() => copy(powershellCommand, "powershell")}
+        >
+          {copied === "powershell" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied === "powershell" ? "copied" : "copy PowerShell command"}
+        </button>
+        <label className="lbl" htmlFor="add-project-command-posix">
+          Run this in bash or zsh
+        </label>
+        <code id="add-project-command-posix" className="command">
+          {posixCommand}
+        </code>
+
+        <button type="button" className="send" onClick={() => copy(posixCommand, "posix")}>
+          {copied === "posix" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied === "posix" ? "copied" : "copy POSIX command"}
         </button>
         <span className="sr-only" role="status">{copied ? "Command copied" : ""}</span>
       </div>

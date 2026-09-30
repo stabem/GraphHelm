@@ -166,7 +166,26 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
     fs::write(&bad, br#"{"scopePaths":["src"],"unknown":1}"#).unwrap();
     let (code, reply) = run(repo.path(), Some(&bad));
     assert_eq!(code, 3, "{reply}");
-    assert_eq!(codes(&reply), vec!["GHCLI031_KEEL_CHECK_INPUT"]);
+    assert_eq!(codes(&reply), vec!["GHS002_SCHEMA"]);
+}
+
+#[test]
+fn a_schema_invalid_card_is_rejected_with_the_failing_field_path() {
+    let repo = repository(&[]);
+    let scratch = tempfile::tempdir().unwrap();
+    let bad = scratch.path().join("card.json");
+    fs::write(
+        &bad,
+        br#"{"promise":"","scopePaths":["src"],"proof":"cargo test"}"#,
+    )
+    .unwrap();
+
+    let (code, reply) = run(repo.path(), Some(&bad));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["ok"], false);
+    assert_eq!(codes(&reply), vec!["GHS002_SCHEMA"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "/promise");
+    assert_eq!(reply["diagnostics"][0]["source"], "keel-card");
 }
 
 /// #1333: `--prove-new-tests` on a fix whose inline `mod tests` adds one test that detects the bug

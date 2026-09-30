@@ -146,21 +146,37 @@ pub fn new_rust_tests(diff: &str) -> Vec<NewTest> {
             continue;
         }
         let inline = !is_test_path(&file.path);
-        for (index, line) in file.added.iter().enumerate() {
+        let mut added_line = 0u32;
+        for (index, line) in file.added_with_context.iter().enumerate() {
+            let Some(line) = line.strip_prefix('+') else {
+                continue;
+            };
+            added_line = added_line.saturating_add(1);
             let trimmed = line.trim_start();
             if !(trimmed.starts_with("#[test]") || trimmed.starts_with("#[tokio::test")) {
                 continue;
             }
-            let Some(name) = file.added[index + 1..]
-                .iter()
-                .find_map(|next| fn_name(next))
-            else {
-                continue;
-            };
+            let mut name = None;
+            for next in &file.added_with_context[index + 1..] {
+                let Some(next) = next.strip_prefix('+').or_else(|| next.strip_prefix(' ')) else {
+                    continue;
+                };
+                let next_trimmed = next.trim_start();
+                if next_trimmed.starts_with("#[test]") || next_trimmed.starts_with("#[tokio::test")
+                {
+                    break;
+                }
+                if let Some(found) = fn_name(next) {
+                    name = Some(found);
+                    break;
+                }
+            }
+            let name =
+                name.unwrap_or_else(|| format!("__keel_unidentified_rust_test_{added_line}"));
             out.push(NewTest {
                 name,
                 path: file.path.clone(),
-                line: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                line: added_line,
                 inline,
             });
         }
@@ -911,6 +927,24 @@ mod tests {
         assert_eq!(verdict(Failed, Failed), TestVerdict::RedOnHead);
         assert_eq!(verdict(TimedOut, Passed), TestVerdict::Unproven);
         assert_eq!(verdict(Failed, NotFound), TestVerdict::Unproven);
+    }
+
+    #[test]
+    fn an_attribute_added_above_an_unchanged_rust_test_is_proven() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n pub fn answer() -> u32 { 42 }\n \n+#[test]\n fn answer_is_forty_two() { assert_eq!(answer(), 42); }\n";
+        let tests = new_rust_tests(diff);
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].name, "answer_is_forty_two");
+        assert_eq!(tests[0].path, "src/lib.rs");
+        assert_eq!(tests[0].line, 1);
+    }
+
+    #[test]
+    fn an_unidentified_rust_test_still_gets_an_unproven_entry() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n pub fn answer() -> u32 { 42 }\n+#[test]\n";
+        let tests = new_rust_tests(diff);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].name.starts_with("__keel_unidentified_rust_test_"));
     }
 
     #[test]

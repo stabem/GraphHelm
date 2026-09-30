@@ -168,10 +168,12 @@ export function Models({
   };
 
   const requestDiscard = (panel: boolean) => {
-    if (partialBaseline !== null && !confirmDiscard) {
-      setDiscardPanel(panel);
-      setConfirmDiscard(true);
-      setValidationError("The route was saved, but the API key was not stored. Keep this panel open to retry, or confirm discard.");
+    if (partialBaseline !== null) {
+      if (!confirmDiscard) {
+        setDiscardPanel(panel);
+        setConfirmDiscard(true);
+        setValidationError("The route was saved, but the API key was not stored. Keep this panel open to retry, or confirm discard.");
+      }
       return;
     }
     if (panel) onClose();

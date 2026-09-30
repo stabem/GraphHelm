@@ -780,19 +780,37 @@ fn run_bounded(mut command: Command, timeout: Duration) -> Result<Option<Finishe
             .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
     ]
     .map(|pipe| {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(mut pipe) = pipe {
                 let _ = pipe.read_to_end(&mut bytes);
             }
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
+            let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        receiver
     });
     let started = Instant::now();
+    let deadline = started + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let [out, err] = readers.map(|reader| reader.join().unwrap_or_default());
+                if Instant::now() >= deadline {
+                    return Ok(None);
+                }
+                let read_to_deadline = |reader: &std::sync::mpsc::Receiver<String>| match reader
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(output) => Some(output),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(String::new()),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                };
+                let Some(out) = read_to_deadline(&readers[0]) else {
+                    return Ok(None);
+                };
+                let Some(err) = read_to_deadline(&readers[1]) else {
+                    return Ok(None);
+                };
                 return Ok(Some((status.success(), out, err)));
             }
             Ok(None) if started.elapsed() >= timeout => {
@@ -898,6 +916,40 @@ mod tests {
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert!(!dir.exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe() {
+        if std::env::var_os("KEEL_PROVE_PIPE_CHILD").is_some() {
+            std::thread::sleep(Duration::from_secs(1));
+            return;
+        }
+        if std::env::var_os("KEEL_PROVE_PIPE_PARENT").is_some() {
+            let _child = Command::new(std::env::current_exe().unwrap())
+                .arg(
+                    "a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe",
+                )
+                .env("KEEL_PROVE_PIPE_CHILD", "1")
+                .spawn()
+                .unwrap();
+            return;
+        }
+
+        let started = Instant::now();
+        let result = run_bounded(
+            {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .arg("a_finished_process_cannot_extend_the_proof_deadline_through_an_inherited_pipe")
+                    .env("KEEL_PROVE_PIPE_PARENT", "1");
+                command
+            },
+            Duration::from_millis(100),
+        )
+        .unwrap();
+
+        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

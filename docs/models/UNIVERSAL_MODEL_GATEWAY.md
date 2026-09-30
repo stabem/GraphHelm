@@ -535,3 +535,40 @@ Per route:
 - native runtime tools are mediated/audited to the extent supported;
 - stale provider metadata generates a warning;
 - the local model route is a first-class citizen.
+
+## Stable-prefix BYOK prompt caching
+
+Prompt caching is opt-in per direct-API route. The optional `promptCache` capability declaration
+must match the operator-selected provider/model:
+
+- `anthropic_ephemeral`: Anthropic Messages text blocks, with one `cache_control` breakpoint on
+  the stable prefix using the provider's default ephemeral lifetime
+- `openai_implicit`: OpenAI Chat Completions, with stable and variable content in separate user
+  messages so the stable message ending remains a reusable prefix boundary; no Anthropic cache
+  control or model-specific explicit-cache parameter is sent
+
+The Runtime keeps `ModelCall.prompt` as its complete legacy flattened text and adds optional
+`stablePrefix` containing only the assembled trusted system text plus its existing separator.
+Changing context, task, execution and attempt identity remain after that prefix, including all
+untrusted-context delimiters. The adapter verifies that the declared prefix is literally the
+beginning of the full prompt. Inconsistent metadata refuses before HTTP instead of dropping or
+rewriting content. Concatenating the emitted text parts reproduces the original prompt exactly;
+all parts retain the existing user role, so caching does not promote retrieved content to a
+higher instruction level.
+
+Absent route capability preserves the old one-message string body, even when prefix metadata is
+available. A legacy call without a useful prefix also keeps that body on an opted-in route.
+Native-runtime calls keep the full flattened prompt; cache policy for the external host is not
+controlled by this BYOK setting. A native or mismatched-provider cache declaration is refused.
+No model or output-budget selection changes accompany caching.
+
+A capability declaration and a request breakpoint are not cache-hit evidence. Record the actual
+provider-reported cache counters and their provenance in the existing attempt receipts; missing
+counters remain unknown. Cache writes may cost more than ordinary input, and model minimums,
+lifetime, routing and request shape affect reuse. Compare cold and repeated calls, total cost per
+proven delivery and quality before claiming a saving. These offline request fixtures prove
+content preservation and dispatch only, not provider acceptance, model adherence or cost benefit.
+The operator must verify model support before enabling a route. Current provider references:
+[Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+(checked 2026-09-30).

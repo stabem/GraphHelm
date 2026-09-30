@@ -53,6 +53,7 @@ fn sentinel_key() -> SecretBytes {
 
 fn call(prompt: &str, max_tokens: u32) -> ModelCall {
     ModelCall {
+        stable_prefix: None,
         prompt: prompt.to_owned(),
         max_tokens,
         max_output_tokens: None,
@@ -909,4 +910,140 @@ fn issue178_openai_cap_without_parameter_refuses_before_http() {
             "an unreadable explicit ceiling cannot silently become absence"
         );
     }
+}
+
+#[test]
+fn stable_prefix_cache_requests_preserve_text_and_are_provider_capability_aware() {
+    // Contract: opt-in cache hints mark only a stable prefix, preserving exact text and legacy
+    // calls. Regression: one flat string cannot mark an Anthropic prefix or a stable message
+    // boundary. Existing tests cover usage/limits, not cache request construction. Offline HTTP.
+    for (provider, policy) in [
+        ("anthropic", "anthropic_ephemeral"),
+        ("openai", "openai_implicit"),
+    ] {
+        let mut prefixes = Vec::new();
+        for task in ["variable task one", "variable task two"] {
+            let response = if provider == "anthropic" {
+                r#"{"content":[{"type":"text","text":"ok"}]}"#
+            } else {
+                r#"{"choices":[{"message":{"content":"ok"}}]}"#
+            };
+            let (base, captured) = fake_server(200, response);
+            let route = serde_json::json!({
+                "id":"cache_route", "provider":provider, "transport":"direct_api",
+                "authentication":"api_key", "billingMode":"per_token", "baseUrl":base,
+                "model":"operator-declared-model", "credentialRef":"secret_test",
+                "profiles":["balanced_reasoning"], "enabled":true, "promptCache":policy
+            });
+            let manifest = RouteManifest::from_json(
+                &serde_json::json!({
+                    "manifestVersion":1,"routes":[route]
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let prefix = "stable trusted instructions\n";
+            let variable = format!("UNTRUSTED EXCERPTS\n{task}\nEND EXCERPTS");
+            let prompt = format!("{prefix}{variable}");
+            let request: ModelCall = serde_json::from_value(serde_json::json!({
+                "prompt":prompt,"maxTokens":4096,"stablePrefix":prefix
+            }))
+            .unwrap();
+            ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()))
+                .call(&sentinel_key(), &request)
+                .unwrap();
+            let sent = captured.recv_timeout(Duration::from_secs(5)).unwrap().body;
+            let (first, second) = if provider == "anthropic" {
+                let blocks = &sent["messages"][0]["content"];
+                assert_eq!(
+                    blocks[0]["cache_control"],
+                    serde_json::json!({"type":"ephemeral"})
+                );
+                assert!(blocks[1].get("cache_control").is_none());
+                (
+                    blocks[0]["text"].as_str().unwrap(),
+                    blocks[1]["text"].as_str().unwrap(),
+                )
+            } else {
+                assert!(!sent.to_string().contains("cache_control"));
+                assert_eq!(sent["messages"][0]["role"], "user");
+                assert_eq!(sent["messages"][1]["role"], "user");
+                (
+                    sent["messages"][0]["content"].as_str().unwrap(),
+                    sent["messages"][1]["content"].as_str().unwrap(),
+                )
+            };
+            assert_eq!(first, prefix);
+            assert_eq!(second, variable);
+            assert_eq!(format!("{first}{second}"), prompt);
+            prefixes.push(first.to_owned());
+        }
+        assert_eq!(prefixes[0], prefixes[1]);
+    }
+    let (base, captured) = fake_server(200, r#"{"content":[{"type":"text","text":"ok"}]}"#);
+    let manifest = build_manifest(&base, "anthropic");
+    let request: ModelCall = serde_json::from_value(serde_json::json!({
+        "prompt":"stable\nvariable","maxTokens":4096,"stablePrefix":"stable\n"
+    }))
+    .unwrap();
+    ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()))
+        .call(&sentinel_key(), &request)
+        .unwrap();
+    assert_eq!(
+        captured.recv_timeout(Duration::from_secs(5)).unwrap().body["messages"][0]["content"],
+        "stable\nvariable"
+    );
+
+    struct NoHttp;
+    impl graphhelm_model_gateway::transport::HttpTransport for NoHttp {
+        fn execute(
+            &self,
+            _: &TransportRequest,
+        ) -> Result<
+            graphhelm_model_gateway::transport::TransportResponse,
+            graphhelm_model_gateway::transport::TransportError,
+        > {
+            panic!("inconsistent cache metadata must refuse before HTTP")
+        }
+    }
+    let mut route = serde_json::json!({
+        "id":"cache_route", "provider":"anthropic", "transport":"direct_api",
+        "authentication":"api_key", "billingMode":"per_token", "baseUrl":"http://127.0.0.1:1",
+        "model":"operator-declared-model", "credentialRef":"secret_test",
+        "profiles":["balanced_reasoning"], "enabled":true, "promptCache":"anthropic_ephemeral"
+    });
+    let manifest = RouteManifest::from_json(
+        &serde_json::json!({
+            "manifestVersion":1,"routes":[route.clone()]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mismatched: ModelCall = serde_json::from_value(serde_json::json!({
+        "prompt":"the actual task", "maxTokens":4096, "stablePrefix":"unrelated prefix"
+    }))
+    .unwrap();
+    assert_eq!(
+        ByokAdapter::new(&manifest.routes()[0], Arc::new(NoHttp))
+            .call(&sentinel_key(), &mismatched)
+            .unwrap_err(),
+        GatewayError::UnsupportedCapability
+    );
+    route["provider"] = "openai".into();
+    assert!(
+        RouteManifest::from_json(
+            &serde_json::json!({
+                "manifestVersion":1,"routes":[route]
+            })
+            .to_string()
+        )
+        .is_err()
+    );
+    let native = serde_json::json!({"manifestVersion":1,"routes":[{
+        "id":"native_cache", "provider":"anthropic", "transport":"native_runtime",
+        "runtime":"claude_code", "authentication":"account_subscription", "billingMode":"subscription_quota",
+        "command":{"program":"claude","args":[]}, "profiles":["balanced_reasoning"], "enabled":true,
+        "promptCache":"anthropic_ephemeral"
+    }]});
+    assert!(RouteManifest::from_json(&native.to_string()).is_err());
 }

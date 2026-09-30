@@ -29,6 +29,10 @@ pub struct ModelCall {
     /// An explicit ceiling, separate from the legacy hint; absence preserves old wire behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<std::num::NonZeroU32>,
+    /// Exact stable initial bytes of `prompt`, separately identified for opt-in provider caching.
+    /// The complete flattened prompt remains authoritative for legacy and native callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_prefix: Option<String>,
 }
 
 /// A transport-successful reply: text, usage and any reported completion state.

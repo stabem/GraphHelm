@@ -401,3 +401,41 @@ fn issue178_incomplete_plain_and_judge_replies_are_terminal_with_sealed_reason()
         }
     }
 }
+
+#[test]
+fn cognitive_calls_keep_the_stable_prefix_separate_from_changing_untrusted_context() {
+    // Contract: the actual model port receives stable trusted bytes separately, while the full
+    // legacy prompt and untrusted fences are unchanged. Existing outcome tests never inspect it.
+    // Cost: two in-memory model I/O calls, under 0.01 seconds, no credentials or process.
+    struct Capture(std::sync::Mutex<Vec<ModelCall>>);
+    impl ModelPort for Capture {
+        fn call<'a>(
+            &'a self,
+            _: &'a str,
+            call: &'a ModelCall,
+        ) -> Pin<Box<dyn Future<Output = Result<ModelReply, GatewayError>> + Send + 'a>> {
+            self.0.lock().unwrap().push(call.clone());
+            Box::pin(async { Ok(reply("done")) })
+        }
+    }
+    let model = Arc::new(Capture(std::sync::Mutex::new(Vec::new())));
+    let mut executor = executor(
+        Ok(reply("done")),
+        ToolDisposition::Completed { exit_code: 0 },
+    );
+    executor.model = model.clone();
+    for variable in ["first untrusted excerpt", "second untrusted excerpt"] {
+        let mut work = cognitive_work();
+        work.prompt.system = "stable trusted instructions".to_owned();
+        work.prompt.context = variable.to_owned();
+        work.prompt.task = format!("task about {variable}");
+        let expected = graphhelm_runtime::executor::wire_prompt(&work.prompt);
+        block_on(executor.execute(&work)).unwrap();
+        let calls = model.0.lock().unwrap();
+        let call = calls.last().unwrap();
+        assert_eq!(call.prompt, expected);
+        let wire = serde_json::to_value(call).unwrap();
+        assert_eq!(wire["stablePrefix"], "stable trusted instructions\n");
+        assert!(call.prompt.contains(variable));
+    }
+}

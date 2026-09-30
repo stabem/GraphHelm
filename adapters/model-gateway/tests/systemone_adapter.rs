@@ -259,6 +259,7 @@ fn a_typesafe_route_on_the_draft_door_is_unsupported_and_sends_nothing() {
     let manifest = build_manifest(&base_url, "typesafe");
     let adapter = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()));
     let call = ModelCall {
+        stable_prefix: None,
         prompt: "draft a graph".to_owned(),
         max_tokens: 16,
         max_output_tokens: None,

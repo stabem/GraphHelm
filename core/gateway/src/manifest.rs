@@ -126,6 +126,15 @@ pub enum OpenAiOutputTokenParameter {
     MaxCompletionTokens,
 }
 
+/// Operator-declared prompt-cache request capability for this provider/model route.
+/// Absence keeps legacy request formatting. A declaration is never evidence of a cache hit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptCache {
+    AnthropicEphemeral,
+    OpenaiImplicit,
+}
+
 /// One validated route. The only way to obtain one is through [`RouteManifest::from_json`], so a
 /// live `ModelRoute` has already satisfied every structural rule this module enforces.
 #[derive(Clone, Debug, Deserialize)]
@@ -154,6 +163,8 @@ pub struct ModelRoute {
     max_output_tokens: Option<std::num::NonZeroU32>,
     #[serde(default)]
     output_token_parameter: Option<OpenAiOutputTokenParameter>,
+    #[serde(default)]
+    prompt_cache: Option<PromptCache>,
 }
 
 const fn default_timeout_seconds() -> u64 {
@@ -224,6 +235,11 @@ impl ModelRoute {
     #[must_use]
     pub const fn timeout_seconds(&self) -> u64 {
         self.timeout_seconds
+    }
+
+    #[must_use]
+    pub const fn prompt_cache(&self) -> Option<PromptCache> {
+        self.prompt_cache
     }
 
     /// Explicit route ceiling; no implicit output default is introduced.
@@ -482,6 +498,20 @@ fn validate_route(route: &ModelRoute) -> Result<(), ManifestError> {
         return Err(ManifestError::BillingTransportMismatch {
             route_id: route.id.clone(),
         });
+    }
+
+    if let Some(cache) = route.prompt_cache {
+        let compatible = route.transport == Transport::DirectApi
+            && match cache {
+                PromptCache::AnthropicEphemeral => route.provider == "anthropic",
+                PromptCache::OpenaiImplicit => route.provider == "openai",
+            };
+        if !compatible {
+            return Err(ManifestError::StructuralViolation {
+                route_id: route.id.clone(),
+                rule: "promptCache must match the direct API provider capability",
+            });
+        }
     }
 
     match route.transport {

@@ -598,6 +598,7 @@ struct ServeDraftModel {
 impl DraftModel for ServeDraftModel {
     fn draft(&self, prompt: &str) -> Result<DraftReply, ArchitectRefusal> {
         let call = ModelCall {
+            stable_prefix: None,
             prompt: prompt.to_owned(),
             max_tokens: architect::MAX_TOKENS,
             max_output_tokens: None,
@@ -1009,7 +1010,7 @@ pub(super) async fn reply_suggestions(
             };
             let Ok(chat) = tokio::runtime::Handle::current().block_on(chat_port.call(
                 chat_route.id(),
-                &ModelCall { prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None },
+                &ModelCall { stable_prefix: None, prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None },
             )) else { continue };
             if chat.is_incomplete() { break; }
             let Some(candidates) = parse_reply_candidates(&chat.text) else { continue };

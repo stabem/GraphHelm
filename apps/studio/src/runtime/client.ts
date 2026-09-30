@@ -62,6 +62,9 @@ export const MAX_LIST_LIMIT = 100;
  * refuses cannot drift apart and start disagreeing about what is too long. */
 export const MAX_MESSAGE_LENGTH = 4000;
 
+/** Every Runtime round trip, including reading its response body, has a finite silence budget. */
+export const RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
+
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
 /** The bound `resume` has always applied to a graph path, now named so three verbs share it. */
@@ -218,6 +221,13 @@ export class DisconnectedError extends Error {
   constructor() {
     super("This Studio session was disconnected. Connect again to continue.");
     this.name = "DisconnectedError";
+  }
+}
+
+class RequestDeadlineError extends Error {
+  constructor() {
+    super("The Runtime did not answer before the request deadline.");
+    this.name = "RequestDeadlineError";
   }
 }
 
@@ -382,6 +392,7 @@ export class RuntimeClient {
   #token: string | null;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
+  #activeRequests = new Set<AbortController>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
 
@@ -398,6 +409,8 @@ export class RuntimeClient {
    * sending `Bearer null`. */
   dispose(): void {
     this.#token = null;
+    for (const controller of this.#activeRequests) controller.abort();
+    this.#activeRequests.clear();
   }
 
   get connected(): boolean {
@@ -417,45 +430,81 @@ export class RuntimeClient {
   async #request<T>({ method, path, body, headers = {} }: RequestOptions): Promise<T> {
     const token = this.#token;
     if (token === null) throw new DisconnectedError();
-
-    let response: Response;
+    const controller = new AbortController();
+    this.#activeRequests.add(controller);
+    let deadlineReached = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      deadlineTimer = setTimeout(() => {
+        deadlineReached = true;
+        controller.abort();
+        reject(new RequestDeadlineError());
+      }, RUNTIME_REQUEST_TIMEOUT_MS);
+    });
+    const cancelled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => {
+        if (!deadlineReached) reject(new DisconnectedError());
+      }, { once: true });
+    });
     try {
-      response = await this.#fetch(`${this.#baseUrl}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...headers,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    } catch {
+      const response = await Promise.race([
+        this.#fetch(`${this.#baseUrl}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+            ...headers,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: controller.signal,
+        }),
+        deadline,
+        cancelled,
+      ]);
+
+      let envelope: Envelope<T>;
+      try {
+        envelope = (await Promise.race([response.json(), deadline, cancelled])) as Envelope<T>;
+      } catch (error) {
+        if (error instanceof RequestDeadlineError || deadlineReached) throw new RequestDeadlineError();
+        if (error instanceof DisconnectedError) throw error;
+        throw new RuntimeError(
+          response.status === 401
+            ? "The bearer token was refused."
+            : `The Runtime replied ${response.status} with a body this client could not read.`,
+          response.status,
+          [],
+        );
+      }
+
+      if (!response.ok || envelope.ok !== true || envelope.data === null) {
+        const diagnostics = Array.isArray(envelope.diagnostics) ? envelope.diagnostics : [];
+        const message =
+          diagnostics[0]?.message ??
+          (response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`);
+        throw new RuntimeError(message, response.status, diagnostics);
+      }
+      return envelope.data;
+    } catch (error) {
+      if (error instanceof DisconnectedError) throw error;
+      if (error instanceof RuntimeError) throw error;
+      if (error instanceof RequestDeadlineError || deadlineReached) {
+        const message = "The Runtime did not answer before the request deadline.";
+        throw new RuntimeError(message, 0, [{
+          code: "GHSTUDIO_REQUEST_TIMEOUT",
+          severity: "error",
+          message,
+          path: "/",
+          source: "studio",
+        }]);
+      }
       // The transport error's own text is discarded: browsers put the request URL in it, and the
       // Studio must not turn a network hiccup into a place where a request detail is surfaced.
       throw new RuntimeError("The Runtime could not be reached at this address.", 0, []);
+    } finally {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+      this.#activeRequests.delete(controller);
     }
-
-    let envelope: Envelope<T>;
-    try {
-      envelope = (await response.json()) as Envelope<T>;
-    } catch {
-      throw new RuntimeError(
-        response.status === 401
-          ? "The bearer token was refused."
-          : `The Runtime replied ${response.status} with a body this client could not read.`,
-        response.status,
-        [],
-      );
-    }
-
-    if (!response.ok || envelope.ok !== true || envelope.data === null) {
-      const diagnostics = Array.isArray(envelope.diagnostics) ? envelope.diagnostics : [];
-      const message =
-        diagnostics[0]?.message ??
-        (response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`);
-      throw new RuntimeError(message, response.status, diagnostics);
-    }
-    return envelope.data;
   }
 
   /**

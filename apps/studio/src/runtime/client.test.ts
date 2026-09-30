@@ -5,6 +5,7 @@ import {
   OPERATOR_ACTOR,
   RuntimeClient,
   RuntimeError,
+  RUNTIME_REQUEST_TIMEOUT_MS,
   WEBMCP_ACTOR,
 } from "./client";
 
@@ -75,6 +76,27 @@ function statusData(overrides: Record<string, unknown> = {}) {
 }
 
 describe("RuntimeClient reads", () => {
+  it("bounds a response body that never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: () => new Promise<unknown>(() => {}),
+      }) as Response) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const read = client.listExecutions();
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      await expect(read).rejects.toMatchObject({
+        code: "GHSTUDIO_REQUEST_TIMEOUT",
+        httpStatus: 0,
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("unwraps the four-key envelope and returns only its data", async () => {
     const { fetchImpl } = scriptedFetch([
       { match: (call) => call.url === "/v1/executions", reply: ok({ executions: [], hasMore: false, nextCursor: null }, "execution.list") },

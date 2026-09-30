@@ -553,15 +553,17 @@ export default function App({
    * a dead Runtime was indistinguishable from a quiet room under a badge stuck on "live". */
   const pollMisses = useRef(0);
   const [stale, setStale] = useState(false);
-  /** One tick at a time: a Runtime slower than the interval stacked concurrent reads whose
-   * commits could land out of order and paint stale status for a whole interval. */
-  const tickBusy = useRef(false);
+  const pollGeneration = useRef(0);
   useEffect(() => {
     if (!connected || selected === "") return;
+    const generation = ++pollGeneration.current;
+    let tickBusy = false;
+    pollMisses.current = 0;
+    setStale(false);
     const timer = setInterval(() => {
       const client = clientRef.current;
-      if (!client || tickBusy.current) return;
-      tickBusy.current = true;
+      if (!client || tickBusy) return;
+      tickBusy = true;
       void (async () => {
         try {
           // Incremental: only what the log grew since the last read. A quiet tick leaves the
@@ -592,7 +594,7 @@ export default function App({
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and
           // a tick that started against A must not paint B (PR #467 review, P1).
-          if (clientRef.current !== client || selectedRef.current !== selected) return;
+          if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
           for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
           setStatus(nextStatus);
           // The refresh covers what it read and prepends what is new; rows beyond the read
@@ -624,15 +626,18 @@ export default function App({
         } catch {
           // A single transient miss stays quiet on purpose - but persistent failure must not:
           // the screen aging under a "live" badge happened for real (server died mid-session).
-          if (clientRef.current !== client) return;
+          if (pollGeneration.current !== generation || clientRef.current !== client) return;
           pollMisses.current += 1;
           if (pollMisses.current >= 3) setStale(true);
         } finally {
-          tickBusy.current = false;
+          tickBusy = false;
         }
       })();
     }, pollIntervalMs);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      tickBusy = false;
+    };
   }, [connected, selected, pollIntervalMs, readEvents]);
 
   const loadList = useCallback(

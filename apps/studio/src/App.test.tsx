@@ -3081,6 +3081,40 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
 });
 
 describe("round-4: the instruments admit their own state", () => {
+  it("lets a new connection poll while the old connection's read is still pending", async () => {
+    let releaseOldRead!: () => void;
+    const oldRead = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+    let statusReads = 0;
+    const first = stubClient({
+      getStatus: vi.fn(async () => {
+        statusReads += 1;
+        if (statusReads > 1) await oldRead;
+        return { ...STATUS };
+      }),
+    });
+    const second = stubClient();
+    const createClient = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    render(
+      <App
+        createClient={createClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={25}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await waitFor(() => expect(statusReads).toBeGreaterThan(1));
+
+    await userEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }));
+    await userEvent.type(await screen.findByLabelText(/bearer token/i), "new-token");
+    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await screen.findByRole("navigation", { name: "Projects" });
+    const readsAfterConnect = second.getStatus.mock.calls.length;
+    await waitFor(() => expect(second.getStatus.mock.calls.length).toBeGreaterThan(readsAfterConnect));
+    releaseOldRead();
+  });
+
   /** Every sealed item was opened twice (hooks + the Said bubble), and a second panel
    * re-fetched everything: the cache's own comment claimed sharing the code did not do. */
   it("opens each sealed item exactly once across the whole page", async () => {

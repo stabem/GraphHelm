@@ -82,11 +82,12 @@ describe("RuntimeClient reads", () => {
       const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
       const client = new RuntimeClient("tok", { fetch: fetchImpl });
       const read = client.listExecutions();
-      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
-      await expect(read).rejects.toMatchObject({
+      const rejection = expect(read).rejects.toMatchObject({
         code: "GHSTUDIO_REQUEST_TIMEOUT",
         httpStatus: 0,
       });
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      await rejection;
       expect(fetchImpl).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
@@ -103,11 +104,12 @@ describe("RuntimeClient reads", () => {
       }) as Response) as unknown as typeof fetch;
       const client = new RuntimeClient("tok", { fetch: fetchImpl });
       const read = client.listExecutions();
-      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
-      await expect(read).rejects.toMatchObject({
+      const rejection = expect(read).rejects.toMatchObject({
         code: "GHSTUDIO_REQUEST_TIMEOUT",
         httpStatus: 0,
       });
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      await rejection;
       expect(fetchImpl).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();

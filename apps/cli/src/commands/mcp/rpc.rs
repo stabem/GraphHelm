@@ -23,7 +23,11 @@ pub(crate) const INVALID_PARAMS: i64 = -32602;
 /// does not serve and `-32602` for params it refuses.
 pub(crate) enum HandlerOutcome {
     Result(serde_json::Value),
-    Error { code: i64, message: String },
+    Error {
+        code: i64,
+        message: String,
+        data: Option<serde_json::Value>,
+    },
 }
 
 fn reply_result(id: &serde_json::Value, result: serde_json::Value) -> serde_json::Value {
@@ -145,8 +149,16 @@ pub(crate) fn run<R: Read, W: Write, S>(
         };
         match outcome {
             HandlerOutcome::Result(result) => write_line(writer, &reply_result(id, result))?,
-            HandlerOutcome::Error { code, message } => {
-                write_line(writer, &reply_error(id, code, &message))?;
+            HandlerOutcome::Error {
+                code,
+                message,
+                data,
+            } => {
+                let mut reply = reply_error(id, code, &message);
+                if let Some(data) = data {
+                    reply["error"]["data"] = data;
+                }
+                write_line(writer, &reply)?;
             }
         }
     }
@@ -171,6 +183,7 @@ mod tests {
             "tools/call" => {
                 if params.get("name").and_then(|name| name.as_str()).is_none() {
                     return HandlerOutcome::Error {
+                        data: None,
                         code: INVALID_PARAMS,
                         message: "tools/call requires a string \"name\"".to_owned(),
                     };
@@ -178,6 +191,7 @@ mod tests {
                 HandlerOutcome::Result(serde_json::json!({}))
             }
             _ => HandlerOutcome::Error {
+                data: None,
                 code: METHOD_NOT_FOUND,
                 message: format!("method {method:?} is not part of this server"),
             },

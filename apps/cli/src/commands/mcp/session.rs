@@ -138,6 +138,7 @@ pub(crate) fn handle(
         }
         "ping" => HandlerOutcome::Result(serde_json::json!({})),
         "tools/list" | "tools/call" if !state.initialized => HandlerOutcome::Error {
+            data: None,
             code: INVALID_REQUEST,
             message: "the server is not initialized: send initialize and \
                       notifications/initialized first"
@@ -149,22 +150,27 @@ pub(crate) fn handle(
         // unretryable), so the server refuses to run it at all — and per the notification
         // rule no reply is written either (the rpc layer discards this outcome's envelope).
         "tools/call" if rpc_id.is_null() => HandlerOutcome::Error {
+            data: None,
             code: INVALID_REQUEST,
             message: "tools/call requires an id".to_owned(),
         },
         "tools/call" => {
             let Some(name) = _params.get("name").and_then(serde_json::Value::as_str) else {
                 return HandlerOutcome::Error {
+                    data: None,
                     code: super::rpc::INVALID_PARAMS,
                     message: "tools/call requires a string \"name\"".to_owned(),
                 };
             };
+            // MCP permits omitted arguments for no-argument tools. Explicit null is still
+            // invalid; transport `_meta` belongs to params, outside the closed tool schema.
             let arguments = _params
                 .get("arguments")
                 .cloned()
-                .unwrap_or(serde_json::Value::Null);
+                .unwrap_or_else(|| serde_json::json!({}));
             let Some(client) = state.client.as_ref() else {
                 return HandlerOutcome::Error {
+                    data: None,
                     code: super::rpc::INVALID_REQUEST,
                     message: "the server has no API client configured".to_owned(),
                 };
@@ -185,12 +191,14 @@ pub(crate) fn handle(
                     &decision,
                 ) {
                     return HandlerOutcome::Error {
+                        data: None,
                         code: super::rpc::INVALID_REQUEST,
                         message: format!("capability refused: {write_error}"),
                     };
                 }
                 if let Err(refusal) = decision {
                     return HandlerOutcome::Error {
+                        data: None,
                         code: super::rpc::INVALID_REQUEST,
                         message: format!("capability refused: {refusal}"),
                     };
@@ -199,6 +207,7 @@ pub(crate) fn handle(
             super::tools::call(client, &state.nonce, rpc_id, name, &arguments)
         }
         _ => HandlerOutcome::Error {
+            data: None,
             code: METHOD_NOT_FOUND,
             message: format!("method {method:?} is not part of this server"),
         },

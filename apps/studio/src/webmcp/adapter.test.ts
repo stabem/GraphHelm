@@ -262,8 +262,8 @@ describe("registration", () => {
    * immediate pause that came back `unknown` hands the agent its key in the evidence; calling
    * again with that key reaches the client with the SAME key, so the Runtime can recognize the
    * retry and the result is tied to the original attempt. Absent -> minted; malformed ->
-   * refused, never replaced by a mint. start_task keeps its own mint (it mints the execution
-   * id per call too, so a key alone cannot name the attempt it would retry). */
+   * refused, never replaced by a mint. start_task requires its execution id and key together for
+   * the same reason: a key alone cannot name the graph body and stream it would retry. */
   it("reuses the returned idempotencyKey on a retry, mints one when absent, refuses a malformed one", async () => {
     let attempts = 0;
     const client = stubClient({
@@ -303,7 +303,9 @@ describe("registration", () => {
       expect(Object.keys(tool.inputSchema.properties as object)).toContain("idempotencyKey");
     }
     const start = registered.find((tool) => tool.name === "graphhelm_start_task")!;
-    expect(Object.keys(start.inputSchema.properties as object)).not.toContain("idempotencyKey");
+    expect(Object.keys(start.inputSchema.properties as object)).toEqual(
+      expect.arrayContaining(["executionId", "idempotencyKey"]),
+    );
   });
 
   it("falls back cleanly when the browser has no model context, and the page keeps working", () => {
@@ -746,6 +748,47 @@ describe("the exchange tools", () => {
     expect(options).not.toHaveProperty("route");
     expect(hook.selected).toEqual([executionId]);
     expect(hook.mutations).toHaveLength(1);
+  });
+
+  it("retries an uncertain start with the original execution, graph, actor, and key", async () => {
+    let attempts = 0;
+    const client = stubClient({
+      startTask: vi.fn(async () => {
+        attempts += 1;
+        return { ...evidence("start"), result: attempts === 1 ? ("unknown" as const) : ("succeeded" as const) };
+      }),
+    });
+    const tools = toolsOf(client);
+    const start = tools.get("graphhelm_start_task")!;
+    const input = { objective: "retry this exact task", route: "sonnet" };
+
+    const first = JSON.parse(await start.execute(input));
+    const [firstId, firstGraph, firstOptions] = vi.mocked(client.startTask).mock.calls[0]!;
+    const firstKey = (firstOptions as { idempotencyKey: string }).idempotencyKey;
+    expect(first.result).toBe("unknown");
+
+    const second = JSON.parse(
+      await start.execute({ ...input, executionId: firstId, idempotencyKey: firstKey }),
+    );
+    const [secondId, secondGraph, secondOptions] = vi.mocked(client.startTask).mock.calls[1]!;
+    expect(second.result).toBe("succeeded");
+    expect(secondId).toBe(firstId);
+    expect(secondGraph).toEqual(firstGraph);
+    expect(secondOptions).toEqual(firstOptions);
+  });
+
+  it("refuses a partial start retry identity and does not call the client", async () => {
+    const client = stubClient();
+    const start = toolsOf(client).get("graphhelm_start_task")!;
+
+    for (const input of [
+      { objective: "new", executionId: "run-existing" },
+      { objective: "new", idempotencyKey: "key-existing" },
+    ]) {
+      const reply = JSON.parse(await start.execute(input));
+      expect(reply.ok).toBe(false);
+    }
+    expect(client.startTask).not.toHaveBeenCalled();
   });
 
   /** Order is load-bearing, and it crashed a real page before it was pinned (2026-08-30). The

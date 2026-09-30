@@ -236,7 +236,10 @@ fn reap_bounded(
 ) -> Result<bool, String> {
     #[cfg(windows)]
     if leader_already_exited {
-        return Ok(true);
+        return child
+            .wait()
+            .map(|status| status.success())
+            .map_err(|error| format!("reaping cargo failed: {error}"));
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     loop {
@@ -247,7 +250,10 @@ fn reap_bounded(
                 .map(|status| status.success())
                 .map_err(|error| format!("reaping cargo failed: {error}"));
             #[cfg(windows)]
-            return Ok(true);
+            return child
+                .wait()
+                .map(|status| status.success())
+                .map_err(|error| format!("reaping cargo failed: {error}"));
         }
         if std::time::Instant::now() >= deadline {
             return Err("process-tree cleanup could not reap cargo within 1s".into());

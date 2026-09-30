@@ -17,7 +17,7 @@ import App from "./App";
 import { saveProjectName, saveRemovedRuns } from "./studio-preferences";
 import { resetPanelCaches } from "./components/panel";
 import type { RuntimeClient } from "./runtime/client";
-import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError } from "./runtime/client";
+import { MAX_NODE_TIMEOUT_SECONDS, RuntimeError, RuntimeClient as ReadClient, RUNTIME_REQUEST_TIMEOUT_MS } from "./runtime/client";
 import type { GraphTopology, MutationEvidence } from "./runtime/types";
 import type { ModelContextLike, WebMcpToolDescriptor } from "./webmcp/adapter";
 import { digestOf } from "./runtime/customs";
@@ -306,7 +306,10 @@ describe("Studio organization and responsive navigation", () => {
     await userEvent.click(pause);
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
     await waitFor(() => expect(listExecutions.mock.calls.length).toBeGreaterThan(callsBeforePause));
-    await waitFor(() => expect(pause).toBeEnabled());
+    // The acknowledged pause at head 14 must not be undone by the stub's older head-13 read.
+    // Refresh observes that the action finished; pause correctly stays illegal on a paused run.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+    expect(pause).toBeDisabled();
     expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
     listExecutions.mockClear();
     view.rerender(<App {...props} pollIntervalMs={10} />);
@@ -905,6 +908,8 @@ describe("operator actions", () => {
    * Runtime's conflict comes back refused, and the REASON is on screen, nothing interrupted. */
   it("pins every dock verb to the head it rendered, and shows the conflict when the run moved", async () => {
     const client = stubClient({
+      sweep: vi.fn(async () => ({ ...PAUSED_EVIDENCE, action: "sweep" as const, statusAfter: { ...STATUS, headSequence: 14 } })),
+      pause: vi.fn(async () => ({ ...PAUSED_EVIDENCE, headBefore: 14, headAfter: 15, statusAfter: { ...STATUS, status: "paused", headSequence: 15 } })),
       pauseImmediately: vi.fn(async () => ({
         ...PAUSED_EVIDENCE,
         actor: { id: "studio-operator", type: "owner" as const },
@@ -925,13 +930,14 @@ describe("operator actions", () => {
     expect(optionsOf(vi.mocked(client.pauseImmediately).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
     expect(await screen.findByText(/the run moved since you looked/)).toBeInTheDocument();
 
-    // The same head on the other verbs the dock fires against the rendered run.
+    // Each verb uses the head currently rendered. Sweeping preserves running and advances to
+    // head 14; its older follow-up read must not put the dock back on head 13.
     await userEvent.click(screen.getByRole("button", { name: "sweep" }));
     await waitFor(() => expect(client.sweep).toHaveBeenCalled());
     expect(optionsOf(vi.mocked(client.sweep).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
-    expect(optionsOf(vi.mocked(client.pause).mock.calls, 1).ifMatch).toBe(STATUS.headSequence);
+    expect(optionsOf(vi.mocked(client.pause).mock.calls, 1).ifMatch).toBe(14);
     expect(client.approve).not.toHaveBeenCalled();
   });
 
@@ -1731,13 +1737,16 @@ describe("the attention verdict explains itself", () => {
       getStatus: vi.fn(async () => ({
         ...STATUS,
         status: paused ? "paused" : "running",
-        headSequence: 12,
+        headSequence: paused ? 13 : 12,
         attentionReasons: [{ kind: "blocked_node", node: "start" }],
         nodeStateCounts: { blocked: 1 },
       })),
       pause: vi.fn(async () => {
         paused = true;
-        return { ...PAUSED_EVIDENCE, statusAfter: { ...STATUS, status: "paused" } };
+        return { ...PAUSED_EVIDENCE, headBefore: 12, headAfter: 13, statusAfter: {
+          ...STATUS, status: "paused", headSequence: 13,
+          attentionReasons: [{ kind: "blocked_node", node: "start" }], nodeStateCounts: { blocked: 1 },
+        } };
       }),
       getEvents: vi.fn(async () => ({
         head: 12,
@@ -4365,4 +4374,134 @@ describe("a parked draft keeps its identity, not just its words", () => {
     await waitFor(() => expect(refreshButton).not.toBeDisabled());
   });
 
+});
+
+
+/** #197: optional naming must not hold required state behind its response, and neither a full
+ * load nor a poll may overwrite a newer observation of the same run. These tests use the real
+ * client deadline with controlled response bodies. Existing cross-run/error tests cover identity
+ * and refusal; they cannot catch a late snapshot of the SAME run. Cost: jsdom/fake clock only. */
+describe("execution reads preserve newer observed state", () => {
+  function readingFixture() {
+    let head = 2;
+    const reads: { path: string; after: number; head: number }[] = [];
+    let hold: (path: string, head: number) => Promise<void> | null = () => null;
+    const row = () => ({
+      executionId: "read-order", mode: "supervised", status: head === 2 ? "paused" : "running",
+      attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: head,
+    });
+    const fetch = vi.fn(async (url: string) => {
+      const parsed = new URL(url, "http://fixture.invalid");
+      const capturedHead = head;
+      const after = Number(parsed.searchParams.get("after") ?? 0);
+      reads.push({ path: parsed.pathname, after, head: capturedHead });
+      let data: unknown;
+      if (parsed.pathname === "/health") data = {};
+      else if (parsed.pathname === "/v1/executions") data = { executions: [row()], hasMore: false, nextCursor: null };
+      else if (parsed.pathname === "/v1/gateway/routes") data = { configured: false, routes: [] };
+      else if (parsed.pathname.endsWith("/briefing")) data = {
+        name: null, objective: "The current run objective", executor: null,
+        nextStep: { kind: "nothing" }, asOfSequence: capturedHead,
+      };
+      else if (parsed.pathname.endsWith("/events")) data = {
+        head: capturedHead,
+        events: [1, 2, 3].filter((sequence) => sequence > after && sequence <= capturedHead).map((sequence) => ({
+          sequence, eventId: `read-event-${sequence}`, occurredAt: "2026-09-30T12:00:00Z",
+          actor: { type: "system", id: "runtime" }, evidenceRefs: [],
+          kind: { type: sequence === 1 ? "execution_form_declared" : sequence === 2 ? "execution_paused" : "execution_resumed",
+            data: sequence === 1 ? { executionId: "read-order", nodeIds: ["step"], nodeTimeoutSeconds: {} } : { executionId: "read-order" } },
+        })),
+      };
+      else if (parsed.pathname === "/v1/executions/read-order") data = {
+        ...STATUS, ...row(), attentionReasons: [], nodeStateCounts: { ready: 1 },
+      };
+      else throw new Error(`unexpected fixture read: ${url}`);
+      const pending = hold(parsed.pathname, capturedHead);
+      return { ok: true, status: 200, json: async () => { if (pending) await pending; return { ok: true, data, diagnostics: [] }; } } as Response;
+    });
+    const client = new ReadClient("fixture-token", { fetch: fetch as typeof globalThis.fetch });
+    return {
+      reads,
+      setHead: (next: number) => { head = next; },
+      hold: (filter: typeof hold) => { hold = filter; },
+      render: () => render(<App createClient={() => client} modelContext={null} session={async () => ({ token: "fixture-token", project: null })} />),
+    };
+  }
+
+  async function settleReads() {
+    await act(async () => { for (let turn = 0; turn < 30; turn += 1) await Promise.resolve(); });
+  }
+
+  function expectCurrent() {
+    const summary = screen.getByLabelText("Now, last, and next");
+    expect(within(summary).getByText("running")).toBeInTheDocument();
+    expect(within(summary).getByText("Event #3 · execution resumed")).toBeInTheDocument();
+    expect(within(summary).queryByText("paused")).not.toBeInTheDocument();
+  }
+
+  it.each(["success", "body timeout"])("publishes required state before an optional briefing and preserves it after %s", async (outcome) => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const fixture = readingFixture();
+      fixture.hold((path) => path.endsWith("/briefing") ? pending : null);
+      fixture.render();
+      await settleReads();
+      expect(screen.getByRole("main", { name: "Work overview" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+      fixture.setHead(3);
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expectCurrent();
+      if (outcome === "success") {
+        await act(async () => { release(); });
+        await settleReads();
+        expect(within(screen.getByRole("main", { name: "Work overview" })).getByText("The current run objective")).toBeInTheDocument();
+      } else {
+        await act(async () => { await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS - 4000); });
+      }
+      expectCurrent();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(fixture.reads.filter((read) => read.path.endsWith("/briefing"))).toHaveLength(1);
+    } finally { cleanup(); vi.useRealTimers(); }
+  });
+
+  it("does not replace a newer poll with an older full event read", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const fixture = readingFixture();
+      fixture.hold((path, head) => path.endsWith("/events") && head === 2 ? pending : null);
+      fixture.render();
+      await settleReads();
+      expect(screen.getByText("Opening this run…")).toBeInTheDocument();
+      fixture.setHead(3);
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expectCurrent();
+      await act(async () => { release(); });
+      await settleReads();
+      expectCurrent();
+    } finally { cleanup(); vi.useRealTimers(); }
+  });
+
+  it("does not replace a newer manual refresh with an older poll status", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const fixture = readingFixture();
+      fixture.render();
+      await settleReads();
+      fixture.hold((path, head) => path === "/v1/executions/read-order" && head === 2 ? pending : null);
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      fixture.setHead(3);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await settleReads();
+      expectCurrent();
+      await act(async () => { release(); });
+      await settleReads();
+      expectCurrent();
+    } finally { cleanup(); vi.useRealTimers(); }
+  });
 });

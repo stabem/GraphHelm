@@ -217,6 +217,12 @@ export default function App({
   const [selected, setSelected] = useState("");
   const [governedActorByNode, setGovernedActorByNode] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<ExecutionStatus | null>(null);
+  // Loads, polls and verified mutations can settle out of order within one selection. A later
+  // arrival is not necessarily a newer observation; identity guards alone do not protect it.
+  const observeStatus = useCallback((next: ExecutionStatus) => {
+    setStatus((previous) => previous !== null && previous.executionId === next.executionId &&
+      previous.headSequence > next.headSequence ? previous : next);
+  }, []);
   const [replySuggestions, setReplySuggestions] = useState<ReplySuggestions | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
   const [replyIssue, setReplyIssue] = useState<string | null>(null);
@@ -476,29 +482,31 @@ export default function App({
       const client = clientRef.current;
       if (!client || !id) return;
       setBusy(true);
+      // Naming is optional. Keep its cached in-flight read, but never let its completion
+      // publish a status/events snapshot captured before a newer poll or mutation.
+      void readBriefing(client, id).then((nextBriefing) => {
+        if (clientRef.current === client && selectedRef.current === id && nextBriefing !== null) {
+          setBriefing(nextBriefing);
+        }
+      });
       try {
-        // The briefing rides the same round-trip but NOT the same failure path: status and
-        // events failing is "this execution could not be read"; the briefing failing is
-        // nothing the operator can act on, and readBriefing already swallowed it.
-        const [nextStatus, nextEvents, nextBriefing] = await Promise.all([
+        const [nextStatus, nextEvents] = await Promise.all([
           client.getStatus(id),
           readEvents(client, id, 0),
-          readBriefing(client, id),
         ]);
         // THE CONNECTION IS A GUARD AXIS TOO (PR #467 review, P1): dispose() cannot cancel a
         // fetch already in flight, and Runtime B can hold the SAME execution id as Runtime A -
         // so a run-id guard alone lets A's late completion land under B. The client object this
         // call captured IS the connection generation; a disconnect or reconnect changes it.
         if (clientRef.current !== client || selectedRef.current !== id) return;
-        setStatus(nextStatus);
-        if (nextBriefing !== null) setBriefing(nextBriefing);
+        observeStatus(nextStatus);
         // KEEP THE OLD IDENTITY WHEN NOTHING CHANGED. Everything derived from the events array
         // (envelopes, personas, bubbles) keys off its identity; a fresh-but-equal array made the
         // poll re-open every sealed envelope each tick, and could cancel the pass forever.
         setEvents((previous) =>
           previous !== null &&
-          previous.head === nextEvents.head &&
-          previous.events.length === nextEvents.events.length
+          (previous.head > nextEvents.head ||
+            (previous.head === nextEvents.head && previous.events.length === nextEvents.events.length))
             ? previous
             : nextEvents,
         );
@@ -513,7 +521,7 @@ export default function App({
         if (clientRef.current === client && selectedRef.current === id) setBusy(false);
       }
     },
-    [readEvents, readBriefing],
+    [readEvents, readBriefing, observeStatus],
   );
 
   /**
@@ -596,7 +604,7 @@ export default function App({
           // a tick that started against A must not paint B (PR #467 review, P1).
           if (pollGeneration.current !== generation || clientRef.current !== client || selectedRef.current !== selected) return;
           for (const run of listRows) restoredOutsidePage.current.delete(run.executionId);
-          setStatus(nextStatus);
+          observeStatus(nextStatus);
           // The refresh covers what it read and prepends what is new; rows beyond the read
           // range (a store that GREW past the operator's paging mid-poll) are kept, not
           // truncated.
@@ -638,7 +646,7 @@ export default function App({
       clearInterval(timer);
       tickBusy = false;
     };
-  }, [connected, selected, pollIntervalMs, readEvents]);
+  }, [connected, selected, pollIntervalMs, readEvents, observeStatus]);
 
   const loadList = useCallback(
     async (options: { append?: boolean; cursor?: string | null } = {}) => {
@@ -1161,7 +1169,7 @@ export default function App({
       // refusal - onActivity is unconditional - so the agent's act is never invisible.
       if (next.executionId !== selectedRef.current) return;
       setEvidence(next);
-      if (next.statusAfter) setStatus(next.statusAfter);
+      if (next.statusAfter) observeStatus(next.statusAfter);
       // An agent that acted on a node brings that node's window up, so the person sees the same
       // detail the agent was working on rather than a whole-run view they have to search.
       setFocus(next.node === null ? { kind: "run" } : { kind: "node", id: next.node });
@@ -1589,7 +1597,7 @@ export default function App({
         // appends to B (PR #467 review — the same guards loadExecution carries).
         if (clientRef.current !== client || selectedRef.current !== next.executionId) return;
         setEvidence(next);
-        if (next.statusAfter) setStatus(next.statusAfter);
+        if (next.statusAfter) observeStatus(next.statusAfter);
         await loadExecution(next.executionId);
         await loadList();
       } catch (reason) {
@@ -1599,7 +1607,7 @@ export default function App({
         if (clientRef.current === client && selectedRef.current === forRun) setBusy(false);
       }
     },
-    [loadExecution, loadList],
+    [loadExecution, loadList, observeStatus],
   );
 
   /** Opens one sealed item. Stable across renders because the thread's turns depend on it: a fresh

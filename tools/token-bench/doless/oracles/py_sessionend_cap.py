@@ -29,6 +29,8 @@ def evaluate(node: ast.AST, env: dict):
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Name):
+        if node.id in env.get("__ambiguous__", ()):
+            raise Unresolved(f"{node.id} is bound more than once or conditionally")
         if node.id in env:
             return env[node.id]
         raise Unresolved(node.id)
@@ -40,7 +42,9 @@ def evaluate(node: ast.AST, env: dict):
         left = evaluate(node.left, env)
         for op, right_node in zip(node.ops, node.comparators):
             right = evaluate(right_node, env)
-            if type(op) not in _CMP or not _CMP[type(op)](left, right):
+            if type(op) not in _CMP:
+                raise Unresolved(ast.unparse(node))
+            if not _CMP[type(op)](left, right):
                 return False
             left = right
         return True
@@ -59,18 +63,53 @@ def evaluate(node: ast.AST, env: dict):
     raise Unresolved(ast.unparse(node))
 
 
-def _bind(statements, env: dict) -> None:
-    """Simple `NAME = expr` / `NAME: T = expr` bindings, in order; unresolvable ones are skipped."""
+def _assigned(node: ast.AST) -> list:
+    """(name, straight_line) for every name a statement binds; straight_line is False for `+=`."""
+    out = []
+    def names(target):
+        return [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+    if isinstance(node, ast.Assign):
+        out += [(n, True) for t in node.targets for n in names(t)]
+    elif isinstance(node, ast.AnnAssign) and node.value is not None:
+        out += [(n, True) for n in names(node.target)]
+    elif isinstance(node, ast.AugAssign):
+        out += [(n, False) for n in names(node.target)]
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        out += [(n, False) for n in names(node.target)]
+    elif isinstance(node, ast.NamedExpr):
+        out += [(node.target.id, False)]
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        out += [(n, False) for item in node.items if item.optional_vars is not None for n in names(item.optional_vars)]
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        out += [(node.name, False)]
+    return out
+
+
+def _bind(statements: list, env: dict, ambiguous: set) -> None:
+    """Bind `NAME = expr` statements that sit directly in `statements`. A name bound more than once
+    in `statements` (walked in full), bound by `+=`, a loop, `with`, `except` or `:=`, or bound inside a branch is
+    ambiguous: it is removed from `env` and any use of it is Unresolved (#139/#140: the last
+    assignment walked must not win)."""
+    top = {id(stmt) for stmt in statements}
+    counts: dict = {}
+    for node in (n for stmt in statements for n in ast.walk(stmt)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        for name, straight in _assigned(node):
+            counts[name] = counts.get(name, 0) + 1
+            if not straight or id(node) not in top:
+                ambiguous.add(name)
+    ambiguous.update(name for name, n in counts.items() if n > 1)
+    for name in ambiguous:
+        env.pop(name, None)
     for stmt in statements:
-        targets, value = [], None
-        if isinstance(stmt, ast.Assign) and all(isinstance(t, ast.Name) for t in stmt.targets):
-            targets, value = [t.id for t in stmt.targets], stmt.value
-        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
-            targets, value = [stmt.target.id], stmt.value
-        for name in targets:
+        for name, _ in _assigned(stmt):
+            if name in ambiguous:
+                continue
             try:
-                env[name] = evaluate(value, env)
+                env[name] = evaluate(stmt.value, env)
             except (Unresolved, TypeError, ZeroDivisionError):
+                ambiguous.add(name)
                 env.pop(name, None)
 
 
@@ -93,15 +132,19 @@ def _defaults(tree: ast.Module, env: dict) -> dict:
 def end_signal_waits(source: str, host: str = "codex") -> list:
     """The socket waits of every `/signal` call in `_end_impl`, evaluated for `host`."""
     tree = ast.parse(source)
+    module_ambiguous: set = set()
     env: dict = {}
-    _bind(tree.body, env)
+    _bind([s for s in tree.body if not isinstance(s, (ast.FunctionDef, ast.ClassDef))], env, module_ambiguous)
+    env["__ambiguous__"] = module_ambiguous
     defaults = _defaults(tree, env)
     end = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_end_impl"), None)
     if end is None:
         raise Unresolved("_end_impl is missing")
-    local = dict(env, host=host)
-    _bind([s for s in ast.walk(end) if isinstance(s, (ast.Assign, ast.AnnAssign))], local)
-    local["host"] = host
+    local_ambiguous = set(module_ambiguous)
+    if any(name == "host" for stmt in end.body for node in ast.walk(stmt) for name, _ in _assigned(node)):
+        raise Unresolved("_end_impl rebinds host")
+    local = dict(env, __ambiguous__=local_ambiguous, host=host)
+    _bind(end.body, local, local_ambiguous)
     waits = []
     for call in (n for n in ast.walk(end) if isinstance(n, ast.Call)):
         if not any(isinstance(c, ast.Constant) and isinstance(c.value, str) and "/signal" in c.value

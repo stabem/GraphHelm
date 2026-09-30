@@ -375,3 +375,48 @@ def test_sessionend_still_reads_literals_defaults_and_refuses_what_it_cannot_res
         pass
     else:
         raise AssertionError("an unresolvable timeout must not pass silently")
+
+
+END_BODY = '''
+CODEX_END_WAIT = 2.0
+
+
+def request(url, token, method, body=None, headers=None, timeout: float = 5.0):
+    pass
+
+
+def _end_impl(payload: dict, host: str) -> None:
+{body}
+    reply = request(f"{{url}}/v1/executions/{{execution}}/signal", token, "POST", {{}}, {{}}, timeout={timeout})
+'''
+
+
+def _waits(body: str, timeout: str):
+    oracle = _oracle("py_sessionend_cap")
+    return oracle, lambda: oracle.end_signal_waits(END_BODY.format(body=body, timeout=timeout))
+
+
+def test_sessionend_fails_closed_on_ambiguous_bindings_and_unknown_operators():
+    """Catches the #140 BLOCK: flow-insensitive binding and an unknown operator read as False
+    accepted a Codex wait of 5 or 6 seconds as 1."""
+    cases = {
+        "branch assignment on host": ('    if host == "codex":\n        w = 5.0\n    else:\n        w = 1.0', "w"),
+        "augmented assignment": ("    w = 1.0\n    w += 5", "w"),
+        "host rebound": ('    host = "claude"', '1.0 if host == "codex" else 5.0'),
+        "is comparison": ("    pass", '5.0 if host is "codex" else 1.0'),
+        "rebinding": ("    w = 1.0\n    w = 5.0", "w"),
+    }
+    for label, (body, timeout) in cases.items():
+        oracle, run = _waits(body, timeout)
+        try:
+            waits = run()
+        except oracle.Unresolved:
+            continue
+        raise AssertionError(f"{label}: resolved to {waits} instead of failing closed")
+
+
+def test_sessionend_still_accepts_a_straight_line_local_and_a_module_constant():
+    _, run = _waits("    w = CODEX_END_WAIT if host == \"codex\" else 3.0", "w")
+    assert run() == [2.0]
+    _, run = _waits("    pass", "min(CODEX_END_WAIT, 2.5)")
+    assert run() == [2.0]

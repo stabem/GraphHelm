@@ -279,7 +279,7 @@ fn an_incomplete_inline_graft_does_not_claim_the_subject_is_new() {
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "base"]);
     write(
-        "pub fn fixed() -> u32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    fn expected_value() -> u32 { 1 }\n    #[test]\n    fn fixed_is_one() { assert_eq!(fixed(), expected_value()); }\n}\n",
+        "pub fn fixed() -> u32 { 1 }\n\n#[cfg(test)]\nmod tests {\nuse super::*;\nfn expected_value() -> u32 { 1 }\n#[test]\nfn fixed_is_one() { assert_eq!(fixed(), expected_value()); }\n}\n",
     );
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "test"]);

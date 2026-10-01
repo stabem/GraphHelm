@@ -42,7 +42,6 @@ import math
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -178,42 +177,9 @@ def run_command(command: list[str], cwd: Path, env: dict | None = None,
                 timeout: int = 900) -> tuple[str, int | None, str]:
     command = [sys.executable if part == "{python}" else part.replace("{doless}", str(DOLESS))
                for part in command]
-    cleanup_unconfirmed = False
-    try:
-        if os.name == "posix":
-            # Own only this observer's ordinary descendants. This is not containment of a
-            # child that deliberately leaves the group, and does not change Windows behavior.
-            process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
-                                       env=env, start_new_session=True)
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except BaseException:
-                # communicate's timeout leaves the leader unreaped. Signal before wait/poll
-                # can release its PID; otherwise a reused group ID could name unrelated work.
-                if process.returncode is None:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        # A stuck kernel task cannot be synchronously reaped. Preserve the
-                        # timeout result, but do not claim confirmed cleanup in its detail.
-                        cleanup_unconfirmed = True
-                raise
-            finally:
-                # Do not communicate/join without a deadline after termination: even an
-                # out-of-scope escaped child could retain these pipes. No timeout output is
-                # consumed by the scorer, so closing them preserves its existing contract.
-                process.stdout.close()
-                process.stderr.close()
-            proc = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-        else:
-            proc = subprocess.run(command, cwd=cwd, text=True, capture_output=True, encoding="utf-8",
-                                  errors="replace", env=env, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    proc, cleanup_unconfirmed = runner._run_captured(command, cwd=cwd, env=env,
+                                                     timeout=timeout, errors="replace")
+    if isinstance(proc, subprocess.TimeoutExpired):
         detail = f"timed out after {timeout}s"
         if cleanup_unconfirmed:
             detail += "; observer process exit unconfirmed after bounded cleanup"

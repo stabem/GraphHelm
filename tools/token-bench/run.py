@@ -29,6 +29,7 @@ import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -273,6 +274,53 @@ def bench_env(task: dict) -> dict:
     return env
 
 
+
+def _run_captured(command: list[str], *, cwd: Path, timeout: float, env: dict | None = None,
+                  input: str | None = None, errors: str | None = None
+                  ) -> tuple[subprocess.CompletedProcess | subprocess.TimeoutExpired, bool]:
+    """Capture a command or timeout, plus whether bounded cleanup left exit unconfirmed.
+
+    The agent uses stdin and strict UTF-8; observers use replacement decoding. Result
+    interpretation belongs to those callers, but both must own the work they start.
+    """
+    cleanup_unconfirmed = False
+    try:
+        if os.name != "posix":
+            return subprocess.run(command, cwd=cwd, input=input, text=True, capture_output=True,
+                                  encoding="utf-8", errors=errors, env=env, timeout=timeout), False
+        # Ordinary descendants only: a child that deliberately leaves the group is not contained.
+        process = subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, stdin=subprocess.PIPE if input is not None else None,
+                                   encoding="utf-8", errors=errors, env=env, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
+        except BaseException:
+            # communicate's timeout leaves the leader unreaped. Signal before wait/poll
+            # can release its PID; a reused group ID could otherwise name unrelated work.
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    # A stuck kernel task cannot be synchronously reaped. Let the caller
+                    # retain the timeout classification while disclosing unconfirmed exit.
+                    cleanup_unconfirmed = True
+            raise
+        finally:
+            # Never drain/join without a deadline: an out-of-scope escaped child might
+            # retain a pipe. Timeout output was not consumed by either existing caller.
+            if process.stdin is not None:
+                process.stdin.close()
+            process.stdout.close()
+            process.stderr.close()
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr), False
+    except subprocess.TimeoutExpired as exc:
+        return exc, cleanup_unconfirmed
+
+
 def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: int, task: dict,
               max_budget_usd: float | None, mcp_config: Path | None,
               claude_cli: dict, *, effort: str | None = None) -> tuple[dict, str, float]:
@@ -291,12 +339,14 @@ def run_agent(wt: Path, prompt: str, arm: str, model: str | None, timeout_min: i
     if max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(max_budget_usd)]
     t0 = time.monotonic()
-    try:
-        proc = subprocess.run(cmd, cwd=wt, input=prompt, text=True, encoding="utf-8", capture_output=True,
-                              timeout=timeout_min * 60, env=bench_env(task))
-    except subprocess.TimeoutExpired as exc:
+    proc, cleanup_unconfirmed = _run_captured(cmd, cwd=wt, input=prompt,
+                                              timeout=timeout_min * 60, env=bench_env(task))
+    if isinstance(proc, subprocess.TimeoutExpired):
+        detail = str(proc)
+        if cleanup_unconfirmed:
+            detail += "; agent process exit unconfirmed after bounded cleanup"
         return {"agentError": "timeout", "timeoutSeconds": timeout_min * 60,
-                "session_id": session_id, "stderr": str(exc)}, "timeout", time.monotonic() - t0
+                "session_id": session_id, "stderr": detail}, "timeout", time.monotonic() - t0
     wall = time.monotonic() - t0
     raw = proc.stdout.strip()
     try:

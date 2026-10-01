@@ -74,7 +74,7 @@ function devSession(env: Record<string, string>): Plugin {
         // dev-only trade-off: apply:"serve" only, dead with the process, absent from the bundle.
         if (provided) return;
         const address = server.httpServer?.address();
-        const port = typeof address === "object" && address !== null ? address.port : 4173;
+        const port = typeof address === "object" && address !== null ? address.port : 5183;
         server.config.logger.info(
           `  Studio auto-connect: http://127.0.0.1:${port}/?session=${nonce}`,
         );
@@ -199,7 +199,7 @@ export default defineConfig(({ mode }) => {
     // disk and served output disagreed). Polling costs a little CPU and ends that class.
     server: {
       host: "127.0.0.1",
-      port: 4173,
+      port: 5183,
       strictPort: true,
       proxy,
       watch: { usePolling: true, interval: 300 },
@@ -210,7 +210,7 @@ export default defineConfig(({ mode }) => {
       // (L's review of #662).
       fs: { allow: [fileURLToPath(new URL("../../schemas", import.meta.url)), "."] },
     },
-    preview: { host: "127.0.0.1", port: 4173, strictPort: true, proxy },
+    preview: { host: "127.0.0.1", port: 5183, strictPort: true, proxy },
     test: {
       environment: "jsdom",
       setupFiles: "./src/test/setup.ts",

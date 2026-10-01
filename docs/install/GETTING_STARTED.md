@@ -288,18 +288,18 @@ npm --prefix apps/studio run dev
 Expected, among the dev server's output:
 
 ```
-  Studio auto-connect: http://127.0.0.1:4173/?session=<nonce>
+  Studio auto-connect: http://127.0.0.1:5183/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
 port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host`
-inside the container instead, publish port `4173`, and open the printed URL with the host's
-published port in place of `4173`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
+inside the container instead, publish port `5183`, and open the printed URL with the host's
+published port in place of `5183`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
 `/health` to it from inside the container, so the Runtime never needs a wider bind.
 
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
-session, so nobody pastes a token. Opening `http://127.0.0.1:4173/` without the query shows the
+session, so nobody pastes a token. Opening `http://127.0.0.1:5183/` without the query shows the
 connect gate instead, where you can paste the contents of `events.token` by hand. With
 `GRAPHHELM_EVENTS` unset there is no session endpoint at all, only the gate.
 

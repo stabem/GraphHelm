@@ -3,9 +3,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import select
+import threading
+import time
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("doless_under_test", HERE / "doless.py")
@@ -209,6 +215,61 @@ def test_a_linker_or_file_lock_fault_is_infra_not_fail(tmp_path):
     status, _, _ = doless.run_command(["{python}", "-c", "import sys; print('assertion failed'); sys.exit(101)"],
                                       tmp_path)
     assert status == "FAIL"
+
+
+
+@pytest.mark.skipif(os.name != "posix" or not hasattr(os, "pidfd_open"),
+                    reason="requires POSIX and a Linux pidfd process-exit observer")
+@pytest.mark.parametrize("parent_exits", [False, True])
+def test_timeout_stops_descendant_before_next_observer(tmp_path, parent_exits):
+    """Real child/pipe observer for #199; ~1s per case, no provider or production seam."""
+    child = tmp_path / "child.py"
+    child.write_text("""import os, sys, time
+from pathlib import Path
+root=Path(sys.argv[1])
+(root/'ready.tmp').write_text(str(os.getpid()))
+(root/'ready.tmp').rename(root/'ready')
+deadline=time.monotonic()+8
+while not (root/'release').exists() and time.monotonic()<deadline:
+    time.sleep(.01)
+if (root/'release').exists():
+    (root/'effect').write_text('late observer effect')
+""")
+    command = ["{python}", "-c",
+               "import subprocess,sys,time; "
+               "subprocess.Popen([sys.executable,sys.argv[1],sys.argv[2]]); "
+               "time.sleep(0 if sys.argv[3]=='True' else 8)",
+               str(child), str(tmp_path), str(parent_exits)]
+    result = []
+    finished = threading.Event()
+
+    def observe():
+        try:
+            result.append(doless.run_command(command, tmp_path, timeout=1))
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=observe, daemon=True)
+    worker.start()
+    pidfd = None
+    try:
+        deadline = time.monotonic() + 5
+        while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        pidfd = os.pidfd_open(int((tmp_path / "ready").read_text()))
+        assert finished.wait(4), "observer did not keep output collection bounded"
+        assert result[0][:2] == ("TIMEOUT", None)
+        # The child can mutate only AFTER run_command returns. Wait for its kernel-reported
+        # exit before inspecting the file: absence during a short sleep is not proof of death.
+        (tmp_path / "release").touch()
+        assert select.select([pidfd], [], [], 3)[0], "observer descendant remains live"
+        assert not (tmp_path / "effect").exists(), "timed-out descendant remained able to act"
+    finally:
+        (tmp_path / "release").touch()
+        if pidfd is not None:
+            os.close(pidfd)
+        worker.join(timeout=10)
+        assert not worker.is_alive(), "finite observer fixture did not finish"
 
 
 def test_an_infra_fault_in_either_observer_is_incomplete():

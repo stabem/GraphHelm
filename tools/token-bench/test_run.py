@@ -2,8 +2,13 @@
 
 import argparse
 import importlib.util
+import json
+import os
+import select
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -49,17 +54,17 @@ def test_expired_auth_without_model_tokens_is_not_a_coding_failure():
 
 def test_agent_prompt_round_trips_unicode_on_legacy_windows_code_page(tmp_path, monkeypatch):
     """The pinned Keel skill must reach the agent even when the host code page is cp1252."""
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
     def echo_prompt(_cmd, **kwargs):
-        return real_run([sys.executable, "-c",
+        return real_popen([sys.executable, "-c",
                          "import json,sys; print(json.dumps({'result': sys.stdin.buffer.read().decode('utf-8')}))"], **kwargs)
 
-    monkeypatch.setattr(runner.subprocess, "run", echo_prompt)
+    monkeypatch.setattr(runner.subprocess, "Popen", echo_prompt)
     monkeypatch.setattr(subprocess.locale, "getencoding", lambda: "cp1252")
     prompt = "Keel → GraphHelm: ação comprovada"
     result, _stderr, _wall = runner.run_agent(
-        tmp_path, prompt, "a", "sonnet", 1, {}, None, None, {"path": "claude"})
+        tmp_path, prompt, "a", "sonnet", 1, {}, None, None, {"path": str(tmp_path / "unlaunchable-agent-fixture")})
     assert result["result"] == prompt
 
 
@@ -71,13 +76,92 @@ def test_timeout_keeps_pinned_session_id_for_partial_usage(tmp_path, monkeypatch
         observed["cmd"] = cmd
         raise subprocess.TimeoutExpired(cmd, 60)
 
-    monkeypatch.setattr(runner.subprocess, "run", timeout)
+    monkeypatch.setattr(runner.subprocess, "Popen", timeout)
     result, _stderr, _wall = runner.run_agent(
-        tmp_path, "prompt", "a", "sonnet", 1, {}, None, None, {"path": "claude"})
+        tmp_path, "prompt", "a", "sonnet", 1, {}, None, None, {"path": str(tmp_path / "unlaunchable-agent-fixture")})
     assert result["agentError"] == "timeout"
     assert str(uuid.UUID(result["session_id"])) == result["session_id"]
     index = observed["cmd"].index("--session-id")
     assert observed["cmd"][index + 1] == result["session_id"]
+
+
+
+@pytest.mark.skipif(os.name != "posix" or not hasattr(os, "pidfd_open"),
+                    reason="requires POSIX and a Linux pidfd process-exit observer")
+@pytest.mark.parametrize("parent_exits", [False, True])
+def test_agent_timeout_stops_descendant_before_scoring(tmp_path, monkeypatch, parent_exits):
+    """#201: real finite configured executable; ~1s API timeout, not a fractional CLI flag."""
+    fake = tmp_path / "finite-agent"
+    fake.write_text("#!" + sys.executable + "\n" + """import json, os, sys, time
+from pathlib import Path
+if sys.argv[1:]==['--version']:
+    print('finite-offline-fixture 1.0'); raise SystemExit
+root=Path.cwd()
+if sys.argv[1:]==['--fixture-child']:
+    (root/'ready.tmp').write_text(str(os.getpid()))
+    (root/'ready.tmp').rename(root/'ready')
+    deadline=time.monotonic()+8
+    while not (root/'release').exists() and time.monotonic()<deadline:
+        time.sleep(.01)
+    if (root/'release').exists():
+        (root/'effect').write_text('late agent effect')
+    raise SystemExit
+import subprocess
+(root/'launch.json').write_text(json.dumps({'argv':sys.argv, 'input':sys.stdin.read()}))
+subprocess.Popen([sys.executable, __file__, '--fixture-child'])
+time.sleep(0 if (root/'parent-exits').exists() else 8)
+""")
+    fake.chmod(0o700)
+    monkeypatch.setenv("TOKEN_BENCH_CLAUDE_CLI", str(fake))
+    monkeypatch.setenv("TOKEN_BENCH_SCRATCH", str(tmp_path / "scratch"))
+    cli = runner.validate_prerequisites("a")
+    assert cli["path"] == str(fake) and cli["version"] == "finite-offline-fixture 1.0"
+    if parent_exits:
+        (tmp_path / "parent-exits").touch()
+    mcp = tmp_path / "mcp.json"
+    mcp.write_text("{}")
+    result = []
+    finished = threading.Event()
+
+    def invoke():
+        try:
+            result.append(runner.run_agent(tmp_path, "finite → sessão", "c", "fixture-model",
+                                           1 / 60, {}, 0.25, mcp, cli, effort="medium"))
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=invoke, daemon=True)
+    worker.start()
+    pidfd = None
+    try:
+        deadline = time.monotonic() + 5
+        while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        pidfd = os.pidfd_open(int((tmp_path / "ready").read_text()))
+        assert finished.wait(4), "agent output collection outlived the bound"
+        reply, stderr, _wall = result[0]
+        launch = json.loads((tmp_path / "launch.json").read_text())
+        argv = launch["argv"]
+        assert reply["agentError"] == "timeout" and reply["timeoutSeconds"] == 1
+        assert reply["session_id"] == argv[argv.index("--session-id") + 1]
+        assert stderr == "timeout" and "timed out" in reply["stderr"]
+        assert launch["input"] == "finite → sessão"
+        for flag, value in (("--model", "fixture-model"), ("--effort", "medium"),
+                            ("--max-budget-usd", "0.25"), ("--mcp-config", str(mcp)),
+                            ("--allowedTools", "mcp__graphhelm")):
+            assert argv[argv.index(flag) + 1] == value
+        assert runner.digest_file(fake) == cli["sha256"]
+        # Release only after run_agent returns; wait for kernel-confirmed exit before
+        # inspecting effects so an unscheduled live child cannot masquerade as stopped.
+        (tmp_path / "release").touch()
+        assert select.select([pidfd], [], [], 3)[0], "agent descendant remains live"
+        assert not (tmp_path / "effect").exists(), "timed-out agent child could still act"
+    finally:
+        (tmp_path / "release").touch()
+        if pidfd is not None:
+            os.close(pidfd)
+        worker.join(timeout=10)
+        assert not worker.is_alive(), "finite agent fixture did not finish"
 
 
 def test_keel_prompt_puts_real_task_under_objective_heading(tmp_path, monkeypatch):
@@ -322,11 +406,12 @@ def test_methodology_observer_requires_calls_card_and_persisted_signal(tmp_path,
 def test_explicit_effort_reaches_cli_without_changing_legacy_commands(tmp_path, monkeypatch):
     """Catches silently dropping requested effort; offline process-boundary fixture (<1s)."""
     calls = []
+    real_popen = subprocess.Popen
     def launch(cmd, **kw):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"result":"ok"}', stderr="")
-    monkeypatch.setattr(runner.subprocess, "run", launch)
-    args = (tmp_path, "task", "a", "claude-test-exact", 1, {}, 1.0, None, {"path": "claude"})
+        return real_popen([sys.executable, "-c", "print('{\"result\":\"ok\"}')"], **kw)
+    monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    args = (tmp_path, "task", "a", "claude-test-exact", 1, {}, 1.0, None, {"path": str(tmp_path / "unlaunchable-agent-fixture")})
     runner.run_agent(*args, effort="high")
     assert calls[0][calls[0].index("--effort") + 1] == "high"
     runner.run_agent(*args)

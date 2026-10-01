@@ -451,7 +451,8 @@ describe("opening", () => {
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
     expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Review pending proposal");
     expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("owner review");
-    expect(screen.getByText(/Needs your attention · needs you/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("Owner action");
+    expect(screen.getByRole("region", { name: "Next action" })).not.toHaveTextContent("recommended replies");
     await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
     expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
     const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
@@ -478,6 +479,45 @@ describe("opening", () => {
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-invalid-path");
     expect(await screen.findByText("typed addNode path is invalid")).toBeVisible();
     expect(screen.getByRole("button", { name: "review selected proposal" })).toBeDisabled();
+  });
+
+  it("opens the recorded blocked-step controls without calling the action an answer", async () => {
+    await open(stubClient());
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    const action = await screen.findByRole("region", { name: "Next action" });
+    expect(action).toHaveTextContent("Review step needing attention");
+    expect(action).toHaveTextContent("implementation needs review");
+    expect(action).not.toHaveTextContent("answer");
+    await userEvent.click(within(action).getByRole("button", { name: "Review step needing attention" }));
+    expect(await screen.findByLabelText("Why this run needs you")).toHaveTextContent("implementation is blocked");
+  });
+
+  it("shows why reply suggestions are unavailable for a waiting-input step", async () => {
+    const client = stubClient({ getStatus: vi.fn(async () => ({
+      ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }],
+    })) });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    const action = await screen.findByRole("region", { name: "Next action" });
+    expect(action).toHaveTextContent("Send direction");
+    await waitFor(() => expect(action).toHaveTextContent("no Jev model set up"));
+    expect(client.getReplySuggestions).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a capacity wait into an owner reply request", async () => {
+    const client = stubClient({ getStatus: vi.fn(async () => ({
+      ...STATUS, attention: "can_sleep", attentionReasons: [{ kind: "waiting_capacity_node", node: "implementation" }],
+    })) });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.queryByRole("region", { name: "Next action" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Owner action")).not.toBeInTheDocument();
   });
 
   it("keeps governed approval disabled until a paused Runtime has no running node", async () => {
@@ -2490,6 +2530,7 @@ describe("round-2: the ledger settles debts honestly", () => {
    * cards could not satisfy this, and an eager signal would write an unapproved answer. */
   it("offers two judged replies for the current head and leaves sending to the owner", async () => {
     const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] })),
       listRoutes: vi.fn(async () => ({ configured: true, routes: [{
         id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
         model: "jev-latest", profiles: [], enabled: true,
@@ -2509,6 +2550,9 @@ describe("round-2: the ledger settles debts honestly", () => {
     expect(screen.getByLabelText(/say something into this run/i)).toHaveValue("Please verify the failing test before approving.");
     expect(client.signal).not.toHaveBeenCalled();
     expect(client.getReplySuggestions).toHaveBeenCalledWith("demo-deploy", "judge");
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Two recommended replies are ready in the conversation.");
   });
 
   /** A slow suggestion read can finish after the run advances. Showing its old advice beside
@@ -3736,7 +3780,7 @@ describe("the exchange", () => {
     const activity = await screen.findByRole("region", { name: "Recent recorded activity" });
     expect(await within(activity).findByText("uma mensagem")).toBeInTheDocument();
     expect(activity).toHaveTextContent("event #17");
-    expect(screen.getByText("0 active nodes")).toBeInTheDocument();
+    expect(screen.getByText("0 active graph nodes")).toBeInTheDocument();
   });
 
   /** THE CREW LIVES ON THE CANVAS - the owner drew it: agents in their own card, avatar and

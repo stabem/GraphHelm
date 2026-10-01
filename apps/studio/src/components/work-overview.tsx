@@ -39,6 +39,7 @@ export interface WorkOverviewProps {
   runStatus?: string | null;
   attention?: string | null;
   nextAction?: { label: string; detail: string } | null;
+  replyGuidance?: string | null;
   onNextAction?: () => void;
   selectedNode: string | null;
   onSelectNode: (nodeId: string | null) => void;
@@ -119,6 +120,7 @@ export function WorkOverview({
   runStatus = null,
   attention = null,
   nextAction = null,
+  replyGuidance = null,
   onNextAction,
   selectedNode,
   onSelectNode,
@@ -199,8 +201,8 @@ export function WorkOverview({
           {runId && <span className="work-run">Run {runId}</span>}
         </div>
         <div className="work-counts" aria-label="Workspace counts">
-          <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
-          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
+          <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} graph node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
+          <span><Activity aria-hidden="true" size={15} /> {activeNodes} active graph node{activeNodes === 1 ? "" : "s"}</span>
           <span><Users aria-hidden="true" size={15} /> {runTeam && runTeam.members.length > 0 ? `${runTeam.members.length} joined sessions` : `${crew.length} agent identities`}</span>
           {subagents && subagents.relationships.length > 0 && <button type="button" className="work-count-link" onClick={jumpToTeam}><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"} · open team</button>}
           <span><MessageCircle aria-hidden="true" size={15} /> {runTeam && runTeam.members.length > 0 ? `${runTeam.messages.length} team message${runTeam.messages.length === 1 ? "" : "s"}` : `${talks.length} conversations`}</span>
@@ -257,16 +259,16 @@ export function WorkOverview({
       </section>
 
       {nextAction && <section className="work-next-action" aria-label="Next action">
-        <div><span>Needs your attention{attention ? ` · ${readable(attention)}` : ""}</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p></div>
+        <div><span>{attention === "needs_you" ? "Owner action" : "Next step"}</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p>{replyGuidance && <p>{replyGuidance}</p>}</div>
         <button type="button" onClick={onNextAction}>{nextAction.label}</button>
       </section>}
 
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
         <div className="work-snapshot-grid">
-          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "running" && activeNodes === 0 && attentionNodes > 0 && <small>No node is working; a step needs attention</small>}{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
+          <div><span>Run state</span><strong>{runStatus ? readable(runStatus) : "State unavailable"}</strong>{runStatus === "running" && activeNodes === 0 && attentionNodes > 0 && <small>No graph node is active; a step needs attention</small>}{runStatus === "completed" && model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && <small>Node results still need review</small>}</div>
           <div><span>Graph step</span><strong>{singleStep ? `${singleStep.id} · ${singleStepText}` : `${model.nodes.length} declared nodes · ${activeNodes} active`}</strong></div>
-          <div><span>Last chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No chat report · open nodes for replies"}</strong></div>
+          <div><span>Last direct chat report</span><strong>{latestReport ? `${latestReport.actorId ?? "Unknown actor"} · ${ago(latestReport.occurredAt)}` : "No direct chat report recorded"}</strong></div>
         </div>
         {latestReport?.text && <p className="work-snapshot-report">{latestReport.text}</p>}
         {model.rosterDeclared && model.nodes.length === 1 && <p className="work-snapshot-note">This run declares one graph node. Agent reports below show work inside the run; they are not extra graph steps or proof that the node is done.</p>}
@@ -322,6 +324,10 @@ export function WorkOverview({
                   const observation = latestObservationForAgent(model, agent.id);
                   const responsibilities = model.nodes.filter((node) => node.assignedActor?.id === agent.id);
                   const report = agentReports[agent.id];
+                  const member = runTeam?.members.find((joined) => joined.actorId === agent.id);
+                  const teamUpdate = member?.activity ?? null;
+                  const reportLabel = teamUpdate ? "Latest verified team update" : report ? "Last direct chat report" : member ? "Latest team update" : "Last direct chat report";
+                  const reportText = teamUpdate ?? report?.text ?? (report ? "Report text has not opened yet" : member ? "No team update reported" : "No direct chat report · see Work nodes");
                   const isSelected = selectedAgent === agent.id;
                   return (
                     <details className="work-agent-details" key={agent.id}>
@@ -329,20 +335,20 @@ export function WorkOverview({
                       <span className="work-avatar" style={{ background: `hsl(${hueOf(agent.id)} 52% 46%)` }} aria-hidden="true">{initialOf(agent.id)}</span>
                       <span className="work-agent-copy">
                         <span className="work-agent-id">{agent.id}</span>
-                        <span className="work-agent-report"><span>Last direct chat report</span><strong>{report?.text ?? (report ? "Report text has not opened yet" : "No direct chat report · see Work nodes")}</strong>{report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
+                        <span className="work-agent-report"><span>{reportLabel}</span><strong>{reportText}</strong>{teamUpdate ? <small>{member?.reportedState ? `Reported ${member.reportedState} · ` : ""}last team event {ago(member?.lastAt ?? null)}</small> : report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
                         <span className="work-observed">
                           <span>Last node update</span>
                           {observation ? (
                             <><strong>{observation.node.id}</strong><small>{ago(observation.at)}</small></>
                           ) : responsibilities.length > 0 ? (
                             <><strong>{responsibilities.map((node) => node.id).join(", ")}</strong><small>Current responsibility · no actor event recorded</small></>
-                          ) : <strong className="work-muted">No node activity yet</strong>}
+                          ) : <strong className="work-muted">No graph-node update recorded</strong>}
                         </span>
                         {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
                       </span>
                     </summary>
                     <div className="work-agent-expanded">
-                      <p>{report?.text ?? (report ? "Report text has not opened yet" : "No direct chat report · see Work nodes")}</p>
+                      <p>{reportText}</p>
                       <button type="button" aria-pressed={isSelected} onClick={() => onSelectAgent?.(isSelected ? null : agent.id)}>{isSelected ? "Close direct chat" : `Open direct chat with ${agent.id}`}</button>
                     </div>
                     </details>

@@ -145,6 +145,7 @@ export function Board({
   runStatus = null,
   attention = null,
   nextAction = null,
+  replyGuidance = null,
   onNextAction,
   selectedTalk = null,
   onSelectTalk,
@@ -196,6 +197,7 @@ export function Board({
   runStatus?: string | null;
   attention?: WorkOverviewProps["attention"];
   nextAction?: WorkOverviewProps["nextAction"];
+  replyGuidance?: WorkOverviewProps["replyGuidance"];
   onNextAction?: WorkOverviewProps["onNextAction"];
   selectedTalk?: string | null;
   onSelectTalk?: (talkKey: string | null) => void;
@@ -804,14 +806,14 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>
       <div className="canvas-story">
         <span><Activity aria-hidden="true" /> Execution map</span>
-        <h2>{model.nodes.length === 0 ? "Waiting for work to appear" : model.nodes.every(node => node.touches === 0) ? "No node activity yet" : `${model.nodes.filter(node => node.state === "running").length} running / ${model.nodes.filter(node => node.state === "blocked").length} blocked`}</h2>
-        <p>{model.nodes.every(node => node.touches === 0) ? "Follow the conversations. Node updates will appear as work is reported." : "Follow the people, their conversations, and the latest reported work."}</p>
+        <h2>{model.nodes.length === 0 ? "Waiting for work to appear" : model.nodes.every(node => node.touches === 0) ? "No graph-node updates recorded" : `${model.nodes.filter(node => node.state === "running").length} running / ${model.nodes.filter(node => node.state === "blocked").length} blocked`}</h2>
+        <p>{model.nodes.every(node => node.touches === 0) ? "Session work updates, when recorded, appear in Run team. Graph-node updates appear when the Runtime records a node event." : "Follow the people, their conversations, and the latest reported work."}</p>
       </div>
       <div className="canvas-arrange" role="group" aria-label="Canvas layout">
         <button type="button" onClick={() => {

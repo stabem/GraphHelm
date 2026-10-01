@@ -34,6 +34,7 @@ import {
 } from "./runtime/client";
 import { devSession, newestPresenceByActor, type AgentPresence, type DevSession } from "./runtime/session";
 import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
+import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
 import type {
   Briefing,
@@ -1621,12 +1622,14 @@ export default function App({
     [],
   );
   const [subagentRead, setSubagentRead] = useState<SubagentReadModel | null>(null);
+  const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
   useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
     if (!selected || events === null) {
       setSubagentRead(null);
+      setRunTeamRead(null);
       setClaudeTaskRead(null);
       return;
     }
@@ -1644,6 +1647,9 @@ export default function App({
     void readSubagentRelationships({ executionId: run, events: eventList, readEvidence })
       .then((result) => { if (!cancelled) setSubagentRead(result); })
       .catch(() => { if (!cancelled) setSubagentRead({ executionId: run, relationships: [], latestByChild: {}, rejected: 1 }); });
+    void readRunTeam(run, eventList, readEvidence)
+      .then((result) => { if (!cancelled) setRunTeamRead(result); })
+      .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
@@ -1767,7 +1773,7 @@ export default function App({
   // pair becomes a bubble standing on the board.
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const recentActivity = useMemo(() => eventList
-    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event))
+    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
     .reverse()
     .map((event) => ({
@@ -1801,7 +1807,7 @@ export default function App({
   const agentReports = useMemo(() => {
     const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
     for (const event of eventList) {
-      if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event) || event.actorType !== "agent" || event.actorId === null) continue;
+      if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event) || isRunTeamSignal(event) || event.actorType !== "agent" || event.actorId === null) continue;
       latest.set(event.actorId, {
         sequence: event.sequence,
         occurredAt: event.occurredAt,
@@ -1816,6 +1822,7 @@ export default function App({
         event.kind === "signal_recorded" &&
         !isSubagentLifecycleSignal(event) &&
         !isClaudeTaskSignal(event) &&
+        !isRunTeamSignal(event) &&
         (event.actorType === "agent" || event.actorType === "owner"),
     );
     const room = spoken.filter((event) => (envelopes[event.sequence]?.to ?? null) === null);
@@ -2723,6 +2730,7 @@ export default function App({
               activity={recentActivity}
               latestEvent={latestEvent}
               subagents={subagentRead?.executionId === selected ? subagentRead : null}
+              runTeam={runTeamRead?.executionId === selected ? runTeamRead : null}
               claudeTasks={claudeTaskRead?.executionId === selected ? claudeTaskRead : null}
               attention={pendingOwnerReview ? "needs_you" : status.attention}
               nextAction={pendingOwnerReview ? {

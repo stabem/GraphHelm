@@ -91,6 +91,10 @@ export function describe(event: RuntimeEvent): string | null {
       const signalKind = typeof payload.kind === "string" ? payload.kind : null;
       if (signalKind === "agent_subagent_started") return "Subagent start recorded; see Team for the session link.";
       if (signalKind === "agent_subagent_stopped") return "Subagent stop recorded; its result still needs separate evidence.";
+      if (signalKind === "run_team_joined") return "Session joined the run team.";
+      if (signalKind === "run_team_reported") return "Session reported its task and activity.";
+      if (signalKind === "run_team_message") return "Team message recorded:";
+      if (signalKind === "run_team_acknowledged") return "Recipient acknowledged an addressed team message.";
       const severity = typeof payload.severity === "string" ? payload.severity : null;
       const from = typeof payload.sourceKind === "string" ? payload.sourceKind : null;
       // `operator_note` is outside the recognized set on purpose, so the Governor records it and
@@ -116,7 +120,10 @@ export function describe(event: RuntimeEvent): string | null {
 /** A stage direction is the machine narrating itself; dialogue is exactly the signal family.
  * Mechanical, not textual: describe() already branches on `kind`, and nothing else may decide. */
 export function isStageDirection(event: RuntimeEvent): boolean {
-  return event.kind !== "signal_recorded";
+  const signalKind = event.kind === "signal_recorded" && event.payload !== null && typeof event.payload === "object"
+    ? (event.payload as { kind?: unknown }).kind : null;
+  return event.kind !== "signal_recorded" || signalKind === "run_team_joined"
+    || signalKind === "run_team_reported" || signalKind === "run_team_acknowledged";
 }
 
 /** Whether this event is the one machine line that answers "why does this run need me" - it
@@ -1074,7 +1081,7 @@ function SayBox({
           <span>{error}</span>
         </p>
       )}
-      <p className="hint">Agents read this as a message, not a command.</p>
+      <p className="hint">Recorded in this run. Agents see it when they read the log; this does not wake them.</p>
     </form>
   );
 }
@@ -1495,7 +1502,7 @@ export function RunPanel({
               : over
                  ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedResults > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
                 : verdict.key === "calm" && status.status === "running"
-                  ? "Running by itself"
+                   ? "Run in progress"
                   : status.status !== null
                     ? `This run is ${readable(status.status)}`
                     : "Nothing to report yet"}

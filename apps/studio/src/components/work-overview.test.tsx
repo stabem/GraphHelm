@@ -4,10 +4,52 @@ import { WorkOverview, isFirstEntryNode } from "./work-overview";
 import type { GraphModel } from "../graph/model";
 import type { SubagentReadModel } from "../runtime/subagents";
 import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
+import type { RunTeamReadModel } from "../runtime/run-team";
 
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("C5 puts explicitly joined sessions and receipt truth before the technical graph", () => {
+    const members: RunTeamReadModel["members"] = ["c1", "c2", "c3"].map((sessionId) => ({
+      actorId: `codex-session-${sessionId}`, host: "codex", sessionId, joinedAt: null,
+      lastAt: null, task: `Task ${sessionId}`, activity: `Update ${sessionId}`,
+      reportedState: "working", endedAt: null,
+    }));
+    members.push({ actorId: "claude-session-a1", host: "claude", sessionId: "a1", joinedAt: null,
+      lastAt: null, task: "Review", activity: "Waiting for browser evidence", reportedState: "waiting", endedAt: null });
+    const runTeam: RunTeamReadModel = { executionId: "run-1", members, rejected: 0, unavailable: false,
+      messages: [{ id: "m1", sender: members[0].actorId, to: members[3].actorId, replyTo: null,
+        text: "Please review the view", at: null, sequence: 1, acknowledged: false, acknowledgedAt: null }] };
+    render(<WorkOverview model={model} runTeam={runTeam} selectedNode={null} onSelectNode={vi.fn()} />);
+    const team = screen.getByRole("region", { name: "Team and shared chat" });
+    expect(within(team).getByText("4 joined sessions")).toBeInTheDocument();
+    expect(screen.getByText("1 team message")).toBeInTheDocument();
+    expect(within(team).getAllByText(/Task c[123]/)).toHaveLength(3);
+    expect(within(team).getByText("Waiting for browser evidence")).toBeInTheDocument();
+    expect(within(team).getByText("Please review the view")).toBeInTheDocument();
+    expect(within(team).getByText("Awaiting recipient acknowledgement")).toBeInTheDocument();
+    expect(within(team).getAllByText(/No fresh activity observed/)).toHaveLength(4);
+  });
+  it("keeps failed team evidence distinct from a verified empty team", () => {
+    const empty: RunTeamReadModel = { executionId: "run-1", members: [], messages: [], rejected: 0, unavailable: false };
+    const { rerender } = render(<WorkOverview model={model} runTeam={empty} selectedNode={null} onSelectNode={vi.fn()} />);
+    const team = screen.getByRole("region", { name: "Team and shared chat" });
+    expect(team).toHaveTextContent("0 joined sessions");
+    expect(team).toHaveTextContent("No native sessions have explicitly joined this run.");
+    expect(team).not.toHaveTextContent("could not be verified");
+
+    rerender(<WorkOverview model={model} runTeam={{ ...empty, rejected: 1 }} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(team).toHaveTextContent("0 verified joined sessions");
+    expect(team).toHaveTextContent("1 team record could not be verified.");
+    expect(team).toHaveTextContent("No joined sessions could be verified from the available team records.");
+    expect(team).not.toHaveTextContent("No native sessions have explicitly joined this run.");
+    expect(team).not.toHaveTextContent("No team messages recorded in this run.");
+
+    rerender(<WorkOverview model={model} runTeam={{ ...empty, members: [{ actorId: "codex-session-c1", host: "codex", sessionId: "c1", joinedAt: null, lastAt: null, task: null, activity: null, reportedState: null, endedAt: null }], rejected: 1 }} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(team).toHaveTextContent("1 verified joined session");
+    expect(team).toHaveTextContent("codex-session-c1");
+    expect(team).toHaveTextContent("1 team record could not be verified.");
+  });
   it("shows the declared step and actual model route separately from the recorder", () => {
     const review = {
       ...node("review_browser_evidence"),

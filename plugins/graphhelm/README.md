@@ -217,6 +217,44 @@ and an unobserved result. An oversized or unterminated frame closes the transpor
 error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and
 activation still need a separate fresh-session observation.
 
+### Explicit run team and shared mailbox
+
+The optional run-team protocol is bound to one `GRAPHHELM_EXECUTION_ID`. Joining is explicit;
+installing the plugin or opening a host chat does not attach it to a run. The Codex compatibility
+companion exposes `team_join`, `team_report`, `team_send`, `team_inbox`, and `team_acknowledge`
+through its existing metadata-bound MCP server. Each tool call uses the native Codex session ID
+from matching `threadId`/`sessionId` transport metadata. The member identity is the same
+`codex-session-<id>` label used by the session hooks. The plugin's general `graphhelm` MCP server
+still uses the shared `agent-chat` label and is **not** a team identity source.
+
+An environment-bound Claude session can use the provider-neutral CLI with
+`GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`, `GRAPHHELM_TOKEN_FILE`, and a trusted
+`GRAPHHELM_SESSION_ID` set by its launcher. For example, from the installed plugin directory:
+
+```text
+python hooks/run_team.py join --host claude
+python hooks/run_team.py report --host claude --update-id progress-1 --task "Review UI" --activity "Checking the rendered view" --state working
+python hooks/run_team.py inbox --host claude
+python hooks/run_team.py acknowledge --host claude --message-id <recorded-message-id>
+python hooks/run_team.py send --host claude --message-id reply-1 --to <sender-actor-id> --reply-to <recorded-message-id> --text "Review complete"
+```
+
+`team_send` writes either an addressed message to an already joined actor or a room message.
+The caller supplies a stable `messageId` so a retry cannot duplicate it. A direct reply must
+return to the sender of a message addressed to this session. `team_inbox` reads a bounded set
+of room and unacknowledged addressed messages; a read does not acknowledge anything. A separate
+call by the addressed session records `team_acknowledge`. Studio reconstructs members, public
+work reports, messages, and acknowledgements from sealed evidence in that exact run. A report is
+the session's statement, not independent proof of active work or acceptance. Silence is shown as
+missing fresh activity; only a recorded SessionEnd says an end was observed.
+
+The mailbox is pull-based. A busy or closed host is not interrupted or restarted, and a recorded
+message does not imply that another host read it. The current Studio operator note is a separate
+run-log message, not an automatic team-mailbox delivery. Runtime bearer credentials authorize
+declared actor labels; they do not cryptographically authenticate native host identity. Use a
+trusted launcher to pin the Claude session and never accept session IDs from a model argument in
+place of that pin. Existing sessions need an explicit safe migration before using these tools.
+
 ### Setup inspection
 
 The `graphhelm-setup` skill includes a hook inspection step. Resolve the actual installed plugin

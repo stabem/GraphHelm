@@ -301,7 +301,9 @@ class HandoffTests(unittest.TestCase):
         replies = [json.loads(line) for line in result.stdout.splitlines()]
         manifest = json.loads(SCRIPT.parent.parent.joinpath("plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(replies[0]["result"]["serverInfo"]["version"], manifest["version"])
-        self.assertEqual([tool["name"] for tool in replies[1]["result"]["tools"]], ["offer", "receive", "status"])
+        self.assertEqual([tool["name"] for tool in replies[1]["result"]["tools"]],
+                         ["offer", "receive", "status", "team_join", "team_report",
+                          "team_send", "team_inbox", "team_acknowledge"])
         self.assertFalse(replies[2]["result"]["isError"])
         self.assertEqual(replies[2]["result"]["content"][0]["type"], "text")
 

@@ -35,6 +35,23 @@ param(
 $ErrorActionPreference = "Stop"
 $studio = Split-Path -Parent $PSScriptRoot  # this file lives in apps/studio/tools/
 
+# Fail before creating project files or starting a Runtime when another Studio (or any other
+# service) already owns the entry address. A second project must not silently acquire a second
+# frontend port or open the first project's page with a nonce minted for this launch.
+$studioPortOccupied = $false
+$studioSocket = $null
+try {
+    $studioSocket = New-Object System.Net.Sockets.TcpClient("127.0.0.1", $StudioPort)
+    $studioPortOccupied = $true
+} catch [System.Net.Sockets.SocketException] {
+    # No listener: Vite's strictPort check remains the final guard against a startup race.
+} finally {
+    if ($studioSocket) { $studioSocket.Dispose() }
+}
+if ($studioPortOccupied) {
+    throw "Studio address http://127.0.0.1:$StudioPort is already in use. Stop that Studio explicitly before starting this project; no other port was selected."
+}
+
 if (-not (Test-Path $Events)) {
     Write-Host "[up] events directory not found, creating: $Events"
     New-Item -ItemType Directory -Force -Path $Events | Out-Null
@@ -116,14 +133,15 @@ $rng.GetBytes($nonceBytes)
 $nonce = (($nonceBytes | ForEach-Object { $_.ToString("x2") }) -join "")
 $env:GRAPHHELM_STUDIO_SESSION_NONCE = $nonce
 
-# 4 - the door, with the key in the URL.
+# 4 - the door, with the key in the URL. The nonce-gated session endpoint proves that the
+# responding Studio is THIS launch; an unrelated page answering / is not sufficient.
 if (-not $NoBrowser) {
     Start-Job -ScriptBlock {
         param($port, $nonce)
         $deadline = (Get-Date).AddSeconds(30)
         while ((Get-Date) -lt $deadline) {
             try {
-                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -TimeoutSec 2 -UseBasicParsing
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$port/__studio/session?nonce=$nonce" -TimeoutSec 2 -UseBasicParsing
                 Start-Process "http://127.0.0.1:$port/?session=$nonce"
                 return
             } catch { Start-Sleep -Milliseconds 500 }

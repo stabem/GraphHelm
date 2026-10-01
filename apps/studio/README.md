@@ -91,7 +91,7 @@ shown refused on the page, with the Runtime's own reason.
 
 The dev server (and only the dev server) can stand in for the browser's model context:
 
-1. Take the auto-connect URL the dev server printed (`Studio auto-connect: http://127.0.0.1:<port>/?session=<nonce>` — port 4173 under plain `npm run dev`, 5183 under `studio-up.ps1`) and append `&webmcp-shim`.
+1. Take the auto-connect URL the dev server printed (`Studio auto-connect: http://127.0.0.1:5183/?session=<nonce>`) and append `&webmcp-shim`.
 2. In the console: `window.__webmcpShim.list()` — the ten tools, as the page registered them.
 3. `await window.__webmcpShim.call("graphhelm_list_executions", {})` — a real read.
 
@@ -107,6 +107,12 @@ production bundle.
 
 One command, cold start included — starts (or reuses) the Runtime, installs dependencies on the
 first run, starts the dev server, opens the browser connected:
+
+Studio uses `http://127.0.0.1:5183/` for plain development, preview, and the Windows launcher.
+An occupied Studio port is an error; the launcher does not select another port or open the
+existing page with a new project's session. This Studio process currently connects to one
+Runtime at a time. To change projects, stop that Studio explicitly and relaunch it with the
+new project's events directory; the project's Runtime port remains an internal setting.
 
 ```powershell
 powershell -File apps/studio/tools/studio-up.ps1 -Events C:\path\to\.graphhelm\events

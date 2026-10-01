@@ -14,6 +14,7 @@ import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
 import type { SubagentReadModel } from "../runtime/subagents";
 import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
+import type { RunTeamReadModel } from "../runtime/run-team";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -29,6 +30,7 @@ export interface WorkOverviewProps {
   latestRecordedUpdate?: RecordedUpdate | null;
   latestEvent?: LatestEvent | null;
   subagents?: SubagentReadModel | null;
+  runTeam?: RunTeamReadModel | null;
   claudeTasks?: ClaudeTaskReadModel | null;
   crew?: CrewMember[];
   talks?: Talk[];
@@ -108,6 +110,7 @@ export function WorkOverview({
   latestRecordedUpdate = null,
   latestEvent = null,
   subagents = null,
+  runTeam = null,
   claudeTasks = null,
   crew = [],
   talks = [],
@@ -198,12 +201,46 @@ export function WorkOverview({
         <div className="work-counts" aria-label="Workspace counts">
           <span><CircleDot aria-hidden="true" size={15} /> {model.nodes.length} node{model.nodes.length === 1 ? "" : "s"}{!model.rosterDeclared && " seen so far"}</span>
           <span><Activity aria-hidden="true" size={15} /> {activeNodes} active node{activeNodes === 1 ? "" : "s"}</span>
-          <span><Users aria-hidden="true" size={15} /> {crew.length} agent identities</span>
+          <span><Users aria-hidden="true" size={15} /> {runTeam && runTeam.members.length > 0 ? `${runTeam.members.length} joined sessions` : `${crew.length} agent identities`}</span>
           {subagents && subagents.relationships.length > 0 && <button type="button" className="work-count-link" onClick={jumpToTeam}><Users aria-hidden="true" size={15} /> {subagents.relationships.length} observed subagent{subagents.relationships.length === 1 ? "" : "s"} · open team</button>}
-          <span><MessageCircle aria-hidden="true" size={15} /> {talks.length} conversations</span>
+          <span><MessageCircle aria-hidden="true" size={15} /> {runTeam && runTeam.members.length > 0 ? `${runTeam.messages.length} team message${runTeam.messages.length === 1 ? "" : "s"}` : `${talks.length} conversations`}</span>
           {attentionNodes > 0 && <span className="work-count-attention">{attentionNodes} needs attention</span>}
         </div>
       </header>
+
+      <section className="work-run-team" aria-label="Team and shared chat">
+        <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>Run team</h2></div><span>{runTeam?.members.length ?? 0} joined sessions</span></div>
+        {runTeam === null ? <p className="work-empty">Checking this run's session records.</p>
+          : runTeam.unavailable ? <p className="work-caution">The team record is too large to verify in this view.</p>
+          : <>
+            {runTeam.members.length === 0
+              ? <p className="work-empty">No native sessions have explicitly joined this run. Historical actor names below are not team membership.</p>
+              : <div className="work-run-team-cards">
+                {runTeam.members.map((member) => {
+                  const minutes = member.lastAt === null ? null : (Date.now() - new Date(member.lastAt).valueOf()) / 60000;
+                  const freshness = member.endedAt !== null ? "Session end observed"
+                    : minutes === null || !Number.isFinite(minutes) || minutes >= 5 ? "No fresh activity observed" : "Recent activity recorded";
+                  return <article key={member.actorId} className="work-run-team-card">
+                    <div className="work-run-team-card-head"><span className="work-avatar" style={{ background: `hsl(${hueOf(member.actorId)} 52% 46%)` }} aria-hidden="true">{initialOf(member.actorId)}</span><div><strong>{member.actorId}</strong><small>{member.host} session</small></div></div>
+                    <p><span>Task</span><strong>{member.task ?? "No task reported"}</strong></p>
+                    <p><span>Latest public activity</span><strong>{member.activity ?? "No work update reported"}</strong></p>
+                    <small>{member.reportedState ? `Reported ${member.reportedState}` : "No work state reported"} · {freshness} · {ago(member.lastAt)}</small>
+                  </article>;
+                })}
+              </div>}
+            <div className="work-run-team-chat">
+              <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h3>Shared chat</h3></div><span>{runTeam.messages.length} recorded message{runTeam.messages.length === 1 ? "" : "s"}</span></div>
+              {runTeam.messages.length === 0 ? <p className="work-empty">No team messages recorded in this run.</p>
+                : <ol>{runTeam.messages.map((message) => <li key={message.id}>
+                  <div><strong>{message.sender}</strong><small>{message.to ? `to ${message.to}` : "to the room"} · {ago(message.at)}</small></div>
+                  <p>{message.text}</p>
+                  {message.replyTo && <small>Reply to {message.replyTo}</small>}
+                  {message.to && <small>{message.acknowledged ? `Recipient acknowledged · ${ago(message.acknowledgedAt)}` : "Awaiting recipient acknowledgement"}</small>}
+                </li>)}</ol>}
+            </div>
+            {runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified.</p>}
+          </>}
+      </section>
 
       <section className="work-now-strip" aria-label="Now, last, and next">
         <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong>{activeNodeNames.length > 0 ? <small><button type="button" className="work-inline-link" onClick={() => onSelectNode(activeNodeNames[0])}>Open {activeNodeNames[0]}</button>{activeNodeNames.length > 1 ? ` · ${activeNodeNames.length - 1} more active` : ""}</small> : <small>No active node recorded</small>}</div>

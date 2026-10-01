@@ -165,7 +165,8 @@ def _signal_event(events: list[dict], signal_id: str) -> dict | None:
     return None
 
 
-def _sealed_signal(url: str, token: str, execution: str, event: dict) -> dict:
+def _sealed_signal(url: str, token: str, execution: str, event: dict,
+                   allowed_kinds: frozenset[str] = frozenset({OFFER_KIND, RECEIPT_KIND})) -> dict:
     record = _signal_record(event)
     if not record:
         raise ValueError("handoff journal event is not a signal record")
@@ -204,7 +205,7 @@ def _sealed_signal(url: str, token: str, execution: str, event: dict) -> dict:
         raise ValueError("sealed evidence does not match journal envelope")
     if signal.get("source", {}).get("id") != record.get("sourceId"):
         raise ValueError("sealed evidence actor does not match journal envelope")
-    if signal.get("source", {}).get("type") != "tool" or signal.get("type") not in {OFFER_KIND, RECEIPT_KIND}:
+    if signal.get("source", {}).get("type") != "tool" or signal.get("type") not in allowed_kinds:
         raise ValueError("sealed evidence is not a handoff signal")
     if signal.get("type") != record.get("kind") or signal.get("severity") != record.get("severity"):
         raise ValueError("sealed evidence metadata does not match journal record")
@@ -445,6 +446,28 @@ def _mcp_tools() -> list[dict]:
          "inputSchema": {**identity, "properties": {
              "offerId": {"type": "string", "maxLength": 128},
          }}},
+        {"name": "team_join", "description": "Attach this native session to the bound run.",
+         "inputSchema": {**identity, "properties": {}}},
+        {"name": "team_report", "description": "Report this session's task and latest public activity; this is not output acceptance.",
+         "inputSchema": {**identity, "properties": {
+             "updateId": {"type": "string", "maxLength": 128},
+             "task": {"type": "string", "maxLength": 500},
+             "activity": {"type": "string", "maxLength": 2000},
+             "state": {"enum": ["working", "waiting", "blocked", "completed"]},
+         }, "required": ["updateId", "task", "activity", "state"]}},
+        {"name": "team_send", "description": "Record a room or addressed message in the bound run; delivery remains unobserved.",
+         "inputSchema": {**identity, "properties": {
+             "messageId": {"type": "string", "maxLength": 128},
+             "text": {"type": "string", "maxLength": 2000},
+             "to": {"type": "string", "maxLength": 128},
+             "replyTo": {"type": "string", "maxLength": 128},
+         }, "required": ["messageId", "text"]}},
+        {"name": "team_inbox", "description": "Read this native session's bounded mailbox and room messages; no receipt is recorded by reading.",
+         "inputSchema": {**identity, "properties": {"after": {"type": "integer", "minimum": 0}}}},
+        {"name": "team_acknowledge", "description": "Record this native session's acknowledgement of an addressed message it read.",
+         "inputSchema": {**identity, "properties": {
+             "messageId": {"type": "string", "maxLength": 128},
+         }, "required": ["messageId"]}},
     ]
 
 
@@ -458,7 +481,7 @@ def _mcp_result(request_id, result: dict) -> dict:
 
 def _mcp_tool_call(name: object, arguments: object, host: str, session: str) -> dict:
     try:
-        if not isinstance(name, str) or name not in {"offer", "receive", "status"}:
+        if not isinstance(name, str) or name not in {"offer", "receive", "status", "team_join", "team_report", "team_send", "team_inbox", "team_acknowledge"}:
             raise ValueError("unknown handoff tool")
         if arguments is None:
             arguments = {}
@@ -467,6 +490,11 @@ def _mcp_tool_call(name: object, arguments: object, host: str, session: str) -> 
         allowed = {
             "offer": {"recipientHost", "recipientSessionId", "handoffId"},
             "receive": {"offerId"}, "status": {"offerId"},
+            "team_join": set(),
+            "team_report": {"updateId", "task", "activity", "state"},
+            "team_send": {"messageId", "text", "to", "replyTo"},
+            "team_inbox": {"after"},
+            "team_acknowledge": {"messageId"},
         }[name]
         if set(arguments) - allowed:
             raise ValueError("tool arguments contain an unsupported field")
@@ -479,8 +507,22 @@ def _mcp_tool_call(name: object, arguments: object, host: str, session: str) -> 
             if "offerId" not in arguments:
                 raise ValueError("receive requires offer id")
             value = receive(host, session, arguments["offerId"])
-        else:
+        elif name == "status":
             value = status(host, session, arguments.get("offerId"))
+        else:
+            import run_team
+            if name == "team_join":
+                value = run_team.join(host, session)
+            elif name == "team_report":
+                value = run_team.report(host, session, arguments["updateId"], arguments["task"],
+                                        arguments["activity"], arguments["state"])
+            elif name == "team_send":
+                value = run_team.send(host, session, arguments["messageId"], arguments["text"],
+                                      arguments.get("to"), arguments.get("replyTo"))
+            elif name == "team_inbox":
+                value = run_team.inbox(host, session, arguments.get("after", 0))
+            else:
+                value = run_team.acknowledge(host, session, arguments["messageId"])
         return {"content": [{"type": "text", "text": json.dumps(value, separators=(",", ":"))}],
                 "isError": False}
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, RecursionError):

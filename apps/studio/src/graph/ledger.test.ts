@@ -40,6 +40,14 @@ it("renders a sealed model reply as its words rather than a JSON accounting blob
     .toContain('"text":"untrusted lookalike"');
 });
 
+it("C5 renders sealed run-team words without exposing protocol JSON in the human thread", () => {
+  const sealed = JSON.stringify({ type: "run_team_message", description: JSON.stringify({
+    protocol: "graphhelm-run-team-v1", executionId: "run-1", text: "Please review the view." }) });
+  expect(readable_content(sealed, "application/json")).toBe("Please review the view.");
+  const malformed = JSON.stringify({ type: "run_team_message", description: "{broken" });
+  expect(readable_content(malformed, "application/json")).toBe("Run team record unavailable.");
+});
+
 describe("the shared ledger of unanswered questions", () => {
   it("owes a question an agent addressed to the operator, with the signalId an answer must cite", () => {
     const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];

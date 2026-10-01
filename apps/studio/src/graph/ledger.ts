@@ -39,6 +39,17 @@ export function readable_content(text: string, mediaType: string): string {
     }
     const description = (parsed as { description?: unknown }).description;
     const type = (parsed as { type?: unknown }).type;
+    if (typeof description === "string" && typeof type === "string" && type.startsWith("run_team_")) {
+      try {
+        const details = JSON.parse(description) as { protocol?: unknown; text?: unknown; task?: unknown; activity?: unknown };
+        if (details.protocol !== "graphhelm-run-team-v1") return "Run team record unavailable.";
+        if (type === "run_team_message") return typeof details.text === "string" ? details.text : "Team message unavailable.";
+        if (type === "run_team_reported") return typeof details.task === "string" && typeof details.activity === "string"
+          ? `${details.task}: ${details.activity}` : "Team report unavailable.";
+        if (type === "run_team_joined") return "Session joined the run team.";
+        if (type === "run_team_acknowledged") return "Addressed message acknowledged by the recipient session.";
+      } catch { return "Run team record unavailable."; }
+    }
     if (typeof description === "string" && type === "node_delivery") {
       const delivery: unknown = JSON.parse(description);
       if (delivery && typeof delivery === "object" && "summary" in delivery && "reason" in delivery

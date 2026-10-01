@@ -2342,6 +2342,24 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-counts > .work-count-link { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: #d8bbff; font: inherit; cursor: pointer; }
 .work-count-attention { color: #ffb36b; }
 .work-now-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+.work-run-team { min-width: 0; margin: 0 0 18px; padding: 16px; border: 1px solid #574963; border-radius: 12px; background: #211d28; }
+.work-run-team-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; margin-bottom: 16px; }
+.work-run-team-card { min-width: 0; padding: 12px; border: 1px solid #494052; border-radius: 10px; background: #2b2532; overflow-wrap: anywhere; }
+.work-run-team-card-head { display: flex; align-items: center; gap: 8px; }
+.work-run-team-card-head > div { display: grid; gap: 2px; min-width: 0; }
+.work-run-team-card-head strong { color: #f0eaf9; font-size: 12px; }
+.work-run-team-card-head small, .work-run-team-card > small { color: #bcb1ca; font-size: 11px; }
+.work-run-team-card p { display: grid; gap: 3px; margin: 10px 0; font-size: 12px; }
+.work-run-team-card p span { color: #b9a6d2; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+.work-run-team-card p strong { color: #f0eaf9; font-weight: 500; }
+.work-run-team-chat { border-top: 1px solid #494052; padding-top: 14px; }
+.work-run-team-chat h3 { margin: 0; font-size: 14px; }
+.work-run-team-chat ol { display: grid; gap: 8px; max-height: 360px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.work-run-team-chat li { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid #494052; border-radius: 8px; background: #29232f; overflow-wrap: anywhere; }
+.work-run-team-chat li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.work-run-team-chat li strong { color: #f0eaf9; font-size: 12px; }
+.work-run-team-chat li small { color: #bcb1ca; font-size: 11px; }
+.work-run-team-chat li p { margin: 0; color: #f0eaf9; font-size: 12px; white-space: pre-wrap; }
 .work-now-strip > div { display: grid; gap: 3px; min-width: 0; padding: 12px; border: 1px solid #494052; border-radius: 10px; background: #241f2b; }
 .work-now-strip span { color: #b9a6d2; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
 .work-now-strip strong { color: #f0eaf9; font-size: 13px; overflow-wrap: anywhere; }

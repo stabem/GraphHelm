@@ -1591,7 +1591,8 @@ mod tests {
         let acl = [
             0x0002_u32.to_ne_bytes().as_slice(),
             &acl_entry(ACL_USER_OBJ, 0o6, 0),
-            &acl_entry(ACL_USER, 0o4, 65_534),
+            // A fixed named UID may be unmapped in the current user namespace.
+            &acl_entry(ACL_USER, 0o4, std::fs::metadata(&path).unwrap().uid()),
             &acl_entry(ACL_GROUP_OBJ, 0o4, 0),
             &acl_entry(ACL_MASK, 0o4, 0),
             &acl_entry(ACL_OTHER, 0o0, 0),

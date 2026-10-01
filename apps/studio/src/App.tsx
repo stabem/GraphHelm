@@ -226,7 +226,7 @@ export default function App({
   }, []);
   const [replySuggestions, setReplySuggestions] = useState<ReplySuggestions | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
-  const [replyIssue, setReplyIssue] = useState<string | null>(null);
+  const [replyIssue, setReplyIssue] = useState<{ executionId: string; headSequence: number; text: string } | null>(null);
   const [judgeRoute, setJudgeRoute] = useState("");
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
@@ -323,13 +323,14 @@ export default function App({
     setReplyIssue(null);
     const id = status?.executionId;
     const head = status?.headSequence;
-    if (!connected || !id || status?.attention !== "needs_you" || selected !== id) return;
+    if (!connected || !id || head === undefined || status?.attention !== "needs_you" || selected !== id) return;
+    const setCurrentIssue = (text: string) => setReplyIssue({ executionId: id, headSequence: head, text });
     if (routes === null) {
-      setReplyIssue("Checking the available model routes…");
+      setCurrentIssue("Checking the available model routes…");
       return;
     }
     if (activeJudgeRoute === null) {
-      setReplyIssue(judgeRoutes.length === 0
+      setCurrentIssue(judgeRoutes.length === 0
         ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
         : "Choose a Jev model to prepare suggested replies.");
       return;
@@ -340,16 +341,16 @@ export default function App({
     void client.getReplySuggestions(id, activeJudgeRoute).then((reply) => {
       if (superseded || clientRef.current !== client) return;
       if (reply === null) {
-        setReplyIssue("This Runtime does not offer recommended replies yet.");
+        setCurrentIssue("This Runtime does not offer recommended replies yet.");
       } else if (reply.executionId !== id || reply.headSequence !== head) {
-        setReplyIssue("The run changed while its replies were prepared. Waiting for a fresh reading.");
+        setCurrentIssue("The run changed while its replies were prepared. Waiting for a fresh reading.");
       } else {
         setReplySuggestions(reply);
       }
     }).catch((reason: unknown) => {
       if (!superseded && clientRef.current === client) {
         const detail = messageOf(reason, "Recommended replies could not be prepared.");
-        setReplyIssue(detail.includes("GRAPHHELM_GATEWAY_KEY")
+        setCurrentIssue(detail.includes("GRAPHHELM_GATEWAY_KEY")
           ? "Recommended replies are unavailable: the Runtime needs its model gateway key. You can still write your own message."
           : `Recommended replies are unavailable: ${detail}`);
       }
@@ -2004,6 +2005,19 @@ export default function App({
     setSayFocusNonce((nonce) => nonce + 1);
   };
   const pendingOwnerReview = durableProposals.length > 0;
+  const currentReplyIssue = status !== null && replyIssue !== null && replyIssue.executionId === status.executionId && replyIssue.headSequence === status.headSequence ? replyIssue.text : null;
+  const currentReplySuggestions = status !== null && replySuggestions !== null && replySuggestions.executionId === status.executionId && replySuggestions.headSequence === status.headSequence ? replySuggestions : null;
+  const replyGuidance = !pendingOwnerReview && waitingForInput && verdict?.key === "needs"
+    ? currentReplySuggestions?.state === "ready" && currentReplySuggestions.suggestions.length === 2
+      ? "Two recommended replies are ready in the conversation."
+      : currentReplyIssue ?? currentReplySuggestions?.reason ?? null
+    : null;
+  const blockedAttentionNode = status?.attentionReasons.find((reason) =>
+    (reason.kind === "blocked_node" || reason.kind === "untriaged_interruption") && typeof reason.node === "string")?.node ?? null;
+  const focusRecordedAttention = () => {
+    setTalkOpen(true);
+    setFocus({ kind: "run" });
+  };
   const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
   const effectiveVerdict = effectiveAttention === undefined ? null : verdictOf(effectiveAttention);
   const effectiveStatus = pendingOwnerReview && status !== null ? { ...status, attention: "needs_you" as const } : status;
@@ -2637,7 +2651,7 @@ export default function App({
                 objective={briefing?.objective ?? null}
                 replySuggestions={replySuggestions}
                 replyLoading={replyLoading}
-                replyIssue={replyIssue}
+                replyIssue={currentReplyIssue}
                 needsDirection={needsDirection}
                 retryFailureNodes={[...retryFailures.keys()]}
                 nodeNames={Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : []))}
@@ -2739,10 +2753,14 @@ export default function App({
               } : waitingForInput && verdict?.key === "needs" ? {
                 label: needsDirection ? "Send direction" : `Answer ${pendingQuestion?.asker ?? "in the thread"}`,
                 detail: needsDirection
-                  ? "This step is waiting. No specific question is visible yet; use a suggested message or write your own direction."
+                  ? "This step is waiting. No specific question is visible yet; open the conversation to write direction."
                   : pendingQuestion?.text ?? "Open the thread to read the question.",
+              } : blockedAttentionNode && verdict?.key === "needs" ? {
+                label: "Review step needing attention",
+                detail: `${blockedAttentionNode} needs review before it can proceed. Open its recorded reason and controls.`,
               } : null}
-              onNextAction={pendingOwnerReview ? focusPendingProposal : focusRunReply}
+              replyGuidance={replyGuidance}
+              onNextAction={pendingOwnerReview ? focusPendingProposal : waitingForInput ? focusRunReply : focusRecordedAttention}
               agentReports={agentReports}
               runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}

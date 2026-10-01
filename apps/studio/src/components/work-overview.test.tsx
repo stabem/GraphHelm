@@ -30,6 +30,20 @@ describe("organized work overview", () => {
     expect(within(team).getByText("Awaiting recipient acknowledgement")).toBeInTheDocument();
     expect(within(team).getAllByText(/No fresh activity observed/)).toHaveLength(4);
   });
+  it("shows a joined actor's verified work update in its legacy card without implying inactivity", () => {
+    const actorId = "codex-session-c1";
+    const runTeam: RunTeamReadModel = { executionId: "run-1", rejected: 0, unavailable: false,
+      messages: [], members: [{ actorId, host: "codex", sessionId: "c1", joinedAt: null,
+        lastAt: "2026-09-29T12:00:00Z", task: "Review Studio", activity: "Checking the reply view",
+        reportedState: "working", endedAt: null }] };
+    render(<WorkOverview model={model} crew={[{ id: actorId, charter: null }]} runTeam={runTeam} selectedNode={null} onSelectNode={vi.fn()} />);
+    const card = screen.getByText(actorId, { selector: ".work-agent-id" }).closest("details")!;
+    expect(card).toHaveTextContent("Latest verified team update");
+    expect(card).toHaveTextContent("Checking the reply view");
+    expect(card).toHaveTextContent("No graph-node update recorded");
+    expect(card).not.toHaveTextContent("No direct chat report");
+    expect(card).not.toHaveTextContent("No node activity yet");
+  });
   it("keeps failed team evidence distinct from a verified empty team", () => {
     const empty: RunTeamReadModel = { executionId: "run-1", members: [], messages: [], rejected: 0, unavailable: false };
     const { rerender } = render(<WorkOverview model={model} runTeam={empty} selectedNode={null} onSelectNode={vi.fn()} />);
@@ -124,7 +138,7 @@ describe("organized work overview", () => {
     render(<WorkOverview model={{ ...model, nodes: [assigned] }} crew={[{ id: "builder", charter: null }]} selectedNode={null} onSelectNode={vi.fn()} />);
     const agent = screen.getByText("builder", { selector: ".work-agent-id" }).closest("details")!;
     expect(agent).toHaveTextContent("implementation");
-    expect(agent).not.toHaveTextContent("No node activity yet");
+    expect(agent).not.toHaveTextContent("No graph-node update recorded");
   });
   it("keeps a typed verified step distinct from an unverified model reply", () => {
     const verified = {
@@ -138,7 +152,7 @@ describe("organized work overview", () => {
   });
   it("retains incomplete-roster and disagreement evidence in the default view", () => {
     render(<WorkOverview model={{...model,rosterDeclared:false,lint:[{kind:"done-without-evidence",detail:"Completion has no evidence",sequence:8}]}} selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(screen.getByText("2 nodes seen so far")).toBeInTheDocument();
+    expect(screen.getByText("2 graph nodes seen so far")).toBeInTheDocument();
     expect(screen.getByRole("region",{name:"Disagreements in the event log"})).toHaveTextContent("Completion has no evidence · event #8");
   });
   it("never presents unverified model edges as dependencies", () => {
@@ -162,18 +176,18 @@ describe("organized work overview", () => {
   it("does not invent an assignment and opens the existing conversation", () => {
     const select=vi.fn();
     render(<WorkOverview model={model} crew={[{id:"codex",charter:null}]} talks={[{key:"pair",label:"codex + helper",participants:["codex","helper"],count:3,lastAt:null}]} selectedNode={null} onSelectNode={vi.fn()} onSelectTalk={select} />);
-    expect(screen.getByText("No node activity yet")).toBeInTheDocument();
+    expect(screen.getByText("No graph-node update recorded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:/codex \+ helper/}));
     expect(select).toHaveBeenCalledWith("pair");
   });
   it("shows recorded messages even while no graph node is active", () => {
     render(<WorkOverview model={model} crew={[{id:"codex",charter:null,lastAt:"2026-09-25T17:00:00Z"}]} talks={[{key:"room",label:"everyone",participants:["codex"],count:1,lastAt:"2026-09-25T17:00:00Z",preview:"Checking the failing flow"}]} activity={[{sequence:39,actorId:"codex",occurredAt:"2026-09-25T17:00:00Z",text:"Checking the failing flow"}]} selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(screen.getByText("0 active nodes")).toBeInTheDocument();
+    expect(screen.getByText("0 active graph nodes")).toBeInTheDocument();
     const activity = screen.getByRole("region", {name:"Recent recorded activity"});
     expect(activity).toHaveTextContent("codex");
     expect(activity).toHaveTextContent("event #39");
     expect(activity).toHaveTextContent("Checking the failing flow");
-    expect(screen.getByText("No node activity yet")).toBeInTheDocument();
+    expect(screen.getByText("No graph-node update recorded")).toBeInTheDocument();
     expect(screen.getByText("Last recorded message or event", {exact:false})).toBeInTheDocument();
     expect(screen.getByText("Checking the failing flow", {selector:".work-talk-preview"})).toBeInTheDocument();
   });

@@ -106,7 +106,8 @@ pub struct Tier1Workspace {
     /// the leftover of a drive whose server died before `release`. Surfaces on the record.
     recovered: bool,
     /// An OS-exclusive claim on the physical workspace name. Held through deferred cleanup,
-    /// even while the cancellation span is parked; process exit releases it for crash recovery.
+    /// even while the cancellation span is parked. Normal cleanup explicitly releases it;
+    /// abandoned claims are released when the OS closes every inherited descriptor.
     ownership: std::fs::File,
     /// The counted span that makes `cancel` wait for this workspace's TEARDOWN (#617).
     ///
@@ -174,8 +175,8 @@ impl Tier1Workspace {
         // blocked reader and deferred cleanup, so an existing directory is not proof of death.
         // Keep the lock outside the removable tree and NEVER unlink it: unlink/reopen would let
         // two owners lock different files for the same workspace. These empty files are stable
-        // coordination metadata, not workspaces or persisted authority; the OS releases the claim
-        // when its process dies. Independent workspace names retain independent locks.
+        // coordination metadata, not workspaces or persisted authority; the OS releases abandoned
+        // claims after every inherited descriptor closes. Workspace names have independent locks.
         let owners = config.staging.join(".graphhelm-workspace-owners");
         std::fs::create_dir_all(&owners).map_err(|source| HostError::Prepare { source })?;
         let ownership = std::fs::OpenOptions::new()
@@ -379,7 +380,8 @@ impl Tier1Workspace {
     /// `CancelSignal::cancel` wait for the teardown its own cancellation caused.
     ///
     /// # Errors
-    /// [`HostError::Config`] if the tree still exists after every attempt.
+    /// [`HostError::Config`] if the tree still exists after every attempt; [`HostError::Prepare`]
+    /// if the ownership lock could not be explicitly released after cleanup.
     pub fn remove(self) -> Result<(), HostError> {
         let mut removed = self.try_git_remove();
         if !removed {
@@ -413,9 +415,15 @@ impl Tier1Workspace {
             let _ = run_supervised(&mut prune, None, false);
         }
         let exists = self.root.exists();
-        // Released HERE, explicitly, and after the last filesystem answer this function needs.
-        // Letting it fall out of scope would work today and would break the moment anyone adds a
-        // line below it, because the release is the thing that lets `cancel` return.
+        // Release after the final filesystem observation; cancellation stays counted through
+        // the unlock attempt and descriptor close.
+        // Drop alone does NOT release Linux flock while another thread's fork-before-exec child
+        // retains this open file description (#207), even with CLOEXEC. End the claim explicitly
+        // only after cleanup; keep the stable file and preserve the OS error if release fails.
+        let unlocked = self
+            .ownership
+            .unlock()
+            .map_err(|source| HostError::Prepare { source });
         drop(self.ownership);
         drop(self.hold);
         if exists {
@@ -423,7 +431,7 @@ impl Tier1Workspace {
                 rule: "the workspace could not be removed",
             });
         }
-        Ok(())
+        unlocked
     }
 
     fn try_git_remove(&self) -> bool {

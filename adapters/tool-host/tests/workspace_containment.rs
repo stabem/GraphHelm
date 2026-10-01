@@ -222,6 +222,90 @@ fn provision_removes_scratch_but_retains_the_stable_ownership_lock() {
     retained.try_lock().unwrap();
 }
 
+/// Contract: completed removal releases ownership even while another thread's child is between
+/// fork and exec (#207). Drop alone leaves Linux flock held by that inherited descriptor.
+/// The serial release observer above does not arrange this interval. No product seam is needed.
+/// Cost: Linux, local git, one unrelated child and anonymous pipes; normally under one second.
+#[cfg(target_os = "linux")]
+#[test]
+fn completed_removal_releases_ownership_before_an_unrelated_child_execs() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+
+    let (_dir, project) = scratch_repo();
+    let staging = tempfile::tempdir().unwrap();
+    let config = WorkspaceConfig::validated(&project, staging.path(), &[]).unwrap();
+    let workspace = Tier1Workspace::provision(&config, "call-1", None).unwrap();
+    let root = workspace.root().to_path_buf();
+    let owner = staging
+        .path()
+        .join(".graphhelm-workspace-owners/call-1.lock");
+    let retained = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&owner)
+        .unwrap();
+    let (ready, ready_writer) = std::io::pipe().unwrap();
+    let (resume_reader, mut resume) = std::io::pipe().unwrap();
+    let receive = |fd| -> std::io::Result<()> {
+        let mut waiting = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // This bounds a broken fixture, not the workspace's release time. The assertion below
+        // observes a held pipe barrier rather than winning a scheduling window.
+        if unsafe { libc::poll(&raw mut waiting, 1, 5_000) } != 1 {
+            return Err(std::io::Error::from_raw_os_error(libc::ETIMEDOUT));
+        }
+        let mut byte = 0_u8;
+        if unsafe { libc::read(fd, (&raw mut byte).cast(), 1) } != 1 || byte != 1 {
+            return Err(std::io::Error::from_raw_os_error(libc::EIO));
+        }
+        Ok(())
+    };
+    let child = std::thread::spawn(move || {
+        let mut command = Command::new("git");
+        command
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        graphhelm_process_tree::configure(&mut command);
+        // SAFETY: after fork the callback uses only async-signal-safe pipe/poll syscalls.
+        // The owning thread waits for exit: Linux PDEATHSIG also fires when that thread exits.
+        unsafe {
+            command.pre_exec(move || {
+                let byte = 1_u8;
+                if libc::write(ready_writer.as_raw_fd(), (&raw const byte).cast(), 1) != 1 {
+                    return Err(std::io::Error::from_raw_os_error(libc::EIO));
+                }
+                receive(resume_reader.as_raw_fd())
+            });
+        }
+        command.status()
+    });
+    let arrived = receive(ready.as_raw_fd());
+    let removed = workspace.remove();
+    let root_is_gone = !root.exists();
+    // The child is still behind the pipe barrier and retains the old ownership descriptor.
+    let next = Tier1Workspace::provision(&config, "call-1", None);
+    let resumed = resume.write_all(&[1]);
+    let status = child.join().unwrap().unwrap();
+    arrived.expect("the unrelated child reached the fork-before-exec barrier");
+    resumed.unwrap();
+    assert!(status.success());
+    removed.unwrap();
+    assert!(root_is_gone);
+    let next = next.expect("completed cleanup must release even a fork-inherited claim");
+    assert!(
+        retained.try_lock().is_err(),
+        "the stable lock file was replaced"
+    );
+    next.remove().unwrap();
+    retained.try_lock().unwrap();
+}
+
 #[test]
 fn resolve_accepts_a_not_yet_existing_file_inside_the_workspace() {
     // Write targets do not exist yet; resolve must vet the existing ancestor chain and still

@@ -209,12 +209,15 @@ export function WorkOverview({
       </header>
 
       <section className="work-run-team" aria-label="Team and shared chat">
-        <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>Run team</h2></div><span>{runTeam?.members.length ?? 0} joined sessions</span></div>
+        <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>Run team</h2></div><span>{runTeam?.members.length ?? 0} {runTeam && runTeam.rejected > 0 ? "verified joined" : "joined"} session{runTeam?.members.length === 1 ? "" : "s"}</span></div>
         {runTeam === null ? <p className="work-empty">Checking this run's session records.</p>
           : runTeam.unavailable ? <p className="work-caution">The team record is too large to verify in this view.</p>
           : <>
+            {runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified. Team membership and chat may be incomplete.</p>}
             {runTeam.members.length === 0
-              ? <p className="work-empty">No native sessions have explicitly joined this run. Historical actor names below are not team membership.</p>
+              ? <p className="work-empty">{runTeam.rejected > 0
+                  ? "No joined sessions could be verified from the available team records."
+                  : "No native sessions have explicitly joined this run. Historical actor names below are not team membership."}</p>
               : <div className="work-run-team-cards">
                 {runTeam.members.map((member) => {
                   const minutes = member.lastAt === null ? null : (Date.now() - new Date(member.lastAt).valueOf()) / 60000;
@@ -229,8 +232,8 @@ export function WorkOverview({
                 })}
               </div>}
             <div className="work-run-team-chat">
-              <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h3>Shared chat</h3></div><span>{runTeam.messages.length} recorded message{runTeam.messages.length === 1 ? "" : "s"}</span></div>
-              {runTeam.messages.length === 0 ? <p className="work-empty">No team messages recorded in this run.</p>
+              <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h3>Shared chat</h3></div><span>{runTeam.messages.length} {runTeam.rejected > 0 ? "verified" : "recorded"} message{runTeam.messages.length === 1 ? "" : "s"}</span></div>
+              {runTeam.messages.length === 0 ? <p className="work-empty">{runTeam.rejected > 0 ? "No team messages could be verified from the available records." : "No team messages recorded in this run."}</p>
                 : <ol>{runTeam.messages.map((message) => <li key={message.id}>
                   <div><strong>{message.sender}</strong><small>{message.to ? `to ${message.to}` : "to the room"} · {ago(message.at)}</small></div>
                   <p>{message.text}</p>
@@ -238,7 +241,6 @@ export function WorkOverview({
                   {message.to && <small>{message.acknowledged ? `Recipient acknowledged · ${ago(message.acknowledgedAt)}` : "Awaiting recipient acknowledgement"}</small>}
                 </li>)}</ol>}
             </div>
-            {runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified.</p>}
           </>}
       </section>
 

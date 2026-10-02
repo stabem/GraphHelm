@@ -200,11 +200,11 @@ export function ProjectRail({
                   run.executionId,
                   typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
                 );
-                const lastActivity = run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                  ? `Last activity ${activityTime(run.lastEventAt)}` : `Last activity unknown · status ${readable(run.status)}`;
+                const lastEventLabel = run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
+                  ? `Last event ${activityTime(run.lastEventAt)}` : `Last event unknown · status ${readable(run.status)}`;
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${label}${label !== run.executionId ? `, run ${run.executionId}` : ""}; ${lastActivity}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${label}${label !== run.executionId ? `, run ${run.executionId}` : ""}; ${lastEventLabel}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -230,8 +230,8 @@ export function ProjectRail({
                       )}
                       <span className="run-when">
                         {run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                          ? <time dateTime={run.lastEventAt} title={run.lastEventAt}>{lastActivity}</time>
-                          : lastActivity}
+                          ? <time dateTime={run.lastEventAt} title={run.lastEventAt}>{lastEventLabel}</time>
+                          : lastEventLabel}
                         {/* #1064: a run started under the fixture executor says so in the index
                           * too, not only once opened — the word, never a glyph. */}
                         {run.executor === "fixture" && (

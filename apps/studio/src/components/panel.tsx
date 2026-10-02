@@ -25,6 +25,7 @@ import { AnswerNode, type AnswerOutcome } from "./answer";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
 import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { isClaudeTaskSignal } from "../runtime/team-tasks";
+import { workConversation, type WorkMessage } from "../runtime/work-conversation";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
 import {
@@ -1372,6 +1373,7 @@ export const DEMONSTRATION_SENTENCE =
 export function RunPanel({
   status,
   events,
+  workMessages = null,
   unverifiedResults = 0,
   onClose,
   openEvidence,
@@ -1392,6 +1394,7 @@ export function RunPanel({
 }: {
   status: ExecutionStatus;
   events: RuntimeEvent[];
+  workMessages?: WorkMessage[] | null;
   /** Completed model calls whose replies still lack an acceptance verdict. */
   unverifiedResults?: number;
   onClose: () => void;
@@ -1435,29 +1438,20 @@ export function RunPanel({
   if (proposalPending) debts.push("owner review");
   for (const reason of status.attentionReasons) {
     const kind = typeof reason.kind === "string" ? reason.kind : "";
-    if (kind === "waiting_input_node" && !debts.includes(needsDirection ? "your direction" : "your answer")) debts.push(needsDirection ? "your direction" : "your answer");
+    if (kind === "waiting_input_node" && !needsDirection && !debts.includes("your answer")) debts.push("your answer");
     if (kind === "blocked_node") {
       const debt = typeof reason.node === "string" && retryFailureNodes.includes(reason.node)
         ? "your decision to retry a failed step" : "your go-ahead";
       if (!debts.includes(debt)) debts.push(debt);
     }
   }
-  // Recent speakers are offered as people to TALK TO — never as people "waiting for an
-  // answer": that claim belongs to the ledger alone (the `owed` prop). The old cards made the
-  // opposite assertion to the banner one block above, on the same screen.
   // The receipt below the thread needs the envelopes to know who an answer was FOR.
   const runEnvelopes = useEnvelopes(events, status.executionId ?? undefined, openEvidence);
-  const askers: Array<{ id: string; at: string | null }> = [];
-  for (let index = events.length - 1; index >= 0 && askers.length < 2; index -= 1) {
-    const event = events[index];
-    if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event)) continue;
-    if (event.actorType !== "agent" || event.actorId === null) continue;
-    if (askers.some((asker) => asker.id === event.actorId)) continue;
-    askers.push({ id: event.actorId, at: event.occurredAt });
-  }
-  const cards = owed !== undefined && owed.length > 0 ? owed : askers;
-  const cardsClaim =
-    owed !== undefined && owed.length > 0 ? "Who is waiting for an answer" : "Talk to someone";
+  const conversation = workMessages ?? workConversation(status.executionId ?? "", events, runEnvelopes, null);
+  const [showAllMessages, setShowAllMessages] = useState(false);
+  const visibleMessages = showAllMessages ? conversation : conversation.slice(-12);
+  const cards = owed ?? [];
+  const cardsClaim = "Who is waiting for an answer";
   const readyDrafts =
     verdict.key === "needs" &&
     replySuggestions?.state === "ready" &&
@@ -1493,12 +1487,30 @@ export function RunPanel({
   }, [sayFocus, sayRecipient]);
   return (
     <section className="panel" aria-label={`Run ${status.executionId ?? ""}`}>
+      <header className="panel-head calm">
+        <div><h2>Conversation</h2><p className="lbl">Recorded work messages</p></div>
+        <button type="button" className="ghost close" onClick={onClose} aria-label="Close this panel"><X aria-hidden="true" /></button>
+      </header>
+      <div className="work-conversation" role="region" aria-label="Shared conversation">
+        {conversation.length === 0 ? <p className="work-empty">No readable work message is available yet. Open Details for the event log.</p>
+          : <>
+            {conversation.length > 12 && <button type="button" className="work-conversation-more" onClick={() => setShowAllMessages((shown) => !shown)}>{showAllMessages ? "Show recent messages" : `Show ${conversation.length - 12} earlier messages`}</button>}
+            <ol>{visibleMessages.map((message) => <li key={message.id}>
+              <div><strong>{message.sender === OPERATOR_ACTOR.id ? "Owner" : message.sender}</strong><small>{message.to ? `to ${message.to}` : "to the room"} · {clock(message.at)}</small></div>
+              <p>{message.text}</p>
+              <small>{message.provenance === "verified-team"
+                ? message.to && message.acknowledged ? "Recipient acknowledged" : message.to ? "Stored; acknowledgement not recorded" : "Stored in team room"
+                : "Stored in run log; delivery not verified"}{message.replyTo ? " · reply recorded" : ""}</small>
+            </li>)}</ol>
+          </>}
+      </div>
+      <details className="run-technical-details"><summary>Details: run state and event log</summary>
       <header className={`panel-head ${verdict.key === "needs" ? "waiting" : unverifiedResults > 0 || status.executor === "fixture" ? "verification-unchecked" : ""}`}>
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>
             {verdict.key === "needs"
-              ? needsDirection ? "This run needs direction" : "This run needs you"
+              ? needsDirection ? "Graph step waiting; no question recorded" : "This run needs you"
               : over
                  ? status.status === "completed" && status.executor === "fixture" ? "Demonstration finished · scripted outcomes" : status.status === "completed" && unverifiedResults > 0 ? "Execution finished · review needed" : `This run is ${readable(status.status ?? "")}`
                 : verdict.key === "calm" && status.status === "running"
@@ -1523,9 +1535,6 @@ export function RunPanel({
         </div>
         {/* "Close this run" read as ENDING the run - the scariest possible misread on a header
           * that says "needs you". The verb names what actually happens: the panel hides. */}
-        <button type="button" className="ghost close" onClick={onClose} aria-label="Close this panel">
-          <X aria-hidden="true" />
-        </button>
       </header>
 
       {objective !== null && objective.trim().length > 0 && (
@@ -1608,10 +1617,12 @@ export function RunPanel({
             : "delivered — waiting for a reply from whoever is working on this"}
         </p>
       )}
+      <p className="panel-foot">started {clock(status.startedAt)} / last event {clock(status.lastEventAt)}</p>
+      </details>
 
       {onSay !== undefined && status.executionId !== null && (
         <>
-        {verdict.key === "needs" && (
+        {verdict.key === "needs" && !needsDirection && (
           <p className="reply-state" role="status">
             {replyLoading
               ? "Preparing two replies for this run…"
@@ -1638,9 +1649,7 @@ export function RunPanel({
         </>
       )}
 
-      <p className="panel-foot">
-        started {clock(status.startedAt)} · last event {clock(status.lastEventAt)}
-      </p>
+
     </section>
   );
 }

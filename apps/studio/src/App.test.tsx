@@ -202,10 +202,39 @@ describe("Studio organization and responsive navigation", () => {
     const identity = screen.getByLabelText("Selected run identity");
     expect(identity).toHaveTextContent("Project: dale-api-base");
     expect(identity).toHaveTextContent("Run: demo-deploy");
-    expect(identity).toHaveTextContent(/Joined sessions (unverified|unknown)|No verified joined sessions in loaded evidence/);
+    expect(identity).not.toHaveTextContent("Joined sessions");
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
     expect(identity).toHaveTextContent("Run: demo-calm");
     expect(identity).not.toHaveTextContent("Run: demo-deploy");
+  });
+
+  it("warns in People when verified team records are unavailable but a message sender is known", async () => {
+    const carriers = Array.from({ length: 2049 }, (_, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "run_team_joined" },
+      occurredAt: null, actorId: "codex", actorType: "agent",
+      idempotencyKey: `key-${index}`, eventId: `event-${index}`, evidenceRefs: [],
+    }));
+    const events = [...carriers, { sequence: 2050, kind: "signal_recorded",
+      payload: { kind: "operator_note", signalId: "note-1" }, occurredAt: null,
+      actorId: "codex", actorType: "agent", idempotencyKey: "key-note",
+      eventId: "event-note", evidenceRefs: ["evidence-note"] }];
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, headSequence: 2050,
+        attention: "can_sleep", attentionReasons: [] })),
+      getEvents: vi.fn(async (_run: string, options: { after: number; limit: number }) => ({
+        head: 2050, events: events.filter((event) => event.sequence > options.after).slice(0, options.limit),
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "evidence-note", mediaType: "application/json",
+        sensitivity: "confidential", contentSha256: "sha256:fixture",
+        content: JSON.stringify({ description: "Checking the latest work result." }) })),
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+      session={async () => ({ token: "local-token", project: "fixture-project" })} />);
+    const people = await screen.findByRole("region", { name: "People and reported work" });
+    await waitFor(() => expect(people).toHaveTextContent("Checking the latest work result."));
+    expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown.");
+    expect(people).toHaveTextContent("Observed actor IDs from recorded messages.");
+    expect(people).not.toHaveTextContent("Explicitly joined sessions.");
   });
 
   it.each([
@@ -430,6 +459,9 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
   // These existing journeys exercise the free canvas; overview has dedicated default-view coverage.
   await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
   await userEvent.click(screen.getByText("Run actions"));
+  // Legacy journeys below inspect the event log after choosing its Details disclosure.
+  const runDetails = document.querySelector("details.run-technical-details > summary");
+  if (runDetails) await userEvent.click(runDetails);
 }
 
 describe("opening", () => {
@@ -460,10 +492,10 @@ describe("opening", () => {
     expect(screen.getByText(/waiting for owner review/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Review pending proposal");
-    expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("owner review");
-    expect(screen.getByRole("region", { name: "Next action" })).toHaveTextContent("Owner action");
-    expect(screen.getByRole("region", { name: "Next action" })).not.toHaveTextContent("recommended replies");
+    expect(await screen.findByRole("region", { name: "Owner decision" })).toHaveTextContent("Review pending proposal");
+    expect(screen.getByRole("region", { name: "Owner decision" })).toHaveTextContent("owner review");
+    expect(screen.getByRole("region", { name: "Owner decision" })).toHaveTextContent("Needs a decision");
+    expect(screen.getByRole("region", { name: "Owner decision" })).not.toHaveTextContent("recommended replies");
     await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
     expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
     const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
@@ -497,7 +529,7 @@ describe("opening", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    const action = await screen.findByRole("region", { name: "Next action" });
+    const action = await screen.findByRole("region", { name: "Owner decision" });
     expect(action).toHaveTextContent("Review step needing attention");
     expect(action).toHaveTextContent("implementation needs review");
     expect(action).not.toHaveTextContent("answer");
@@ -505,7 +537,7 @@ describe("opening", () => {
     expect(await screen.findByLabelText("Why this run needs you")).toHaveTextContent("implementation is blocked");
   });
 
-  it("shows why reply suggestions are unavailable for a waiting-input step", async () => {
+  it("does not invent an owner request when a graph step waits without a question", async () => {
     const client = stubClient({ getStatus: vi.fn(async () => ({
       ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }],
     })) });
@@ -513,9 +545,8 @@ describe("opening", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    const action = await screen.findByRole("region", { name: "Next action" });
-    expect(action).toHaveTextContent("Send direction");
-    await waitFor(() => expect(action).toHaveTextContent("no Jev model set up"));
+    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
+    expect(screen.getByText("graph waiting; no request recorded")).toBeInTheDocument();
     expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
 
@@ -583,11 +614,11 @@ describe("opening", () => {
   });
 
   it("opens the organized overview without applying saved canvas coordinates", async () => {
-    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"F:/github/GraphHelm"})} />);
+    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"fixtures/project"})} />);
     expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();
     expect(screen.getByRole("button",{name:/^Overview$/})).toHaveAttribute("aria-pressed","true");
     expect(screen.queryByRole("combobox",{name:"Find on board"})).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("F:/github/GraphHelm");
+    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("fixtures/project");
   });
   /** THE POINT OF THE SESSION WORK. Nobody types anything: the page asks the dev server, gets the
    * token the Runtime already wrote, and is connected before the operator does a thing. */
@@ -637,11 +668,11 @@ describe("the projects rail", () => {
     render(<App
       createClient={() => stubClient() as unknown as RuntimeClient}
       modelContext={null}
-      session={async () => ({ token: "local-token", project: "ml-saas", projectPath: "F:/github/ml-saas" })}
+      session={async () => ({ token: "local-token", project: "fixture-service", projectPath: "fixtures/service" })}
     />);
     const rail = await screen.findByLabelText("Projects");
-    expect(within(rail).getByText("ml-saas")).toBeVisible();
-    expect(within(rail).getByText("F:/github/ml-saas")).toBeVisible();
+    expect(within(rail).getByText("fixture-service")).toBeVisible();
+    expect(within(rail).getByText("fixtures/service")).toBeVisible();
   });
   /** A project is a FOLDER and the runs live inside it. The rail says how many projects there
    * really are rather than implying a hierarchy the Runtime cannot back. */
@@ -1758,7 +1789,7 @@ describe("the conversation moves on its own", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     const panel = await screen.findByLabelText(/^Run /);
     // No clicks after this point: the reply must surface by itself.
-    expect(await within(panel).findByText("oi de volta")).toBeInTheDocument();
+    expect(await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText("oi de volta")).toBeInTheDocument();
   });
 });
 
@@ -1908,7 +1939,7 @@ describe("the attention verdict explains itself", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "resume" })).toBeEnabled());
   });
 
-  it("names the missing model when a node waits for input and nothing is wired", async () => {
+  it("shows a graph wait as diagnostic when no request or model route is recorded", async () => {
     const client = stubClient({
       getStatus: vi.fn(async () => ({
         ...STATUS,
@@ -1919,14 +1950,12 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    // No agent has actually asked anything, and the block says so instead of demanding an
-    // answer to nothing — the debt, not just the debtor.
-    expect(why).toHaveTextContent(/No specific question is visible here yet/);
-    expect(within(why).getByText(/no model is wired/i)).toBeInTheDocument();
+    expect(screen.getByText("graph waiting; no request recorded")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
 
-  it("the waiting-input action opens the thread and puts the cursor in the message box", async () => {
+  it("keeps manual room messaging available without inventing a waiting-input action", async () => {
     const client = stubClient({
       getStatus: vi.fn(async () => ({
         ...STATUS,
@@ -1936,10 +1965,9 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /send direction/i }));
-
     const box = await screen.findByLabelText(/say something into this run/i);
+    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    await userEvent.click(box);
     await waitFor(() => expect(box).toHaveFocus());
   });
 });
@@ -1994,7 +2022,7 @@ function askedClient(overrides: Record<string, unknown> = {}) {
 }
 
 describe("the answer path", () => {
-  it("the answer button retargets the composer to the room, visibly", async () => {
+  it("sends a manual room message after the earlier question was answered", async () => {
     // codex spoke (so a reply hint offers it) but its question is already answered — the banner
     // owes nothing to codex, and its action must speak to the ROOM, undoing any stale lock.
     const client = askedClient({
@@ -2029,17 +2057,8 @@ describe("the answer path", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    // Lock the composer onto codex the way a person actually does: through a reply hint. With
-    // codex's question already answered, the cards carry the honest "talk to" claim, never
-    // "waiting for an answer".
     await screen.findByLabelText(/^Run demo-deploy/);
-    const hints = await screen.findByLabelText(/talk to someone/i);
-    await userEvent.click(within(hints).getByRole("button", { name: /message codex/i }));
-    expect(screen.getAllByText(/→ codex/).length).toBeGreaterThan(0);
-
-    // The banner's own action must undo that lock before promising the answer lands.
-    const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /send direction in the thread/i }));
+    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "resposta pra sala");
@@ -2099,11 +2118,9 @@ describe("the answer path", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    await waitFor(() =>
-      expect(within(why).queryByText(/Qual porta devo usar/)).not.toBeInTheDocument(),
-    );
-    await waitFor(() => expect(why).toHaveTextContent(/No specific question is visible here yet/));
+    const conversation = await screen.findByRole("region", { name: "Shared conversation" });
+    expect(await within(conversation).findByText(/Qual porta devo usar/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
   });
 });
 
@@ -2496,11 +2513,9 @@ describe("round-2: the ledger settles debts honestly", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    await waitFor(() =>
-      expect(within(why).queryByText(/aqui esta o relatorio/)).not.toBeInTheDocument(),
-    );
-    expect(why).toHaveTextContent(/No specific question is visible here yet/);
+    const conversation = await screen.findByRole("region", { name: "Shared conversation" });
+    expect(await within(conversation).findByText(/aqui esta o relatorio/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
   });
 
   /** The composer's reply hints claimed "Who is waiting for an answer" while listing mere
@@ -2563,7 +2578,7 @@ describe("round-2: the ledger settles debts honestly", () => {
     expect(client.getReplySuggestions).toHaveBeenCalledWith("demo-deploy", "judge");
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(await screen.findByRole("region", { name: "Next action" })).toHaveTextContent("Two recommended replies are ready in the conversation.");
+    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
   });
 
   /** A slow suggestion read can finish after the run advances. Showing its old advice beside
@@ -2756,9 +2771,8 @@ describe("round-3: what you typed survives, and what waits is true", () => {
     expect(box).toHaveValue("resposta pela metade");
   });
 
-  /** Under the honest "Talk to someone" claim, the button verb was still "answer" — asserting
-   * the very debt the heading denies. */
-  it("recent speakers are offered with an honest verb, not 'answer'", async () => {
+  /** A speaker with unreadable words must not become a fabricated person or answer request. */
+  it("does not promote an unreadable recent speaker into an answer request", async () => {
     const client = stubClient({
       getStatus: vi.fn(async () => ({
         ...STATUS,
@@ -2783,9 +2797,11 @@ describe("round-3: what you typed survives, and what waits is true", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const hints = await screen.findByLabelText(/talk to someone/i);
-    expect(within(hints).getByRole("button", { name: /message codex/i })).toBeInTheDocument();
-    expect(within(hints).queryByRole("button", { name: /answer codex/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/talk to someone/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.getByRole("region", { name: "People and reported work" })).toHaveTextContent("No agent work message is readable yet");
+    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
   });
 });
 
@@ -3407,16 +3423,16 @@ describe("the log is searchable and addressable", () => {
     const client = stubClient(twoMessages());
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await screen.findByText(/porta certa/);
+    await within(document.querySelector(".thread") as HTMLElement).findByText(/porta certa/);
 
     await userEvent.type(screen.getByLabelText(/search this conversation/i), "porta");
-    expect(screen.getByText(/porta certa/)).toBeInTheDocument();
-    expect(within(document.querySelector(".talk") as HTMLElement).queryByText(/fila esta vazia/)).not.toBeInTheDocument();
+    expect(within(document.querySelector(".thread") as HTMLElement).getByText(/porta certa/)).toBeInTheDocument();
+    expect(within(document.querySelector(".thread") as HTMLElement).queryByText(/fila esta vazia/)).not.toBeInTheDocument();
     // The narrowing is announced - a thread that silently hides is a thread that lies.
     expect(screen.getByText(/1 of 2/)).toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText(/search this conversation/i));
-    expect(await within(document.querySelector(".talk") as HTMLElement).findByText(/fila esta vazia/)).toBeInTheDocument();
+    expect(await within(document.querySelector(".thread") as HTMLElement).findByText(/fila esta vazia/)).toBeInTheDocument();
   });
 
   it("every spoken turn carries its coordinate, and clicking copies it", async () => {
@@ -3433,7 +3449,7 @@ describe("the log is searchable and addressable", () => {
     const client = stubClient(twoMessages());
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await screen.findByText(/porta certa/);
+    await within(document.querySelector(".thread") as HTMLElement).findByText(/porta certa/);
 
     await userEvent.click(screen.getByRole("button", { name: "#13" }));
     expect(written).toContain("demo-deploy#13");
@@ -3648,7 +3664,7 @@ describe("the exchange", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     const panel = await screen.findByLabelText(/^Run /);
-    const said = await within(panel).findByText(
+    const said = await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText(
       /the migration needs a decision before I go further/,
     );
     // EXACTLY the sentence. A `contains`-shaped assertion is satisfied by the sentence buried in
@@ -3985,7 +4001,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     const panel = await screen.findByLabelText(/^Run /);
-    expect(await within(panel).findByText("concordo com o plano")).toBeInTheDocument();
+    expect(await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText("concordo com o plano")).toBeInTheDocument();
     expect(within(panel).getByText(/→ codex/)).toBeInTheDocument();
   });
 

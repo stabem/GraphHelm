@@ -213,10 +213,10 @@ export function WorkOverview({
   return (
     <main className="work-overview" aria-label="Work overview">
       <header className="work-primary-header">
-        <span>Selected run · {projectName ?? "Project"}</span>
+        <span>Selected run &middot; {projectName ?? "Project"}</span>
         <h1 className="work-mission">Mission: {objective?.trim() || "objective not recorded"}</h1>
         {runId && <small>Run {runId}</small>}
-        <small>{runStatus === null ? "State not recorded" : readable(runStatus)} · {recordedUpdate}</small>
+        <small>{runStatus === null ? "State not recorded" : readable(runStatus)} &middot; {recordedUpdate}</small>
       </header>
       <nav className="work-primary-navigation" aria-label="Mission navigation">
         <button type="button" onClick={openGraph}>Open graph and steps</button>

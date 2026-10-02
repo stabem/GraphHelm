@@ -6,6 +6,15 @@
 .delivery-eyebrow, .delivery-meta { font-size: 11px; color: #b3b4c2; }
 .delivery-card h4 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
 .delivery-card ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.delivery-work { margin: 14px 0; padding: 12px; border: 1px solid #41434d; border-radius: 9px; background: #1c1d22; }
+.delivery-work h5, .delivery-jpd h5 { margin: 10px 0 5px; font-size: 12px; color: #e5e7ef; }
+.delivery-work h5:first-child, .delivery-jpd h5:first-child { margin-top: 0; }
+.delivery-work ul, .delivery-jpd ul { margin: 6px 0 0; padding-left: 18px; list-style: disc; }
+.delivery-work li, .delivery-jpd li { margin: 5px 0; color: #c6c8d2; font-size: 11px; overflow-wrap: anywhere; }
+.delivery-work code { color: #d9e7ff; overflow-wrap: anywhere; }
+.delivery-jpd { margin-top: 14px; padding-top: 10px; border-top: 1px solid #383942; }
+.delivery-jpd p { margin: 6px 0; }
+.delivery-unavailable { font-style: italic; }
 .delivery-card li + li { border-top: 1px solid #383942; margin-top: 10px; padding-top: 10px; }
 .delivery-document { display: flex; align-items: center; width: 100%; gap: 8px; padding: 7px 0; border: 0; background: transparent; color: #8cc5ff; text-align: left; cursor: pointer; }
 .delivery-document span { min-width: 0; flex: 1; overflow-wrap: anywhere; }

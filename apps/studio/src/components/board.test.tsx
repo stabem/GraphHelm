@@ -130,6 +130,24 @@ describe("the run capsule", () => {
 });
 
 describe("node evidence", () => {
+  it("highlights verified assignment only, never a history speaker", () => {
+    const model: GraphModel = {
+      ...MODEL,
+      edgesKnown: true,
+      edges: [{ id: "implementation->deploy", from: "implementation", to: "deploy", type: "control" }],
+      nodes: [
+        { ...MODEL.nodes[0], assignedActor: { type: "agent", id: "builder" }, history: [{ sequence: 1, kind: "report", nextState: "blocked", outcome: "blocked", occurredAt: null, actorId: "reviewer", actorType: "agent", evidence: 0 }] },
+        MODEL.nodes[1],
+      ],
+    };
+    render(<Board model={model} board={emptyBoard()} selectedNode={null} selectedAgent="builder" onSelectAgent={vi.fn()} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
+    const assigned = screen.getAllByText("implementation").find((element) => element.closest("article.node"))!.closest("article.node")! as HTMLElement;
+    const neighbor = screen.getAllByText("deploy").find((element) => element.closest("article.node"))!.closest("article.node")! as HTMLElement;
+    expect(assigned.style.boxShadow).toContain("hsl");
+    expect(neighbor).not.toHaveClass("node-filtered-out");
+    expect(neighbor.style.boxShadow).toBe("");
+  });
+
   it("names the runtime as recorder and keeps the event address", () => {
     render(<Board model={{ ...MODEL, nodes: [...MODEL.nodes, { id: "draft", state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
     expect(screen.getByText("Runtime")).toBeInTheDocument();

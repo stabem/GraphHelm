@@ -670,6 +670,16 @@ export function Board({
   };
 
   const showConnect = connectOpen || graphFile.trim().length > 0 || connectionTone === "refused";
+  const assignedNodeIds = selectedAgent === null
+    ? new Set<string>()
+    : new Set(model.nodes.filter((node) => node.assignedActor?.id === selectedAgent).map((node) => node.id));
+  const focusedNodeIds = new Set(assignedNodeIds);
+  if (selectedAgent !== null && model.edgesKnown) {
+    for (const edge of model.edges) {
+      if (assignedNodeIds.has(edge.from)) focusedNodeIds.add(edge.to);
+      if (assignedNodeIds.has(edge.to)) focusedNodeIds.add(edge.from);
+    }
+  }
 
   itemRectsRef.current = [
     ...agentPlaces.map((agent) => ({ id: `agent:${agent.id}`, x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
@@ -998,6 +1008,7 @@ export function Board({
             entry={isEntryNode(model, node.id)}
             objective={isFirstEntryNode(model, node.id) ? objective : null}
             selected={node.id === selectedNode}
+            focusVisible={selectedAgent === null || focusedNodeIds.has(node.id)}
             multi={picked.has(`node:${node.id}`)}
             onOpen={() => {
               if (swallowClick.current) return;
@@ -1417,6 +1428,7 @@ function NodeBlock({
   multi = false,
   highlight = null,
   highlightAgent = null,
+  focusVisible = true,
   objective = null,
 }: {
   multi?: boolean;
@@ -1432,6 +1444,7 @@ function NodeBlock({
   /** The picked agent's own colour: nodes this agent touched wear a thin ring of it. */
   highlight?: string | null;
   highlightAgent?: string | null;
+  focusVisible?: boolean;
 }) {
   const mood = moodOf(node.state);
   const last = node.history.at(-1);
@@ -1457,11 +1470,11 @@ function NodeBlock({
   };
   return (
     <article
-      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
+      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""} ${!focusVisible ? "node-filtered-out" : ""}`}
       style={{
         left: at.x,
         top: at.y,
-        ...(highlight !== null && highlightAgent !== null && !selected && crew.includes(highlightAgent)
+        ...(highlight !== null && highlightAgent !== null && !selected && node.assignedActor?.id === highlightAgent
           ? { boxShadow: `0 0 0 1.5px ${highlight}, var(--lift)` }
           : {}),
       }}

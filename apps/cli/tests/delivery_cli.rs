@@ -158,6 +158,7 @@ fn progressive_deliveries_are_sealed_and_invalid_sources_never_append() {
     let second = data(invoke("implementation", "writer-agent"));
     assert_ne!(first["signalId"], second["signalId"]);
     assert_eq!(head(&events).as_u64().unwrap(), before + 2);
+
     assert_delivery_actor(&events);
     let invalid_actor = invoke("implementation", "bad actor id");
     assert!(!invalid_actor.status.success());
@@ -219,4 +220,18 @@ fn progressive_deliveries_are_sealed_and_invalid_sources_never_append() {
     assert!(!directory.path().join("docs/prd.md").exists());
     assert_no_plaintext(&events, b"Created retry rule");
     assert_no_plaintext(&events, b"Explain checkout failures");
+
+    // Ordinary `execution start --file` records a declaration, not a published current graph.
+    // A structurally valid JPD report therefore refuses closed until publication supplies the
+    // active identity; this observes the fail-closed producer boundary.
+    record["documents"][0]["path"] = "docs/prd.md".into();
+    let journey: Value = serde_json::from_str(include_str!(
+        "../../../extensions/builtin/graphhelm-jpd/fixtures/positive/journey-verification-first-pass.json"
+    ))
+    .unwrap();
+    record["work"] = json!({"version":1,"sessionId":"session-1","stage":"implementation","revision":"a".repeat(40),"skills":[],"checks":[],"journeyVerification":journey});
+    write(directory.path(), "delivery.json", &record);
+    let before_unpublished_jpd = head(&events).as_u64().unwrap();
+    assert!(!invoke("implementation", "writer-agent").status.success());
+    assert_eq!(head(&events).as_u64().unwrap(), before_unpublished_jpd);
 }

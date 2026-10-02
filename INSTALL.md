@@ -166,6 +166,29 @@ It does **not** install the CLI, start the Runtime, or replace the main `graphhe
 registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate
 surface; it does not replace the main Runtime tools.
 
+### Keel and Journey-Proven Development skills
+
+When adopting the Keel/JPD development method, install its two companion packages in each
+requested host. The main plugin and the Codex hooks companion do not contain these skills.
+
+```sh
+# Claude Code
+claude plugin install graphhelm-development-contracts@graphhelm
+claude plugin install graphhelm-jpd@graphhelm
+
+# Codex
+codex plugin add graphhelm-development-contracts@graphhelm
+codex plugin add graphhelm-jpd@graphhelm
+```
+
+**Verify** with `claude plugin details graphhelm-development-contracts@graphhelm` and
+`claude plugin details graphhelm-jpd@graphhelm`, or `codex plugin list --marketplace graphhelm
+--json`. Confirm the installed companion packages and their skill inventory. In step 7, start
+a fresh session and confirm that Keel and the JPD skill family are discoverable in that host.
+Report installed bytes, session discovery, and observed invocation separately. None proves
+that a journey passed or that a trusted observer certified a result. Existing personal plugins,
+profiles, permission rules, and unrelated hook registrations stay in place.
+
 **Verify for each requested host:** its plugin list shows `graphhelm` installed and enabled
 (in Claude Code, `/plugin`), and a new session offers the guide skill:
 `/graphhelm:graphhelm-guide` in Claude Code or `$graphhelm-guide` in Codex. Report hook activation

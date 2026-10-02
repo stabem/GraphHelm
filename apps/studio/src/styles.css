@@ -475,6 +475,16 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   margin: 3px 0 10px 20px;
 }
 
+.run-group-title, .run-group-toggle {
+  display: block;
+  margin: 9px 10px 3px;
+  color: var(--dim);
+  font-size: 10px;
+  text-align: left;
+}
+.run-group-toggle { text-decoration: underline; }
+.run-page-note { margin: 8px 10px 2px; color: var(--faint); font-size: 10px; }
+
 .run {
   display: flex;
   align-items: center;
@@ -619,6 +629,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 
 .strip-card.right { margin-left: auto; padding: 7px 8px; gap: 4px; }
+
+.run-selection-identity {
+  flex-basis: 100%;
+  margin: 0 8px 2px;
+  color: var(--dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 
 /* The verdict's own explanation, wrapping to its own line inside the left strip card. Each
    reason sentence carries the one action that is legal for it; the button sits in the sentence

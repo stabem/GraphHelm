@@ -2349,6 +2349,13 @@ export default function App({
               <span className="meta">pick a run, or start one</span>
             )}
             {effectiveVerdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
+            {selected && <p className="run-selection-identity" aria-label="Selected run identity">
+            Project: {project ?? "this runtime"}{projectPath ? ` (${projectPath})` : ""} · Run: {selected} · {runTeamRead?.executionId !== selected || runTeamRead.unavailable
+              ? "Joined sessions unverified"
+              : runTeamRead.members.length > 0
+                ? `Verified joined: ${runTeamRead.members.map((member) => `${member.actorId} (${member.host}, session ${member.sessionId})`).join(", ")}${runTeamRead.rejected > 0 ? ` · ${runTeamRead.rejected} signals unverified` : ""}`
+                : runTeamRead.rejected > 0 ? `${runTeamRead.rejected} signals unverified; joined sessions unknown` : "No verified joined sessions in loaded evidence"}
+            </p>}
           </div>
 
           <div className="strip-card right">

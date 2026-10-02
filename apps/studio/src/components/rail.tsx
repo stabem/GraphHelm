@@ -24,7 +24,28 @@ import { useEffect, useState } from "react";
 import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary } from "../runtime/types";
-import { clock, hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
+import { hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
+
+function recentFirst(runs: ExecutionSummary[]): ExecutionSummary[] {
+  return [...runs].sort((a, b) => {
+    const at = a.lastEventAt ? Date.parse(a.lastEventAt) : NaN;
+    const bt = b.lastEventAt ? Date.parse(b.lastEventAt) : NaN;
+    const timeA = Number.isFinite(at) ? at : -Infinity;
+    const timeB = Number.isFinite(bt) ? bt : -Infinity;
+    return timeB - timeA || (a.executionId < b.executionId ? -1 : a.executionId > b.executionId ? 1 : 0);
+  });
+}
+
+function activityTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    second: "2-digit", timeZoneName: "short",
+  }).format(new Date(value));
+}
+
+function hasRecordedActivity(run: ExecutionSummary): boolean {
+  return typeof run.lastEventAt === "string" && Number.isFinite(Date.parse(run.lastEventAt));
+}
 
 export interface Project {
   /** The folder's name. Today: the Runtime's own store. */
@@ -81,6 +102,7 @@ export function ProjectRail({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? "");
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [historyMode, setHistoryMode] = useState<"auto" | "shown" | "hidden">("auto");
   useEffect(() => setDraftName(projectName ?? ""), [projectName]);
   const saveName = () => {
     if (onRenameProject?.(draftName) !== false) setEditing(false);
@@ -155,7 +177,16 @@ export function ProjectRail({
             </div>
 
             <div className="project-runs">
-              {project.runs.map((run) => {
+              {(() => {
+                const dated = project.runs.filter(hasRecordedActivity);
+                const unknownTime = recentFirst(project.runs.filter((run) => !hasRecordedActivity(run)));
+                const ongoing = recentFirst(dated.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
+                const history = recentFirst(dated.filter((run) => ["completed", "failed", "cancelled"].includes(run.status)));
+                const unknown = recentFirst(dated.filter((run) => !["running", "paused", "blocked", "completed", "failed", "cancelled"].includes(run.status)));
+                const selectedHistory = history.find((run) => run.executionId === selected);
+                const historyExpanded = historyMode === "shown" || (historyMode === "auto" && ongoing.length === 0);
+                const visibleHistory = historyExpanded ? history : selectedHistory ? [selectedHistory] : [];
+                const renderRows = (runs: ExecutionSummary[]) => runs.map((run) => {
                 const verdict = verdictOf(run.attention);
                 const reviewCount = run.status === "completed" && run.executor !== "fixture" && typeof run.unverifiedResults === "number" && run.unverifiedResults > 0
                   ? run.unverifiedResults : 0;
@@ -169,9 +200,11 @@ export function ProjectRail({
                   run.executionId,
                   typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
                 );
+                const lastActivity = run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
+                  ? `Last activity ${activityTime(run.lastEventAt)}` : `Last activity unknown · status ${readable(run.status)}`;
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} onClick={() => onSelect(run.executionId)} title={rowStatus}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${label}${label !== run.executionId ? `, run ${run.executionId}` : ""}; ${lastActivity}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -196,7 +229,9 @@ export function ProjectRail({
                         <span className="run-address" title={run.executionId}>{run.executionId}</span>
                       )}
                       <span className="run-when">
-                        {clock(run.lastEventAt)}
+                        {run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
+                          ? <time dateTime={run.lastEventAt} title={run.lastEventAt}>{lastActivity}</time>
+                          : lastActivity}
                         {/* #1064: a run started under the fixture executor says so in the index
                           * too, not only once opened — the word, never a glyph. */}
                         {run.executor === "fixture" && (
@@ -215,7 +250,17 @@ export function ProjectRail({
                   {onRemoveRun && (confirmRemove === run.executionId ? <span className="run-remove-confirm"><span>Remove from this browser’s list; history stays intact and execution continues.</span><button type="button" onClick={() => { onRemoveRun(run.executionId); setConfirmRemove(null); }}>Remove</button><button type="button" onClick={() => setConfirmRemove(null)} aria-label="Cancel remove">Cancel</button></span> : <button type="button" className="icon-action run-remove" onClick={() => setConfirmRemove(run.executionId)} aria-label={`Remove ${run.executionId} from this browser's list`} title="Remove from this browser’s list"><Trash2 aria-hidden="true" /></button>)}
                   </div>
                 );
-              })}
+                });
+                return <>
+                  {ongoing.length > 0 && <div role="group" aria-label={`Ongoing runs (${ongoing.length})`}><p className="lbl run-group-title">Ongoing ({ongoing.length})</p>{renderRows(ongoing)}</div>}
+                  {unknown.length > 0 && <div role="group" aria-label={`Status unknown (${unknown.length})`}><p className="lbl run-group-title">Status unknown ({unknown.length})</p>{renderRows(unknown)}</div>}
+                  {history.length > 0 && <div role="group" aria-label={`Historical runs (${history.length})`}>
+                    <button type="button" className="run-group-toggle" aria-expanded={historyExpanded} onClick={() => setHistoryMode(historyExpanded ? "hidden" : "shown")}>{historyExpanded ? "Hide history" : "Show history"} ({history.length})</button>
+                    {renderRows(visibleHistory)}
+                  </div>}
+                  {unknownTime.length > 0 && <div role="group" aria-label={`Activity time unknown (${unknownTime.length})`}><p className="lbl run-group-title">Activity time unknown ({unknownTime.length})</p>{renderRows(unknownTime)}</div>}
+                </>;
+              })()}
 
               {project.runs.length === 0 && (
                 <button type="button" className="rail-empty" onClick={onNewTask}>
@@ -224,9 +269,9 @@ export function ProjectRail({
               )}
 
               {hasMore && (
-                <button type="button" className="show-more" onClick={onLoadMore} disabled={busy}>
+                <><p className="run-page-note">Loaded runs only; more may have newer activity.</p><button type="button" className="show-more" onClick={onLoadMore} disabled={busy}>
                   show more
-                </button>
+                </button></>
               )}
             </div>
           </div>

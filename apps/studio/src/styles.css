@@ -2354,9 +2354,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #1083 F9: the scroll box runs to the scene's bottom and PADS its content by the dock's measured
    height (App.tsx writes --dock-reserve), so the last card scrolls above the dock instead of
    sitting behind it; the fallback is the old fixed reserve. */
-.work-overview-scroll { position: absolute; inset: 0; overflow: auto; container-type: inline-size; padding: 32px clamp(24px, 4vw, 64px) calc(var(--dock-reserve, 70px) + 32px); background: #141416; scrollbar-width: thin; }
+.work-overview-scroll { position: absolute; inset: 64px 0 0; overflow: auto; container-type: inline-size; padding: 32px clamp(24px, 4vw, 64px) calc(var(--dock-reserve, 70px) + 32px); background: #141416; scrollbar-width: thin; }
 .work-overview { font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #eeeef2; }
-.work-primary-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 24px; padding-right: 200px; }
+.work-primary-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 24px; }
 .work-primary-header > span { flex-basis: 100%; }
 .work-primary-header > span, .work-primary-header small { color: #bcb3c7; font-size: 12px; }
 .work-primary-header h1 { flex-basis: 100%; margin: 0; font-size: 24px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -2561,7 +2561,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .work-agent-list { grid-template-columns: minmax(0,1fr); }
   .work-node-grid { grid-template-columns: minmax(0,1fr); }
   .work-heading { padding-top: 40px; padding-right: 0; }
-  .work-primary-header { padding-top: 40px; padding-right: 0; }
+  .work-primary-header { padding-right: 0; }
 }
 @media (max-width: 600px) {
   .work-next-action { align-items: stretch; flex-direction: column; }

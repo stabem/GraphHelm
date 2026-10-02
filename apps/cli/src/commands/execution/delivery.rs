@@ -142,6 +142,27 @@ fn revision(value: &str) -> bool {
 }
 
 fn validate_journey(value: &serde_json::Value, work_revision: &str) -> bool {
+    let mut pending = vec![value];
+    while let Some(part) = pending.pop() {
+        match part {
+            serde_json::Value::String(text) => {
+                if text.chars().any(char::is_control) || secret_shaped(text) {
+                    return false;
+                }
+            }
+            serde_json::Value::Array(items) => pending.extend(items),
+            serde_json::Value::Object(fields) => {
+                if fields
+                    .keys()
+                    .any(|key| key.chars().any(char::is_control) || secret_shaped(key))
+                {
+                    return false;
+                }
+                pending.extend(fields.values());
+            }
+            _ => {}
+        }
+    }
     static SCHEMAS: OnceLock<Option<graphhelm_schema::OfflineSchemaSet>> = OnceLock::new();
     let schemas = SCHEMAS.get_or_init(|| {
         let mut resources = BTreeMap::new();
@@ -542,6 +563,14 @@ mod tests {
         let delivery = parse_record(&serde_json::to_vec(&value).unwrap())
             .ok()
             .unwrap();
+        // Admission must protect nested report prose before it reaches sealed evidence.
+        // This reuses the valid candidate above; cost: one offline parser call per case.
+        for text in ["token=plain-value", "report\u{0007}"] {
+            let mut unsafe_report = value.clone();
+            unsafe_report["work"]["journeyVerification"]["authority"]["validation"]["reason"] =
+                text.into();
+            assert!(parse_record(&serde_json::to_vec(&unsafe_report).unwrap()).is_err());
+        }
         let mut bad_revision = value.clone();
         bad_revision["work"]["journeyVerification"]["bindings"]["code"]["revision"] =
             "c".repeat(40).into();

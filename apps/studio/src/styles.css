@@ -2367,6 +2367,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-primary-navigation button { border: 0; background: transparent; cursor: pointer; text-decoration: underline; }
 .work-reset-filter { border: 0; background: transparent; cursor: pointer; }
 .work-primary-roster { margin-top: 32px; margin-bottom: 24px; }
+.work-person-report { margin: 4px 0; padding-top: 4px; border-top: 1px solid #3c3745; }
+.work-person-report > summary { min-height: 44px; display: flex; align-items: center; color: #cbb7ee; font-size: 12px; cursor: pointer; }
 .work-roster-note { margin: 0 0 12px; color: #bcb3c7; font-size: 12px; }
 .work-primary-people { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px; }
 .work-primary-people article { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px; border: 1px solid #494052; border-radius: 10px; background: #25212b; overflow-wrap: anywhere; }
@@ -2559,7 +2561,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .work-agent-list { grid-template-columns: minmax(0,1fr); }
   .work-node-grid { grid-template-columns: minmax(0,1fr); }
   .work-heading { padding-top: 40px; padding-right: 0; }
-  .work-primary-header { padding-right: 0; }
+  .work-primary-header { padding-top: 40px; padding-right: 0; }
 }
 @media (max-width: 600px) {
   .work-next-action { align-items: stretch; flex-direction: column; }

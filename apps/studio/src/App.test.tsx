@@ -208,6 +208,35 @@ describe("Studio organization and responsive navigation", () => {
     expect(identity).not.toHaveTextContent("Run: demo-deploy");
   });
 
+  it("warns in People when verified team records are unavailable but a message sender is known", async () => {
+    const carriers = Array.from({ length: 2049 }, (_, index) => ({
+      sequence: index + 1, kind: "signal_recorded", payload: { kind: "run_team_joined" },
+      occurredAt: null, actorId: "codex", actorType: "agent",
+      idempotencyKey: `key-${index}`, eventId: `event-${index}`, evidenceRefs: [],
+    }));
+    const events = [...carriers, { sequence: 2050, kind: "signal_recorded",
+      payload: { kind: "operator_note", signalId: "note-1" }, occurredAt: null,
+      actorId: "codex", actorType: "agent", idempotencyKey: "key-note",
+      eventId: "event-note", evidenceRefs: ["evidence-note"] }];
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, headSequence: 2050,
+        attention: "can_sleep", attentionReasons: [] })),
+      getEvents: vi.fn(async (_run: string, options: { after: number; limit: number }) => ({
+        head: 2050, events: events.filter((event) => event.sequence > options.after).slice(0, options.limit),
+      })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "evidence-note", mediaType: "application/json",
+        sensitivity: "confidential", contentSha256: "sha256:fixture",
+        content: JSON.stringify({ description: "Checking the latest work result." }) })),
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+      session={async () => ({ token: "local-token", project: "fixture-project" })} />);
+    const people = await screen.findByRole("region", { name: "People and reported work" });
+    await waitFor(() => expect(people).toHaveTextContent("Checking the latest work result."));
+    expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown.");
+    expect(people).toHaveTextContent("Observed actor IDs from recorded messages.");
+    expect(people).not.toHaveTextContent("Explicitly joined sessions.");
+  });
+
   it.each([
     [false, "demo-deploy"],
     [false, "demo-calm"],

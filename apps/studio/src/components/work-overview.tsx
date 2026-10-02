@@ -198,6 +198,7 @@ export function WorkOverview({
       </section>}
       <section className="work-primary-roster" aria-label="People and reported work">
         <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>People</h2></div></div>
+        {runTeam?.unavailable && <p className="work-caution" role="note">Team records unavailable; joined membership is unknown. Only readable message senders can appear here.</p>}
         {joinedMembers.length > 0 ? <>
           <p className="work-roster-note">Explicitly joined sessions. Work state is what each session last reported, not a live heartbeat.</p>
           <div className="work-primary-people">{joinedMembers.map((member) => <article key={member.actorId}>

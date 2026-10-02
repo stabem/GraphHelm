@@ -123,6 +123,48 @@ describe("naming rows on the rail", () => {
   });
 });
 
+describe("activity-ordered run history", () => {
+  const actions = {
+    onSelect: vi.fn(), onLoadMore: vi.fn(), onNewTask: vi.fn(),
+    onAddProject: vi.fn(), onOpenModels: vi.fn(),
+  };
+
+  it("groups ongoing, unknown, and historical runs, sorting each by last content event", async () => {
+    render(<ProjectRail projects={[{ name: "store", runs: [
+      { ...row("older-live"), status: "running", lastEventAt: "2026-09-01T08:00:00Z" },
+      { ...row("newer-history"), lastEventAt: "2026-10-01T10:00:00Z" },
+      { ...row("newer-live"), status: "paused", lastEventAt: "2026-09-02T08:00:00Z" },
+      { ...row("unknown"), status: "none" },
+      { ...row("missing-time"), status: "blocked" },
+    ] }]}
+      selected="older-live" connected hasMore busy={false} {...actions} />);
+    const ongoing = screen.getByRole("group", { name: /ongoing runs/i });
+    const ongoingNames = within(ongoing).getAllByRole("button", { name: /live|missing-time/ }).map((button) => button.textContent);
+    expect(ongoingNames[0]).toContain("newer-live");
+    expect(ongoingNames[1]).toContain("older-live");
+    expect(ongoingNames[2]).toContain("missing-time");
+    expect(within(ongoing).getByText(/Last activity unknown/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /status unknown/i })).toHaveTextContent("unknown");
+    expect(screen.getByRole("button", { name: /show history/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /newer-history/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /show history/i }));
+    expect(screen.getByRole("button", { name: /newer-history/ })).toHaveTextContent("Last activity");
+    expect(screen.getByText(/Loaded runs only/)).toBeInTheDocument();
+  });
+
+  it("keeps a selected historical run visible when history is collapsed", async () => {
+    render(<ProjectRail projects={[{ name: "store", runs: [
+      { ...row("live"), status: "running" },
+      { ...row("selected-history"), lastEventAt: "2026-10-01T10:00:00Z" },
+    ] }]}
+      selected="selected-history" connected hasMore={false} busy={false} {...actions} />);
+    expect(screen.getByRole("button", { name: /selected-history/ })).toHaveAttribute("aria-current", "true");
+    await userEvent.click(screen.getByRole("button", { name: /show history/i }));
+    await userEvent.click(screen.getByRole("button", { name: /hide history/i }));
+    expect(screen.getByRole("button", { name: /selected-history/ })).toHaveAttribute("aria-current", "true");
+  });
+});
+
 /**
  * #1098 D4: two runs whose objectives share a long prefix read identically on the rail — the name
  * line ellipsises and the grey address line is the only difference. The blind visual judge hovered

@@ -197,6 +197,17 @@ describe("Studio organization and responsive navigation", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
+  it("keeps the selected project and run address visible outside the mobile rail without guessing membership", async () => {
+    await open(stubClient());
+    const identity = screen.getByLabelText("Selected run identity");
+    expect(identity).toHaveTextContent("Project: dale-api-base");
+    expect(identity).toHaveTextContent("Run: demo-deploy");
+    expect(identity).toHaveTextContent(/Joined sessions (unverified|unknown)|No verified joined sessions in loaded evidence/);
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
+    expect(identity).toHaveTextContent("Run: demo-calm");
+    expect(identity).not.toHaveTextContent("Run: demo-deploy");
+  });
+
   it.each([
     [false, "demo-deploy"],
     [false, "demo-calm"],

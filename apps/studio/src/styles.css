@@ -2404,6 +2404,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-sidebar { min-width: 0; display: grid; gap: 28px; }
 .work-section { min-width: 0; }
 .work-team-flat-note { margin: -4px 0 10px; color: #aaa2b4; font-size: 11px; }
+.work-actor-session-list { display: grid; gap: 5px; margin-bottom: 14px; padding: 11px 12px; border: 1px solid #555063; border-radius: 10px; background: #25212b; overflow-wrap: anywhere; }
+.work-actor-session-list > strong { color: #f0e7fb; font-size: 12px; }
+.work-actor-session-list > span, .work-actor-session-list p, .work-actor-session-list small { color: #b5abba; font-size: 11px; }
+.work-actor-session-list p { margin: 0; }
+.work-actor-session-list ul { display: grid; gap: 7px; margin: 3px 0 0; padding: 0; list-style: none; }
+.work-actor-session-list li { display: grid; gap: 2px; padding-top: 6px; border-top: 1px solid #4b4655; font-size: 12px; }
+.work-actor-session-list li code { overflow-wrap: anywhere; }
 .work-session-list { display: grid; gap: 8px; margin-bottom: 14px; }
 .work-session { padding: 11px 12px; border: 1px solid #555063; border-radius: 10px; background: #25212b; overflow-wrap: anywhere; }
 .work-session summary { cursor: pointer; color: #f0e7fb; font-weight: 600; }

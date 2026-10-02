@@ -32,7 +32,7 @@ import {
   OPERATOR_ACTOR,
   newIdempotencyKey,
 } from "./runtime/client";
-import { devSession, newestPresenceByActor, type AgentPresence, type DevSession } from "./runtime/session";
+import { devSession, newestPresenceByActor, recordedActorSessions, type AgentPresence, type DevSession } from "./runtime/session";
 import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
@@ -389,6 +389,7 @@ export default function App({
    * measured before anything else ran. The hooks now also bail on equal commits; this memo
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
+  const recordedSessions = useMemo(() => recordedActorSessions(eventList), [eventList]);
   const journalTopology = useMemo(() => topologyFromJournal(eventList), [eventList]);
   // A recorded snapshot is the run's own claim. If it fails verification, a
   // remembered file must not make the same run look connected anyway.
@@ -2748,6 +2749,7 @@ export default function App({
               busy={busy}
               runId={selected === "" ? undefined : selected}
               crew={crew}
+              recordedSessions={recordedSessions}
               activity={recentActivity}
               latestEvent={latestEvent}
               subagents={subagentRead?.executionId === selected ? subagentRead : null}

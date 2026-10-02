@@ -9,6 +9,24 @@ import type { RunTeamReadModel } from "../runtime/run-team";
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("shows typed transport sessions separately from actor identities and verified joins", () => {
+    const recordedSessions = ["transport-a", "transport-b", "transport-c"].map((session, index) => ({
+      actorId: "agent-a", session, firstSequence: index + 1, lastSequence: index + 1,
+    }));
+    recordedSessions.push({ actorId: "agent-b", session: "transport-d", firstSequence: 4, lastSequence: 4 });
+    const { rerender } = render(<WorkOverview model={model}
+      crew={[{ id: "agent-a", charter: null }, { id: "agent-b", charter: null }]}
+      recordedSessions={recordedSessions} selectedNode={null} onSelectNode={vi.fn()} />);
+    const sessions = screen.getByRole("group", { name: "Recorded actor and transport sessions" });
+    expect(screen.getByText("2 actor IDs")).toBeInTheDocument();
+    expect(within(sessions).getByText("4 recorded transport IDs")).toBeInTheDocument();
+    expect(within(sessions).getAllByText("agent-a")).toHaveLength(3);
+    expect(within(sessions).getByText("transport-c")).toBeInTheDocument();
+    expect(within(sessions).getByText(/not native chat identities or activity heartbeats/i)).toBeInTheDocument();
+    expect(screen.queryByText("4 joined sessions")).not.toBeInTheDocument();
+    rerender(<WorkOverview model={model} recordedSessions={[]} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(within(sessions).getByText(/No typed actor\/session declarations recorded/i)).toBeInTheDocument();
+  });
   it("C5 puts explicitly joined sessions and receipt truth before the technical graph", () => {
     const members: RunTeamReadModel["members"] = ["c1", "c2", "c3"].map((sessionId) => ({
       actorId: `codex-session-${sessionId}`, host: "codex", sessionId, joinedAt: null,

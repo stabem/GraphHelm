@@ -133,6 +133,7 @@ export function Board({
   onDrawConnections,
   busy,
   crew = [],
+  recordedSessions = [],
   selectedAgent = null,
   onSelectAgent,
   talks = [],
@@ -183,6 +184,7 @@ export function Board({
    * `agent_presence_declared` this actor has made, or absent when the actor never declared one -
    * absence renders no badge at all, never a placeholder. */
   crew?: Array<{ id: string; charter: string | null; lastAt?: string | null; presence?: AgentPresence | null }>;
+  recordedSessions?: WorkOverviewProps["recordedSessions"];
   selectedAgent?: string | null;
   onSelectAgent?: (agentId: string | null) => void;
   /** The room's conversations, each one a bubble standing on the board. Derived by App from
@@ -806,7 +808,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} recordedSessions={recordedSessions} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

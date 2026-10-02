@@ -142,15 +142,23 @@ fn revision(value: &str) -> bool {
 }
 
 fn validate_journey(value: &serde_json::Value, work_revision: &str) -> bool {
-    let mut pending = vec![value];
-    while let Some(part) = pending.pop() {
+    let mut pending = vec![(None, value)];
+    while let Some((field, part)) = pending.pop() {
         match part {
             serde_json::Value::String(text) => {
-                if text.chars().any(char::is_control) || secret_shaped(text) {
+                // These schema-defined digest/revision fields carry bare SHA-256 values.
+                let hash_field = matches!(
+                    field,
+                    Some("contentSha256" | "ciphertextSha256" | "revision")
+                ) && text.len() == 64
+                    && revision(text);
+                if text.chars().any(char::is_control) || (!hash_field && secret_shaped(text)) {
                     return false;
                 }
             }
-            serde_json::Value::Array(items) => pending.extend(items),
+            serde_json::Value::Array(items) => {
+                pending.extend(items.iter().map(|item| (None, item)))
+            }
             serde_json::Value::Object(fields) => {
                 if fields
                     .keys()
@@ -158,7 +166,7 @@ fn validate_journey(value: &serde_json::Value, work_revision: &str) -> bool {
                 {
                     return false;
                 }
-                pending.extend(fields.values());
+                pending.extend(fields.iter().map(|(key, item)| (Some(key.as_str()), item)));
             }
             _ => {}
         }

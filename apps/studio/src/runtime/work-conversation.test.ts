@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { workConversation } from "./work-conversation";
+import { mcpTransportFromRecordKey, workConversation } from "./work-conversation";
 import type { RunTeamReadModel } from "./run-team";
 import type { RuntimeEvent } from "./types";
 
@@ -11,6 +11,36 @@ const signal = (sequence: number, kind: string, actorId = "agent-a"): RuntimeEve
 });
 
 describe("work conversation", () => {
+  it("accepts only the exact MCP record-key shape as transport provenance", () => {
+    expect(mcpTransportFromRecordKey("mcp-aaaaaaaaaaaaaaaa-sroute-1-record-1111111111111111")).toBe("aaaaaaaaaaaaaaaa");
+    expect(mcpTransportFromRecordKey("mcp-bbbbbbbbbbbbbbbb-n7-record-2222222222222222")).toBe("bbbbbbbbbbbbbbbb");
+    for (const key of [null, "mcp-short-s1-record-1111111111111111",
+      "mcp-AAAAAAAAAAAAAAAA-s1-record-1111111111111111",
+      "mcp-aaaaaaaaaaaaaaaa-s1-signal-1111111111111111",
+      "mcp-aaaaaaaaaaaaaaaa-x1-record-1111111111111111", "custom-operator-note"]) {
+      expect(mcpTransportFromRecordKey(key)).toBeNull();
+    }
+  });
+
+  it("keeps interleaved notes on distinct MCP transports without promoting bookkeeping", () => {
+    const a = "aaaaaaaaaaaaaaaa";
+    const b = "bbbbbbbbbbbbbbbb";
+    const events = [
+      { ...signal(1, "operator_note", "codex"), idempotencyKey: `mcp-${a}-s1-record-1111111111111111` },
+      { ...signal(2, "operator_note", "codex"), idempotencyKey: `mcp-${b}-s2-record-2222222222222222` },
+      { ...signal(3, "wake_lease", "codex"), idempotencyKey: `mcp-${a}-s3-record-3333333333333333` },
+      { ...signal(4, "operator_note", "codex"), idempotencyKey: `mcp-${a}-s4-record-4444444444444444` },
+      { ...signal(5, "operator_note", "claude"), idempotencyKey: "direct-http-note" },
+    ];
+    const envelopes = Object.fromEntries(events.map((event) => [event.sequence,
+      { text: `Work ${event.sequence}`, to: null, replyTo: null }]));
+    expect(workConversation("run-a", events, envelopes, null).map((message) =>
+      [message.sender, message.transportSession ?? null, message.text])).toEqual([
+      ["codex", a, "Work 1"], ["codex", b, "Work 2"], ["codex", a, "Work 4"],
+      ["claude", null, "Work 5"],
+    ]);
+  });
+
   it("merges opened notes and verified team messages in event order without bookkeeping", () => {
     const team: RunTeamReadModel = { executionId: "run-a", members: [], rejected: 0, unavailable: false,
       messages: [

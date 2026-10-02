@@ -550,6 +550,31 @@ describe("opening", () => {
     expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
 
+  it("leads with recorded external work when the only wait is an unanswered graph step without a request", async () => {
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "start" }] })),
+      getEvents: vi.fn(async () => ({ head: 13, events: [{
+        sequence: 13, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "note-13" },
+        occurredAt: "2026-08-27T12:01:00Z", actorId: "codex", actorType: "agent",
+        idempotencyKey: "mcp-aaaaaaaaaaaaaaaa-s13-record-1111111111111111",
+        eventId: "event-13", evidenceRefs: ["evidence-note"],
+      }] })),
+      readEvidence: vi.fn(async () => ({ evidenceId: "evidence-note", mediaType: "application/json",
+        sensitivity: "confidential", contentSha256: "sha256:fixture",
+        content: JSON.stringify({ description: "Reviewed the implementation path." }) })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "People and reported work" })).toHaveTextContent("Reviewed the implementation path."));
+    expect(document.querySelector(".topstrip .tag")).toHaveTextContent("agent work recorded · graph step waiting");
+    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
+    const selected = screen.getByRole("navigation", { name: "Projects" }).querySelector('button[aria-current="true"]')!;
+    expect(selected).toHaveAttribute("title", "agent work recorded · graph step waiting");
+    expect(selected).toHaveClass("calm");
+  });
+
   it("does not turn a capacity wait into an owner reply request", async () => {
     const client = stubClient({ getStatus: vi.fn(async () => ({
       ...STATUS, attention: "can_sleep", attentionReasons: [{ kind: "waiting_capacity_node", node: "implementation" }],

@@ -159,9 +159,12 @@ export function WorkOverview({
         : `Event #${latestRecordedUpdate.sequence} · recorded ${fullInstant(latestRecordedUpdate.occurredAt)}`;
   const joinedMembers = runTeam?.unavailable ? [] : runTeam?.members ?? [];
   const knownActors = new Set(crew.map((agent) => agent.id));
-  const recentSpeakers = [...workMessages].reverse().reduce<string[]>((actors, message) => {
-    if (knownActors.has(message.sender) && !actors.includes(message.sender)) actors.push(message.sender);
-    return actors;
+  const recentSpeakers = [...workMessages].reverse().reduce<WorkMessage[]>((latest, message) => {
+    if (knownActors.has(message.sender) && !latest.some((item) =>
+      item.sender === message.sender && (item.transportSession ?? null) === (message.transportSession ?? null))) {
+      latest.push(message);
+    }
+    return latest;
   }, []).slice(0, 6);
   const orderedNodes = [...model.nodes].sort((left, right) => {
     const leftActive = ["running", "queued", "linting"].includes(left.state) ? 0 : 1;
@@ -209,14 +212,19 @@ export function WorkOverview({
             <button type="button" onClick={() => onSelectAgent?.(member.actorId)}>Open direct chat</button>
           </article>)}</div>
         </> : recentSpeakers.length > 0 ? <>
-          <p className="work-roster-note">Observed actor IDs from recorded messages. A single ID may cover several native chats; no native joins are verified here.</p>
-          <div className="work-primary-people">{recentSpeakers.map((actorId) => {
-            const latest = [...workMessages].reverse().find((message) => message.sender === actorId)!;
-            return <article key={actorId}>
-              <strong>{actorId}</strong><small>Observed actor · session unverified</small>
+          <p className="work-roster-note">Observed actor IDs from recorded messages. Matching MCP record keys separate transport sources; neither proves a native chat or live session.</p>
+          <div className="work-primary-people">{recentSpeakers.map((latest) => {
+            const actorId = latest.sender;
+            const transport = latest.transportSession ?? null;
+            const declared = transport !== null && recordedSessions.some((entry) =>
+              entry.actorId === actorId && entry.session === transport);
+            return <article key={JSON.stringify([runId, actorId, transport])}>
+              <strong>{actorId}</strong><small>{transport === null
+                ? "Observed actor · session unverified"
+                : `Recorded MCP transport ${transport} · ${declared ? "typed declaration recorded" : "declaration not recorded"} · native chat unverified`}</small>
               <span>Task not reported</span><p>{latest.text}</p>
               <small>Message stored · {ago(latest.at)}</small>
-              <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open direct chat</button>
+              <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open actor chat</button>
             </article>;
           })}</div>
         </> : <p className="work-empty">No agent work message is readable yet. Recorded identities are available in Details.</p>}

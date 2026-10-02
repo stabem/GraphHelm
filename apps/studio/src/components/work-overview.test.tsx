@@ -9,6 +9,34 @@ import type { RunTeamReadModel } from "../runtime/run-team";
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("shows each recorded MCP transport's latest work, without claiming native chat membership", () => {
+    const a = "aaaaaaaaaaaaaaaa", b = "bbbbbbbbbbbbbbbb", c = "cccccccccccccccc";
+    const workMessages = [
+      { id: "1", sequence: 1, sender: "codex", to: null, replyTo: null, text: "First transport's earlier note", at: null, provenance: "stored" as const, acknowledged: false, transportSession: a },
+      { id: "2", sequence: 2, sender: "codex", to: null, replyTo: null, text: "Second transport's note", at: null, provenance: "stored" as const, acknowledged: false, transportSession: b },
+      { id: "3", sequence: 3, sender: "codex", to: null, replyTo: null, text: "Third transport's note", at: null, provenance: "stored" as const, acknowledged: false, transportSession: c },
+      { id: "4", sequence: 4, sender: "codex", to: null, replyTo: null, text: "First transport's latest note", at: null, provenance: "stored" as const, acknowledged: false, transportSession: a },
+      { id: "5", sequence: 5, sender: "claude", to: null, replyTo: null, text: "Distinct HTTP actor note", at: null, provenance: "stored" as const, acknowledged: false },
+    ];
+    const onSelectAgent = vi.fn();
+    render(<WorkOverview model={model} runId="run-a"
+      crew={[{ id: "codex", charter: null }, { id: "claude", charter: null }]}
+      recordedSessions={[{ actorId: "codex", session: a, sequences: [6] },
+        { actorId: "codex", session: b, sequences: [7] }]}
+      workMessages={workMessages} selectedNode={null} onSelectNode={vi.fn()} onSelectAgent={onSelectAgent} />);
+    const people = screen.getByRole("region", { name: "People and reported work" });
+    const cards = within(people).getAllByRole("article");
+    expect(cards).toHaveLength(4);
+    expect(people).toHaveTextContent("First transport's latest note");
+    expect(people).not.toHaveTextContent("First transport's earlier note");
+    for (const nonce of [a, b, c]) expect(people).toHaveTextContent(nonce);
+    expect(people).toHaveTextContent("Distinct HTTP actor note");
+    expect(people).toHaveTextContent("declaration not recorded");
+    expect(people).not.toHaveTextContent("Explicitly joined sessions");
+    fireEvent.click(within(cards[0]).getByRole("button", { name: "Open actor chat" }));
+    expect(onSelectAgent).toHaveBeenCalledWith("claude");
+  });
+
   it("shows typed transport sessions separately from actor identities and verified joins", () => {
     const recordedSessions = ["transport-a", "transport-b", "transport-c"].map((session, index) => ({
       actorId: "agent-a", session, sequences: [index + 1],
@@ -254,7 +282,7 @@ describe("organized work overview", () => {
     const builder = screen.getByText("builder", {selector: ".work-primary-people strong"}).closest("article")!;
     expect(builder).toHaveTextContent("Implementing the issue");
     expect(selectAgent).not.toHaveBeenCalled();
-    fireEvent.click(within(builder).getByRole("button", {name:"Open direct chat"}));
+    fireEvent.click(within(builder).getByRole("button", {name:"Open actor chat"}));
     expect(selectAgent).toHaveBeenCalledWith("builder");
     expect(snapshot).not.toHaveTextContent("Running");
   });

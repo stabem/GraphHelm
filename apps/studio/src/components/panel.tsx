@@ -1496,7 +1496,7 @@ export function RunPanel({
           : <>
             {conversation.length > 12 && <button type="button" className="work-conversation-more" onClick={() => setShowAllMessages((shown) => !shown)}>{showAllMessages ? "Show recent messages" : `Show ${conversation.length - 12} earlier messages`}</button>}
             <ol>{visibleMessages.map((message) => <li key={message.id}>
-              <div><strong>{message.sender === OPERATOR_ACTOR.id ? "Owner" : message.sender}</strong><small>{message.to ? `to ${message.to}` : "to the room"} · {clock(message.at)}</small></div>
+              <div><strong>{message.sender === OPERATOR_ACTOR.id ? "Owner" : message.sender}</strong><small>{message.transportSession ? `MCP transport ${message.transportSession} · ` : ""}{message.to ? `to ${message.to}` : "to the room"} · {clock(message.at)}</small></div>
               <p>{message.text}</p>
               <small>{message.provenance === "verified-team"
                 ? message.to && message.acknowledged ? "Recipient acknowledged" : message.to ? "Stored; acknowledgement not recorded" : "Stored in team room"

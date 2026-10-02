@@ -73,6 +73,7 @@ export function ProjectRail({
   onRemoveRun,
   onRestoreRun,
   briefings = {},
+  selectedPresentation = null,
 }: {
   projects: Project[];
   selected: string;
@@ -98,6 +99,8 @@ export function ProjectRail({
    * wears its objective as its name; the id stays on the row as its address. Absent (older
    * Runtime, not read yet) the row says the id, which is what it always said. */
   briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
+  /** Selected-run display only. The Runtime attention value remains unchanged in Details. */
+  selectedPresentation?: { key: string; status: string } | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? "");
@@ -190,9 +193,9 @@ export function ProjectRail({
                 const verdict = verdictOf(run.attention);
                 const reviewCount = run.status === "completed" && run.executor !== "fixture" && typeof run.unverifiedResults === "number" && run.unverifiedResults > 0
                   ? run.unverifiedResults : 0;
-                const rowKey = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? "review" : verdict.key;
-                const rowStatus = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.attention);
                 const on = run.executionId === selected;
+                const rowKey = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? "review" : on && selectedPresentation ? selectedPresentation.key : verdict.key;
+                const rowStatus = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : on && selectedPresentation ? selectedPresentation.status : readable(run.attention);
                 // #1083 F7: the row's own declared objective first (one index read names every
                 // row), the briefing a selection already read as the fallback for an older
                 // Runtime whose rows do not carry it.

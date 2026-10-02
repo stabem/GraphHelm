@@ -224,6 +224,7 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0 }
       </div>}
       {currentRequest && <div className={`native-chat-request native-chat-request-${currentRequest.state}`} aria-live="polite">
         <strong>{statusLabel(currentRequest)}</strong><span>Request id: <code>{currentRequest.requestId}</code></span>
+        <span>Chat: {currentRequest.title} · <code>{currentRequest.sourceDirectory}</code></span>
         {currentRequest.text && <p>{currentRequest.text}</p>}
         {currentRequest.detail && <p>{currentRequest.detail}</p>}
       </div>}

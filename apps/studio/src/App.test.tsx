@@ -245,13 +245,13 @@ describe("Studio organization and responsive navigation", () => {
   ])("closes mobile projects navigation after choosing %s / %s while preserving desktop navigation", async (wide, run) => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: wide, media: query }));
     try {
-      await open(stubClient());
+      await open(stubClient(), null, false);
       const toggle = screen.getByRole("button", { name: "Toggle projects" });
       if (!wide) await userEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText(run, { exact: true }));
       expect(toggle).toHaveAttribute("aria-expanded", wide ? "true" : "false");
-      expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", wide ? "true" : "false");
+      expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", "false");
     } finally {
       cleanup();
       vi.unstubAllGlobals();
@@ -447,7 +447,7 @@ describe("Studio organization and responsive navigation", () => {
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */
-async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null) {
+async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true) {
   render(
     <App
       createClient={() => client as unknown as RuntimeClient}
@@ -459,6 +459,10 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
   // These existing journeys exercise the free canvas; overview has dedicated default-view coverage.
   await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
   await userEvent.click(screen.getByText("Run actions"));
+  // These conversation journeys explicitly open the optional pane.
+  if (conversation && screen.getByRole("button", { name: "Toggle conversation" }).getAttribute("aria-expanded") !== "true") {
+    await userEvent.click(screen.getByRole("button", { name: "Toggle conversation" }));
+  }
   // Legacy journeys below inspect the event log after choosing its Details disclosure.
   const runDetails = document.querySelector("details.run-technical-details > summary");
   if (runDetails) await userEvent.click(runDetails);
@@ -2182,7 +2186,7 @@ describe("the thread's own honesty", () => {
   });
 
   it("a sealed item the store refused is an alert with a way back in", async () => {
-    let attempts = 0;
+    let available = false;
     const client = stubClient({
       getEvents: vi.fn(async () => ({
         head: 14,
@@ -2201,8 +2205,7 @@ describe("the thread's own honesty", () => {
         ],
       })),
       readEvidence: vi.fn(async () => {
-        attempts += 1;
-        if (attempts === 1) throw new Error("repository storage operation failed");
+        if (!available) throw new Error("repository storage operation failed");
         return {
           evidenceId: "ev-flaky",
           mediaType: "application/json",
@@ -2217,6 +2220,7 @@ describe("the thread's own honesty", () => {
 
     const failure = await screen.findByRole("alert");
     expect(failure).toHaveTextContent(/cannot open/);
+    available = true;
     await userEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText("agora abriu")).toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Activity,
   ArrowDown,
@@ -172,10 +172,8 @@ export function WorkOverview({
       if (assignedNodeIds.has(edge.to)) focusedNodeIds.add(edge.from);
     }
   }
-  const technicalDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const openGraph = () => {
-    technicalDetailsRef.current?.setAttribute("open", "");
-    document.getElementById("work-nodes")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    document.getElementById("work-nodes")?.scrollIntoView?.({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
   };
   const openAssignedSteps = (actorId: string) => {
     setStepFocus({ runId, actor: actorId });
@@ -210,24 +208,83 @@ export function WorkOverview({
     group.tasks.push(task);
     sessions.set(key, group);
   }
-  const jumpToTeam = () => document.getElementById("work-team")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  const jumpToTeam = () => document.getElementById("work-team")?.scrollIntoView?.({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
 
   return (
     <main className="work-overview" aria-label="Work overview">
       <header className="work-primary-header">
-        <span>Selected run</span>
-        <h1>{projectName ?? "Project"}</h1>
+        <span>Selected run � {projectName ?? "Project"}</span>
+        <h1 className="work-mission">Mission: {objective?.trim() || "objective not recorded"}</h1>
         {runId && <small>Run {runId}</small>}
-        <p className="work-mission">Mission: {objective?.trim() || "objective not recorded"}</p>
+        <small>{runStatus === null ? "State not recorded" : readable(runStatus)} � {recordedUpdate}</small>
       </header>
       <nav className="work-primary-navigation" aria-label="Mission navigation">
         <button type="button" onClick={openGraph}>Open graph and steps</button>
-        <button type="button" onClick={openGraph}>Select a step for outputs and proof</button>
+        <span>Select a step for outputs and proof</span>
       </nav>
       {nextAction && <section className="work-next-action" aria-label="Owner decision">
         <div><span>Needs a decision</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p>{replyGuidance && <p>{replyGuidance}</p>}</div>
         <button type="button" onClick={onNextAction}>{nextAction.label}</button>
       </section>}
+        <section className="work-main" id="work-nodes" aria-label="Work nodes">
+          <div className="work-section-heading work-node-heading">
+            <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
+            <span>{focusActor !== null
+              ? assignedNodeIds.size === 0
+                ? `${focusActor} has no assigned graph steps`
+                : model.edgesKnown
+                  ? `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"} and verified neighbors`
+                  : `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"}; dependency evidence unavailable`
+              : model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
+            {focusActor !== null && <button type="button" className="work-reset-filter" onClick={() => setStepFocus({ runId, actor: null })}>Clear actor focus</button>}
+          </div>
+          {model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && (
+            <p className="work-note" role="note">
+              A finished step does not prove its goal passed. Open the node to read its evidence and acceptance verdict.
+            </p>
+          )}
+          {model.nodes.length === 0 ? (
+            <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
+          ) : (
+            <div className="work-node-grid">
+              {orderedNodes.map((node) => {
+                const latest = latestNodeEvent(node);
+                const result = nodeResult(node);
+                const incoming = model.edgesKnown ? model.edges.filter((edge) => edge.to === node.id && nodeIds.has(edge.from)) : [];
+                const outgoing = model.edgesKnown ? model.edges.filter((edge) => edge.from === node.id && nodeIds.has(edge.to)) : [];
+                const isSelected = selectedNode === node.id;
+                return (
+                <article className={`work-node-card${isSelected ? " work-selected" : ""}${focusActor && node.assignedActor?.id === focusActor ? " work-related" : ""}${focusActor && focusedNodeIds.has(node.id) && node.assignedActor?.id !== focusActor ? " work-context" : ""}${focusActor && !focusedNodeIds.has(node.id) ? " work-filtered-out" : ""}`} key={node.id}>
+                    <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
+                      <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
+                      <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
+                      {node.declaredName && node.declaredName !== node.id && <span className="work-muted">{node.id}</span>}
+                      {node.declaredRole && <span className="work-muted">Declared role · {node.declaredRole}</span>}
+                      {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
+                        <q className="work-node-objective" title={objective}>{objective}</q>
+                      )}
+                      {node.proposal && <span className="work-node-latest"><span>Governance</span><strong>{node.proposal.status === "rejected" ? `Proposal rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `Proposal unavailable · ${node.proposal.reason ?? "reason unavailable"}` : `Proposal ${node.proposal.status}`}</strong><small>{node.proposal.status === "rejected" ? "Next action: review the recorded reason before proposing again." : node.proposal.status === "unavailable" ? "Next action: request the typed proposal descriptor again." : node.assignedActor ? `Responsible actor · ${node.assignedActor.id}` : "Next action: assign an actor and approve the governed draft."}</small></span>}
+                      {!node.assignedActor && <span className="work-muted">No assignment recorded</span>}
+                      {node.assignedActor && <span className="work-node-latest"><span>Responsible actor</span><strong>{node.assignedActor.id}</strong><small>{node.assignedActor.type} · assignment is separate from the Runtime recorder</small></span>}
+                      {latest ? (
+                        <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorType === "system" ? "Recorded by Runtime" : latest.actorId ? `Recorded by ${latest.actorId}` : "Recorder unknown"} · {ago(latest.occurredAt)}</small></span>
+                      ) : null}
+                      {(result || node.actualExecutor) && <span className="work-node-latest"><span>Executed by</span><strong>{result?.executor ?? (node.actualExecutor?.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor?.kind ?? "Not recorded")}</strong><small>{result?.verification ?? "Latest attempt recorded"}</small></span>}
+                    </button>
+                    <div className="work-node-footer"><span><Clock3 aria-hidden="true" size={14} /> {node.history.length} history item{node.history.length === 1 ? "" : "s"}</span></div>
+                    {model.edgesKnown ? (
+                      <div className="work-dependencies">
+                        {incoming.map((edge) => <button type="button" className="work-dependency" key={`in-${edge.id}`} onClick={() => onSelectNode(edge.from)}><ArrowDown aria-hidden="true" size={14} /><span>from {edge.from}</span></button>)}
+                        {outgoing.map((edge) => <button type="button" className="work-dependency" key={`out-${edge.id}`} onClick={() => onSelectNode(edge.to)}><ArrowUp aria-hidden="true" size={14} /><span>to {edge.to}</span></button>)}
+                        {incoming.length === 0 && outgoing.length === 0 && <span className="work-no-dependencies">No dependencies</span>}
+                      </div>
+                    ) : <p className="work-awaiting">{ended ? "Dependency evidence is unavailable in this view." : "Dependencies awaiting evidence."}</p>}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       <section className="work-primary-roster" aria-label="People and reported work">
         <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>People</h2></div></div>
         {runTeam?.unavailable && <p className="work-caution" role="note">Team records unavailable; joined membership is unknown. Only readable message senders can appear here.</p>}
@@ -253,7 +310,7 @@ export function WorkOverview({
               <strong>{actorId}</strong><small>{transport === null
                 ? "Observed actor · session unverified"
                 : `Recorded MCP transport ${transport} · ${declared ? "typed declaration recorded" : "declaration not recorded"} · native chat unverified`}</small>
-              <span>Task not reported</span><p>{latest.text}</p>
+              <span>Task not reported</span><details className="work-person-report"><summary>Last recorded report</summary><p>{latest.text}</p></details>
               <small>Message stored · {ago(latest.at)}</small>
               <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open actor chat</button>
               <button type="button" onClick={() => openAssignedSteps(actorId)}>Open assigned steps</button>
@@ -263,7 +320,7 @@ export function WorkOverview({
         </> : <p className="work-empty">No agent work message is readable yet. Recorded identities are available in Details.</p>}
         {runTeam && runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified; membership may be incomplete.</p>}
       </section>
-      <details ref={technicalDetailsRef} className="work-technical-details"><summary>Details: graph, records, and transport IDs</summary>
+      <details className="work-technical-details"><summary>Details: graph, records, and transport IDs</summary>
       <header className="work-header">
         <div className="work-heading">
           <span className="work-kicker"><Activity aria-hidden="true" size={16} /> Active workspace</span>
@@ -393,64 +450,7 @@ export function WorkOverview({
           </section>
         </aside>
 
-        <section className="work-main" id="work-nodes" aria-label="Work nodes">
-          <div className="work-section-heading work-node-heading">
-            <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
-            <span>{focusActor !== null
-              ? assignedNodeIds.size === 0
-                ? `${focusActor} has no assigned graph steps`
-                : model.edgesKnown
-                  ? `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"} and verified neighbors`
-                  : `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"}; dependency evidence unavailable`
-              : model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
-            {focusActor !== null && <button type="button" className="work-reset-filter" onClick={() => setStepFocus({ runId, actor: null })}>Clear actor focus</button>}
-          </div>
-          {model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && (
-            <p className="work-note" role="note">
-              A finished step does not prove its goal passed. Open the node to read its evidence and acceptance verdict.
-            </p>
-          )}
-          {model.nodes.length === 0 ? (
-            <div className="work-empty work-empty-panel"><CircleDot aria-hidden="true" size={22} /><p>No work nodes have been observed yet.</p></div>
-          ) : (
-            <div className="work-node-grid">
-              {orderedNodes.map((node) => {
-                const latest = latestNodeEvent(node);
-                const result = nodeResult(node);
-                const incoming = model.edgesKnown ? model.edges.filter((edge) => edge.to === node.id && nodeIds.has(edge.from)) : [];
-                const outgoing = model.edgesKnown ? model.edges.filter((edge) => edge.from === node.id && nodeIds.has(edge.to)) : [];
-                const isSelected = selectedNode === node.id;
-                return (
-                <article className={`work-node-card${isSelected ? " work-selected" : ""}${focusActor && node.assignedActor?.id === focusActor ? " work-related" : ""}${focusActor && focusedNodeIds.has(node.id) && node.assignedActor?.id !== focusActor ? " work-context" : ""}${focusActor && !focusedNodeIds.has(node.id) ? " work-filtered-out" : ""}`} key={node.id}>
-                    <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
-                      <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
-                      <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
-                      {node.declaredName && <span className="work-muted">{node.id}</span>}
-                      {node.declaredRole && <span className="work-muted">Declared role · {node.declaredRole}</span>}
-                      {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
-                        <q className="work-node-objective" title={objective}>{objective}</q>
-                      )}
-                      {node.proposal && <span className="work-node-latest"><span>Governance</span><strong>{node.proposal.status === "rejected" ? `Proposal rejected · ${node.proposal.reason ?? "reason unavailable"}` : node.proposal.status === "unavailable" ? `Proposal unavailable · ${node.proposal.reason ?? "reason unavailable"}` : `Proposal ${node.proposal.status}`}</strong><small>{node.proposal.status === "rejected" ? "Next action: review the recorded reason before proposing again." : node.proposal.status === "unavailable" ? "Next action: request the typed proposal descriptor again." : node.assignedActor ? `Responsible actor · ${node.assignedActor.id}` : "Next action: assign an actor and approve the governed draft."}</small></span>}
-                      {node.assignedActor && <span className="work-node-latest"><span>Responsible actor</span><strong>{node.assignedActor.id}</strong><small>{node.assignedActor.type} · assignment is separate from the Runtime recorder</small></span>}
-                      {latest ? (
-                        <span className="work-node-latest"><span>Latest event</span><strong>{readable(latest.outcome ?? latest.kind)}</strong><small>{latest.actorType === "system" ? "Recorded by Runtime" : latest.actorId ? `Recorded by ${latest.actorId}` : "Recorder unknown"} · {ago(latest.occurredAt)}</small></span>
-                      ) : <span className="work-node-latest"><span>Latest event</span><strong className="work-muted">Awaiting first event</strong></span>}
-                      {(result || node.actualExecutor) && <span className="work-node-latest"><span>Executed by</span><strong>{result?.executor ?? (node.actualExecutor?.kind === "model" ? `Model · route ${node.actualExecutor.routeId ?? "not recorded"}` : node.actualExecutor?.kind ?? "Not recorded")}</strong><small>{result?.verification ?? "Latest attempt recorded"}</small></span>}
-                    </button>
-                    <div className="work-node-footer"><span><Clock3 aria-hidden="true" size={14} /> {node.history.length} history item{node.history.length === 1 ? "" : "s"}</span></div>
-                    {model.edgesKnown ? (
-                      <div className="work-dependencies">
-                        {incoming.map((edge) => <button type="button" className="work-dependency" key={`in-${edge.id}`} onClick={() => onSelectNode(edge.from)}><ArrowDown aria-hidden="true" size={14} /><span>from {edge.from}</span></button>)}
-                        {outgoing.map((edge) => <button type="button" className="work-dependency" key={`out-${edge.id}`} onClick={() => onSelectNode(edge.to)}><ArrowUp aria-hidden="true" size={14} /><span>to {edge.to}</span></button>)}
-                        {incoming.length === 0 && outgoing.length === 0 && <span className="work-no-dependencies">No dependencies</span>}
-                      </div>
-                    ) : <p className="work-awaiting">{ended ? "Dependency evidence is unavailable in this view." : "Dependencies awaiting evidence."}</p>}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+
       </div>
       <section className="work-activity" id="work-activity" aria-label="Recent recorded activity">
         <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Recent recorded activity</h2></div><span>Messages in the event log</span></div>

@@ -124,19 +124,21 @@ function JourneyDetails({ journey }: { journey: Record<string, unknown> }) {
   const retry = journey.retry as Record<string, unknown> | undefined;
   const obligations = journey.obligations as Array<Record<string, unknown>>;
   const observers = Array.isArray(bindings.observers) ? bindings.observers as Array<Record<string, unknown>> : [];
-  return <div className="delivery-jpd"><h5>JPD candidate (not certification)</h5>
+  return <div className="delivery-jpd"><div className="delivery-jpd-heading"><h5>JPD candidate (not certification)</h5><span className="delivery-outcome delivery-outcome-unobserved">not certification</span></div>
     <p>Proposed result: <strong>{String(journey.proposedResultStatus)}</strong></p>
-    <p>Graph: {String(graph.graphId)} v{String(graph.version)} · {String(graph.semanticHash)}</p>
-    <p>Code: {String(code.repository)} @ {String(code.revision)}</p>
-    <p>Environment: {String(configuration.environment)} · configuration {String(configuration.digest)}</p>
-    <ul>{fixtures.map((fixture) => <li key={String(fixture.fixtureId)}>Fixture {String(fixture.fixtureId)}: {String(fixture.digest)}</li>)}</ul>
+    <details className="delivery-details"><summary>Candidate provenance</summary><div className="delivery-details-body">
+      <p>Graph: {String(graph.graphId)} v{String(graph.version)} · {String(graph.semanticHash)}</p>
+      <p>Code: {String(code.repository)} @ {String(code.revision)}</p>
+      <p>Environment: {String(configuration.environment)} · configuration {String(configuration.digest)}</p>
+      <ul>{fixtures.map((fixture) => <li key={String(fixture.fixtureId)}>Fixture {String(fixture.fixtureId)}: {String(fixture.digest)}</li>)}</ul>
+      {observers.map((observer) => <p key={String(observer.observerId)}>Observer {String(observer.observerId)} v{String(observer.version)}: reported evidence {observer.evidenceFresh ? "fresh" : "stale"} · configuration {String(observer.configurationDigest)} · environment {String(observer.environmentDigest)}</p>)}
+    </div></details>
     <p>Authority: candidate · validation {String(validation.status)}{validation.missingCapability ? ` · missing ${String(validation.missingCapability)}` : ""}{validation.reason ? ` · ${String(validation.reason)}` : ""}</p>
     <p>Gate: {String(gate.status)}{gate.result ? ` · ${String(gate.result)}` : ""}{gate.refusal ? ` · missing ${String((gate.refusal as Record<string, unknown>).missingCapability)}` : ""}</p>
     <ul>{obligations.map((item) => <li key={String(item.obligationId)}>Obligation {String(item.obligationId)}: {String(item.status)}{item.status === "observer_missing" ? ` · missing ${String((item.refusal as Record<string, unknown>).missingCapability)}` : ""}{item.status === "failed" ? ` · ${String(item.failure)}` : ""}</li>)}</ul>
-    {observers.map((observer) => <p key={String(observer.observerId)}>Observer {String(observer.observerId)} v{String(observer.version)}: reported evidence {observer.evidenceFresh ? "fresh" : "stale"} · configuration {String(observer.configurationDigest)} · environment {String(observer.environmentDigest)}</p>)}
     {(journey.disagreements as Array<Record<string, unknown>>).map((item) => <p key={String(item.disagreementId)}>Disagreement {String(item.disagreementId)}: {String(item.status)} · {String(item.resolution)}</p>)}
     {retry && <p>Retry: {String(retry.outcomeClassification ?? "unclassified")} · classification {String((retry.classification as Record<string, unknown>).status)} · lineage {String((retry.lineageValidation as Record<string, unknown>).status)} · first failure preserved {retry.firstFailurePreserved ? "yes" : "no"}</p>}
-    <p>Review and merge receipts: not observed in this delivery record.</p>
+    <p className="delivery-unavailable">Review and merge receipts: not observed in this delivery record.</p>
   </div>;
 }
 
@@ -183,11 +185,6 @@ export function NodeDeliveries({ nodeId, executionId, events, openEvidence, onOp
       return <article className="delivery-card" key={id}>
       <span className="delivery-eyebrow">Reported delivery</span>
       <h4>{record.summary}</h4><p>{record.reason}</p>
-      {record.work ? <div className="delivery-work"><h5>Reported work</h5><p>Stage: <strong>{record.work.stage}</strong> · session reported by work: <code>{record.work.sessionId}</code></p><p>Recorded reporter: {event?.actorId ?? "unknown"} · {event?.occurredAt ?? "time unavailable"} · sequence {event?.sequence ?? "unknown"}</p><p>Revision: <code>{record.work.revision}</code></p>
-        <h5>Skills</h5>{record.work.skills.length === 0 && <p>No skill provenance reported.</p>}<ul>{record.work.skills.map((skill) => <li key={skill.id}>{skill.id} v{skill.version} · {skill.digest} · {skill.status}</li>)}</ul>
-        <h5>Checks</h5>{record.work.checks.length === 0 && <p>No check attempts reported.</p>}<ul>{record.work.checks.map((check) => <li key={`${check.id}:${check.attemptId}`}><code>{check.command}</code> · {check.observer} · <strong>{check.outcome}</strong> · attempt {check.attemptId}{check.previousAttemptId ? ` · after ${check.previousAttemptId}` : ""}{check.evidence ? ` · evidence ${check.evidence.evidenceId} (${check.evidence.contentHash}, ${check.evidence.size} bytes)` : ""}</li>)}</ul>
-        {record.work.journeyVerification ? <JourneyDetails journey={record.work.journeyVerification} /> : <p className="delivery-unavailable">No JPD candidate recorded. Certification is unobserved.</p>}
-      </div> : <p className="delivery-unavailable">Reported work is unavailable in this delivery record.</p>}
       <ul>{record.documents.map((document, index) => <li key={`${document.path}:${index}`}>
         <button className="delivery-document" onClick={() => onOpenDocument({ evidenceId: id, index, path: document.path, title: document.title, projectId: record.projectId })}>
           <FileText size={15} /><span><strong>{document.title || document.path}</strong><small>{document.path}</small></span><ArrowUpRight size={14} />
@@ -196,6 +193,11 @@ export function NodeDeliveries({ nodeId, executionId, events, openEvidence, onOp
         {document.journeyIds?.length ? <p className="delivery-meta">Journeys: {document.journeyIds.join(", ")}</p> : null}
         {document.ruleIds?.length ? <p className="delivery-meta">Rules: {document.ruleIds.join(", ")}</p> : null}
       </li>)}</ul>
+      {record.work ? <div className="delivery-work"><div className="delivery-work-heading"><h5>Reported work</h5><span className="delivery-stage">{record.work.stage}</span></div><details className="delivery-details"><summary>Session and revision</summary><div className="delivery-details-body"><p>Session reported by work: <code>{record.work.sessionId}</code></p><p>Recorded reporter: {event?.actorId ?? "unknown"} · {event?.occurredAt ?? "time unavailable"} · sequence {event?.sequence ?? "unknown"}</p><p>Revision: <code>{record.work.revision}</code></p></div></details>
+        <h5>Skills</h5>{record.work.skills.length === 0 && <p>No skill provenance reported.</p>}<ul>{record.work.skills.map((skill) => <li className="delivery-skill-row" key={skill.id}><span><strong>{skill.id}</strong> v{skill.version}</span><span className="delivery-skill-status">{skill.status}</span><details className="delivery-details delivery-inline-details"><summary>Digest</summary><code>{skill.digest}</code></details></li>)}</ul>
+        <h5>Checks</h5>{record.work.checks.length === 0 && <p>No check attempts reported.</p>}<ul>{record.work.checks.map((check) => <li className="delivery-check-row" key={`${check.id}:${check.attemptId}`}><span className="delivery-check-main"><strong>Check {check.id}</strong><span className="delivery-meta">{check.observer}</span></span><span className={`delivery-outcome delivery-outcome-${check.outcome}`}>{check.outcome}</span><details className="delivery-details delivery-inline-details"><summary>Details</summary><div className="delivery-details-body"><p><code>{check.command}</code></p><p>Attempt {check.attemptId}{check.previousAttemptId ? ` · after ${check.previousAttemptId}` : ""}{check.evidence ? ` · evidence ${check.evidence.evidenceId} (${check.evidence.contentHash}, ${check.evidence.size} bytes)` : ""}</p></div></details></li>)}</ul>
+        {record.work.journeyVerification ? <JourneyDetails journey={record.work.journeyVerification} /> : <p className="delivery-unavailable">No JPD candidate recorded. Certification is unobserved.</p>}
+      </div> : <p className="delivery-unavailable">Reported work is unavailable in this delivery record.</p>}
     </article>;
     })}
   </section>;

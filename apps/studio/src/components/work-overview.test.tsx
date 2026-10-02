@@ -11,7 +11,10 @@ const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"
 describe("organized work overview", () => {
   it("puts the mission and graph navigation beside the primary run header", () => {
     render(<WorkOverview model={model} projectName="GraphHelm" objective="Ship the navigation slice" selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(screen.getByRole("heading", { name: "GraphHelm" })).toBeInTheDocument();
+    // Steps are usable without expanding transport diagnostics (offline DOM observer).
+    expect(screen.getByRole("region", { name: "Work nodes" }).closest("details")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open node work" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Mission: Ship the navigation slice" })).toBeInTheDocument();
     expect(screen.getByText("Mission: Ship the navigation slice")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Mission navigation" })).toHaveTextContent("Open graph and steps");
     expect(screen.getByRole("button", { name: "Open graph and steps" })).toBeInTheDocument();

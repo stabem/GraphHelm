@@ -1,0 +1,285 @@
+{
+  "contractId": "studio-native-chat-228",
+  "version": 1,
+  "title": "Connect an existing native chat from Studio",
+  "taskScope": "Owner selects an existing Codex chat, sends a request tied to an ordinary step, and observes actual host receipt/reply without shell commands.",
+  "actors": [
+    {
+      "actorId": "owner",
+      "name": "Project owner",
+      "goal": "Delegate a step to an existing native chat"
+    }
+  ],
+  "preconditions": [
+    "Authenticated owner Runtime with sealed keyring and selected execution/node",
+    "Trusted native binary and native SQLite directory configured in Runtime launcher",
+    "Existing native thread accepts read/resume without permission or provider overrides"
+  ],
+  "steps": [
+    {
+      "stepId": "discover",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Connect existing chat"
+        }
+      },
+      "expectedStates": [
+        "loading",
+        "empty",
+        "error",
+        "success"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Native chat is unavailable or its response is unconfirmed.",
+        "safeStop": "Preserve request identity; do not resend, reassign or complete the node.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Changing native history, source cwd or permissions",
+          "Claiming delivery from HTTP acceptance",
+          "Repeating an uncertain native turn automatically"
+        ]
+      }
+    },
+    {
+      "stepId": "select",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "select",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Existing chat"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "disabled"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Native chat is unavailable or its response is unconfirmed.",
+        "safeStop": "Preserve request identity; do not resend, reassign or complete the node.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Changing native history, source cwd or permissions",
+          "Claiming delivery from HTTP acceptance",
+          "Repeating an uncertain native turn automatically"
+        ]
+      }
+    },
+    {
+      "stepId": "send",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Send work"
+        }
+      },
+      "expectedStates": [
+        "loading",
+        "error",
+        "partial_success",
+        "success"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Native chat is unavailable or its response is unconfirmed.",
+        "safeStop": "Preserve request identity; do not resend, reassign or complete the node.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Changing native history, source cwd or permissions",
+          "Claiming delivery from HTTP acceptance",
+          "Repeating an uncertain native turn automatically"
+        ]
+      }
+    },
+    {
+      "stepId": "readback",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Native chat requests"
+        }
+      },
+      "expectedStates": [
+        "loading",
+        "error",
+        "success"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Native chat is unavailable or its response is unconfirmed.",
+        "safeStop": "Preserve request identity; do not resend, reassign or complete the node.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Changing native history, source cwd or permissions",
+          "Claiming delivery from HTTP acceptance",
+          "Repeating an uncertain native turn automatically"
+        ]
+      }
+    },
+    {
+      "stepId": "retry",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "recover",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Refresh request status"
+        }
+      },
+      "expectedStates": [
+        "retrying",
+        "error",
+        "recovered"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Native chat is unavailable or its response is unconfirmed.",
+        "safeStop": "Preserve request identity; do not resend, reassign or complete the node.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Changing native history, source cwd or permissions",
+          "Claiming delivery from HTTP acceptance",
+          "Repeating an uncertain native turn automatically"
+        ]
+      }
+    }
+  ],
+  "promises": [
+    {
+      "promiseId": "catalog-visible",
+      "stepId": "discover",
+      "statement": "The actual native catalog is visible and operable.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "dom_semantic_snapshot",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio-browser",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "native-receipt",
+      "stepId": "send",
+      "statement": "The selected native thread acknowledges the actual turn tied to request, execution, source project and node.",
+      "requiredFact": "message_delivered",
+      "requiredEvidenceKinds": [
+        "provider_delivery_receipt",
+        "durable_readback"
+      ],
+      "requiredObserverCapability": "codex-native-thread",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "reply-visible",
+      "stepId": "readback",
+      "statement": "The bounded actual native reply appears separately from node completion and accepted code delivery.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "dom_semantic_snapshot",
+        "visual_capture",
+        "durable_readback"
+      ],
+      "requiredObserverCapability": "studio-browser",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "history-preserved",
+      "stepId": "readback",
+      "statement": "The original native history and source cwd remain intact.",
+      "requiredFact": "event_history_intact",
+      "requiredEvidenceKinds": [
+        "durable_readback",
+        "event_chain_verification"
+      ],
+      "requiredObserverCapability": "codex-native-thread",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "retry-safe",
+      "stepId": "retry",
+      "statement": "Retrying the same identity reads its durable result without a duplicate native turn.",
+      "requiredFact": "recovery_safe",
+      "requiredEvidenceKinds": [
+        "durable_readback",
+        "interaction_trace"
+      ],
+      "requiredObserverCapability": "codex-native-thread",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    }
+  ],
+  "riskSignals": [
+    "authentication",
+    "concurrency",
+    "critical_ux",
+    "external_delivery",
+    "multiple_components",
+    "personal_data",
+    "recovery",
+    "security"
+  ],
+  "outOfScope": [
+    "Operational node assignment or graph lifecycle completion",
+    "Moving a native chat to another project or copying its full transcript",
+    "Automatic skill-use or JPD certification from model claims",
+    "Restarting busy desktop chats or automatically approving tool requests"
+  ]
+}

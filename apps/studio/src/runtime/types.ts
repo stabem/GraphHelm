@@ -308,3 +308,33 @@ export interface OpenWait {
   atSequence: number;
   deadline?: string | null;
 }
+
+export type NativeChatRequestState = "requested" | "received" | "completed" | "blocked" | "unobserved";
+
+export interface NativeChatSummary {
+  id: string;
+  title: string;
+  projectDirectory: string;
+  updatedAt: number;
+}
+
+export interface NativeChatPage {
+  chats: NativeChatSummary[];
+  nextCursor: string | null;
+}
+
+export interface NativeChatRequest {
+  requestId: string;
+  nodeId: string;
+  threadId: string;
+  title: string;
+  sourceDirectory: string;
+  state: NativeChatRequestState;
+  text?: string;
+  detail?: string;
+  turnId?: string;
+}
+
+export interface NativeChatRequestPage {
+  requests: NativeChatRequest[];
+}

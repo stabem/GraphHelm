@@ -29,6 +29,10 @@ import type {
   ReplySuggestions,
   GraphTopology,
   ModelRouteSummary,
+  NativeChatPage,
+  NativeChatRequest,
+  NativeChatRequestPage,
+  NativeChatRequestState,
   MutationEvidence,
   RecordedActor,
   RuntimeEvent,
@@ -74,6 +78,64 @@ const MAX_GRAPH_PATH_LENGTH = 512;
 const MAX_EVIDENCE_ITEMS = 32;
 /** The Runtime's refusal for a well-formed id that names no execution (#1083 F1). */
 const EXECUTION_NOT_FOUND = "GHCLI028_EXECUTION_NOT_FOUND";
+const NATIVE_CHAT_STATES: readonly NativeChatRequestState[] = ["requested", "received", "completed", "blocked", "unobserved"];
+
+function checkedNativeText(value: unknown, field: string, max = 4096): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) {
+    throw new RuntimeError(`${field} must be a non-empty text value of at most ${max} characters.`, 0, []);
+  }
+  return value;
+}
+
+function checkedNativePage(raw: unknown): NativeChatPage {
+  if (raw === null || typeof raw !== "object" || !Array.isArray((raw as { chats?: unknown }).chats)) {
+    throw new RuntimeError("The Runtime returned an invalid native chat list.", 0, []);
+  }
+  const chats = (raw as { chats: unknown[] }).chats.map((entry) => {
+    if (entry === null || typeof entry !== "object") throw new RuntimeError("The Runtime returned an invalid native chat.", 0, []);
+    const value = entry as Record<string, unknown>;
+    return {
+      id: checkedNativeText(value.id, "chat id"),
+      title: checkedNativeText(value.title, "chat title"),
+      projectDirectory: checkedNativeText(value.projectDirectory, "project directory", 4096),
+      updatedAt: typeof value.updatedAt === "number" && Number.isSafeInteger(value.updatedAt)
+        ? value.updatedAt
+        : (() => { throw new RuntimeError("The Runtime returned an invalid native chat updatedAt.", 0, []); })(),
+    };
+  });
+  const nextCursor = (raw as { nextCursor?: unknown }).nextCursor;
+  if (nextCursor !== null && nextCursor !== undefined && typeof nextCursor !== "string") {
+    throw new RuntimeError("The Runtime returned an invalid native chat cursor.", 0, []);
+  }
+  return { chats, nextCursor: nextCursor ?? null };
+}
+
+function checkedNativeRequests(raw: unknown): NativeChatRequestPage {
+  if (raw === null || typeof raw !== "object" || !Array.isArray((raw as { requests?: unknown }).requests)) {
+    throw new RuntimeError("The Runtime returned invalid native chat request records.", 0, []);
+  }
+  const requests = (raw as { requests: unknown[] }).requests.map((entry) => {
+    if (entry === null || typeof entry !== "object") throw new RuntimeError("The Runtime returned an invalid native chat request.", 0, []);
+    const value = entry as Record<string, unknown>;
+    const state = value.state;
+    if (typeof state !== "string" || !NATIVE_CHAT_STATES.includes(state as NativeChatRequestState)) {
+      throw new RuntimeError("The Runtime returned an invalid native chat request state.", 0, []);
+    }
+    const result: NativeChatRequest = {
+      requestId: checkedNativeText(value.requestId, "request id", 128),
+      nodeId: checkedNativeText(value.nodeId, "node id", 128),
+      threadId: checkedNativeText(value.threadId, "thread id", 128),
+      title: checkedNativeText(value.title, "request title"),
+      sourceDirectory: checkedNativeText(value.sourceDirectory, "source directory"),
+      state: state as NativeChatRequestState,
+    };
+    for (const field of ["text", "detail", "turnId"] as const) {
+      if (value[field] !== undefined) result[field] = checkedNativeText(value[field], field);
+    }
+    return result;
+  });
+  return { requests };
+}
 
 /**
  * The largest silence budget the persisted envelope admits, READ FROM THE SCHEMA rather than
@@ -546,6 +608,50 @@ export class RuntimeClient {
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
     });
+  }
+
+  async listNativeChats(options: { cursor?: string } = {}): Promise<NativeChatPage> {
+    const query = options.cursor === undefined ? "" : `?cursor=${encodeURIComponent(checkedNativeText(options.cursor, "cursor", 4096))}`;
+    return checkedNativePage(await this.#request<unknown>({ method: "GET", path: `/v1/native-chats${query}` }));
+  }
+
+  async listNativeChatRequests(executionId: string): Promise<NativeChatRequestPage> {
+    const id = checkedId(executionId, "executionId");
+    return checkedNativeRequests(await this.#request<unknown>({
+      method: "GET",
+      path: `/v1/executions/${encodeURIComponent(id)}/native-chats`,
+    }));
+  }
+
+  async sendNativeChat(executionId: string, request: {
+    requestId: string;
+    nodeId: string;
+    threadId: string;
+    message: string;
+    sourceDirectory: string;
+    title: string;
+  }): Promise<{ requestId: string }> {
+    const id = checkedId(executionId, "executionId");
+    const requestId = checkedNativeText(request.requestId, "requestId", 128);
+    const nodeId = checkedNativeText(request.nodeId, "nodeId", 128);
+    const threadId = checkedNativeText(request.threadId, "threadId", 128);
+    const message = checkedNativeText(request.message, "message", 2000);
+    const sourceDirectory = checkedNativeText(request.sourceDirectory, "sourceDirectory");
+    const title = checkedNativeText(request.title, "title");
+    const raw = await this.#request<unknown>({
+      method: "POST",
+      path: `/v1/executions/${encodeURIComponent(id)}/native-chats`,
+      body: { requestId, nodeId, threadId, message, sourceDirectory, title },
+      headers: {
+        "Idempotency-Key": requestId,
+        "X-GraphHelm-Actor": OPERATOR_ACTOR.id,
+        "X-GraphHelm-Actor-Type": OPERATOR_ACTOR.type,
+      },
+    });
+    if (raw === null || typeof raw !== "object" || (raw as { requestId?: unknown }).requestId !== requestId) {
+      throw new RuntimeError("The Runtime returned no matching native chat request identity.", 0, []);
+    }
+    return { requestId };
   }
 
   /** Read advisory drafts for this run. A 404 means an older Runtime lacks this route. */

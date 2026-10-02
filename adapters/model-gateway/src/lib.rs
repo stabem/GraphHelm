@@ -10,6 +10,7 @@
 pub mod broker;
 pub mod byok;
 pub mod env;
+pub mod native_chats;
 pub mod runtime;
 pub mod systemone;
 pub mod transport;

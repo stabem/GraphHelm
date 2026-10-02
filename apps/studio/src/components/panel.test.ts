@@ -61,6 +61,19 @@ it("keeps subagent lifecycle signals out of chat evidence and raw technical payl
   expect(open).not.toHaveBeenCalled();
 });
 
+/** Protects native receipts from eagerly exposing their sealed JSON in conversation.
+ * Existing subagent coverage does not reach native-chat signals. Cost: one jsdom
+ * render, no native host, model, credentials, or external network. */
+it("summarizes native chat receipts without eagerly opening their sealed data", () => {
+  const signal = event(10, "signal_recorded", { kind: "native_chat_completed" });
+  signal.evidenceRefs = ["sealed-native-receipt"];
+  const open = vi.fn(async () => ({ evidenceId: "sealed-native-receipt", content: "RAW NATIVE RECEIPT JSON", contentSha256: "hash", mediaType: "application/json", sensitivity: "internal" as const }));
+  render(React.createElement(Thread, { events: [signal], executionId: "run", openEvidence: open }));
+  expect(screen.getByText("Native chat reply received. Open its work step to read it.")).toBeInTheDocument();
+  expect(screen.queryByText("RAW NATIVE RECEIPT JSON")).not.toBeInTheDocument();
+  expect(open).not.toHaveBeenCalled();
+});
+
 it("shows the newest sealed report while an older evidence read is still pending", async () => {
   resetPanelCaches();
   const older = event(1, "signal_recorded");

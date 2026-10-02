@@ -72,6 +72,7 @@ import { Board } from "./components/board";
 import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
+import { NativeChats } from "./components/native-chats";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
@@ -3125,6 +3126,7 @@ export default function App({
             {node !== null && (
               <aside className="talk node-col">
               {node !== null && (
+                <>
                 <NodePanel
                   node={node}
                   events={nodeThread}
@@ -3181,7 +3183,16 @@ export default function App({
                           }),
                         }
                   }
+                  nativeChats={
+                    <NativeChats
+                      client={clientRef.current}
+                      executionId={selected}
+                      nodeId={node.id}
+                      refreshSequence={status?.headSequence ?? 0}
+                    />
+                  }
                 />
+                </>
               )}
               </aside>
             )}

@@ -5176,6 +5176,7 @@ mod off_reactor_tests {
             cancels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             sweep_interval: None,
             read_audit: None,
+            native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         (directory, state)
     }

@@ -15,7 +15,7 @@
  * JSX, which escapes it. There is no `dangerouslySetInnerHTML` in this application.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
@@ -90,6 +90,13 @@ export function describe(event: RuntimeEvent): string | null {
       // `kind`/`severity`/`sourceKind` and no `description`, because D-036 keeps free-form content
       // out of event payloads. The words arrive underneath, out of sealed evidence.
       const signalKind = typeof payload.kind === "string" ? payload.kind : null;
+      if (signalKind?.startsWith("native_chat_")) {
+        if (signalKind === "native_chat_completed") return "Native chat reply received. Open its work step to read it.";
+        if (signalKind === "native_chat_received") return "The native chat received its work request.";
+        if (signalKind === "native_chat_requested") return "A work request was recorded for a native chat.";
+        if (signalKind === "native_chat_blocked") return "The native chat needs attention. Open its work step.";
+        return "The native chat outcome is unconfirmed. Open its work step.";
+      }
       if (signalKind === "agent_subagent_started") return "Subagent start recorded; see Team for the session link.";
       if (signalKind === "agent_subagent_stopped") return "Subagent stop recorded; its result still needs separate evidence.";
       if (signalKind === "run_team_joined") return "Session joined the run team.";
@@ -124,7 +131,14 @@ export function isStageDirection(event: RuntimeEvent): boolean {
   const signalKind = event.kind === "signal_recorded" && event.payload !== null && typeof event.payload === "object"
     ? (event.payload as { kind?: unknown }).kind : null;
   return event.kind !== "signal_recorded" || signalKind === "run_team_joined"
-    || signalKind === "run_team_reported" || signalKind === "run_team_acknowledged";
+    || signalKind === "run_team_reported" || signalKind === "run_team_acknowledged"
+    || isNativeChatSignal(event);
+}
+
+function isNativeChatSignal(event: RuntimeEvent): boolean {
+  const payload = event.payload;
+  return event.kind === "signal_recorded" && payload !== null && typeof payload === "object"
+    && "kind" in payload && typeof payload.kind === "string" && payload.kind.startsWith("native_chat_");
 }
 
 /** Whether this event is the one machine line that answers "why does this run need me" - it
@@ -670,6 +684,7 @@ export function Thread({
                 openEvidence !== undefined &&
                 !isSubagentLifecycleSignal(event) &&
                 !isClaudeTaskSignal(event) &&
+                !isNativeChatSignal(event) &&
                 event.evidenceRefs.map((evidenceId) => (
                   <Said
                     key={evidenceId}
@@ -1095,6 +1110,7 @@ export function NodePanel({
   openEvidence,
   onOpenDocument,
   answer,
+  nativeChats,
 }: {
   node: GraphNode;
   events: RuntimeEvent[];
@@ -1111,6 +1127,7 @@ export function NodePanel({
     onAnswer: (evidence: ClaimEvidence[]) => Promise<AnswerOutcome>;
     hash: (file: File) => Promise<{ contentHash: string; size: number }>;
   };
+  nativeChats?: ReactNode;
 }) {
   const mood = moodOf(node.state);
   const result = nodeResult(node);
@@ -1187,6 +1204,7 @@ export function NodePanel({
         />
       )}
 
+      {nativeChats}
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}
       {(!deliveryView || historyEvents.length > 0) && <Thread events={historyEvents} executionId={executionId} openEvidence={openEvidence} />}
 

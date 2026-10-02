@@ -1770,6 +1770,11 @@ export default function App({
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const workMessages = useMemo(() => workConversation(selected, eventList, envelopes,
     runTeamRead?.executionId === selected ? runTeamRead : null), [selected, eventList, envelopes, runTeamRead]);
+  const hasRecordedAgentWork = useMemo(() => {
+    const agentSequences = new Set(eventList.filter((event) =>
+      event.kind === "signal_recorded" && event.actorType === "agent").map((event) => event.sequence));
+    return workMessages.some((message) => message.provenance === "stored" && agentSequences.has(message.sequence));
+  }, [eventList, workMessages]);
   const recentActivity = useMemo(() => eventList
     .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
@@ -2018,6 +2023,13 @@ export default function App({
   const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
   const effectiveVerdict = effectiveAttention === undefined ? null : verdictOf(effectiveAttention);
   const effectiveStatus = pendingOwnerReview && status !== null ? { ...status, attention: "needs_you" as const } : status;
+  /** An entry graph's waiting bit is a technical fact, not an owner request or a claim that
+   * external agents stopped. Keep other reasons, questions, and proposals prominent. */
+  const recordedWorkBehindGraphWait = status?.status === "running" && status.attention === "needs_you"
+    && waitingForInput && pendingQuestion === null && !pendingOwnerReview && blockedAttentionNode === null
+    && retryFailures.size === 0
+    && status.attentionReasons.every((reason) => reason.kind === "waiting_input_node")
+    && hasRecordedAgentWork;
   const focusPendingProposal = () => {
     setGovernedDraftId((current) => current || durableProposals[0]?.draftId || "");
     setRunActionsOpen(true);
@@ -2254,6 +2266,7 @@ export default function App({
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
+        selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
         selected={selected}
         connected={connected}
         stale={stale}
@@ -2345,7 +2358,7 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {effectiveVerdict && <span className={`tag ${needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
+            {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {selected && <p className="run-selection-identity" aria-label="Selected run identity">Project: {project ?? "this runtime"} / Run: {selected}</p>}
           </div>
 

@@ -11,6 +11,14 @@ export interface WorkMessage {
   at: string | null;
   provenance: "stored" | "verified-team";
   acknowledged: boolean;
+  /** GraphHelm MCP process nonce from a recognized record key; never a native chat identity. */
+  transportSession?: string | null;
+}
+
+/** MCP record keys carry a 16-hex process nonce, typed RPC id, and request digest. */
+export function mcpTransportFromRecordKey(key: string | null): string | null {
+  if (key === null) return null;
+  return /^mcp-([0-9a-f]{16})-[sn][a-z0-9-]{1,32}-record-[0-9a-f]{16}$/.exec(key)?.[1] ?? null;
 }
 
 /** Opened operator notes and verified team messages, in journal order. Transport and lifecycle
@@ -32,7 +40,8 @@ export function workConversation(
     if (!text) continue;
     messages.push({ id: `event-${event.sequence}`, sequence: event.sequence, sender: event.actorId,
       to: envelope.to, replyTo: envelope.replyTo, text, at: event.occurredAt,
-      provenance: "stored", acknowledged: false });
+      provenance: "stored", acknowledged: false,
+      transportSession: event.actorType === "agent" ? mcpTransportFromRecordKey(event.idempotencyKey) : null });
   }
   if (team?.executionId === executionId && !team.unavailable) {
     for (const message of team.messages) {

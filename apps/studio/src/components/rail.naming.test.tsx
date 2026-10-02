@@ -150,12 +150,12 @@ describe("activity-ordered run history", () => {
     expect(unknownRows[0]).toHaveTextContent("status completed");
     expect(unknownRows[1]).toHaveTextContent("missing-time");
     expect(unknownRows[1]).toHaveTextContent("status blocked");
-    expect(unknownTime).toHaveTextContent("Last activity unknown");
+    expect(unknownTime).toHaveTextContent("Last event unknown");
     expect(screen.getByRole("group", { name: /status unknown/i })).toHaveTextContent("unknown");
     expect(screen.getByRole("button", { name: /show history/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /newer-history/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /show history/i }));
-    expect(screen.getByRole("button", { name: /newer-history/ })).toHaveTextContent("Last activity");
+    expect(screen.getByRole("button", { name: /newer-history/ })).toHaveTextContent("Last event");
     expect(screen.getByText(/Loaded runs only/)).toBeInTheDocument();
   });
 

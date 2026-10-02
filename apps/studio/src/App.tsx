@@ -33,6 +33,7 @@ import {
   newIdempotencyKey,
 } from "./runtime/client";
 import { devSession, newestPresenceByActor, recordedActorSessions, type AgentPresence, type DevSession } from "./runtime/session";
+import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
@@ -147,14 +148,7 @@ export default function App({
   const clientRef = useRef<RuntimeClient | null>(null);
   const toolsRef = useRef<RegisteredTools | null>(null);
 
-  const [canvasMode, setCanvasMode] = useState(false);
   const [runActionsOpen, setRunActionsOpen] = useState(false);
-  const [compactActions, setCompactActions] = useState(() => typeof window !== "undefined" && window.innerWidth <= 600);
-  useEffect(() => {
-    const update = () => setCompactActions(window.innerWidth <= 600);
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
   const [connected, setConnected] = useState(false);
   /** What the rail calls this folder. Named by the operator; absent, the rail says what it can. */
   const [project, setProject] = useState<string | null>(null);
@@ -1774,6 +1768,8 @@ export default function App({
   // and your DIRECT LINE with one agent (behind that agent's own blob, not here). Each room and
   // pair becomes a bubble standing on the board.
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
+  const workMessages = useMemo(() => workConversation(selected, eventList, envelopes,
+    runTeamRead?.executionId === selected ? runTeamRead : null), [selected, eventList, envelopes, runTeamRead]);
   const recentActivity = useMemo(() => eventList
     .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
@@ -2349,14 +2345,8 @@ export default function App({
             ) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {effectiveVerdict && <span className={`tag ${status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
-            {selected && <p className="run-selection-identity" aria-label="Selected run identity">
-            Project: {project ?? "this runtime"}{projectPath ? ` (${projectPath})` : ""} · Run: {selected} · {runTeamRead?.executionId !== selected || runTeamRead.unavailable
-              ? "Joined sessions unverified"
-              : runTeamRead.members.length > 0
-                ? `Verified joined: ${runTeamRead.members.map((member) => `${member.actorId} (${member.host}, session ${member.sessionId})`).join(", ")}${runTeamRead.rejected > 0 ? ` · ${runTeamRead.rejected} signals unverified` : ""}`
-                : runTeamRead.rejected > 0 ? `${runTeamRead.rejected} signals unverified; joined sessions unknown` : "No verified joined sessions in loaded evidence"}
-            </p>}
+            {effectiveVerdict && <span className={`tag ${needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
+            {selected && <p className="run-selection-identity" aria-label="Selected run identity">Project: {project ?? "this runtime"} / Run: {selected}</p>}
           </div>
 
           <div className="strip-card right">
@@ -2520,7 +2510,7 @@ export default function App({
               {/* WHY IT NEEDS YOU, where you answer it. This block lived in the top strip -
                 * a header narrating a panel it did not belong to. Each reason still carries
                 * the one action that is legal for it. */}
-              {verdict?.key === "needs" && status && status.attentionReasons.length > 0 && (
+              {verdict?.key === "needs" && status && status.attentionReasons.some((reason) => reason.kind !== "waiting_input_node" || pendingQuestion !== null) && (
                 <div className="attention" aria-label="Why this run needs you">
                   {status.attentionReasons.map((reason, reasonIndex) => {
                     const node = typeof reason.node === "string" ? reason.node : null;
@@ -2633,6 +2623,7 @@ export default function App({
               <RunPanel
                 status={effectiveStatus!}
                 events={eventList}
+                workMessages={workMessages}
                 unverifiedResults={unverifiedResults}
                 onClose={() => {
                   setTalkOpen(false);
@@ -2750,6 +2741,7 @@ export default function App({
               runId={selected === "" ? undefined : selected}
               crew={crew}
               recordedSessions={recordedSessions}
+              workMessages={workMessages}
               activity={recentActivity}
               latestEvent={latestEvent}
               subagents={subagentRead?.executionId === selected ? subagentRead : null}
@@ -2759,11 +2751,9 @@ export default function App({
               nextAction={pendingOwnerReview ? {
                 label: "Review pending proposal",
                 detail: "A sealed proposal is waiting for an owner review, assignment, and approval.",
-              } : waitingForInput && verdict?.key === "needs" ? {
-                label: needsDirection ? "Send direction" : `Answer ${pendingQuestion?.asker ?? "in the thread"}`,
-                detail: needsDirection
-                  ? "This step is waiting. No specific question is visible yet; open the conversation to write direction."
-                  : pendingQuestion?.text ?? "Open the thread to read the question.",
+              } : waitingForInput && verdict?.key === "needs" && pendingQuestion !== null ? {
+                label: `Answer ${pendingQuestion.asker}`,
+                detail: pendingQuestion.text,
               } : blockedAttentionNode && verdict?.key === "needs" ? {
                 label: "Review step needing attention",
                 detail: `${blockedAttentionNode} needs review before it can proceed. Open its recorded reason and controls.`,
@@ -2774,7 +2764,6 @@ export default function App({
               runStatus={status.status}
               selectedAgent={focus.kind === "agent" ? focus.id : null}
               onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
-              onCanvasChange={setCanvasMode}
               talks={talks}
               selectedTalk={focus.kind === "talk" ? focus.id : null}
               onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
@@ -2794,7 +2783,7 @@ export default function App({
               * `actionLegality` is the one place that judgement lives. */}
             <div className="dock" ref={dockRef}>
               <span className="canvas-execution-state">Execution / {status.status ?? "State unavailable"}</span>
-              <details className="execution-actions" open={(!canvasMode && !compactActions) || runActionsOpen} onToggle={(event) => { if (canvasMode || compactActions) setRunActionsOpen(event.currentTarget.open); }}>
+              <details className="execution-actions" open={runActionsOpen} onToggle={(event) => setRunActionsOpen(event.currentTarget.open)}>
               <summary>Run actions</summary>
               <div className="execution-menu">
               {!ended && (<>

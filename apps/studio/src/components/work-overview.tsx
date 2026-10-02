@@ -16,6 +16,7 @@ import type { SubagentReadModel } from "../runtime/subagents";
 import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
 import type { RunTeamReadModel } from "../runtime/run-team";
 import type { RecordedActorSession } from "../runtime/session";
+import type { WorkMessage } from "../runtime/work-conversation";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -35,6 +36,7 @@ export interface WorkOverviewProps {
   claudeTasks?: ClaudeTaskReadModel | null;
   crew?: CrewMember[];
   recordedSessions?: RecordedActorSession[];
+  workMessages?: WorkMessage[];
   talks?: Talk[];
   activity?: RecordedActivity[];
   agentReports?: Record<string, AgentReport>;
@@ -85,22 +87,6 @@ function latestNodeEvent(node: GraphNode) {
   return node.history.at(-1);
 }
 
-function latestObservationForAgent(model: GraphModel, agentId: string): { node: GraphNode; at: string | null } | null {
-  let latest: { node: GraphNode; at: string | null; timestamp: number } | null = null;
-  for (const node of model.nodes) {
-    for (const event of node.history) {
-      // The event actor is the only historical fact this event carries. Current assignment is a
-      // separate present-tense responsibility and must not rewrite who recorded old work.
-      if (event.actorId !== agentId) continue;
-      const timestamp = event.sequence;
-      if (latest === null || timestamp >= latest.timestamp) {
-        latest = { node, at: event.occurredAt, timestamp };
-      }
-    }
-  }
-  return latest === null ? null : { node: latest.node, at: latest.at };
-}
-
 function statusClass(node: GraphNode): string {
   if (nodeStatusLabel(node) !== null) return "work-status work-status-review";
   return `work-status work-status-${moodOf(node.state)}`;
@@ -117,6 +103,7 @@ export function WorkOverview({
   claudeTasks = null,
   crew = [],
   recordedSessions = [],
+  workMessages = [],
   talks = [],
   activity = [],
   agentReports = {},
@@ -170,9 +157,12 @@ export function WorkOverview({
       : Number.isNaN(new Date(latestRecordedUpdate.occurredAt).valueOf())
         ? `Event #${latestRecordedUpdate.sequence} · timestamp invalid`
         : `Event #${latestRecordedUpdate.sequence} · recorded ${fullInstant(latestRecordedUpdate.occurredAt)}`;
-  const orderedCrew = [...crew].sort((left, right) =>
-    (agentReports[right.id]?.sequence ?? 0) - (agentReports[left.id]?.sequence ?? 0),
-  );
+  const joinedMembers = runTeam?.unavailable ? [] : runTeam?.members ?? [];
+  const knownActors = new Set(crew.map((agent) => agent.id));
+  const recentSpeakers = [...workMessages].reverse().reduce<string[]>((actors, message) => {
+    if (knownActors.has(message.sender) && !actors.includes(message.sender)) actors.push(message.sender);
+    return actors;
+  }, []).slice(0, 6);
   const orderedNodes = [...model.nodes].sort((left, right) => {
     const leftActive = ["running", "queued", "linting"].includes(left.state) ? 0 : 1;
     const rightActive = ["running", "queued", "linting"].includes(right.state) ? 0 : 1;
@@ -197,6 +187,41 @@ export function WorkOverview({
 
   return (
     <main className="work-overview" aria-label="Work overview">
+      <header className="work-primary-header">
+        <span>Selected run</span>
+        <h1>{projectName ?? "Project"}</h1>
+        {runId && <small>Run {runId}</small>}
+      </header>
+      {nextAction && <section className="work-next-action" aria-label="Owner decision">
+        <div><span>Needs a decision</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p>{replyGuidance && <p>{replyGuidance}</p>}</div>
+        <button type="button" onClick={onNextAction}>{nextAction.label}</button>
+      </section>}
+      <section className="work-primary-roster" aria-label="People and reported work">
+        <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>People</h2></div></div>
+        {joinedMembers.length > 0 ? <>
+          <p className="work-roster-note">Explicitly joined sessions. Work state is what each session last reported, not a live heartbeat.</p>
+          <div className="work-primary-people">{joinedMembers.map((member) => <article key={member.actorId}>
+            <strong>{member.actorId}</strong><small>{member.host} session</small>
+            <span>{member.task ?? "Task not reported"}</span>
+            <p>{member.activity ?? "No work update reported"}</p>
+            <small>{member.reportedState ? `Reported ${member.reportedState}` : "No state reported"} · {ago(member.lastAt)}</small>
+            <button type="button" onClick={() => onSelectAgent?.(member.actorId)}>Open direct chat</button>
+          </article>)}</div>
+        </> : recentSpeakers.length > 0 ? <>
+          <p className="work-roster-note">Observed actor IDs from recorded messages. A single ID may cover several native chats; no native joins are verified here.</p>
+          <div className="work-primary-people">{recentSpeakers.map((actorId) => {
+            const latest = [...workMessages].reverse().find((message) => message.sender === actorId)!;
+            return <article key={actorId}>
+              <strong>{actorId}</strong><small>Observed actor · session unverified</small>
+              <span>Task not reported</span><p>{latest.text}</p>
+              <small>Message stored · {ago(latest.at)}</small>
+              <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open direct chat</button>
+            </article>;
+          })}</div>
+        </> : <p className="work-empty">No agent work message is readable yet. Recorded identities are available in Details.</p>}
+        {runTeam && runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified; membership may be incomplete.</p>}
+      </section>
+      <details className="work-technical-details"><summary>Details: graph, records, and transport IDs</summary>
       <header className="work-header">
         <div className="work-heading">
           <span className="work-kicker"><Activity aria-hidden="true" size={16} /> Active workspace</span>
@@ -213,42 +238,6 @@ export function WorkOverview({
         </div>
       </header>
 
-      <section className="work-run-team" aria-label="Team and shared chat">
-        <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>Run team</h2></div><span>{runTeam?.members.length ?? 0} {runTeam && runTeam.rejected > 0 ? "verified joined" : "joined"} session{runTeam?.members.length === 1 ? "" : "s"}</span></div>
-        {runTeam === null ? <p className="work-empty">Checking this run's session records.</p>
-          : runTeam.unavailable ? <p className="work-caution">The team record is too large to verify in this view.</p>
-          : <>
-            {runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified. Team membership and chat may be incomplete.</p>}
-            {runTeam.members.length === 0
-              ? <p className="work-empty">{runTeam.rejected > 0
-                  ? "No joined sessions could be verified from the available team records."
-                  : "No native sessions have explicitly joined this run. Historical actor names below are not team membership."}</p>
-              : <div className="work-run-team-cards">
-                {runTeam.members.map((member) => {
-                  const minutes = member.lastAt === null ? null : (Date.now() - new Date(member.lastAt).valueOf()) / 60000;
-                  const freshness = member.endedAt !== null ? "Session end observed"
-                    : minutes === null || !Number.isFinite(minutes) || minutes >= 5 ? "No fresh activity observed" : "Recent activity recorded";
-                  return <article key={member.actorId} className="work-run-team-card">
-                    <div className="work-run-team-card-head"><span className="work-avatar" style={{ background: `hsl(${hueOf(member.actorId)} 52% 46%)` }} aria-hidden="true">{initialOf(member.actorId)}</span><div><strong>{member.actorId}</strong><small>{member.host} session</small></div></div>
-                    <p><span>Task</span><strong>{member.task ?? "No task reported"}</strong></p>
-                    <p><span>Latest public activity</span><strong>{member.activity ?? "No work update reported"}</strong></p>
-                    <small>{member.reportedState ? `Reported ${member.reportedState}` : "No work state reported"} · {freshness} · {ago(member.lastAt)}</small>
-                  </article>;
-                })}
-              </div>}
-            <div className="work-run-team-chat">
-              <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h3>Shared chat</h3></div><span>{runTeam.messages.length} {runTeam.rejected > 0 ? "verified" : "recorded"} message{runTeam.messages.length === 1 ? "" : "s"}</span></div>
-              {runTeam.messages.length === 0 ? <p className="work-empty">{runTeam.rejected > 0 ? "No team messages could be verified from the available records." : "No team messages recorded in this run."}</p>
-                : <ol>{runTeam.messages.map((message) => <li key={message.id}>
-                  <div><strong>{message.sender}</strong><small>{message.to ? `to ${message.to}` : "to the room"} · {ago(message.at)}</small></div>
-                  <p>{message.text}</p>
-                  {message.replyTo && <small>Reply to {message.replyTo}</small>}
-                  {message.to && <small>{message.acknowledged ? `Recipient acknowledged · ${ago(message.acknowledgedAt)}` : "Awaiting recipient acknowledgement"}</small>}
-                </li>)}</ol>}
-            </div>
-          </>}
-      </section>
-
       <section className="work-now-strip" aria-label="Now, last, and next">
         <div><span>Now</span><strong>{runStatus ? readable(runStatus) : "Run state unavailable"}</strong>{activeNodeNames.length > 0 ? <small><button type="button" className="work-inline-link" onClick={() => onSelectNode(activeNodeNames[0])}>Open {activeNodeNames[0]}</button>{activeNodeNames.length > 1 ? ` · ${activeNodeNames.length - 1} more active` : ""}</small> : <small>No active node recorded</small>}</div>
         <div><span>Last</span><strong>{latestEvent ? `Event #${latestEvent.sequence} · ${readable(latestEvent.kind)}` : "No latest event recorded"}</strong><small>{latestEvent ? `${latestEvent.actorId ?? "Unknown actor"} · ${ago(latestEvent.occurredAt)}` : "Last chat report is shown below"}</small></div>
@@ -260,11 +249,6 @@ export function WorkOverview({
         <div><span>Project folder</span><strong>{projectPath ?? "Project folder unavailable"}</strong></div>
         <div><span>Latest recorded update</span><strong>{recordedUpdate}</strong></div>
       </section>
-
-      {nextAction && <section className="work-next-action" aria-label="Next action">
-        <div><span>{attention === "needs_you" ? "Owner action" : "Next step"}</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p>{replyGuidance && <p>{replyGuidance}</p>}</div>
-        <button type="button" onClick={onNextAction}>{nextAction.label}</button>
-      </section>}
 
       <section className="work-snapshot" aria-label="Where this run stands">
         <div className="work-section-heading"><div><Activity aria-hidden="true" size={17} /><h2>Where this run stands</h2></div><span>From the Runtime record</span></div>
@@ -330,46 +314,6 @@ export function WorkOverview({
             {sessions.size === 0 && <p className="work-team-flat-note">{subagents === null ? "Checking recorded session links · showing a flat team list." : "No readable session links · showing a flat team list."}</p>}
             {subagents && subagents.rejected > 0 && <p className="work-caution" role="note">{subagents.rejected} session signal{subagents.rejected === 1 ? "" : "s"} could not be verified.</p>}
             {claudeTasks && claudeTasks.rejected > 0 && <p className="work-caution" role="note">{claudeTasks.rejected} Claude task signal{claudeTasks.rejected === 1 ? "" : "s"} could not be verified.</p>}
-            {crew.length === 0 ? (
-              <p className="work-empty">No agents have been observed in this run.</p>
-            ) : (
-              <div className="work-agent-list">
-                {orderedCrew.map((agent) => {
-                  const observation = latestObservationForAgent(model, agent.id);
-                  const responsibilities = model.nodes.filter((node) => node.assignedActor?.id === agent.id);
-                  const report = agentReports[agent.id];
-                  const member = runTeam?.members.find((joined) => joined.actorId === agent.id);
-                  const teamUpdate = member?.activity ?? null;
-                  const reportLabel = teamUpdate ? "Latest verified team update" : report ? "Last direct chat report" : member ? "Latest team update" : "Last direct chat report";
-                  const reportText = teamUpdate ?? report?.text ?? (report ? "Report text has not opened yet" : member ? "No team update reported" : "No direct chat report · see Work nodes");
-                  const isSelected = selectedAgent === agent.id;
-                  return (
-                    <details className="work-agent-details" key={agent.id}>
-                    <summary className="work-agent-row">
-                      <span className="work-avatar" style={{ background: `hsl(${hueOf(agent.id)} 52% 46%)` }} aria-hidden="true">{initialOf(agent.id)}</span>
-                      <span className="work-agent-copy">
-                        <span className="work-agent-id">{agent.id}</span>
-                        <span className="work-agent-report"><span>{reportLabel}</span><strong>{reportText}</strong>{teamUpdate ? <small>{member?.reportedState ? `Reported ${member.reportedState} · ` : ""}last team event {ago(member?.lastAt ?? null)}</small> : report && <small>{ago(report.occurredAt)} · event #{report.sequence}</small>}</span>
-                        <span className="work-observed">
-                          <span>Last node update</span>
-                          {observation ? (
-                            <><strong>{observation.node.id}</strong><small>{ago(observation.at)}</small></>
-                          ) : responsibilities.length > 0 ? (
-                            <><strong>{responsibilities.map((node) => node.id).join(", ")}</strong><small>Current responsibility · no actor event recorded</small></>
-                          ) : <strong className="work-muted">No graph-node update recorded</strong>}
-                        </span>
-                        {agent.lastAt && <span className="work-observed">Last recorded message or event · {ago(agent.lastAt)}</span>}
-                      </span>
-                    </summary>
-                    <div className="work-agent-expanded">
-                      <p>{reportText}</p>
-                      <button type="button" aria-pressed={isSelected} onClick={() => onSelectAgent?.(isSelected ? null : agent.id)}>{isSelected ? "Close direct chat" : `Open direct chat with ${agent.id}`}</button>
-                    </div>
-                    </details>
-                  );
-                })}
-              </div>
-            )}
           </section>
 
           <section className="work-section">
@@ -468,6 +412,7 @@ export function WorkOverview({
           </li>)}</ol>
         )}
       </section>
+      </details>
     </main>
   );
 }

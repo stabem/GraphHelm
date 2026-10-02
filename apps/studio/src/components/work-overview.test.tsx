@@ -29,7 +29,7 @@ describe("organized work overview", () => {
     rerender(<WorkOverview model={model} recordedSessions={[]} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(within(sessions).getByText(/No typed actor\/session declarations recorded/i)).toBeInTheDocument();
   });
-  it("C5 puts explicitly joined sessions and receipt truth before the technical graph", () => {
+  it("C5 puts explicitly joined sessions in the primary people list", () => {
     const members: RunTeamReadModel["members"] = ["c1", "c2", "c3"].map((sessionId) => ({
       actorId: `codex-session-${sessionId}`, host: "codex", sessionId, joinedAt: null,
       lastAt: null, task: `Task ${sessionId}`, activity: `Update ${sessionId}`,
@@ -41,48 +41,39 @@ describe("organized work overview", () => {
       messages: [{ id: "m1", sender: members[0].actorId, to: members[3].actorId, replyTo: null,
         text: "Please review the view", at: null, sequence: 1, acknowledged: false, acknowledgedAt: null }] };
     render(<WorkOverview model={model} runTeam={runTeam} selectedNode={null} onSelectNode={vi.fn()} />);
-    const team = screen.getByRole("region", { name: "Team and shared chat" });
-    expect(within(team).getByText("4 joined sessions")).toBeInTheDocument();
-    expect(screen.getByText("1 team message")).toBeInTheDocument();
-    expect(within(team).getAllByText(/Task c[123]/)).toHaveLength(3);
-    expect(within(team).getByText("Waiting for browser evidence")).toBeInTheDocument();
-    expect(within(team).getByText("Please review the view")).toBeInTheDocument();
-    expect(within(team).getByText("Awaiting recipient acknowledgement")).toBeInTheDocument();
-    expect(within(team).getAllByText(/No fresh activity observed/)).toHaveLength(4);
+    const people = screen.getByRole("region", { name: "People and reported work" });
+    expect(within(people).getByText(/Explicitly joined sessions/)).toBeInTheDocument();
+    expect(within(people).getAllByText(/Task c[123]/)).toHaveLength(3);
+    expect(within(people).getByText("Waiting for browser evidence")).toBeInTheDocument();
+    expect(within(people).getAllByRole("button", { name: "Open direct chat" })).toHaveLength(4);
   });
-  it("shows a joined actor's verified work update in its legacy card without implying inactivity", () => {
+  it("shows a joined actor's verified work update without implying inactivity", () => {
     const actorId = "codex-session-c1";
     const runTeam: RunTeamReadModel = { executionId: "run-1", rejected: 0, unavailable: false,
       messages: [], members: [{ actorId, host: "codex", sessionId: "c1", joinedAt: null,
         lastAt: "2026-09-29T12:00:00Z", task: "Review Studio", activity: "Checking the reply view",
         reportedState: "working", endedAt: null }] };
     render(<WorkOverview model={model} crew={[{ id: actorId, charter: null }]} runTeam={runTeam} selectedNode={null} onSelectNode={vi.fn()} />);
-    const card = screen.getByText(actorId, { selector: ".work-agent-id" }).closest("details")!;
-    expect(card).toHaveTextContent("Latest verified team update");
+    const card = screen.getByText(actorId, { selector: ".work-primary-people strong" }).closest("article")!;
     expect(card).toHaveTextContent("Checking the reply view");
-    expect(card).toHaveTextContent("No graph-node update recorded");
+    expect(card).toHaveTextContent("Reported working");
     expect(card).not.toHaveTextContent("No direct chat report");
     expect(card).not.toHaveTextContent("No node activity yet");
   });
   it("keeps failed team evidence distinct from a verified empty team", () => {
     const empty: RunTeamReadModel = { executionId: "run-1", members: [], messages: [], rejected: 0, unavailable: false };
     const { rerender } = render(<WorkOverview model={model} runTeam={empty} selectedNode={null} onSelectNode={vi.fn()} />);
-    const team = screen.getByRole("region", { name: "Team and shared chat" });
-    expect(team).toHaveTextContent("0 joined sessions");
-    expect(team).toHaveTextContent("No native sessions have explicitly joined this run.");
-    expect(team).not.toHaveTextContent("could not be verified");
+    const people = screen.getByRole("region", { name: "People and reported work" });
+    expect(people).toHaveTextContent("No agent work message is readable yet");
+    expect(people).not.toHaveTextContent("could not be verified");
 
     rerender(<WorkOverview model={model} runTeam={{ ...empty, rejected: 1 }} selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(team).toHaveTextContent("0 verified joined sessions");
-    expect(team).toHaveTextContent("1 team record could not be verified.");
-    expect(team).toHaveTextContent("No joined sessions could be verified from the available team records.");
-    expect(team).not.toHaveTextContent("No native sessions have explicitly joined this run.");
-    expect(team).not.toHaveTextContent("No team messages recorded in this run.");
+    expect(people).toHaveTextContent("1 team record could not be verified");
+    expect(people).not.toHaveTextContent("No native sessions have explicitly joined this run");
 
     rerender(<WorkOverview model={model} runTeam={{ ...empty, members: [{ actorId: "codex-session-c1", host: "codex", sessionId: "c1", joinedAt: null, lastAt: null, task: null, activity: null, reportedState: null, endedAt: null }], rejected: 1 }} selectedNode={null} onSelectNode={vi.fn()} />);
-    expect(team).toHaveTextContent("1 verified joined session");
-    expect(team).toHaveTextContent("codex-session-c1");
-    expect(team).toHaveTextContent("1 team record could not be verified.");
+    expect(people).toHaveTextContent("codex-session-c1");
+    expect(people).toHaveTextContent("1 team record could not be verified");
   });
   it("shows the declared step and actual model route separately from the recorder", () => {
     const review = {
@@ -144,9 +135,7 @@ describe("organized work overview", () => {
     expect(card).toHaveTextContent("reviewer");
     expect(card).toHaveTextContent("assignment is separate from the Runtime recorder");
   });
-  /** Observable contract: an assigned agent sees the node's latest Runtime-recorded outcome in
-   * its collaboration card. This catches the defect where filtering only by event actor makes
-   * system-runtime recorded work look like "No node activity" for the responsible agent. */
+  /** The technical node record keeps assignment separate from the Runtime recorder. */
   it("shows assigned node activity even when Runtime recorded the outcome", () => {
     const assigned = {
       ...node("implementation"),
@@ -156,9 +145,10 @@ describe("organized work overview", () => {
       history: [{ sequence: 12, kind: "node_outcome_recorded", nextState: "succeeded", outcome: "succeeded", occurredAt: "2026-09-28T12:00:00Z", actorId: "system-runtime", actorType: "system", evidence: 1 }],
     };
     render(<WorkOverview model={{ ...model, nodes: [assigned] }} crew={[{ id: "builder", charter: null }]} selectedNode={null} onSelectNode={vi.fn()} />);
-    const agent = screen.getByText("builder", { selector: ".work-agent-id" }).closest("details")!;
-    expect(agent).toHaveTextContent("implementation");
-    expect(agent).not.toHaveTextContent("No graph-node update recorded");
+    const step = screen.getByRole("button", { name: /Open node implementation/ });
+    expect(step).toHaveTextContent("builder");
+    expect(step).toHaveTextContent("Recorded by Runtime");
+    expect(screen.getByRole("region", { name: "People and reported work" })).not.toHaveTextContent("builder");
   });
   it("keeps a typed verified step distinct from an unverified model reply", () => {
     const verified = {
@@ -196,19 +186,19 @@ describe("organized work overview", () => {
   it("does not invent an assignment and opens the existing conversation", () => {
     const select=vi.fn();
     render(<WorkOverview model={model} crew={[{id:"codex",charter:null}]} talks={[{key:"pair",label:"codex + helper",participants:["codex","helper"],count:3,lastAt:null}]} selectedNode={null} onSelectNode={vi.fn()} onSelectTalk={select} />);
-    expect(screen.getByText("No graph-node update recorded")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "People and reported work" })).toHaveTextContent("No agent work message is readable yet");
     fireEvent.click(screen.getByRole("button",{name:/codex \+ helper/}));
     expect(select).toHaveBeenCalledWith("pair");
   });
   it("shows recorded messages even while no graph node is active", () => {
-    render(<WorkOverview model={model} crew={[{id:"codex",charter:null,lastAt:"2026-09-25T17:00:00Z"}]} talks={[{key:"room",label:"everyone",participants:["codex"],count:1,lastAt:"2026-09-25T17:00:00Z",preview:"Checking the failing flow"}]} activity={[{sequence:39,actorId:"codex",occurredAt:"2026-09-25T17:00:00Z",text:"Checking the failing flow"}]} selectedNode={null} onSelectNode={vi.fn()} />);
+    render(<WorkOverview model={model} crew={[{id:"codex",charter:null,lastAt:"2026-09-25T17:00:00Z"}]} talks={[{key:"room",label:"everyone",participants:["codex"],count:1,lastAt:"2026-09-25T17:00:00Z",preview:"Checking the failing flow"}]} activity={[{sequence:39,actorId:"codex",occurredAt:"2026-09-25T17:00:00Z",text:"Checking the failing flow"}]} workMessages={[{id:"m39",sequence:39,sender:"codex",to:null,replyTo:null,text:"Checking the failing flow",at:"2026-09-25T17:00:00Z",provenance:"stored",acknowledged:false}]} selectedNode={null} onSelectNode={vi.fn()} />);
     expect(screen.getByText("0 active graph nodes")).toBeInTheDocument();
     const activity = screen.getByRole("region", {name:"Recent recorded activity"});
     expect(activity).toHaveTextContent("codex");
     expect(activity).toHaveTextContent("event #39");
     expect(activity).toHaveTextContent("Checking the failing flow");
-    expect(screen.getByText("No graph-node update recorded")).toBeInTheDocument();
-    expect(screen.getByText("Last recorded message or event", {exact:false})).toBeInTheDocument();
+    expect(screen.getByRole("region", {name:"People and reported work"})).toHaveTextContent("Checking the failing flow");
+    expect(screen.getByRole("region", {name:"People and reported work"})).toHaveTextContent("session unverified");
     expect(screen.getByText("Checking the failing flow", {selector:".work-talk-preview"})).toBeInTheDocument();
   });
   it("keeps the report pending while its text has not opened", () => {
@@ -249,10 +239,8 @@ describe("organized work overview", () => {
       model={{ ...model, nodes: [node("start")] }}
       crew={[{ id: "builder", charter: null }, { id: "reviewer", charter: null }]}
       activity={[{ sequence: 20, actorId: "reviewer", occurredAt: "2026-09-25T17:02:00Z", text: "Checking the branch" }]}
-      agentReports={{
-        builder: { sequence: 11, occurredAt: "2026-09-25T17:00:00Z", text: "Implementing the issue" },
-        reviewer: { sequence: 20, occurredAt: "2026-09-25T17:02:00Z", text: "Checking the branch" },
-      }}
+      workMessages={[{id:"m11",sequence:11,sender:"builder",to:null,replyTo:null,text:"Implementing the issue",at:"2026-09-25T17:00:00Z",provenance:"stored",acknowledged:false},
+        {id:"m20",sequence:20,sender:"reviewer",to:null,replyTo:null,text:"Checking the branch",at:"2026-09-25T17:02:00Z",provenance:"stored",acknowledged:false}]}
       runStatus="paused"
       selectedNode={null}
       onSelectNode={vi.fn()}
@@ -263,21 +251,17 @@ describe("organized work overview", () => {
     expect(snapshot).toHaveTextContent("start · unknown");
     expect(snapshot).toHaveTextContent("reviewer");
     expect(snapshot).toHaveTextContent("This run declares one graph node");
-    const builder = screen.getByText("builder", {selector: ".work-agent-id"}).closest("details")!;
-    expect(builder).toHaveTextContent("event #11");
-    expect(screen.getAllByText("Last direct chat report", {selector: ".work-agent-report > span"})[0].closest("details")).toHaveTextContent("reviewer");
-    fireEvent.click(within(builder).getByText("builder", {selector: ".work-agent-id"}).closest("summary")!);
-    expect(builder).toHaveAttribute("open");
-    expect(within(builder).getByText("Implementing the issue", {selector: ".work-agent-expanded p"})).toBeVisible();
+    const builder = screen.getByText("builder", {selector: ".work-primary-people strong"}).closest("article")!;
+    expect(builder).toHaveTextContent("Implementing the issue");
     expect(selectAgent).not.toHaveBeenCalled();
-    fireEvent.click(within(builder).getByRole("button", {name:"Open direct chat with builder"}));
+    fireEvent.click(within(builder).getByRole("button", {name:"Open direct chat"}));
     expect(selectAgent).toHaveBeenCalledWith("builder");
     expect(snapshot).not.toHaveTextContent("Running");
   });
   it("shows the next step before the activity and opens its action", () => {
     const act = vi.fn();
     render(<WorkOverview model={model} selectedNode={null} onSelectNode={vi.fn()} nextAction={{label:"Send direction",detail:"No question is visible yet."}} onNextAction={act} />);
-    const action = screen.getByRole("region", {name:"Next action"});
+    const action = screen.getByRole("region", {name:"Owner decision"});
     expect(action).toHaveTextContent("No question is visible yet.");
     fireEvent.click(within(action).getByRole("button", {name:"Send direction"}));
     expect(act).toHaveBeenCalledOnce();

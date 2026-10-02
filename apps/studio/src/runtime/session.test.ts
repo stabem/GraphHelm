@@ -14,13 +14,13 @@ describe("recorded actor and transport-session boundaries", () => {
     const owner = { ...presence(8, "owner", "mcp-owner"), actorType: "owner", payload: { actorId: "owner", actorType: "owner", session: "mcp-owner" } };
     expect(recordedActorSessions([
       presence(6, "codex", "mcp-a"), presence(3, "codex", "mcp-b"),
-      presence(2, "codex", "mcp-a"), presence(5, "claude", "mcp-c"),
+      presence(2, "codex", "mcp-a"), presence(4, "codex", "mcp-a"), presence(5, "claude", "mcp-c"),
       presence(7, "codex", "mcp-spoof", "another-actor"),
-      presence(4, "codex", " "), prose, owner,
+      presence(10, "codex", " "), prose, owner,
     ])).toEqual([
-      { actorId: "codex", session: "mcp-a", firstSequence: 2, lastSequence: 6 },
-      { actorId: "claude", session: "mcp-c", firstSequence: 5, lastSequence: 5 },
-      { actorId: "codex", session: "mcp-b", firstSequence: 3, lastSequence: 3 },
+      { actorId: "codex", session: "mcp-a", sequences: [2, 4, 6] },
+      { actorId: "claude", session: "mcp-c", sequences: [5] },
+      { actorId: "codex", session: "mcp-b", sequences: [3] },
     ]);
   });
 });

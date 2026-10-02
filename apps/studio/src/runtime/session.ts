@@ -97,13 +97,13 @@ export interface RecordedActorSession {
   actorId: string;
   /** The caller's transport session value. GraphHelm MCP uses a per-process nonce here. */
   session: string;
-  firstSequence: number;
-  lastSequence: number;
+  /** Every typed declaration event for this actor/session pair, in journal order. */
+  sequences: number[];
 }
 
 /** Distinct actor + transport-session pairs from typed presence declarations in this run.
  * This is journal provenance, not native chat membership or a heartbeat. A model switch may
- * declare the same pair again, so keep its first and latest declaration sequence. */
+ * declare the same pair again, so keep every declaration sequence. */
 export function recordedActorSessions(events: RuntimeEvent[]): RecordedActorSession[] {
   const pairs = new Map<string, RecordedActorSession>();
   for (const event of events) {
@@ -117,12 +117,11 @@ export function recordedActorSessions(events: RuntimeEvent[]): RecordedActorSess
         || session.trim().length === 0 || /[\u0000-\u001f\u007f]/.test(session)) continue;
     const key = JSON.stringify([event.actorId, session]);
     const previous = pairs.get(key);
-    pairs.set(key, previous === undefined
-      ? { actorId: event.actorId, session, firstSequence: event.sequence, lastSequence: event.sequence }
-      : { ...previous, firstSequence: Math.min(previous.firstSequence, event.sequence),
-        lastSequence: Math.max(previous.lastSequence, event.sequence) });
+    if (previous === undefined) pairs.set(key, { actorId: event.actorId, session, sequences: [event.sequence] });
+    else previous.sequences.push(event.sequence);
   }
-  return [...pairs.values()].sort((a, b) => b.lastSequence - a.lastSequence
+  for (const pair of pairs.values()) pair.sequences = [...new Set(pair.sequences)].sort((a, b) => a - b);
+  return [...pairs.values()].sort((a, b) => b.sequences[b.sequences.length - 1] - a.sequences[a.sequences.length - 1]
     || (a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0)
     || (a.session < b.session ? -1 : a.session > b.session ? 1 : 0));
 }

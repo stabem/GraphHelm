@@ -295,13 +295,13 @@ export function WorkOverview({
             </div>
             <div className="work-actor-session-list" role="group" aria-label="Recorded actor and transport sessions">
               <strong>Recorded actor and transport sessions</strong>
-              <span>{recordedSessions.length} recorded transport IDs</span>
+              <span>{recordedSessions.length} recorded actor/session pairs</span>
               <p>These are transport declarations, not native chat identities or activity heartbeats.</p>
               {recordedSessions.length === 0
                 ? <p>No typed actor/session declarations recorded for this run.</p>
                 : <ul>{recordedSessions.map((entry) => <li key={JSON.stringify([entry.actorId, entry.session])}>
                   <span>{entry.actorId}</span><code>{entry.session}</code>
-                  <small>Declared at event #{entry.firstSequence}{entry.lastSequence === entry.firstSequence ? "" : `; latest declaration #${entry.lastSequence}`}</small>
+                  <small>Declared at {entry.sequences.length === 1 ? "event" : "events"} {entry.sequences.map((sequence) => `#${sequence}`).join(", ")}</small>
                 </li>)}</ul>}
             </div>
             {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Observed host sessions">

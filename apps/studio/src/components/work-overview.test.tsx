@@ -11,17 +11,19 @@ const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"
 describe("organized work overview", () => {
   it("shows typed transport sessions separately from actor identities and verified joins", () => {
     const recordedSessions = ["transport-a", "transport-b", "transport-c"].map((session, index) => ({
-      actorId: "agent-a", session, firstSequence: index + 1, lastSequence: index + 1,
+      actorId: "agent-a", session, sequences: [index + 1],
     }));
-    recordedSessions.push({ actorId: "agent-b", session: "transport-d", firstSequence: 4, lastSequence: 4 });
+    recordedSessions[0].sequences = [1, 5, 7];
+    recordedSessions.push({ actorId: "agent-b", session: "transport-a", sequences: [4] });
     const { rerender } = render(<WorkOverview model={model}
       crew={[{ id: "agent-a", charter: null }, { id: "agent-b", charter: null }]}
       recordedSessions={recordedSessions} selectedNode={null} onSelectNode={vi.fn()} />);
     const sessions = screen.getByRole("group", { name: "Recorded actor and transport sessions" });
     expect(screen.getByText("2 actor IDs")).toBeInTheDocument();
-    expect(within(sessions).getByText("4 recorded transport IDs")).toBeInTheDocument();
+    expect(within(sessions).getByText("4 recorded actor/session pairs")).toBeInTheDocument();
     expect(within(sessions).getAllByText("agent-a")).toHaveLength(3);
     expect(within(sessions).getByText("transport-c")).toBeInTheDocument();
+    expect(within(sessions).getByText("Declared at events #1, #5, #7")).toBeInTheDocument();
     expect(within(sessions).getByText(/not native chat identities or activity heartbeats/i)).toBeInTheDocument();
     expect(screen.queryByText("4 joined sessions")).not.toBeInTheDocument();
     rerender(<WorkOverview model={model} recordedSessions={[]} selectedNode={null} onSelectNode={vi.fn()} />);
@@ -217,7 +219,7 @@ describe("organized work overview", () => {
     render(<WorkOverview
       model={model}
       projectName="GraphHelm"
-      projectPath="F:/github/GraphHelm"
+      projectPath="fixtures/project"
       latestRecordedUpdate={{ sequence: 21, occurredAt: "2026-09-26T16:00:00Z" }}
       activity={[
         { sequence: 12, actorId: "older", occurredAt: "2026-09-26T17:00:00Z", text: "Older update" },
@@ -228,7 +230,7 @@ describe("organized work overview", () => {
     />);
     const identity = screen.getByRole("region", { name: "Active workspace" });
     expect(identity).toHaveTextContent("GraphHelm");
-    expect(identity).toHaveTextContent("F:/github/GraphHelm");
+    expect(identity).toHaveTextContent("fixtures/project");
     expect(identity).toHaveTextContent("Event #21 · recorded");
     expect(screen.getByRole("region", { name: "Where this run stands" })).toHaveTextContent("newer");
     expect(screen.getByText("Active workspace")).toBeInTheDocument();

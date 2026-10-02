@@ -2307,6 +2307,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .talk { position: absolute; inset: 0 auto 0 0; z-index: 8; width: min(360px, 100%); box-shadow: var(--float); }
   .chat-col, .node-col { inset: 0 0 0 auto; z-index: 10; }
   .scene { width: 100%; }
+  .split:has(> .node-col, > .chat-col) .scene .dock { display: none; }
   .topstrip .run-name { max-width: none; }
   .topstrip .strip-card:first-of-type { flex: 1; }
   .tools button, .dock button, .icon-action, .mobile-toggle, .ghost { min-height: 40px; }

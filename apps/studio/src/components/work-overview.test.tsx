@@ -9,6 +9,41 @@ import type { RunTeamReadModel } from "../runtime/run-team";
 const node = (id: string) => ({ id, state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null });
 const model: GraphModel = { nodes: [node("triage"), node("work")], edges: [{id:"link",from:"triage",to:"work",type:"dependency"}], edgesKnown: false, entrypoints: [], rosterDeclared: true, lint: [] };
 describe("organized work overview", () => {
+  it("puts the mission and graph navigation beside the primary run header", () => {
+    render(<WorkOverview model={model} projectName="GraphHelm" objective="Ship the navigation slice" selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "GraphHelm" })).toBeInTheDocument();
+    expect(screen.getByText("Mission: Ship the navigation slice")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Mission navigation" })).toHaveTextContent("Open graph and steps");
+    expect(screen.getByRole("button", { name: "Open graph and steps" })).toBeInTheDocument();
+  });
+
+  it("opens assigned steps separately and focuses only exact assignments plus verified neighbors", () => {
+    const selectAgent = vi.fn();
+    const selectNode = vi.fn();
+    const assigned = { ...node("work"), assignedActor: { type: "agent", id: "builder" } };
+    const narrated = { ...node("triage"), history: [{ sequence: 1, kind: "report", nextState: "ready", outcome: "ready", occurredAt: null, actorId: "builder", actorType: "agent", evidence: 0 }] };
+    const unrelated = node("unrelated");
+    const verified = { ...model, edgesKnown: true, nodes: [narrated, assigned, unrelated] };
+    render(<WorkOverview model={verified} crew={[{ id: "builder", charter: null }]} workMessages={[{ id: "m1", sequence: 1, sender: "builder", to: null, replyTo: null, text: "Working", at: null, provenance: "stored", acknowledged: false }]} selectedAgent={null} onSelectAgent={selectAgent} selectedNode={null} onSelectNode={selectNode} />);
+    const people = screen.getByRole("region", { name: "People and reported work" });
+    fireEvent.click(within(people).getByRole("button", { name: "Open assigned steps" }));
+    expect(selectNode).toHaveBeenCalledWith("work");
+    expect(selectAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Open node work/ }).closest("article")).toHaveClass("work-related");
+    expect(screen.getByRole("button", { name: /Open node triage/ }).closest("article")).toHaveClass("work-context");
+    expect(screen.getByRole("button", { name: /Open node unrelated/ }).closest("article")).toHaveClass("work-filtered-out");
+    expect(screen.getByRole("button", { name: "Clear actor focus" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear actor focus" }));
+    expect(selectAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Open node unrelated/ }).closest("article")).not.toHaveClass("work-filtered-out");
+  });
+
+  it("keeps unknown assignment truthful instead of inferring it from a report", () => {
+    render(<WorkOverview model={{ ...model, nodes: [{ ...node("work"), history: [{ sequence: 1, kind: "report", nextState: "ready", outcome: "ready", occurredAt: null, actorId: "builder", actorType: "agent", evidence: 0 }] }] }} crew={[{ id: "builder", charter: null }]} workMessages={[{ id: "m1", sequence: 1, sender: "builder", to: null, replyTo: null, text: "Working", at: null, provenance: "stored", acknowledged: false }]} selectedAgent="builder" selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByText("builder has no assigned graph steps")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open node work/ }).closest("article")).toHaveClass("work-filtered-out");
+  });
+
   it("shows each recorded MCP transport's latest work, without claiming native chat membership", () => {
     const a = "aaaaaaaaaaaaaaaa", b = "bbbbbbbbbbbbbbbb", c = "cccccccccccccccc";
     const workMessages = [
@@ -474,8 +509,9 @@ describe("the objective on the entry card", () => {
   it("is attached to the first entrypoint only", () => {
     render(<WorkOverview model={two} objective="Investigate slow login on mobile" selectedNode={null} onSelectNode={vi.fn()} />);
     const quotes = screen.getAllByText("Investigate slow login on mobile");
-    expect(quotes).toHaveLength(1);
-    expect(within(quotes[0].closest("article")!).getByText("work")).toBeInTheDocument();
+    const entryQuotes = quotes.filter((quote) => quote.closest("article")?.classList.contains("work-node-card"));
+    expect(entryQuotes).toHaveLength(1);
+    expect(within(entryQuotes[0].closest("article")!).getByText("work")).toBeInTheDocument();
     expect(isFirstEntryNode(two, "triage")).toBe(false);
     expect(isFirstEntryNode(two, "work")).toBe(true);
   });

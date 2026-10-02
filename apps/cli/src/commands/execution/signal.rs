@@ -273,7 +273,8 @@ pub(crate) fn execute_authenticated(
                 "/signal/description",
             )
         })?;
-        super::delivery::parse_record(description.as_bytes())?;
+        let delivery = super::delivery::parse_record(description.as_bytes())?;
+        super::delivery::validate_graph_binding(&delivery, &projection)?;
     }
 
     let admitted = match admit_signal(&projection, &envelope) {

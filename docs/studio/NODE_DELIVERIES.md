@@ -32,6 +32,100 @@ The sealing key remains in `GRAPHHELM_EVENTS_KEY`, never in the report or comman
 
 Reports are **reported provenance**: recording one does not verify that a file changed, certify a business rule, or change the node's lifecycle state. Accepted kinds are `file` and `business_rule`; actions are `created`, `updated`, and `reviewed`. Reports are limited to 16 KiB and 32 documents. Supply explicit journey/rule references when applicable, rather than inferring them from filenames. Generic `execution signal` can carry the same reserved `node_delivery` envelope, but it must satisfy the same typed validation and sealing requirements.
 
+## Follow the mission to its proof
+
+Studio keeps the mission objective visible above the people roster. **Open assigned steps**
+shows an actor's explicitly assigned nodes in the operational graph. Other nodes and their
+verified dependencies remain available; an actor's messages or session hierarchy never create
+an assignment or dependency. **Open direct chat** remains a separate action. With no assigned
+node, the view says so instead of constructing a workflow from prose.
+
+Opening a node shows its reported outputs and their source records. A delivery may include
+an optional `work` object to explain the current reported stage, skill use and checks. For example,
+append this object to the version 1 delivery above, using the actual revision and resource digests:
+
+```json
+{
+  "work": {
+    "version": 1,
+    "sessionId": "session-writer-1",
+    "stage": "checking persistence",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "skills": [
+      {
+        "id": "keel",
+        "version": "1.3.0",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "reported"
+      }
+    ],
+    "checks": [
+      {
+        "id": "persist-customer",
+        "command": "cargo test customer_persistence",
+        "observer": "local test process",
+        "outcome": "unobserved",
+        "attemptId": "attempt-1"
+      }
+    ]
+  }
+}
+```
+
+These values illustrate the shape; they are not an actual check or installed-skill receipt.
+`stage` is a bounded description, not a fixed workflow category. The report accepts at most
+16 skills and 32 checks within the existing 16 KiB total limit. Skill status is `requested` or
+`reported`; neither establishes host loading, invocation observation or evaluation. The reported
+session ID is distinct from the event's recorded actor and may differ from it.
+
+Each check names a command, observer, outcome and attempt. Outcomes are `passed`, `failed`,
+`skipped` or `unobserved`. A passed or failed report also requires an `evidence` binding with
+`evidenceId`, `contentHash` (`sha256:` plus 64 lowercase hexadecimal characters) and nonnegative
+`size`. A later attempt can name `previousAttemptId`; earlier reports stay in the append-only
+history. An evidence reference is a reported binding, not proof that its bytes were independently
+opened or that its observer is trusted. Skipped and unobserved checks do not count as passes.
+All checks in one work report concern its declared Git `revision` (40 or 64 lowercase hexadecimal
+characters). A report of a different revision remains a separate historical record.
+
+### JPD candidate results
+
+`work.journeyVerification`, when supplied, is the complete artifact defined by the existing
+[journey verification result schema](../../extensions/builtin/graphhelm-jpd/schemas/journey-verification-result.schema.json).
+The Runtime validates its shape offline, its code revision against the work report, and its graph
+binding against the execution's graph when recording the signal. Older deliveries without work
+or JPD data remain valid and display the absence explicitly.
+
+A graph binding requires an active published Graph Version in the execution projection. An
+ordinary `execution start` declares the graph shape; that declaration alone is not a sealed
+publication. Such a run can record ordinary work but refuses a graph-bound JPD artifact until
+the existing governed publication path establishes the active version.
+
+Studio presents the candidate's proposed result, obligations, missing observers, bindings and
+retry history. It keeps `proven`, `accepted_with_waiver` and `unresolved` as proposed artifact
+statuses; it does not mint an authoritative certificate. Schema validity does not authenticate
+evaluator receipts, recompute evidence digests or establish freshness. A generic JPD journey
+still needs its registered deterministic validator and adequate observers. A passed node gate,
+reported check, host task completion, or a skill's text cannot supply those missing capabilities.
+
+Reported output, observed test results, JPD acceptance and integrated delivery are separate facts.
+The panel does not infer review or merge from this report. Review and main-branch integration
+remain unobserved until an independent external receipt establishes them.
+
+### Responsibility boundaries
+
+| Piece | Responsibility |
+|---|---|
+| Agent or host adapter | Produce the scoped report, skill provenance, attempt identities and evidence bindings; state what is unobserved. |
+| CLI and Runtime signal admission | Bound and validate the sealed record and its node/graph/revision bindings; preserve attributed events without changing acceptance. |
+| Event Store | Preserve every report and earlier failure in order; replay does not rewrite history. |
+| Governor and deterministic validators | Decide authorized operational transitions and acceptance through their existing contracts. |
+| Studio | Navigate the mission, explicit assignments, outputs and candidate proof; show source, age, missing data and historical attempts faithfully. |
+| Independent reviewer | Run the reached checks on the reviewed head and integrate that head under the repository delivery process. |
+
+Installing a companion package only makes its skill resources available to the host. It does not
+populate this report automatically. A real producer must record the facts it can observe through
+the existing delivery command or sealed signal API; absent instrumentation remains visible.
+
 ## Read and edit from Studio
 
 Select the node, then a blue document link under **Deliveries**. The adjacent editor reads the **main project directory**, not an ephemeral agent workspace or the run's Git output ref. A report can describe a file that is not present in that directory; opening it then refuses rather than substituting a different version.

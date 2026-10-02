@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import {
   Activity,
   ArrowDown,
@@ -159,6 +160,29 @@ export function WorkOverview({
         : `Event #${latestRecordedUpdate.sequence} · recorded ${fullInstant(latestRecordedUpdate.occurredAt)}`;
   const joinedMembers = runTeam?.unavailable ? [] : runTeam?.members ?? [];
   const knownActors = new Set(crew.map((agent) => agent.id));
+  const [stepFocus, setStepFocus] = useState({ runId, actor: selectedAgent });
+  const focusActor = stepFocus.runId === runId ? stepFocus.actor : null;
+  const assignedNodeIds = focusActor === null
+    ? new Set<string>()
+    : new Set(model.nodes.filter((node) => node.assignedActor?.id === focusActor).map((node) => node.id));
+  const focusedNodeIds = new Set(assignedNodeIds);
+  if (focusActor !== null && model.edgesKnown) {
+    for (const edge of model.edges) {
+      if (assignedNodeIds.has(edge.from)) focusedNodeIds.add(edge.to);
+      if (assignedNodeIds.has(edge.to)) focusedNodeIds.add(edge.from);
+    }
+  }
+  const technicalDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const openGraph = () => {
+    technicalDetailsRef.current?.setAttribute("open", "");
+    document.getElementById("work-nodes")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  };
+  const openAssignedSteps = (actorId: string) => {
+    setStepFocus({ runId, actor: actorId });
+    const assigned = model.nodes.find((node) => node.assignedActor?.id === actorId);
+    if (assigned !== undefined) onSelectNode(assigned.id);
+    openGraph();
+  };
   const recentSpeakers = [...workMessages].reverse().reduce<WorkMessage[]>((latest, message) => {
     if (knownActors.has(message.sender) && !latest.some((item) =>
       item.sender === message.sender && (item.transportSession ?? null) === (message.transportSession ?? null))) {
@@ -194,7 +218,12 @@ export function WorkOverview({
         <span>Selected run</span>
         <h1>{projectName ?? "Project"}</h1>
         {runId && <small>Run {runId}</small>}
+        <p className="work-mission">Mission: {objective?.trim() || "objective not recorded"}</p>
       </header>
+      <nav className="work-primary-navigation" aria-label="Mission navigation">
+        <button type="button" onClick={openGraph}>Open graph and steps</button>
+        <button type="button" onClick={openGraph}>Select a step for outputs and proof</button>
+      </nav>
       {nextAction && <section className="work-next-action" aria-label="Owner decision">
         <div><span>Needs a decision</span><strong>{nextAction.label}</strong><p>{nextAction.detail}</p>{replyGuidance && <p>{replyGuidance}</p>}</div>
         <button type="button" onClick={onNextAction}>{nextAction.label}</button>
@@ -210,6 +239,8 @@ export function WorkOverview({
             <p>{member.activity ?? "No work update reported"}</p>
             <small>{member.reportedState ? `Reported ${member.reportedState}` : "No state reported"} · {ago(member.lastAt)}</small>
             <button type="button" onClick={() => onSelectAgent?.(member.actorId)}>Open direct chat</button>
+            <button type="button" onClick={() => openAssignedSteps(member.actorId)}>Open assigned steps</button>
+            {model.nodes.every((node) => node.assignedActor?.id !== member.actorId) && <small>No assigned graph steps recorded</small>}
           </article>)}</div>
         </> : recentSpeakers.length > 0 ? <>
           <p className="work-roster-note">Observed actor IDs from recorded messages. Matching MCP record keys separate transport sources; neither proves a native chat or live session.</p>
@@ -225,12 +256,14 @@ export function WorkOverview({
               <span>Task not reported</span><p>{latest.text}</p>
               <small>Message stored · {ago(latest.at)}</small>
               <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open actor chat</button>
+              <button type="button" onClick={() => openAssignedSteps(actorId)}>Open assigned steps</button>
+              {model.nodes.every((node) => node.assignedActor?.id !== actorId) && <small>No assigned graph steps recorded</small>}
             </article>;
           })}</div>
         </> : <p className="work-empty">No agent work message is readable yet. Recorded identities are available in Details.</p>}
         {runTeam && runTeam.rejected > 0 && <p className="work-caution" role="note">{runTeam.rejected} team record{runTeam.rejected === 1 ? "" : "s"} could not be verified; membership may be incomplete.</p>}
       </section>
-      <details className="work-technical-details"><summary>Details: graph, records, and transport IDs</summary>
+      <details ref={technicalDetailsRef} className="work-technical-details"><summary>Details: graph, records, and transport IDs</summary>
       <header className="work-header">
         <div className="work-heading">
           <span className="work-kicker"><Activity aria-hidden="true" size={16} /> Active workspace</span>
@@ -360,10 +393,17 @@ export function WorkOverview({
           </section>
         </aside>
 
-        <section className="work-main" aria-label="Work nodes">
+        <section className="work-main" id="work-nodes" aria-label="Work nodes">
           <div className="work-section-heading work-node-heading">
             <div><Network aria-hidden="true" size={17} /><h2>Work nodes</h2></div>
-            <span>{model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
+            <span>{focusActor !== null
+              ? assignedNodeIds.size === 0
+                ? `${focusActor} has no assigned graph steps`
+                : model.edgesKnown
+                  ? `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"} and verified neighbors`
+                  : `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"}; dependency evidence unavailable`
+              : model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
+            {focusActor !== null && <button type="button" className="work-reset-filter" onClick={() => setStepFocus({ runId, actor: null })}>Clear actor focus</button>}
           </div>
           {model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && (
             <p className="work-note" role="note">
@@ -381,7 +421,7 @@ export function WorkOverview({
                 const outgoing = model.edgesKnown ? model.edges.filter((edge) => edge.from === node.id && nodeIds.has(edge.to)) : [];
                 const isSelected = selectedNode === node.id;
                 return (
-                <article className={`work-node-card${isSelected ? " work-selected" : ""}${selectedAgent && (node.assignedActor?.id === selectedAgent || node.history.some(event => event.actorId === selectedAgent)) ? " work-related" : ""}`} key={node.id}>
+                <article className={`work-node-card${isSelected ? " work-selected" : ""}${focusActor && node.assignedActor?.id === focusActor ? " work-related" : ""}${focusActor && focusedNodeIds.has(node.id) && node.assignedActor?.id !== focusActor ? " work-context" : ""}${focusActor && !focusedNodeIds.has(node.id) ? " work-filtered-out" : ""}`} key={node.id}>
                     <button type="button" className="work-node-open" aria-label={`Open node ${node.id}`} aria-pressed={isSelected} onClick={() => onSelectNode(isSelected ? null : node.id)}>
                       <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
@@ -412,7 +452,7 @@ export function WorkOverview({
           )}
         </section>
       </div>
-      <section className="work-activity" aria-label="Recent recorded activity">
+      <section className="work-activity" id="work-activity" aria-label="Recent recorded activity">
         <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Recent recorded activity</h2></div><span>Messages in the event log</span></div>
         {activity.length === 0 ? <p className="work-empty">No messages recorded in this run yet.</p> : (
           <ol className="work-activity-list">{activity.map((item) => <li key={item.sequence}>

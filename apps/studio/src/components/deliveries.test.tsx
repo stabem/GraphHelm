@@ -11,6 +11,22 @@ const work = { version: 1, sessionId: "reported-session", stage: "implement", re
   { id: "unobserved", command: "browser journey", observer: "browser", outcome: "unobserved", attemptId: "attempt-2" },
 ] };
 describe("node delivery records", () => {
+  // Protects against offering unsupported source files to the document API.
+  // Existing coverage opens only Markdown. Cost: one local component render; no I/O.
+  it("shows source files as references while keeping supported documents openable", async () => {
+    const record = { version: 1, projectId: "a".repeat(64), summary: "Workspace update", reason: "Updated code and guide", documents: [
+      { path: "apps/studio/src/components/work-overview.tsx", title: "Workspace source", kind: "file", action: "updated" },
+      { path: "docs/guide.MD", title: "Workspace guide", kind: "file", action: "updated" },
+    ] };
+    const onOpenDocument = vi.fn();
+    render(<NodeDeliveries nodeId="docs" executionId="run" events={[event]} openEvidence={async () => ({ ...evidence, content: JSON.stringify({ description: JSON.stringify(record) }) })} onOpenDocument={onOpenDocument} />);
+    expect(await screen.findByText("Workspace source")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Workspace source/ })).toBeNull();
+    expect(screen.getByText("Source reference. Open this path in your code editor.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Workspace guide/ }));
+    expect(onOpenDocument).toHaveBeenCalledOnce();
+    expect(onOpenDocument).toHaveBeenCalledWith({ evidenceId: "evidence", index: 1, path: "docs/guide.MD", title: "Workspace guide", projectId: "a".repeat(64) });
+  });
   it("opens the referenced document and renders prose as text", async () => {
     const onOpenDocument = vi.fn();
     const { container } = render(<NodeDeliveries nodeId="docs" executionId="run" events={[event]} openEvidence={async () => evidence} onOpenDocument={onOpenDocument} />);

@@ -34,6 +34,12 @@ Reports are **reported provenance**: recording one does not verify that a file c
 
 ## Follow the mission to its proof
 
+Delivery paths are references to the main project. Studio offers its document editor for
+Markdown, plain text, reStructuredText, AsciiDoc, JSON, YAML, TOML, and CSV files. Other
+extensions, including source code, appear as selectable path references to open in a code
+editor. They are not offered to the document API. Opening a supported document focuses the
+workspace on that document and its delivery inspector; closing it restores the graph view.
+
 Studio keeps the mission objective visible above the people roster. **Open assigned steps**
 shows an actor's explicitly assigned nodes in the operational graph. Other nodes and their
 verified dependencies remain available; an actor's messages or session hierarchy never create

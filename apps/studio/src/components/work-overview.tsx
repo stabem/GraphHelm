@@ -15,6 +15,7 @@ import { ago, fullInstant, hueOf, initialOf, readable } from "./format";
 import type { SubagentReadModel } from "../runtime/subagents";
 import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
 import type { RunTeamReadModel } from "../runtime/run-team";
+import type { RecordedActorSession } from "../runtime/session";
 
 type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -33,6 +34,7 @@ export interface WorkOverviewProps {
   runTeam?: RunTeamReadModel | null;
   claudeTasks?: ClaudeTaskReadModel | null;
   crew?: CrewMember[];
+  recordedSessions?: RecordedActorSession[];
   talks?: Talk[];
   activity?: RecordedActivity[];
   agentReports?: Record<string, AgentReport>;
@@ -114,6 +116,7 @@ export function WorkOverview({
   runTeam = null,
   claudeTasks = null,
   crew = [],
+  recordedSessions = [],
   talks = [],
   activity = [],
   agentReports = {},
@@ -288,7 +291,18 @@ export function WorkOverview({
           <section className="work-section" id="work-team">
             <div className="work-section-heading">
               <div><Users aria-hidden="true" size={17} /><h2>Team</h2></div>
-              <span>{crew.length}</span>
+              <span>{crew.length} actor IDs</span>
+            </div>
+            <div className="work-actor-session-list" role="group" aria-label="Recorded actor and transport sessions">
+              <strong>Recorded actor and transport sessions</strong>
+              <span>{recordedSessions.length} recorded actor/session pairs</span>
+              <p>These are transport declarations, not native chat identities or activity heartbeats.</p>
+              {recordedSessions.length === 0
+                ? <p>No typed actor/session declarations recorded for this run.</p>
+                : <ul>{recordedSessions.map((entry) => <li key={JSON.stringify([entry.actorId, entry.session])}>
+                  <span>{entry.actorId}</span><code>{entry.session}</code>
+                  <small>Declared at {entry.sequences.length === 1 ? "event" : "events"} {entry.sequences.map((sequence) => `#${sequence}`).join(", ")}</small>
+                </li>)}</ul>}
             </div>
             {sessions.size > 0 && <div className="work-session-list" role="group" aria-label="Observed host sessions">
               {[...sessions].map(([key, session]) => <details className="work-session" key={key} open>

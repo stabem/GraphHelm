@@ -93,6 +93,39 @@ export interface AgentPresence {
   effort?: "low" | "medium" | "high";
 }
 
+export interface RecordedActorSession {
+  actorId: string;
+  /** The caller's transport session value. GraphHelm MCP uses a per-process nonce here. */
+  session: string;
+  /** Every typed declaration event for this actor/session pair, in journal order. */
+  sequences: number[];
+}
+
+/** Distinct actor + transport-session pairs from typed presence declarations in this run.
+ * This is journal provenance, not native chat membership or a heartbeat. A model switch may
+ * declare the same pair again, so keep every declaration sequence. */
+export function recordedActorSessions(events: RuntimeEvent[]): RecordedActorSession[] {
+  const pairs = new Map<string, RecordedActorSession>();
+  for (const event of events) {
+    if (event.kind !== "agent_presence_declared" || event.actorType !== "agent" || event.actorId === null
+        || !Number.isSafeInteger(event.sequence) || event.sequence < 1) continue;
+    const payload = event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? event.payload as Record<string, unknown> : null;
+    const session = payload?.session;
+    if (payload?.actorType !== "agent" || payload.actorId !== event.actorId
+        || typeof session !== "string" || session.length === 0 || session.length > 128
+        || session.trim().length === 0 || /[\u0000-\u001f\u007f]/.test(session)) continue;
+    const key = JSON.stringify([event.actorId, session]);
+    const previous = pairs.get(key);
+    if (previous === undefined) pairs.set(key, { actorId: event.actorId, session, sequences: [event.sequence] });
+    else previous.sequences.push(event.sequence);
+  }
+  for (const pair of pairs.values()) pair.sequences = [...new Set(pair.sequences)].sort((a, b) => a - b);
+  return [...pairs.values()].sort((a, b) => b.sequences[b.sequences.length - 1] - a.sequences[a.sequences.length - 1]
+    || (a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0)
+    || (a.session < b.session ? -1 : a.session > b.session ? 1 : 0));
+}
+
 /**
  * The newest `agent_presence_declared` for each actor, across a run's whole event stream.
  *

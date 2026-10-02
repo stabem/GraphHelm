@@ -2200,6 +2200,153 @@ fn scoped_agent_bearer_binds_execution_and_actor_attribution() {
     assert_eq!(foreign_status, 401, "{foreign_reply}");
 }
 
+/// Native chat routes are owner-only surfaces. A scoped agent credential is allowed to read its
+/// execution status and post ordinary signals, but it must not discover native chats, inspect
+/// native-chat receipts, or start a native turn. This protects the host bridge from being reached
+/// through an execution-scoped bearer; the native process itself is never started by this test.
+#[test]
+fn native_chat_routes_refuse_unauthenticated_and_scoped_agent_bearers() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-native-auth";
+    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let credential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let binding = format!("{credential}=agent-planner|project-local|{execution}");
+    let (_guard, base, _owner_token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_AGENT_CREDENTIALS", binding.as_str()),
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+        ],
+    );
+
+    let catalog = format!("{base}/v1/native-chats");
+    let receipts = format!("{base}/v1/executions/{execution}/native-chats");
+    assert_eq!(get_status(&catalog, None), 401);
+    assert_eq!(get_status(&receipts, None), 401);
+    assert_eq!(get_status(&catalog, Some(credential)), 401);
+    assert_eq!(get_status(&receipts, Some(credential)), 401);
+
+    let body = serde_json::json!({
+        "requestId": "native-auth-1",
+        "nodeId": "implementation",
+        "threadId": "019fdfe7-b5fa-7ca1-89c8-9651ad856819",
+        "message": "read-only probe",
+        "sourceDirectory": directory.path().to_str().unwrap(),
+        "title": "auth probe"
+    });
+    let (status, reply) = post_json(
+        &receipts,
+        credential,
+        &[
+            ("Idempotency-Key", "native-auth-1"),
+            ("X-GraphHelm-Actor", "owner-forged"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &body,
+    );
+    assert_eq!(status, 401, "{reply}");
+}
+
+/// Invalid owner requests must stop before native configuration or process launch. The unknown
+/// node is checked against the durable execution projection, so a future route that validates
+/// only JSON shape could accidentally hand an arbitrary node to the host bridge.
+#[test]
+fn native_chat_owner_route_refuses_unknown_node_before_native_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-native-invalid";
+    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let host_program = std::env::current_exe().unwrap();
+    let host_program = host_program.to_str().unwrap();
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[
+            ("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX),
+            // This is only a syntactically valid executable for the route's preflight. If the
+            // invalid node reaches the adapter, the test would observe a different failure.
+            ("GRAPHHELM_CODEX_HOST_PROGRAM", host_program),
+        ],
+    );
+    let before = head_sequence(&base, &token, execution);
+    let body = serde_json::json!({
+        "requestId": "native-invalid-node-1",
+        "nodeId": "does-not-exist",
+        "threadId": "019fdfe7-b5fa-7ca1-89c8-9651ad856819",
+        "message": "read-only probe",
+        "sourceDirectory": directory.path().to_str().unwrap(),
+        "title": "invalid node"
+    });
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/native-chats"),
+        &token,
+        &[
+            ("Idempotency-Key", "native-invalid-node-1"),
+            ("X-GraphHelm-Actor", "owner-native-test"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &body,
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/nodeId", "{reply}");
+    assert_eq!(head_sequence(&base, &token, execution), before);
+}
+
+/// The generic signal endpoint cannot forge a native-chat receipt. Native observations have a
+/// separate sealed adapter path; accepting the reserved kind here would let any owner bearer
+/// manufacture a successful reply without talking to the native host.
+#[test]
+fn generic_signal_route_refuses_reserved_native_chat_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-native-reserved";
+    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let before = head_sequence(&base, &token, execution);
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "native-reserved-1"),
+            ("X-GraphHelm-Actor", "owner-native-test"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({
+            "signal": signal_envelope("native-reserved-1", "native_chat_completed")
+        }),
+    );
+    assert_eq!(status, 400, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/signal/type", "{reply}");
+    assert_eq!(head_sequence(&base, &token, execution), before);
+}
+
 /// Journey contract: a sealed two-node draft is approved over HTTP exactly once. A retry after
 /// the server is restarted returns the original success and appends no duplicate publication;
 /// changing the reviewed digest fails closed and leaves the head unchanged. This catches the

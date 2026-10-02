@@ -1,0 +1,138 @@
+[
+  {
+    "obligationId": "native-chat/catalog-visible",
+    "contractId": "studio-native-chat-228",
+    "contractDigest": "sha256:61eae7764c13b167be69382bcfbb63a274db0bc559dc0360815c6514ec84c9d2",
+    "promiseId": "catalog-visible",
+    "fact": "content_rendered",
+    "requiredEvidenceKinds": [
+      "dom_semantic_snapshot",
+      "visual_capture"
+    ],
+    "observerRequirements": {
+      "capability": "studio-browser",
+      "minimumTrust": "first_party_instrumented",
+      "maxAgeSeconds": 86400,
+      "absenceWindowSeconds": null
+    },
+    "resolution": {
+      "status": "capability_missing",
+      "authority": "advisory",
+      "resultStatus": "unresolved",
+      "refusal": {
+        "code": "EVIDENCE_MATCH_EVALUATOR_MISSING",
+        "missingCapability": "registered-native-chat-evidence-matcher",
+        "reason": "The installed JPD catalog is declarative_only and has no registered deterministic matcher for the native-chat and Studio observations. Live host/browser receipts remain ordinary evidence; they cannot self-authorize JPD certification."
+      }
+    }
+  },
+  {
+    "obligationId": "native-chat/native-receipt",
+    "contractId": "studio-native-chat-228",
+    "contractDigest": "sha256:61eae7764c13b167be69382bcfbb63a274db0bc559dc0360815c6514ec84c9d2",
+    "promiseId": "native-receipt",
+    "fact": "message_delivered",
+    "requiredEvidenceKinds": [
+      "provider_delivery_receipt",
+      "durable_readback"
+    ],
+    "observerRequirements": {
+      "capability": "codex-native-thread",
+      "minimumTrust": "first_party_instrumented",
+      "maxAgeSeconds": 86400,
+      "absenceWindowSeconds": null
+    },
+    "resolution": {
+      "status": "capability_missing",
+      "authority": "advisory",
+      "resultStatus": "unresolved",
+      "refusal": {
+        "code": "EVIDENCE_MATCH_EVALUATOR_MISSING",
+        "missingCapability": "registered-native-chat-evidence-matcher",
+        "reason": "The installed JPD catalog is declarative_only and has no registered deterministic matcher for the native-chat and Studio observations. Live host/browser receipts remain ordinary evidence; they cannot self-authorize JPD certification."
+      }
+    }
+  },
+  {
+    "obligationId": "native-chat/reply-visible",
+    "contractId": "studio-native-chat-228",
+    "contractDigest": "sha256:61eae7764c13b167be69382bcfbb63a274db0bc559dc0360815c6514ec84c9d2",
+    "promiseId": "reply-visible",
+    "fact": "content_rendered",
+    "requiredEvidenceKinds": [
+      "dom_semantic_snapshot",
+      "visual_capture",
+      "durable_readback"
+    ],
+    "observerRequirements": {
+      "capability": "studio-browser",
+      "minimumTrust": "first_party_instrumented",
+      "maxAgeSeconds": 86400,
+      "absenceWindowSeconds": null
+    },
+    "resolution": {
+      "status": "capability_missing",
+      "authority": "advisory",
+      "resultStatus": "unresolved",
+      "refusal": {
+        "code": "EVIDENCE_MATCH_EVALUATOR_MISSING",
+        "missingCapability": "registered-native-chat-evidence-matcher",
+        "reason": "The installed JPD catalog is declarative_only and has no registered deterministic matcher for the native-chat and Studio observations. Live host/browser receipts remain ordinary evidence; they cannot self-authorize JPD certification."
+      }
+    }
+  },
+  {
+    "obligationId": "native-chat/history-preserved",
+    "contractId": "studio-native-chat-228",
+    "contractDigest": "sha256:61eae7764c13b167be69382bcfbb63a274db0bc559dc0360815c6514ec84c9d2",
+    "promiseId": "history-preserved",
+    "fact": "event_history_intact",
+    "requiredEvidenceKinds": [
+      "durable_readback",
+      "event_chain_verification"
+    ],
+    "observerRequirements": {
+      "capability": "codex-native-thread",
+      "minimumTrust": "first_party_instrumented",
+      "maxAgeSeconds": 86400,
+      "absenceWindowSeconds": null
+    },
+    "resolution": {
+      "status": "capability_missing",
+      "authority": "advisory",
+      "resultStatus": "unresolved",
+      "refusal": {
+        "code": "EVIDENCE_MATCH_EVALUATOR_MISSING",
+        "missingCapability": "registered-native-chat-evidence-matcher",
+        "reason": "The installed JPD catalog is declarative_only and has no registered deterministic matcher for the native-chat and Studio observations. Live host/browser receipts remain ordinary evidence; they cannot self-authorize JPD certification."
+      }
+    }
+  },
+  {
+    "obligationId": "native-chat/retry-safe",
+    "contractId": "studio-native-chat-228",
+    "contractDigest": "sha256:61eae7764c13b167be69382bcfbb63a274db0bc559dc0360815c6514ec84c9d2",
+    "promiseId": "retry-safe",
+    "fact": "recovery_safe",
+    "requiredEvidenceKinds": [
+      "durable_readback",
+      "interaction_trace"
+    ],
+    "observerRequirements": {
+      "capability": "codex-native-thread",
+      "minimumTrust": "first_party_instrumented",
+      "maxAgeSeconds": 86400,
+      "absenceWindowSeconds": null
+    },
+    "resolution": {
+      "status": "capability_missing",
+      "authority": "advisory",
+      "resultStatus": "unresolved",
+      "refusal": {
+        "code": "EVIDENCE_MATCH_EVALUATOR_MISSING",
+        "missingCapability": "registered-native-chat-evidence-matcher",
+        "reason": "The installed JPD catalog is declarative_only and has no registered deterministic matcher for the native-chat and Studio observations. Live host/browser receipts remain ordinary evidence; they cannot self-authorize JPD certification."
+      }
+    }
+  }
+]

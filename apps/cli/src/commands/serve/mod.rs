@@ -1,5 +1,6 @@
 mod documents;
 pub(super) mod monitor;
+mod native_chats;
 mod notices;
 pub(super) mod ports;
 mod routes;
@@ -160,6 +161,7 @@ struct ServeState {
     /// Where to append the read audit, when `--read-audit` asked for one. `None` - the default -
     /// means nothing is recorded at all.
     read_audit: Option<Arc<Path>>,
+    native_chat_busy: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
@@ -208,6 +210,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         cancels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         read_audit: args.read_audit.as_deref().map(Arc::from),
         sweep_interval: args.sweep_interval,
+        native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let rt =
@@ -611,6 +614,7 @@ fn build_router(state: ServeState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/executions", get(routes::list_executions))
+        .route("/v1/native-chats", get(native_chats::list))
         .route("/v1/executions/{id}", get(routes::status))
         .route(
             "/v1/executions/{id}/reply-suggestions",
@@ -624,6 +628,10 @@ fn build_router(state: ServeState) -> Router {
         )
         .route("/v1/executions/{id}/start", post(routes::start))
         .route("/v1/executions/{id}/signal", post(routes::signal))
+        .route(
+            "/v1/executions/{id}/native-chats",
+            get(native_chats::requests).post(native_chats::send),
+        )
         .route("/v1/executions/{id}/documents/read", post(documents::read))
         .route("/v1/executions/{id}/documents/save", post(documents::save))
         .route("/v1/executions/{id}/approve", post(routes::approve))

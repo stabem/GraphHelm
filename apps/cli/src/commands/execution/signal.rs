@@ -225,6 +225,56 @@ pub(crate) fn execute_authenticated(
     sealing: Option<&SignalKeyring>,
     scoped_agent_authenticated: bool,
 ) -> Result<serde_json::Value, Failure> {
+    execute_authenticated_inner(
+        events,
+        execution,
+        signal,
+        evidence_out,
+        actor,
+        key,
+        sealing,
+        scoped_agent_authenticated,
+        false,
+    )
+}
+
+/// Runtime-only observer path for native chat receipts. It uses the same sealing and append
+/// implementation as generic signals while keeping the reserved kinds out of the public signal
+/// transport.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_native_observer(
+    events: &Path,
+    execution: &str,
+    signal: &[u8],
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: &SignalKeyring,
+) -> Result<serde_json::Value, Failure> {
+    execute_authenticated_inner(
+        events,
+        Some(execution),
+        signal,
+        None,
+        actor,
+        key,
+        Some(sealing),
+        false,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_authenticated_inner(
+    events: &Path,
+    execution: Option<&str>,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    key: OpaqueId,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+    allow_native: bool,
+) -> Result<serde_json::Value, Failure> {
     if evidence_out.is_none() && sealing.is_none() {
         return Err(argument(
             "this Runtime has no keyring, so the signal envelope can only be preserved as a file; \
@@ -238,6 +288,17 @@ pub(crate) fn execute_authenticated(
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
         .map_err(|_| signal_invalid("the signal envelope is not valid JSON", "/signal"))?;
+    if !allow_native
+        && envelope
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("native_chat_"))
+    {
+        return Err(signal_invalid(
+            "native chat receipts are reserved for the Runtime bridge",
+            "/signal/type",
+        ));
+    }
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
 
     // This reserved signal is a typed, sealed ledger record, not arbitrary prose. Validate before

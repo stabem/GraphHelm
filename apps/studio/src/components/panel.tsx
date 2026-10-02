@@ -15,7 +15,7 @@
  * JSX, which escapes it. There is no `dangerouslySetInnerHTML` in this application.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
@@ -1095,6 +1095,7 @@ export function NodePanel({
   openEvidence,
   onOpenDocument,
   answer,
+  nativeChats,
 }: {
   node: GraphNode;
   events: RuntimeEvent[];
@@ -1111,6 +1112,7 @@ export function NodePanel({
     onAnswer: (evidence: ClaimEvidence[]) => Promise<AnswerOutcome>;
     hash: (file: File) => Promise<{ contentHash: string; size: number }>;
   };
+  nativeChats?: ReactNode;
 }) {
   const mood = moodOf(node.state);
   const result = nodeResult(node);
@@ -1187,6 +1189,7 @@ export function NodePanel({
         />
       )}
 
+      {nativeChats}
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}
       {(!deliveryView || historyEvents.length > 0) && <Thread events={historyEvents} executionId={executionId} openEvidence={openEvidence} />}
 

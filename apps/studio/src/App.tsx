@@ -195,7 +195,7 @@ export default function App({
   /** Whether the run's conversation column is open. Closing the panel closes the PANEL — the
    * run, its board and its crew stay; the run's name in the top strip brings it back. The old
    * wiring deselected the whole run and left "This board is empty" over 19 messages. */
-  const [talkOpen, setTalkOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
+  const [talkOpen, setTalkOpen] = useState(false);
   const conversationToggleRef = useRef<HTMLButtonElement | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
 
@@ -744,7 +744,6 @@ export default function App({
       // run; carrying either across a switch would aim them at the wrong one.
       setConfirmCancel(false);
       setRemedySeconds({});
-      setTalkOpen(true);
       const stored = loadBoard(id);
       setBoard(stored);
       // The path this board was pointed at last time comes back with the board, so the shape
@@ -2262,8 +2261,10 @@ export default function App({
     }
   };
 
+  const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
+
   return (
-    <div className={`app ${projectsOpen ? "projects-open" : ""} ${talkOpen ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
+    <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
         selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
@@ -2332,7 +2333,7 @@ export default function App({
       <div className="stage">
         <div className="topstrip">
           <button type="button" className="ghost mobile-toggle projects-toggle" aria-expanded={projectsOpen} aria-controls="projects-rail" onClick={() => setProjectsOpen((open) => !open)} aria-label="Toggle projects"><Menu aria-hidden="true" /></button>
-          <button type="button" className="ghost mobile-toggle conversation-toggle" ref={conversationToggleRef} disabled={addingProject || (!draft && selected === "")} aria-expanded={talkOpen} aria-controls="conversation-panel" onClick={() => setTalkOpen((open) => !open)} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
+          <button type="button" className="ghost mobile-toggle conversation-toggle" ref={conversationToggleRef} disabled={addingProject || (!draft && selected === "")} aria-expanded={conversationVisible} aria-controls="conversation-panel" onClick={() => { setTalkOpen(!conversationVisible); if (draft === null && ["node", "agent", "talk"].includes(focus.kind)) setFocus({ kind: "none" }); }} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
           <div className="strip-card">
             {selected ? (
               <button
@@ -2519,7 +2520,7 @@ export default function App({
         ) : (
           <div className="split">
             {talkOpen && (
-            <aside id="conversation-panel" className="talk">
+            <aside id="conversation-panel" className="talk" hidden={!conversationVisible}>
               {/* WHY IT NEEDS YOU, where you answer it. This block lived in the top strip -
                 * a header narrating a panel it did not belong to. Each reason still carries
                 * the one action that is legal for it. */}

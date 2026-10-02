@@ -43,6 +43,10 @@ function activityTime(value: string): string {
   }).format(new Date(value));
 }
 
+function hasRecordedActivity(run: ExecutionSummary): boolean {
+  return typeof run.lastEventAt === "string" && Number.isFinite(Date.parse(run.lastEventAt));
+}
+
 export interface Project {
   /** The folder's name. Today: the Runtime's own store. */
   name: string;
@@ -174,9 +178,11 @@ export function ProjectRail({
 
             <div className="project-runs">
               {(() => {
-                const ongoing = recentFirst(project.runs.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
-                const history = recentFirst(project.runs.filter((run) => ["completed", "failed", "cancelled"].includes(run.status)));
-                const unknown = recentFirst(project.runs.filter((run) => !["running", "paused", "blocked", "completed", "failed", "cancelled"].includes(run.status)));
+                const dated = project.runs.filter(hasRecordedActivity);
+                const unknownTime = recentFirst(project.runs.filter((run) => !hasRecordedActivity(run)));
+                const ongoing = recentFirst(dated.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
+                const history = recentFirst(dated.filter((run) => ["completed", "failed", "cancelled"].includes(run.status)));
+                const unknown = recentFirst(dated.filter((run) => !["running", "paused", "blocked", "completed", "failed", "cancelled"].includes(run.status)));
                 const selectedHistory = history.find((run) => run.executionId === selected);
                 const historyExpanded = historyMode === "shown" || (historyMode === "auto" && ongoing.length === 0);
                 const visibleHistory = historyExpanded ? history : selectedHistory ? [selectedHistory] : [];
@@ -195,7 +201,7 @@ export function ProjectRail({
                   typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId],
                 );
                 const lastActivity = run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                  ? `Last activity ${activityTime(run.lastEventAt)}` : "Last activity unknown";
+                  ? `Last activity ${activityTime(run.lastEventAt)}` : `Last activity unknown · status ${readable(run.status)}`;
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
                   <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${label}${label !== run.executionId ? `, run ${run.executionId}` : ""}; ${lastActivity}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
@@ -225,7 +231,7 @@ export function ProjectRail({
                       <span className="run-when">
                         {run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
                           ? <time dateTime={run.lastEventAt} title={run.lastEventAt}>{lastActivity}</time>
-                          : "Last activity unknown"}
+                          : lastActivity}
                         {/* #1064: a run started under the fixture executor says so in the index
                           * too, not only once opened — the word, never a glyph. */}
                         {run.executor === "fixture" && (
@@ -252,6 +258,7 @@ export function ProjectRail({
                     <button type="button" className="run-group-toggle" aria-expanded={historyExpanded} onClick={() => setHistoryMode(historyExpanded ? "hidden" : "shown")}>{historyExpanded ? "Hide history" : "Show history"} ({history.length})</button>
                     {renderRows(visibleHistory)}
                   </div>}
+                  {unknownTime.length > 0 && <div role="group" aria-label={`Activity time unknown (${unknownTime.length})`}><p className="lbl run-group-title">Activity time unknown ({unknownTime.length})</p>{renderRows(unknownTime)}</div>}
                 </>;
               })()}
 

@@ -129,21 +129,28 @@ describe("activity-ordered run history", () => {
     onAddProject: vi.fn(), onOpenModels: vi.fn(),
   };
 
-  it("groups ongoing, unknown, and historical runs, sorting each by last content event", async () => {
+  it("groups known activity by lifecycle and missing or invalid times in their own bucket", async () => {
     render(<ProjectRail projects={[{ name: "store", runs: [
       { ...row("older-live"), status: "running", lastEventAt: "2026-09-01T08:00:00Z" },
       { ...row("newer-history"), lastEventAt: "2026-10-01T10:00:00Z" },
       { ...row("newer-live"), status: "paused", lastEventAt: "2026-09-02T08:00:00Z" },
-      { ...row("unknown"), status: "none" },
+      { ...row("unknown"), status: "none", lastEventAt: "2026-09-04T08:00:00Z" },
       { ...row("missing-time"), status: "blocked" },
+      { ...row("invalid-time"), status: "completed", lastEventAt: "not-an-instant" },
     ] }]}
       selected="older-live" connected hasMore busy={false} {...actions} />);
     const ongoing = screen.getByRole("group", { name: /ongoing runs/i });
-    const ongoingNames = within(ongoing).getAllByRole("button", { name: /live|missing-time/ }).map((button) => button.textContent);
+    const ongoingNames = within(ongoing).getAllByRole("button", { name: /live/ }).map((button) => button.textContent);
     expect(ongoingNames[0]).toContain("newer-live");
     expect(ongoingNames[1]).toContain("older-live");
-    expect(ongoingNames[2]).toContain("missing-time");
-    expect(within(ongoing).getByText(/Last activity unknown/)).toBeInTheDocument();
+    expect(within(ongoing).queryByRole("button", { name: /missing-time/ })).not.toBeInTheDocument();
+    const unknownTime = screen.getByRole("group", { name: /activity time unknown/i });
+    const unknownRows = within(unknownTime).getAllByRole("button");
+    expect(unknownRows[0]).toHaveTextContent("invalid-time");
+    expect(unknownRows[0]).toHaveTextContent("status completed");
+    expect(unknownRows[1]).toHaveTextContent("missing-time");
+    expect(unknownRows[1]).toHaveTextContent("status blocked");
+    expect(unknownTime).toHaveTextContent("Last activity unknown");
     expect(screen.getByRole("group", { name: /status unknown/i })).toHaveTextContent("unknown");
     expect(screen.getByRole("button", { name: /show history/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /newer-history/ })).not.toBeInTheDocument();
@@ -154,7 +161,7 @@ describe("activity-ordered run history", () => {
 
   it("keeps a selected historical run visible when history is collapsed", async () => {
     render(<ProjectRail projects={[{ name: "store", runs: [
-      { ...row("live"), status: "running" },
+      { ...row("live"), status: "running", lastEventAt: "2026-10-01T09:00:00Z" },
       { ...row("selected-history"), lastEventAt: "2026-10-01T10:00:00Z" },
     ] }]}
       selected="selected-history" connected hasMore={false} busy={false} {...actions} />);

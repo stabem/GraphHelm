@@ -539,7 +539,9 @@ mod tests {
             serde_json::json!({"graphId":graph_id,"version":1,"semanticHash":graph_hash});
         journey["bindings"]["code"]["revision"] = "a".repeat(40).into();
         value["work"] = serde_json::json!({"version":1,"sessionId":"session-1","stage":"implementation","revision":"a".repeat(40),"skills":[],"checks":[],"journeyVerification":journey});
-        let delivery = parse_record(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let delivery = parse_record(&serde_json::to_vec(&value).unwrap())
+            .ok()
+            .unwrap();
         let mut bad_revision = value.clone();
         bad_revision["work"]["journeyVerification"]["bindings"]["code"]["revision"] =
             "c".repeat(40).into();

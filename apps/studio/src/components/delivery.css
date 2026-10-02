@@ -42,6 +42,8 @@
 .delivery-document svg { flex-shrink: 0; }
 .delivery-document small { display: block; margin-top: 4px; font-size: 12px; }
 .delivery-document:hover strong { text-decoration: underline; }
+.delivery-source { color: #d5d6df; cursor: text; user-select: text; }
+.delivery-source:hover strong { text-decoration: none; }
 .document-editor { position: relative; display: flex; flex-direction: column; gap: 14px; width: min(480px, 42vw); min-width: 300px; height: 100%; overflow-y: auto; padding: 20px; box-sizing: border-box; background: #1c1d22; border-left: 1px solid #41434d; color: #ebebf0; }
 .document-editor header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .document-editor button { cursor: pointer; border: 1px solid #484b56; border-radius: 8px; padding: 9px 12px; color: #edf0f8; background: #30323b; }
@@ -66,14 +68,12 @@
    all previous panes return to their existing state as soon as the editor closes. */
 .app[data-document-open="true"] #conversation-panel,
 .app[data-document-open="true"] .split > .chat-col { display: none !important; }
-.app[data-document-open="true"] .split > .node-col { position: relative; inset: auto; flex: 0 0 300px; width: 300px; box-shadow: none; }
-.app[data-document-open="true"] .split > .document-editor { flex: 1 0 420px; width: auto; }
+.app[data-document-open="true"] .split > .node-col { position: relative; inset: auto; flex: 0 0 400px; width: 400px; box-shadow: none; }
+.app[data-document-open="true"] .split > .document-editor { flex: 1 1 420px; width: auto; min-width: 0; }
 .app[data-document-open="true"] .work-layout { grid-template-columns: minmax(0, 1fr); }
 .app[data-document-open="true"] .work-sidebar { grid-template-columns: minmax(0, 1fr); }
-@media (max-width: 1700px) {
-  /* The board stays mounted, but yields the work area instead of collapsing into a text sliver. */
-  .app[data-document-open="true"] .split > .scene { display: none; }
-}
+/* The board stays mounted and returns when the document closes. */
+.app[data-document-open="true"] .split > .scene { display: none; }
 @media (max-width: 800px) {
   .app[data-document-open="true"] .split > .node-col { display: none; }
   .app[data-document-open="true"] .split > .document-editor { position: fixed; inset: 0; width: 100%; min-width: 0; flex: none; }

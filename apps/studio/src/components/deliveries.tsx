@@ -186,9 +186,11 @@ export function NodeDeliveries({ nodeId, executionId, events, openEvidence, onOp
       <span className="delivery-eyebrow">Reported delivery</span>
       <h4>{record.summary}</h4><p>{record.reason}</p>
       <ul>{record.documents.map((document, index) => <li key={`${document.path}:${index}`}>
-        <button className="delivery-document" onClick={() => onOpenDocument({ evidenceId: id, index, path: document.path, title: document.title, projectId: record.projectId })}>
+        {/\.(md|mdx|txt|rst|adoc|json|yaml|yml|toml|csv)$/i.test(document.path) ? <button className="delivery-document" onClick={() => onOpenDocument({ evidenceId: id, index, path: document.path, title: document.title, projectId: record.projectId })}>
           <FileText size={15} /><span><strong>{document.title || document.path}</strong><small>{document.path}</small></span><ArrowUpRight size={14} />
-        </button>
+        </button> : <div className="delivery-document delivery-source">
+          <FileText size={15} /><span><strong>{document.title || document.path}</strong><small>{document.path}</small><small>Source reference. Open this path in your code editor.</small></span>
+        </div>}
         <small className="delivery-meta">{document.action} · {document.kind === "business_rule" ? "Business rule" : "File"}</small>
         {document.journeyIds?.length ? <p className="delivery-meta">Journeys: {document.journeyIds.join(", ")}</p> : null}
         {document.ruleIds?.length ? <p className="delivery-meta">Rules: {document.ruleIds.join(", ")}</p> : null}

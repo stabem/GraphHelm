@@ -169,7 +169,10 @@ where
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| bounded_string(thread_id, MAX_TITLE));
     // Deliberately pass no model, provider, sandbox, approval, or other setting: server metadata owns them.
-    rpc.request("thread/resume", json!({"threadId": thread_id}))?;
+    rpc.request(
+        "thread/resume",
+        json!({"threadId": thread_id, "excludeTurns": true}),
+    )?;
     let turn_result = rpc.request(
         "turn/start",
         json!({"threadId": thread_id, "input": [{"type":"text","text":message}]}),
@@ -529,21 +532,52 @@ fn turn_event_matches(v: &Value, method: &str, thread_id: &str, turn_id: Option<
     tid.as_deref() == Some(thread_id) && id.as_deref() == turn_id
 }
 fn collect_text(v: &Value, out: &mut String) {
-    if out.len() >= MAX_MESSAGE {
+    let Some(item) = v.pointer("/params/item") else {
+        return;
+    };
+    if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
         return;
     }
-    if let Some(s) = v.pointer("/params/item/text").and_then(Value::as_str) {
-        out.push_str(
-            &s.chars()
-                .take(MAX_MESSAGE - out.chars().count())
-                .collect::<String>(),
-        );
+    let Some(text) = item.get("text").and_then(Value::as_str) else {
+        return;
+    };
+    match item.get("phase").and_then(Value::as_str) {
+        // Providers may omit phase. Keep their latest completed assistant message
+        // for compatibility; commentary and tool text never consume reply space.
+        Some("final_answer") | None => *out = bounded_string(text, MAX_MESSAGE),
+        _ => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Protects final reply selection from commentary exhausting the character budget.
+    // Existing identity tests do not observe item content. Cost: pure JSON, no host or I/O.
+    #[test]
+    fn final_reply_survives_long_commentary_and_ignores_tool_text() {
+        let mut reply = String::new();
+        collect_text(
+            &json!({"params":{"item":{"type":"agentMessage","phase":"commentary","text":"progress".repeat(MAX_MESSAGE)}}}),
+            &mut reply,
+        );
+        assert!(reply.is_empty());
+        collect_text(
+            &json!({"params":{"item":{"type":"agentMessage","phase":null,"text":"legacy reply"}}}),
+            &mut reply,
+        );
+        assert_eq!(reply, "legacy reply");
+        collect_text(
+            &json!({"params":{"item":{"type":"agentMessage","phase":"final_answer","text":"é".repeat(MAX_MESSAGE + 1)}}}),
+            &mut reply,
+        );
+        assert_eq!(reply, "é".repeat(MAX_MESSAGE));
+        collect_text(
+            &json!({"params":{"item":{"type":"commandExecution","text":"tool output"}}}),
+            &mut reply,
+        );
+        assert_eq!(reply, "é".repeat(MAX_MESSAGE));
+    }
     #[test]
     fn uuid_validation_rejects_unstable_ids() {
         assert!(valid_uuid("019fdfe7-b5fa-7ca1-89c8-9651ad856819"));

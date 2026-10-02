@@ -2264,7 +2264,7 @@ fn native_chat_owner_route_refuses_unknown_node_before_native_call() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let execution = "exec-http-native-invalid";
-    cli_start(&events, &all_success_fixtures(directory.path()), execution);
+    cli_start(&events, &blocked_fixtures(directory.path()), execution);
     let keyring = directory.path().join("keyring");
     create_signal_keyring(&keyring);
     let host_program = std::env::current_exe().unwrap();

@@ -314,11 +314,12 @@ describe("verified mutations", () => {
 
     const addressed = scriptedFetch(routes());
     const client = new RuntimeClient("tok", { fetch: addressed.fetchImpl });
-    await client.signal("demo", "resposta", { to: "codex", replyTo: "signal-17" });
+    await client.signal("demo", "resposta", { to: "codex", replyTo: "signal-17", kind: "native_persona_linked" });
     const sent = (addressed.calls.find((call) => call.method === "POST")?.body as { signal: Record<string, unknown> })
       .signal;
     expect(sent.to).toBe("codex");
     expect(sent.replyTo).toBe("signal-17");
+    expect(sent.type).toBe("native_persona_linked");
 
     const plain = scriptedFetch(routes());
     const plainClient = new RuntimeClient("tok", { fetch: plain.fetchImpl });
@@ -327,6 +328,7 @@ describe("verified mutations", () => {
       .signal;
     expect(Object.keys(unsent)).not.toContain("to");
     expect(Object.keys(unsent)).not.toContain("replyTo");
+    expect(unsent.type).toBe("operator_note");
   });
 
   it("does not expose immediate pause in the client type", () => {
@@ -334,6 +336,16 @@ describe("verified mutations", () => {
     // @ts-expect-error Immediate pause is unavailable until the Runtime can attribute it.
     const forbidden: PauseOptions = { mode: "immediate" };
     expect(forbidden).toEqual({ mode: "immediate" });
+  });
+
+  it("rejects native persona links from non-owner callers before network I/O", async () => {
+    const scripted = scriptedFetch([]);
+    const client = new RuntimeClient("tok", { fetch: scripted.fetchImpl });
+    await expect(client.signal("demo", "{}", {
+      kind: "native_persona_linked",
+      actor: { id: "agent-1", type: "agent" },
+    })).rejects.toThrow(/must be recorded by the owner/i);
+    expect(scripted.calls).toHaveLength(0);
   });
 
   /** The full happy path: read the head, mutate against it, read back, report the delta. */

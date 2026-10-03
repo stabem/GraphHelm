@@ -66,6 +66,7 @@
 .native-chats { padding: 18px; border-top: 1px solid #33343b; color: #e7e7ec; }
 .native-chat-disclosure { width: 100%; min-height: 44px; padding: 10px; text-align: left; color: #e7e7ec; background: #222329; border: 1px solid #373840; border-radius: 8px; cursor: pointer; }
 .native-chat-collapse { padding: 5px 8px; color: #c9b4ff; background: transparent; border: 1px solid #484b56; border-radius: 6px; cursor: pointer; }
+.native-chat-refresh { min-height: 40px; margin-top: 12px; padding: 8px 12px; color: #c9b4ff; background: #222329; border: 1px solid #484b56; border-radius: 6px; cursor: pointer; }
 .native-chats h3 { margin: 0; font-size: 15px; }
 .native-chats-heading { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .native-chats-heading span, .native-chats-help, .native-chats-search, .native-chat-history, .native-chat-actions, .native-chat-request span { color: #b3b4c2; font-size: 12px; line-height: 1.5; }
@@ -92,6 +93,14 @@
 .native-chat-error { color: #ffcbc4; }
 .native-chat-notice { color: #c9b4ff; }
 .native-chats :focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
+.native-chat-persona { display: grid; gap: 10px; padding: 12px; margin-bottom: 14px; border: 1px solid #484a56; border-radius: 8px; }
+.native-chat-persona label { display: grid; gap: 6px; font-size: 12px; }
+.native-chat-persona button { min-height: 40px; color: #e7e7ec; background: #302844; border: 1px solid #9c7cdb; border-radius: 8px; cursor: pointer; }
+.native-chat-persona button:disabled { opacity: .5; cursor: default; }
+.node-recent-conversation { padding: 14px 18px; border-top: 1px solid #33343b; min-width: 0; }
+.node-recent-conversation h3 { margin: 0 0 12px; font-size: 13px; }
+.node-recent-conversation > .thread, .node-recent-conversation details > .thread { flex: none; overflow: visible; padding: 0; }
+.node-recent-conversation > details { margin-top: 14px; font-size: 12px; color: #b3b4c2; }
 @media (max-width: 800px) { .native-chats { padding: 14px; } .native-chat-list { max-height: 180px; } .native-chats textarea { font-size: 16px; } }
 @media (max-width: 800px) { .document-editor { position: fixed; inset: 0; width: 100%; min-width: 0; height: 100dvh; z-index: 60; padding: 16px; } }
 

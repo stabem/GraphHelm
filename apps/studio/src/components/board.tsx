@@ -184,7 +184,7 @@ export function Board({
    * log; this component only places and moves them. `presence` is the newest
    * `agent_presence_declared` this actor has made, or absent when the actor never declared one -
    * absence renders no badge at all, never a placeholder. */
-  crew?: Array<{ id: string; charter: string | null; lastAt?: string | null; presence?: AgentPresence | null }>;
+  crew?: Array<{ id: string; charter: string | null; name?: string; lastAt?: string | null; presence?: AgentPresence | null }>;
   recordedSessions?: WorkOverviewProps["recordedSessions"];
   workMessages?: WorkOverviewProps["workMessages"];
   selectedAgent?: string | null;
@@ -1075,7 +1075,7 @@ export function Board({
               >
                 {initialOf(agent.id)}
               </span>
-              <span className="agent-name" title={agent.id}>{agent.id}</span>
+              <span className="agent-name" title={crew.find((member) => member.id === agent.id)?.name ?? agent.id}>{crew.find((member) => member.id === agent.id)?.name ?? agent.id}</span>
               {/* THE DECLARED CAPABILITY - never inferred from a route or a default. A session
                 * that declared nothing produced no `agent_presence_declared` event at all, so
                 * `presence` is null and this renders NOTHING: no "unknown", no placeholder. A

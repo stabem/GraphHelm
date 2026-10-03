@@ -22,7 +22,7 @@ import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
-import type { ClaimEvidence, EvidenceContent, ExecutionStatus, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
+import type { ClaimEvidence, EvidenceContent, ExecutionStatus, NativeChatSummary, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
 import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { isClaudeTaskSignal } from "../runtime/team-tasks";
 import { workConversation, type WorkMessage } from "../runtime/work-conversation";
@@ -470,11 +470,13 @@ export function Thread({
   executionId,
   openEvidence,
   emptyMessage = "Nothing has been said about this yet.",
+  newestFirst = false,
 }: {
   events: RuntimeEvent[];
   executionId?: string;
   openEvidence?: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
   emptyMessage?: string;
+  newestFirst?: boolean;
 }) {
   // THE CHAT OPENS AT THE END, because a conversation is read from where it is happening. The
   // first version opened at the top and the person had to scroll past the whole history to find
@@ -491,7 +493,7 @@ export function Thread({
   const humanUntil = useRef(0);
   useEffect(() => {
     const list = listRef.current;
-    if (list === null) return;
+    if (list === null || newestFirst) return;
     if (pinned.current) list.scrollTop = list.scrollHeight;
     // The turns keep growing after this first scroll - evidence opens asynchronously and each
     // bubble adds height - so pin to the end on every size change, not only on new events.
@@ -503,7 +505,7 @@ export function Thread({
     observer.observe(list);
     for (const child of list.children) observer.observe(child);
     return () => observer.disconnect();
-  }, [events]);
+  }, [events, newestFirst]);
 
   if (events.length === 0) {
     return <p className="panel-empty">{emptyMessage}</p>;
@@ -512,7 +514,9 @@ export function Thread({
   const eager = new Set(
     events
       .filter((event) => event.evidenceRefs.length > 0)
-      .slice(-AUTO_OPEN_LIMIT)
+      // The node inspector shares the browser connection pool with catalog and owner actions.
+      // Open only its latest three envelopes eagerly; older words remain explicitly openable.
+      .slice(-(newestFirst ? 3 : AUTO_OPEN_LIMIT))
       .map((event) => event.sequence),
   );
   return (
@@ -540,7 +544,8 @@ export function Thread({
         // A continuation only follows another SPOKEN turn by the same actor - a strip between
         // two turns re-earns the header.
         let previousTalk: RuntimeEvent | null = null;
-        return groupTurns(events).map((group) => {
+        const groups = groupTurns(events);
+        return (newestFirst ? groups.reverse() : groups).map((group) => {
           if (group.kind === "stage") {
             previousTalk = null;
             const first = group.events[0];
@@ -815,6 +820,45 @@ export function usePersonas(
 
 /** The envelope behind each signal event, opened once and shared: the agent panel filters by
  * `to`, the thread shows addresses, and neither should fetch what the other already has. */
+export function useNativePersonaLinks(
+  events: RuntimeEvent[],
+  executionId: string | undefined,
+  openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
+): Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> {
+  const [links, setLinks] = useState<{ executionId?: string; entries: Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> }>({ entries: {} });
+  useEffect(() => {
+    if (executionId === undefined || openEvidence === undefined) return;
+    let live = true;
+    const births = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
+      (event.payload as { kind?: string } | null)?.kind === "native_persona_linked" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+    void (async () => {
+      const entries: typeof links.entries = {};
+      for (const birth of births) {
+        try {
+          const sealed = await openSealed(executionId, birth.evidenceRefs[0], openEvidence);
+          const envelope = JSON.parse(sealed.content) as { to?: unknown; description?: string; source?: { type?: string; id?: string } };
+          if (envelope.source?.type !== "user" || envelope.source.id !== birth.actorId || typeof envelope.description !== "string") continue;
+          const value = JSON.parse(envelope.description) as Record<string, unknown>;
+          if (value.protocol !== "graphhelm-native-persona-v1" || value.executionId !== executionId ||
+            typeof value.threadId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.threadId) || envelope.to !== value.threadId ||
+            typeof value.title !== "string" || value.title.trim().length === 0 || value.title.length > 512 ||
+            typeof value.charter !== "string" || value.charter.trim().length === 0 || value.charter.length > 800 ||
+            typeof value.nodeId !== "string" || value.nodeId.length === 0 || value.nodeId.length > 128 ||
+            typeof value.sourceDirectory !== "string" || value.sourceDirectory.length > 4096 || !/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(value.sourceDirectory) || entries[value.threadId]) continue;
+          entries[value.threadId] = { chat: { id: value.threadId, title: value.title, projectDirectory: value.sourceDirectory, updatedAt: 0 }, charter: value.charter, nodeId: value.nodeId };
+        } catch {
+          // Unreadable or malformed membership is not a persona and grants no routing authority.
+        }
+      }
+      if (live) setLinks((previous) => previous.executionId === executionId && JSON.stringify(previous.entries) === JSON.stringify(entries) ? previous : { executionId, entries });
+    })();
+    return () => { live = false; };
+  }, [events, executionId, openEvidence]);
+  return links.executionId === executionId ? links.entries : NO_NATIVE_PERSONAS;
+}
+
+const NO_NATIVE_PERSONAS: Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> = {};
+
 export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
@@ -1205,8 +1249,9 @@ export function NodePanel({
       )}
 
       {nativeChats}
+      {historyEvents.length > 0 && <section className="node-recent-conversation" aria-label="Recent messages"><h3>Recent messages · newest first</h3><Thread newestFirst events={historyEvents.slice(-20)} executionId={executionId} openEvidence={openEvidence} />{historyEvents.length > 20 && <details><summary>Older history · {historyEvents.length - 20} records</summary><Thread newestFirst events={historyEvents.slice(0, -20)} executionId={executionId} openEvidence={openEvidence} /></details>}</section>}
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}
-      {(!deliveryView || historyEvents.length > 0) && <Thread events={historyEvents} executionId={executionId} openEvidence={openEvidence} />}
+      {!deliveryView && historyEvents.length === 0 && <Thread events={historyEvents} />}
 
     </section>
   );
@@ -1222,6 +1267,8 @@ export function NodePanel({
  */
 export function AgentPanel({
   agentId,
+  name,
+  nativeChats,
   charter = null,
   events,
   executionId,
@@ -1232,6 +1279,8 @@ export function AgentPanel({
   sayError = "",
 }: {
   agentId: string;
+  name?: string;
+  nativeChats?: ReactNode;
   charter?: string | null;
   events: RuntimeEvent[];
   executionId?: string;
@@ -1278,7 +1327,7 @@ export function AgentPanel({
           {initialOf(agentId)}
         </span>
         <div style={{ minWidth: 0 }}>
-          <h2>{agentId}</h2>
+          <h2>{name ?? agentId}</h2>
           <p className={charter !== null ? "charter" : "lbl"}>{charter ?? "your direct conversation"}</p>
         </div>
         <button type="button" className="ghost close" onClick={onClose} aria-label={`Close ${agentId}`}>
@@ -1286,9 +1335,9 @@ export function AgentPanel({
         </button>
       </header>
 
-      <Thread events={exchanges} executionId={executionId} openEvidence={openEvidence} />
+      {nativeChats ?? <Thread events={exchanges} executionId={executionId} openEvidence={openEvidence} />}
 
-      {onSay !== undefined && (
+      {nativeChats === undefined && onSay !== undefined && (
         <SayBox
           busy={saying}
           error={sayError}
@@ -1300,8 +1349,7 @@ export function AgentPanel({
       )}
 
       <p className="panel-foot">
-        Only what you and {agentId} said to each other. Group talk lives in the bubbles on the
-        board.
+        {nativeChats === undefined ? `Only what you and ${name ?? agentId} said to each other. Group talk lives in the bubbles on the board.` : "Orders go to this linked chat. A link records membership; it does not assign or complete a graph step."}
       </p>
     </section>
   );

@@ -1324,7 +1324,7 @@ export function AgentPanel({
           aria-hidden="true"
           style={{ background: `hsl(${hueOf(agentId)} 52% 46%)` }}
         >
-          {initialOf(agentId)}
+          {initialOf(name ?? agentId)}
         </span>
         <div style={{ minWidth: 0 }}>
           <h2>{name ?? agentId}</h2>

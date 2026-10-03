@@ -1073,7 +1073,7 @@ export function Board({
                   opacity: presenceOf(minutesSince(crew.find((member) => member.id === agent.id)?.lastAt)),
                 }}
               >
-                {initialOf(agent.id)}
+                {initialOf(crew.find((member) => member.id === agent.id)?.name ?? agent.id)}
               </span>
               <span className="agent-name" title={crew.find((member) => member.id === agent.id)?.name ?? agent.id}>{crew.find((member) => member.id === agent.id)?.name ?? agent.id}</span>
               {/* THE DECLARED CAPABILITY - never inferred from a route or a default. A session
@@ -1100,7 +1100,9 @@ export function Board({
                 })()}
               {/* Presentation only: the blob's accessible name stays the agent's id alone. */}
               <span className="agent-when" aria-hidden="true">
-                Seen {ago(crew.find((member) => member.id === agent.id)?.lastAt)} ago
+                {crew.find((member) => member.id === agent.id)?.lastAt == null
+                  ? "Activity not observed"
+                  : `Last report ${ago(crew.find((member) => member.id === agent.id)?.lastAt)} ago`}
               </span>
               {crew.find((member) => member.id === agent.id)?.charter != null && (
                 <span className="crew-role">persona</span>

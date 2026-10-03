@@ -2552,6 +2552,7 @@ export default function App({
             <aside className="main-chat-rail" aria-label="Principal conversation">
               <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected}
                 personas={mainChatPersonas} refreshSequence={status.headSequence ?? 0}
+                replySuggestions={currentReplySuggestions} replyLoading={replyLoading} replyIssue={currentReplyIssue}
                 onConnect={() => {
                   const first = model.nodes[0];
                   if (first) setFocus({ kind: "node", id: first.id });

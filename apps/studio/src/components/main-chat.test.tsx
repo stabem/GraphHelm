@@ -32,6 +32,27 @@ describe("MainChat", () => {
     sessionStorage.clear();
   });
 
+  // DOM-only: protects advisory/current-head advice and draft-only use while dispatch is locked.
+  it("offers current JEV drafts without sending or overwriting a draft and rejects stale advice", async () => {
+    const client = runtime({ listNativeChatRequests: vi.fn().mockResolvedValue({ requests: [{ requestId: "unknown", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "unobserved" }] }) });
+    const suggestions = { executionId: "run-1", headSequence: 7, state: "ready" as const, suggestions: [
+      { to: "builder", draft: "Inspect the open issues and propose a work split.", reason: "No work split was recorded.", sourceSequences: [7] },
+      { to: null, draft: "Check the pending request before dispatching more work.", reason: "The outcome is unknown.", sourceSequences: [7] },
+    ] };
+    const view = render(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={7} replySuggestions={suggestions} />);
+    const advice = await screen.findByRole("region", { name: "JEV next step" });
+    expect(advice).toHaveTextContent("No work split was recorded.");
+    fireEvent.click(screen.getByRole("button", { name: "Use suggestion 1" }));
+    expect(screen.getByLabelText("Instruction")).toHaveValue(suggestions.suggestions[0].draft);
+    expect(screen.getByRole("button", { name: "Use suggestion 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    expect(client.sendNativeChat).not.toHaveBeenCalled();
+    view.rerender(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={8} replySuggestions={suggestions} replyIssue="Waiting for fresh JEV advice." />);
+    expect(screen.queryByText(suggestions.suggestions[0].reason)).not.toBeInTheDocument();
+    expect(screen.getByText("Waiting for fresh JEV advice.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Instruction")).toHaveValue(suggestions.suggestions[0].draft);
+  });
+
   it("sends the selected principal or the three real other personas with distinct chartered requests", async () => {
     const client = runtime();
     render(<MainChat client={client} executionId="run-1" personas={personas} />);
@@ -93,6 +114,10 @@ describe("MainChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
     expect(screen.getByText(/Wait for this/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Instruction")).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Prepare the next order" } });
+    expect(screen.getByLabelText("Instruction")).toHaveValue("Prepare the next order");
+    expect(client.sendNativeChat).toHaveBeenCalledTimes(1);
     resolve({ requestId: "accepted" });
   });
 
@@ -212,6 +237,7 @@ describe("MainChat", () => {
     render(<MainChat client={client} executionId="run-offline" personas={personas} />);
     await screen.findByText("ledger unavailable");
     expect(screen.getByText(/pending-offline/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Instruction")).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Do not repeat" } });
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
     expect(client.sendNativeChat).not.toHaveBeenCalled();

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { newIdempotencyKey, RuntimeError, type RuntimeClient } from "../runtime/client";
-import type { NativeChatRequest, NativeChatSummary } from "../runtime/types";
+import type { NativeChatRequest, NativeChatSummary, ReplySuggestions } from "../runtime/types";
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RECOVERY_BYTES = 64 * 1024;
@@ -23,6 +23,9 @@ export interface MainChatProps {
   executionId: string;
   personas: MainChatPersona[];
   refreshSequence?: number;
+  replySuggestions?: ReplySuggestions | null;
+  replyLoading?: boolean;
+  replyIssue?: string | null;
   onConnect?: () => void;
 }
 
@@ -124,7 +127,7 @@ function withCharter(charter: string, message: string): string {
   return `${prefix}${message.trim()}`;
 }
 
-export function MainChat({ client, executionId, personas, refreshSequence = 0, onConnect }: MainChatProps) {
+export function MainChat({ client, executionId, personas, refreshSequence = 0, replySuggestions = null, replyLoading = false, replyIssue = null, onConnect }: MainChatProps) {
   const principal = personas[0] ?? null;
   const [selectedId, setSelectedId] = useState(principal?.chat.id ?? "");
   const [message, setMessage] = useState("");
@@ -153,6 +156,8 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
   const hasReceiptPending = activeRows.some((row) => isPending(row.state));
   const canSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
+  const currentAdvice = replySuggestions?.executionId === executionId && replySuggestions.headSequence === refreshSequence ? replySuggestions : null;
+  const suggestedDrafts = currentAdvice?.state === "ready" && currentAdvice.suggestions.length === 2 ? currentAdvice.suggestions : [];
 
   useEffect(() => {
     const scopeChanged = scopeRef.current !== scopeKey;
@@ -378,11 +383,24 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
   if (personas.length === 0) return <section className="main-chat" aria-label="Main chat"><h2>Main chat</h2><p>Connect existing chat to choose a coordinator.</p>{onConnect && <button type="button" onClick={onConnect}>Connect existing chat</button>}</section>;
 
   return <section className="main-chat" aria-label="Main chat">
-    <header><h2>Main chat</h2><p aria-label="Next step">Next step: choose the coordinator, write one instruction, then send it to main chat or the listed team targets.</p></header>
+    <header><h2>Main chat</h2><p aria-label="Next step">{blockedByPending || readFailed
+      ? "Next step: refresh the previous request's status. You can prepare your next instruction below; sending waits for confirmation."
+      : "Next step: review JEV's advice or write your own instruction, then choose who receives it."}</p></header>
     <label htmlFor="main-chat-recipient">Main recipient</label>
     <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending || blockedByPending} onChange={(event) => setSelectedId(event.target.value)}>
       {personas.map((persona) => <option key={persona.chat.id} value={persona.chat.id}>{persona.chat.title} · {persona.chat.id}</option>)}
     </select>
+    <section className="main-chat-guidance" aria-label="JEV next step">
+      <h3>JEV · Suggested next step</h3>
+      {replyLoading ? <p role="status">Preparing JEV suggestions…</p> : suggestedDrafts.length === 2 ? <>
+        <p>Advice for the current run. Using a suggestion only fills your draft; check the selected recipient before sending.</p>
+        {suggestedDrafts.map((suggestion, index) => <article key={index}>
+          <p>{suggestion.draft}</p><p className="main-chat-team-targets">{suggestion.reason}</p>
+          <button type="button" disabled={message !== "" || suggestion.draft.length > messageLimit} onClick={() => setMessage(suggestion.draft)}>Use suggestion {index + 1}</button>
+        </article>)}
+        {message !== "" && <p>Clear your instruction to use a suggestion. Your draft will not be overwritten.</p>}
+      </> : <p role="status">{replyIssue ?? currentAdvice?.reason ?? (currentAdvice?.state === "not_needed" ? "JEV has no suggested reply for this run right now." : "JEV suggestions are unavailable for the current run. You can write your own instruction.")}</p>}
+    </section>
     <div aria-label="Main chat conversation" className="main-chat-conversation" ref={conversationRef} onScroll={(event) => {
       const element = event.currentTarget;
       atBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
@@ -395,12 +413,12 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
       {activeRows.length === 0 && <p className="main-chat-empty">No orders sent yet. Your next message will appear here.</p>}
     </div>
     <label htmlFor="main-chat-message">Instruction</label>
-    <textarea id="main-chat-message" value={message} disabled={sending || blockedByPending} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
+    <textarea id="main-chat-message" value={message} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
     <p>{message.length}/{messageLimit} characters</p>
     <p className="main-chat-team-targets">Team targets: {teamTargets.length === 0 ? "none" : teamTargets.map((persona) => persona.chat.title).join(", ")}</p>
     <div className="main-chat-actions"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
-    {blockedByPending && <p role="status">Reconcile the active request before starting a new batch.</p>}
+    {blockedByPending && <p role="status">Sending is paused until the previous request is confirmed. You can keep writing your next instruction.</p>}
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
   </section>;
 }

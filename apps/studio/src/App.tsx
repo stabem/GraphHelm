@@ -2730,7 +2730,7 @@ export default function App({
                   // KEYED BY WHO IT BELONGS TO: a prop change re-addressed a LIVE composer
                   // without remounting - agent A's half-typed draft stood one Enter from
                   // shipping to agent B (round-4).
-                  key={`agent-${focus.id}`}
+                  key={`agent-${selected}-${focus.id}`}
                   agentId={focus.id}
                   charter={nativePersonaLinks[focus.id]?.charter ?? personas[focus.id] ?? null}
                   name={nativePersonaLinks[focus.id]?.chat.title}
@@ -3223,6 +3223,7 @@ export default function App({
                   }
                   nativeChats={
                     <NativeChats
+                      key={`native-${selected}-${node.id}`}
                       client={clientRef.current}
                       executionId={selected}
                       nodeId={node.id}

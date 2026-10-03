@@ -128,4 +128,26 @@ describe("NativeChats", () => {
     await screen.findByText("bound receipt");
     expect(screen.queryByText("wrong receipt")).toBeNull();
   });
+
+  it("does not let a late persona link disable the next selected chat", async () => {
+    let resolveLink!: () => void;
+    const onLinkPersona = vi.fn(() => new Promise<void>((resolve) => { resolveLink = resolve; }));
+    const runtime = client({
+      listNativeChats: vi.fn().mockResolvedValue({ chats: [
+        { id: "chat-1", title: "First chat", projectDirectory: "C:/first", updatedAt: 2_000 },
+        { id: "chat-2", title: "Second chat", projectDirectory: "C:/second", updatedAt: 1_000 },
+      ], nextCursor: null }),
+    });
+    render(<NativeChats client={runtime} executionId="execution-1" nodeId="node-a" onLinkPersona={onLinkPersona} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect existing chat" }));
+    await screen.findByRole("button", { name: /First chat/ });
+    fireEvent.click(screen.getByRole("button", { name: /First chat/ }));
+    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "Reviewer" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add persona to activity" }));
+    expect(screen.getByRole("button", { name: /Second chat/ })).toBeDisabled();
+    resolveLink();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add persona to activity" })).toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /Second chat/ }));
+    expect(screen.getByRole("button", { name: "Add persona to activity" })).toBeEnabled();
+  });
 });

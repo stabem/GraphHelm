@@ -57,6 +57,7 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, 
   const [personaLinked, setPersonaLinked] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const generation = useRef(0);
+  const selectedChatIdRef = useRef(boundChat?.id ?? "");
   const scopeRef = useRef("");
   const readingRef = useRef(false);
   const scopeKey = `${executionId}\0${nodeId}`;
@@ -82,6 +83,7 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, 
       setChats([]);
       setRequests([]);
       setSelectedChatId(boundChat?.id ?? "");
+      selectedChatIdRef.current = boundChat?.id ?? "";
       setPersonaLinked(false);
       setRequestId("");
       setLocalRequest(null);
@@ -203,10 +205,13 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, 
 
   const linkPersona = async () => {
     if (!selectedChat || !onLinkPersona || composedCharter === "" || composedCharter.length > MAX_PERSONA_LENGTH || linkingPersona || personaPending || sending || personaLinked || activityCharter !== "") return;
+    const linkedChatId = selectedChat.id;
+    const linkedGeneration = generation.current;
     setLinkingPersona(true);
     setError("");
     try {
       await onLinkPersona(selectedChat, composedCharter);
+      if (linkedGeneration !== generation.current || selectedChatIdRef.current !== linkedChatId) return;
       setPersonaLinked(true);
       setNotice("Persona membership recorded for this activity. No native chat turn was sent.");
     } catch (reason) {
@@ -244,7 +249,7 @@ export function NativeChats({ client, executionId, nodeId, refreshSequence = 0, 
       {!boundChat && visibleChats.length > 0 && (
         <div className="native-chat-list" role="list" aria-label="Existing native chats">
           {visibleChats.map((chat) => (
-            <button type="button" className={`native-chat-option${chat.id === selectedChatId ? " selected" : ""}`} key={chat.id} onClick={() => { setSelectedChatId(chat.id); setPersonaLinked(false); setNotice(""); }}>
+            <button type="button" className={`native-chat-option${chat.id === selectedChatId ? " selected" : ""}`} key={chat.id} disabled={linkingPersona} onClick={() => { selectedChatIdRef.current = chat.id; setSelectedChatId(chat.id); setPersonaLinked(false); setNotice(""); }}>
               <strong>{chat.title}</strong><span>{chat.projectDirectory}</span><small>{chat.id}</small>
             </button>
           ))}

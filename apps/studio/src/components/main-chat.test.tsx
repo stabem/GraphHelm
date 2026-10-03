@@ -167,6 +167,19 @@ describe("MainChat", () => {
     expect(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`)).toBe("[]");
   });
 
+  it("shows a retained request identity even when ledger reconciliation fails", async () => {
+    sessionStorage.setItem(`graphhelm.main-chat.recovery:${location.origin}:run-offline`, JSON.stringify([
+      { executionId: "run-offline", requestId: "pending-offline", nodeId: "node-main", threadId: "main" },
+    ]));
+    const client = runtime({ listNativeChatRequests: vi.fn().mockRejectedValue(new Error("ledger unavailable")) });
+    render(<MainChat client={client} executionId="run-offline" personas={personas} />);
+    await screen.findByText("ledger unavailable");
+    expect(screen.getByText(/pending-offline/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Do not repeat" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    expect(client.sendNativeChat).not.toHaveBeenCalled();
+  });
+
   it("stores only request identity and stops before dispatch when storage fails or is malformed", async () => {
     const client = runtime();
     const storedView = render(<MainChat client={client} executionId="run-storage" personas={personas} />);

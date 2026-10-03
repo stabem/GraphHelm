@@ -182,25 +182,29 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
         }
         return;
       }
+      setRows((current) => {
+        const merged = new Map(current.map((row) => [keyOf(row), row]));
+        for (const recoveryId of recovery.entries) {
+          if (merged.has(keyOf(recoveryId))) continue;
+          const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
+          merged.set(keyOf(recoveryId), {
+            requestId: recoveryId.requestId,
+            nodeId: recoveryId.nodeId,
+            threadId: recoveryId.threadId,
+            title: persona?.chat.title ?? "Retained native chat request",
+            sourceDirectory: persona?.chat.projectDirectory ?? "",
+            state: "unobserved",
+            detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
+            local: true,
+          });
+        }
+        return [...merged.values()];
+      });
       try {
         const page = await client.listNativeChatRequests(executionId);
         if (cancelled || run !== generation.current) return;
         setRows((current) => {
           const merged = new Map(current.map((row) => [keyOf(row), row]));
-          for (const recoveryId of recovery.entries) {
-            if (merged.has(keyOf(recoveryId))) continue;
-            const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
-            merged.set(keyOf(recoveryId), {
-              requestId: recoveryId.requestId,
-              nodeId: recoveryId.nodeId,
-              threadId: recoveryId.threadId,
-              title: persona?.chat.title ?? "Retained native chat request",
-              sourceDirectory: persona?.chat.projectDirectory ?? "",
-              state: "unobserved",
-              detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
-              local: true,
-            });
-          }
           for (const request of page.requests) {
             const old = merged.get(keyOf(request));
             merged.set(keyOf(request), { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local });
@@ -383,7 +387,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
     </div>
     <label htmlFor="main-chat-message">Instruction</label>
     <textarea id="main-chat-message" value={message} disabled={sending || blockedByPending} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
-    <p>{message.length}/{messageLimit} characters available after the selected charter. Team sends validate every target before dispatch.</p>
+    <p>{message.length}/{messageLimit} characters</p>
     <p className="main-chat-team-targets">Team targets: {teamTargets.length === 0 ? "none" : teamTargets.map((persona) => persona.chat.title).join(", ")}</p>
     <div className="main-chat-actions"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}

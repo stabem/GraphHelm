@@ -1,0 +1,285 @@
+{
+  "contractId": "studio-main-chat-235",
+  "version": 1,
+  "title": "Principal conversation and explicit team instructions",
+  "taskScope": "Owner sees the principal conversation immediately and sends explicit orders to its selected native coordinator or other linked activity chats.",
+  "actors": [
+    {
+      "actorId": "owner",
+      "name": "Project owner",
+      "goal": "See activity personas and give an individual chat an order"
+    }
+  ],
+  "preconditions": [
+    "Authenticated owner Runtime with sealed keyring and selected execution/node",
+    "Trusted native binary and native SQLite directory configured in Runtime launcher",
+    "Existing native thread accepts read/resume without permission or provider overrides"
+  ],
+  "steps": [
+    {
+      "stepId": "principal",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Principal conversation"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 180,
+        "visibleError": "This native request is blocked or its outcome is unobserved.",
+        "safeStop": "Keep each original request identity; do not repeat the batch or infer delivery.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Native turns on opening the principal conversation",
+          "Automatic retries after partial or unknown delivery",
+          "Changing original chat history, working directory, permissions, provider or model",
+          "Graph assignment or output acceptance inferred from a reply"
+        ]
+      }
+    },
+    {
+      "stepId": "direction",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Next step"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 180,
+        "visibleError": "This native request is blocked or its outcome is unobserved.",
+        "safeStop": "Keep each original request identity; do not repeat the batch or infer delivery.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Native turns on opening the principal conversation",
+          "Automatic retries after partial or unknown delivery",
+          "Changing original chat history, working directory, permissions, provider or model",
+          "Graph assignment or output acceptance inferred from a reply"
+        ]
+      }
+    },
+    {
+      "stepId": "main",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Send to main chat"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 180,
+        "visibleError": "This native request is blocked or its outcome is unobserved.",
+        "safeStop": "Keep each original request identity; do not repeat the batch or infer delivery.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Native turns on opening the principal conversation",
+          "Automatic retries after partial or unknown delivery",
+          "Changing original chat history, working directory, permissions, provider or model",
+          "Graph assignment or output acceptance inferred from a reply"
+        ]
+      }
+    },
+    {
+      "stepId": "team",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Send to team"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 180,
+        "visibleError": "This native request is blocked or its outcome is unobserved.",
+        "safeStop": "Keep each original request identity; do not repeat the batch or infer delivery.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Native turns on opening the principal conversation",
+          "Automatic retries after partial or unknown delivery",
+          "Changing original chat history, working directory, permissions, provider or model",
+          "Graph assignment or output acceptance inferred from a reply"
+        ]
+      }
+    },
+    {
+      "stepId": "recovery",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Refresh request status"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 180,
+        "visibleError": "This native request is blocked or its outcome is unobserved.",
+        "safeStop": "Keep each original request identity; do not repeat the batch or infer delivery.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Native turns on opening the principal conversation",
+          "Automatic retries after partial or unknown delivery",
+          "Changing original chat history, working directory, permissions, provider or model",
+          "Graph assignment or output acceptance inferred from a reply"
+        ]
+      }
+    }
+  ],
+  "promises": [
+    {
+      "promiseId": "principal-promise",
+      "stepId": "principal",
+      "statement": "The principal conversation is visible beside the graph without opening Free canvas.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.main_chat",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "direction-promise",
+      "stepId": "direction",
+      "statement": "A visible next action names who receives a coordinator or team instruction.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.main_chat",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "main-promise",
+      "stepId": "main",
+      "statement": "An explicit owner order reaches only the selected native principal with a matching observed reply.",
+      "requiredFact": "control_operable",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.main_chat",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "team-promise",
+      "stepId": "team",
+      "statement": "Each other linked persona gets its own immutable request identity and independently observed native reply.",
+      "requiredFact": "control_operable",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.main_chat",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "recovery-promise",
+      "stepId": "recovery",
+      "statement": "Partial or unknown outcomes preserve identities and are reconciled without sending another turn.",
+      "requiredFact": "state_persisted",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.main_chat",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    }
+  ],
+  "riskSignals": [
+    "authentication",
+    "critical_ux",
+    "external_delivery",
+    "concurrency",
+    "recovery"
+  ],
+  "outOfScope": [
+    "Automatic inter-chat conversation",
+    "Implicit production deployment",
+    "Graph completion and accepted code output",
+    "JPD certification"
+  ]
+}

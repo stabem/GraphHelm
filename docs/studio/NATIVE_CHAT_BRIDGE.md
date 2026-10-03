@@ -14,7 +14,33 @@ The catalog shows the most recently updated native chats first, with stable thre
 the tie breaker. Pagination preserves the selected recipient. Node inspectors show the newest
 twenty history records first and keep older records behind **Older history**.
 
-## Activity personas
+## Principal conversation
+
+The principal conversation is visible on the left as soon as an activity opens. Its **Next step**
+explains how to select the main native chat and enter an instruction. The selector defaults to
+the first owner-declared native persona; the displayed recipient identity remains explicit.
+**Send to main chat** addresses only that selected native thread. **Send to team** addresses the
+other linked activity personas, with their names shown before the owner sends anything.
+
+Each recipient gets a distinct immutable native request identity and its own activity charter.
+The owner explicitly starts the batch; opening the panel, discovering chats or refreshing
+requests sends nothing. A partial or unknown outcome is reconciled under its original identity.
+The panel never repeats a batch automatically. A received reply is displayed as a reply, rather
+than evidence that the requested code, review or deployment finished.
+
+The [principal conversation journey](../acceptance/studio-main-chat-journey-2026-10-03.json)
+defines rendering, target isolation, actual native replies and partial-failure recovery. Fan-out
+is an explicit owner instruction to the selected team; it does not prove autonomous conversation
+between native chats or assign Governor-owned graph steps.
+
+Native Desktop updates can remove the version-specific executable configured by the Runtime
+launcher. `GRAPHHELM_CODEX_HOST_PROGRAM` must identify the current trusted installed executable.
+Validate its existence before launching the Runtime. A host validation failure before durable
+intent means no native request was dispatched; retain the original UI request identity and
+reconcile the ledger before sending new work. Do not rewrite native thread databases or change
+the provider, approval or sandbox profile to bypass a missing host.
+
+## Declaring a persona
 
 After selecting a native chat, enter its **Role** and **Personality**, then press **Add persona
 to activity**. This owner declaration links the existing chat identity to the selected activity

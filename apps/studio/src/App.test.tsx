@@ -197,6 +197,17 @@ describe("Studio organization and responsive navigation", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
+  // DOM-only, no native calls: protects the entry point missing from the owner journey.
+  it("opens the principal conversation beside the overview and keeps it on the free canvas", async () => {
+    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"fixtures/project"})} />);
+    const overview = await screen.findByRole("main", { name: "Work overview" });
+    const principal = screen.getByRole("complementary", { name: "Principal conversation" });
+    expect(principal).toBeVisible();
+    expect(principal.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
+    expect(screen.getByRole("complementary", { name: "Principal conversation" })).toBeVisible();
+  });
+
   it("keeps the selected project and run address visible outside the mobile rail without guessing membership", async () => {
     await open(stubClient());
     const identity = screen.getByLabelText("Selected run identity");

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MainChat, type MainChatProps } from "./main-chat";
 
@@ -27,9 +27,14 @@ function runtime(overrides: Partial<TestClient> = {}): TestClient & NonNullable<
 }
 
 describe("MainChat", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   it("sends the selected principal or the three real other personas with distinct chartered requests", async () => {
     const client = runtime();
     render(<MainChat client={client} executionId="run-1" personas={personas} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalledWith("run-1"));
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Inspect this order" } });
     fireEvent.click(screen.getByRole("button", { name: "Send to team (3 others)" }));
     await waitFor(() => expect(client.sendNativeChat).toHaveBeenCalledTimes(3));
@@ -49,6 +54,7 @@ describe("MainChat", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ requestId: "ok-3" }) });
     render(<MainChat client={client} executionId="run-1" personas={personas} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalledWith("run-1"));
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Do the work" } });
     fireEvent.click(screen.getByRole("button", { name: "Send to team (3 others)" }));
     await screen.findByText(/1 request could not be proven/);
@@ -81,6 +87,7 @@ describe("MainChat", () => {
     let resolve!: (value: { requestId: string }) => void;
     const client = runtime({ sendNativeChat: vi.fn(() => new Promise<{ requestId: string }>(resolvePromise => { resolve = resolvePromise; })) });
     render(<MainChat client={client} executionId="run-1" personas={personas.slice(0, 2)} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalledWith("run-1"));
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Wait for this" } });
     fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
@@ -88,17 +95,110 @@ describe("MainChat", () => {
     resolve({ requestId: "accepted" });
   });
 
-  it("unlocks and clears the composer when the execution scope changes during a pending send", () => {
+  it("unlocks and clears the composer when the execution scope changes during a pending send", async () => {
     let resolve!: (value: { requestId: string }) => void;
     const client = runtime({ sendNativeChat: vi.fn(() => new Promise<{ requestId: string }>(done => { resolve = done; })) });
     const view = render(<MainChat client={client} executionId="old-run" personas={personas.slice(0, 2)} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalledWith("old-run"));
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Old run instruction" } });
     fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
     view.rerender(<MainChat client={client} executionId="new-run" personas={personas.slice(0, 2)} />);
     expect(screen.getByLabelText("Instruction")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "New run instruction" } });
-    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
     resolve({ requestId: "old-accepted" });
+  });
+
+  it("keeps sending disabled until the initial ledger read finishes or fails", async () => {
+    let resolveRead!: (value: { requests: never[] }) => void;
+    const client = runtime({ listNativeChatRequests: vi.fn(() => new Promise<{ requests: never[] }>(resolve => { resolveRead = resolve; })) });
+    const delayed = render(<MainChat client={client} executionId="run-delayed" personas={personas} />);
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Wait for ledger" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    resolveRead({ requests: [] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
+    expect(client.sendNativeChat).not.toHaveBeenCalled();
+    delayed.unmount();
+
+    const failed = runtime({ listNativeChatRequests: vi.fn().mockRejectedValue(new Error("ledger offline")) });
+    render(<MainChat client={failed} executionId="run-failed" personas={personas} />);
+    await screen.findByText("ledger offline");
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Do not send" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    expect(failed.sendNativeChat).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed ledger read when the roster arrives late and refresh succeeds", async () => {
+    const list = vi.fn().mockRejectedValue(new Error("ledger unavailable"));
+    const client = runtime({ listNativeChatRequests: list });
+    const view = render(<MainChat client={client} executionId="run-late-roster" personas={[]} />);
+    view.rerender(<MainChat client={client} executionId="run-late-roster" personas={personas} />);
+    await screen.findByText("ledger unavailable");
+    expect(screen.getByRole("button", { name: "Refresh request status" })).toBeEnabled();
+    list.mockResolvedValue({ requests: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh request status" }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Retry after recovery" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
+    expect(screen.queryByText("ledger unavailable")).not.toBeInTheDocument();
+  });
+
+  it("retains recovered identities across roster changes and reloads until a terminal receipt", async () => {
+    sessionStorage.setItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`, JSON.stringify([
+      { executionId: "run-reload", requestId: "request-unknown", nodeId: "node-removed", threadId: "removed" },
+    ]));
+    let terminal = false;
+    const client = runtime({ listNativeChatRequests: vi.fn(() => terminal ? Promise.resolve({ requests: [{ requestId: "request-unknown", nodeId: "node-removed", threadId: "removed", title: "Recovered", sourceDirectory: "", state: "completed" as const }] }) : Promise.resolve({ requests: [] })) });
+    const first = render(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 2)} />);
+    await screen.findByText(/Retained native chat request/);
+    expect(screen.getByText(/request-unknown/)).toBeInTheDocument();
+    first.rerender(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 1)} />);
+    expect(screen.getByText(/request-unknown/)).toBeInTheDocument();
+    first.unmount();
+    render(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 1)} />);
+    expect(await screen.findByText(/request-unknown/)).toBeInTheDocument();
+    expect(JSON.parse(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`)!)).toEqual([
+      { executionId: "run-reload", requestId: "request-unknown", nodeId: "node-removed", threadId: "removed" },
+    ]);
+    terminal = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh request status" }));
+    await screen.findByText(/Completed · chat reply received/);
+    expect(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`)).toBe("[]");
+  });
+
+  it("stores only request identity and stops before dispatch when storage fails or is malformed", async () => {
+    const client = runtime();
+    const storedView = render(<MainChat client={client} executionId="run-storage" personas={personas} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalledWith("run-storage"));
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Persist identity" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
+    await waitFor(() => expect(client.sendNativeChat).toHaveBeenCalledTimes(1));
+    const stored = JSON.parse(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-storage`)!);
+    expect(stored).toHaveLength(1);
+    expect(Object.keys(stored[0]).sort()).toEqual(["executionId", "nodeId", "requestId", "threadId"]);
+    expect(JSON.stringify(stored)).not.toContain("Persist identity");
+    storedView.unmount();
+
+    sessionStorage.setItem(`graphhelm.main-chat.recovery:${location.origin}:run-malformed`, JSON.stringify([
+      { executionId: "run-malformed", requestId: "id", nodeId: "node", threadId: "thread", message: "secret" },
+    ]));
+    const malformed = runtime();
+    const malformedView = render(<MainChat client={malformed} executionId="run-malformed" personas={personas} />);
+    await waitFor(() => expect(malformed.listNativeChatRequests).not.toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Must not send" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    expect(malformed.sendNativeChat).not.toHaveBeenCalled();
+    malformedView.unmount();
+
+    const failingStorage = runtime();
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage full"); });
+    render(<MainChat client={failingStorage} executionId="run-write-failed" personas={personas} />);
+    await waitFor(() => expect(failingStorage.listNativeChatRequests).toHaveBeenCalledWith("run-write-failed"));
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Must not dispatch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
+    await screen.findByText("Recovery storage is unavailable. Nothing was sent.");
+    expect(failingStorage.sendNativeChat).not.toHaveBeenCalled();
+    setItem.mockRestore();
   });
 });

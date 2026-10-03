@@ -4,6 +4,9 @@ import { newIdempotencyKey, RuntimeError, type RuntimeClient } from "../runtime/
 import type { NativeChatRequest, NativeChatSummary } from "../runtime/types";
 
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_RECOVERY_BYTES = 64 * 1024;
+const MAX_RECOVERY_ENTRIES = 256;
+const MAX_RECOVERY_FIELD_LENGTH = 256;
 const POLL_MS = 2500;
 const TIMEOUT_MS = 15000;
 
@@ -25,6 +28,72 @@ export interface MainChatProps {
 
 type Row = NativeChatRequest & { ownerMessage?: string; local?: boolean };
 type Notice = { tone: "good" | "bad"; text: string } | null;
+type RecoveryId = Pick<NativeChatRequest, "requestId" | "nodeId" | "threadId"> & { executionId: string };
+
+function recoveryStorageKey(executionId: string): string {
+  const origin = globalThis.location?.origin ?? "unknown-origin";
+  return `graphhelm.main-chat.recovery:${origin}:${executionId}`;
+}
+
+function readRecovery(executionId: string): { ok: true; entries: RecoveryId[] } | { ok: false } {
+  try {
+    const raw = globalThis.sessionStorage.getItem(recoveryStorageKey(executionId));
+    if (raw === null) return { ok: true, entries: [] };
+    if (raw.length > MAX_RECOVERY_BYTES) return { ok: false };
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > MAX_RECOVERY_ENTRIES) return { ok: false };
+    const entries: RecoveryId[] = [];
+    for (const entry of parsed) {
+      if (entry === null || typeof entry !== "object") return { ok: false };
+      const keys = Object.keys(entry).sort();
+      if (keys.join("\0") !== "executionId\0nodeId\0requestId\0threadId") return { ok: false };
+      const candidate = entry as Record<string, unknown>;
+      if (candidate.executionId !== executionId ||
+        typeof candidate.executionId !== "string" || candidate.executionId === "" ||
+        typeof candidate.requestId !== "string" || candidate.requestId === "" ||
+        typeof candidate.nodeId !== "string" || candidate.nodeId === "" ||
+        typeof candidate.threadId !== "string" || candidate.threadId === "" ||
+        (candidate.executionId as string).length > MAX_RECOVERY_FIELD_LENGTH ||
+        (candidate.requestId as string).length > MAX_RECOVERY_FIELD_LENGTH ||
+        (candidate.nodeId as string).length > MAX_RECOVERY_FIELD_LENGTH ||
+        (candidate.threadId as string).length > MAX_RECOVERY_FIELD_LENGTH) return { ok: false };
+      entries.push(candidate as RecoveryId);
+    }
+    return { ok: true, entries };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function writeRecovery(executionId: string, entries: RecoveryId[]): boolean {
+  try {
+    globalThis.sessionStorage.setItem(recoveryStorageKey(executionId), JSON.stringify(entries));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function addRecovery(executionId: string, requests: Array<Pick<RecoveryId, "requestId" | "nodeId" | "threadId">>): boolean {
+  const existing = readRecovery(executionId);
+  if (!existing.ok) return false;
+  const byKey = new Map(existing.entries.map((entry) => [keyOf(entry), entry]));
+  for (const request of requests) {
+    byKey.set(keyOf(request), {
+      executionId,
+      requestId: request.requestId,
+      nodeId: request.nodeId,
+      threadId: request.threadId,
+    });
+  }
+  return writeRecovery(executionId, [...byKey.values()]);
+}
+
+function removeRecovery(request: RecoveryId): void {
+  const existing = readRecovery(request.executionId);
+  if (!existing.ok) return;
+  writeRecovery(request.executionId, existing.entries.filter((entry) => keyOf(entry) !== keyOf(request)));
+}
 
 function errorText(error: unknown): string {
   if (error instanceof RuntimeError) return error.message;
@@ -64,12 +133,14 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
   const [notice, setNotice] = useState<Notice>(null);
   const [readError, setReadError] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   const generation = useRef(0);
   const scopeRef = useRef("");
   const reading = useRef(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
-  const scopeKey = `${executionId}\0${personas.map((persona) => `${persona.nodeId}\0${persona.chat.id}`).join("\x01")}`;
+  const scopeKey = executionId;
 
   const byChat = useMemo(() => new Map(personas.map((persona) => [persona.chat.id, persona])), [personas]);
   const selected = byChat.get(selectedId) ?? principal;
@@ -77,41 +148,77 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
   const messageLimitFor = (persona: MainChatPersona | null) => Math.max(0, MAX_MESSAGE_LENGTH - (persona ? prefixLength(persona.charter) : 0));
   const messageLimit = messageLimitFor(selected);
   const teamTargets = personas.filter((persona) => persona.chat.id !== selected?.chat.id);
-  const activeRows = rows.filter((row) => byChat.has(row.threadId) && personas.some((persona) => persona.nodeId === row.nodeId && persona.chat.id === row.threadId));
+  const activeRows = rows;
   const blockedByPending = activeRows.some((row) => isPending(row.state));
-  const hasReceiptPending = activeRows.some((row) => row.state === "requested" || row.state === "received");
-  const canSend = client !== null && selected !== null && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
+  const hasReceiptPending = activeRows.some((row) => isPending(row.state));
+  const canSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
 
   useEffect(() => {
-    if (scopeRef.current === scopeKey) return;
-    generation.current += 1;
+    const scopeChanged = scopeRef.current !== scopeKey;
+    if (scopeChanged) {
+      generation.current += 1;
+      scopeRef.current = scopeKey;
+      setRows([]);
+      setSelectedId(principal?.chat.id ?? "");
+      setSending(false);
+      setMessage("");
+      setNotice(null);
+      setReadError("");
+      setHydrated(false);
+      setReadFailed(false);
+    }
     const run = generation.current;
-    scopeRef.current = scopeKey;
-    setRows([]);
-    setSelectedId(principal?.chat.id ?? "");
-    setSending(false);
-    setMessage("");
-    setNotice(null);
-    setReadError("");
     if (!nativeApiAvailable || executionId === "" || personas.length === 0) return;
+    if (scopeChanged || !hydrated) setHydrated(false);
     let cancelled = false;
     const read = async () => {
+      const recovery = readRecovery(executionId);
+      if (!recovery.ok) {
+        if (!cancelled && run === generation.current) {
+          setReadFailed(true);
+          setHydrated(true);
+          setReadError("Recovery state could not be read. Sending is disabled until storage is available.");
+        }
+        return;
+      }
       try {
         const page = await client.listNativeChatRequests(executionId);
         if (cancelled || run !== generation.current) return;
-        const allowed = new Set(personas.map((persona) => `${persona.nodeId}\0${persona.chat.id}`));
         setRows((current) => {
           const merged = new Map(current.map((row) => [keyOf(row), row]));
-          for (const request of page.requests) if (allowed.has(`${request.nodeId}\0${request.threadId}`)) {
+          for (const recoveryId of recovery.entries) {
+            if (merged.has(keyOf(recoveryId))) continue;
+            const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
+            merged.set(keyOf(recoveryId), {
+              requestId: recoveryId.requestId,
+              nodeId: recoveryId.nodeId,
+              threadId: recoveryId.threadId,
+              title: persona?.chat.title ?? "Retained native chat request",
+              sourceDirectory: persona?.chat.projectDirectory ?? "",
+              state: "unobserved",
+              detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
+              local: true,
+            });
+          }
+          for (const request of page.requests) {
             const old = merged.get(keyOf(request));
             merged.set(keyOf(request), { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local });
           }
           return [...merged.values()];
         });
+        for (const request of page.requests) {
+          if (request.state === "completed" || request.state === "blocked") removeRecovery({ ...request, executionId });
+        }
         setReadError("");
+        setReadFailed(false);
       } catch (error) {
-        if (!cancelled && run === generation.current) setReadError(errorText(error));
+        if (!cancelled && run === generation.current) {
+          setReadFailed(true);
+          setReadError(errorText(error));
+        }
+      } finally {
+        if (!cancelled && run === generation.current) setHydrated(true);
       }
     };
     void read();
@@ -126,19 +233,50 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
       if (reading.current) return;
       reading.current = true;
       try {
+        const recovery = readRecovery(executionId);
+        if (!recovery.ok) {
+          if (!cancelled && run === generation.current) {
+            setReadFailed(true);
+            setHydrated(true);
+            setReadError("Recovery state could not be read. Sending is disabled until storage is available.");
+          }
+          return;
+        }
         const page = await client.listNativeChatRequests(executionId);
         if (cancelled || run !== generation.current) return;
-        const allowed = new Set(personas.map((persona) => `${persona.nodeId}\0${persona.chat.id}`));
         setRows((current) => {
           const merged = new Map(current.map((row) => [keyOf(row), row]));
-          for (const request of page.requests) if (allowed.has(`${request.nodeId}\0${request.threadId}`)) {
+          for (const recoveryId of recovery.entries) {
+            if (merged.has(keyOf(recoveryId))) continue;
+            const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
+            merged.set(keyOf(recoveryId), {
+              requestId: recoveryId.requestId,
+              nodeId: recoveryId.nodeId,
+              threadId: recoveryId.threadId,
+              title: persona?.chat.title ?? "Retained native chat request",
+              sourceDirectory: persona?.chat.projectDirectory ?? "",
+              state: "unobserved",
+              detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
+              local: true,
+            });
+          }
+          for (const request of page.requests) {
             const old = merged.get(keyOf(request));
             merged.set(keyOf(request), { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local });
           }
           return [...merged.values()];
         });
+        for (const request of page.requests) {
+          if (request.state === "completed" || request.state === "blocked") removeRecovery({ ...request, executionId });
+        }
+        setReadError("");
+        setReadFailed(false);
+        setHydrated(true);
       } catch (error) {
-        if (!cancelled && run === generation.current) setReadError(errorText(error));
+        if (!cancelled && run === generation.current) {
+          setReadFailed(true);
+          setReadError(errorText(error));
+        }
       } finally {
         reading.current = false;
       }
@@ -184,6 +322,11 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
     }
     if (new Set(requests.map((request) => request.requestId)).size !== requests.length) {
       setNotice({ tone: "bad", text: "The Runtime request identities were not unique. Nothing was sent." });
+      return;
+    }
+    if (!addRecovery(executionId, requests)) {
+      setNotice({ tone: "bad", text: "Recovery storage is unavailable. Nothing was sent." });
+      setReadFailed(true);
       return;
     }
     setSending(true);
@@ -243,7 +386,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
     <p>{message.length}/{messageLimit} characters available after the selected charter. Team sends validate every target before dispatch.</p>
     <p className="main-chat-team-targets">Team targets: {teamTargets.length === 0 ? "none" : teamTargets.map((persona) => persona.chat.title).join(", ")}</p>
     <div className="main-chat-actions"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
-    {activeRows.length > 0 && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
+    {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
     {blockedByPending && <p role="status">Reconcile the active request before starting a new batch.</p>}
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
   </section>;

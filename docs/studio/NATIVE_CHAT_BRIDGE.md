@@ -28,6 +28,13 @@ requests sends nothing. A partial or unknown outcome is reconciled under its ori
 The panel never repeats a batch automatically. A received reply is displayed as a reply, rather
 than evidence that the requested code, review or deployment finished.
 
+The composer stays locked until the request ledger has been read successfully. A failed ledger
+read leaves it locked. Before dispatch, the browser saves only recovery identities in session
+storage: execution, node, thread and request IDs. It does not save message text, charters, replies,
+project paths or credentials. A reload or roster change preserves an uncertain request even if
+its intent is absent from the ledger. Only an exact authoritative terminal receipt releases that
+recovery identity; refreshing does not send the work again.
+
 The [principal conversation journey](../acceptance/studio-main-chat-journey-2026-10-03.json)
 defines rendering, target isolation, actual native replies and partial-failure recovery. Fan-out
 is an explicit owner instruction to the selected team; it does not prove autonomous conversation

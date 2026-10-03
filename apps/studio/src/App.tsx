@@ -74,6 +74,7 @@ import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelo
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
+import { MainChat } from "./components/main-chat";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
@@ -1753,6 +1754,7 @@ export default function App({
   // Derived AT THIS LEVEL because the crew lives on the canvas, not inside the chat panel.
   const personas = usePersonas(eventList, selected === "" ? undefined : selected, openEvidence);
   const nativePersonaLinks = useNativePersonaLinks(eventList, selected === "" ? undefined : selected, openEvidence);
+  const mainChatPersonas = useMemo(() => Object.values(nativePersonaLinks), [nativePersonaLinks]);
   // When each actor was last heard from - the blobs dim with silence, honestly. MEMOIZED, like
   // every O(events) derivation below: these run inside the component body and App re-renders at
   // pointer-move frequency during a rail drag - rebuilding five full-array scans per frame was
@@ -2547,6 +2549,14 @@ export default function App({
           </section>
         ) : (
           <div className="split">
+            <aside className="main-chat-rail" aria-label="Principal conversation">
+              <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected}
+                personas={mainChatPersonas} refreshSequence={status.headSequence ?? 0}
+                onConnect={() => {
+                  const first = model.nodes[0];
+                  if (first) setFocus({ kind: "node", id: first.id });
+                }} />
+            </aside>
             {talkOpen && (
             <aside id="conversation-panel" className="talk" hidden={!conversationVisible}>
               {/* WHY IT NEEDS YOU, where you answer it. This block lived in the top strip -

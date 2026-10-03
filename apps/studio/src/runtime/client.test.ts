@@ -127,11 +127,12 @@ describe("RuntimeClient reads", () => {
       }) as Response) as unknown as typeof fetch;
       const client = new RuntimeClient("tok", { fetch: fetchImpl });
       const read = client.getReplySuggestions("demo", "judge");
+      const result = read.then((value) => value, (error: unknown) => error);
       await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
       resolveBody({ ok: true, command: "execution.reply_suggestions", data: {
         executionId: "demo", headSequence: 3, state: "ready", suggestions: [],
       }, diagnostics: [] });
-      await expect(read).resolves.toMatchObject({ state: "ready", headSequence: 3 });
+      expect(await result).toMatchObject({ state: "ready", headSequence: 3 });
     } finally {
       vi.useRealTimers();
     }
@@ -143,22 +144,32 @@ describe("RuntimeClient reads", () => {
       const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
       const client = new RuntimeClient("tok", { fetch: fetchImpl });
       const suggestions = client.getReplySuggestions("demo", "judge");
-      const rejection = expect(suggestions).rejects.toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
+      let settled = false;
+      const result = suggestions.then((value) => { settled = true; return value; }, (error: unknown) => { settled = true; return error; });
+      const ordinary = client.getStatus("demo").then((value) => value, (error: unknown) => error);
       await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
-      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      expect(await ordinary).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
+      expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(120_000 - RUNTIME_REQUEST_TIMEOUT_MS);
-      await rejection;
+      expect(await result).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("reports disposal as disconnect while a suggestions read is pending", async () => {
-    const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
-    const client = new RuntimeClient("tok", { fetch: fetchImpl });
-    const suggestions = client.getReplySuggestions("demo", "judge");
-    client.dispose();
-    await expect(suggestions).rejects.toBeInstanceOf(DisconnectedError);
+  it("reports disposal as disconnect after suggestions outlive the ordinary deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const suggestions = client.getReplySuggestions("demo", "judge");
+      const result = suggestions.then((value) => value, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      client.dispose();
+      expect(await result).toBeInstanceOf(DisconnectedError);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("unwraps the four-key envelope and returns only its data", async () => {

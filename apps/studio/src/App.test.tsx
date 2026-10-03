@@ -231,9 +231,9 @@ describe("Studio organization and responsive navigation", () => {
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "fixture-project" })} />);
     const people = await screen.findByRole("region", { name: "People and reported work" });
-    await waitFor(() => expect(people).toHaveTextContent("Checking the latest work result."));
     expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown.");
-    expect(people).toHaveTextContent("Observed actor IDs from recorded messages.");
+    expect(people).not.toHaveTextContent("Observed actor IDs from recorded messages.");
+    expect(people).not.toHaveTextContent("Checking the latest work result.");
     expect(people).not.toHaveTextContent("Explicitly joined sessions.");
   });
 
@@ -571,7 +571,7 @@ describe("opening", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    await waitFor(() => expect(screen.getByRole("region", { name: "People and reported work" })).toHaveTextContent("Reviewed the implementation path."));
+    expect(screen.getByRole("region", { name: "People and reported work" })).not.toHaveTextContent("Reviewed the implementation path.");
     expect(document.querySelector(".topstrip .tag")).toHaveTextContent("agent work recorded · graph step waiting");
     expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
     const selected = screen.getByRole("navigation", { name: "Projects" }).querySelector('button[aria-current="true"]')!;
@@ -3147,6 +3147,28 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
         head: 15,
         events: [
           {
+            sequence: 11,
+            kind: "signal_recorded",
+            payload: { kind: "persona_created", signalId: "persona-codex", sourceKind: "user" },
+            occurredAt: "2026-08-27T12:00:00Z",
+            actorId: "studio-operator",
+            actorType: "owner",
+            idempotencyKey: "k11",
+            eventId: "event-11",
+            evidenceRefs: ["ev-persona-codex"],
+          },
+          {
+            sequence: 12,
+            kind: "signal_recorded",
+            payload: { kind: "persona_created", signalId: "persona-claude", sourceKind: "user" },
+            occurredAt: "2026-08-27T12:00:30Z",
+            actorId: "studio-operator",
+            actorType: "owner",
+            idempotencyKey: "k12",
+            eventId: "event-12",
+            evidenceRefs: ["ev-persona-claude"],
+          },
+          {
             sequence: 13,
             kind: "signal_recorded",
             payload: { kind: "operator_note", signalId: "s-1", sourceKind: "agent" },
@@ -3169,6 +3191,15 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
             evidenceRefs: [],
           },
         ],
+      })),
+      readEvidence: vi.fn(async (_executionId: string, evidenceId: string) => ({
+        evidenceId,
+        mediaType: "application/json",
+        sensitivity: "confidential",
+        contentSha256: "sha256:persona",
+        content: evidenceId === "ev-persona-codex"
+          ? JSON.stringify({ to: "codex", description: "Codex persona" })
+          : JSON.stringify({ to: "claude-revisor", description: "Claude persona" }),
       })),
     });
     await open(client);
@@ -3839,16 +3870,14 @@ describe("the exchange", () => {
     expect(screen.getByText("0 active graph nodes")).toBeInTheDocument();
   });
 
-  /** THE CREW LIVES ON THE CANVAS - the owner drew it: agents in their own card, avatar and
-   * name, distinct from nodes. Personas wear the "persona" role tag; plain agents do not. */
-  it("shows the crew on the canvas, personas marked as personas", async () => {
+  /** Technical actors do not become crew members from ordinary activity records. */
+  it("shows only an explicitly chartered persona on the crew canvas", async () => {
     await open(roomClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     const crew = await screen.findByLabelText("Agents in this room");
     const persona = await within(crew).findByRole("button", { name: /seguranca/ });
     expect(within(persona).getByText("persona")).toBeInTheDocument();
-    const agent = within(crew).getByRole("button", { name: /^codex$/i });
-    expect(within(agent).queryByText("persona")).not.toBeInTheDocument();
+    expect(within(crew).queryByRole("button", { name: /^codex$/i })).not.toBeInTheDocument();
   });
 
   /** Clicking a crew member opens the INDIVIDUAL conversation: the thread filtered to that
@@ -3957,13 +3986,8 @@ describe("the exchange", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     const crew = await screen.findByLabelText("Agents in this room");
 
-    const codex = within(crew).getByRole("button", { name: /^codex$/i });
-    expect(within(codex).getByText("gpt-6-astra")).toBeInTheDocument();
-    expect(within(codex).queryByText(/gpt-6-early/)).not.toBeInTheDocument();
-    expect(within(codex).queryByText("·")).not.toBeInTheDocument();
-
-    const claude = within(crew).getByRole("button", { name: /^claude-code$/i });
-    expect(within(claude).queryByText(/gpt|unknown|n\/a/i)).not.toBeInTheDocument();
+    expect(within(crew).queryByRole("button", { name: /^codex$/i })).not.toBeInTheDocument();
+    expect(within(crew).queryByRole("button", { name: /^claude-code$/i })).not.toBeInTheDocument();
   });
 
   /** A persona's birth is a thread event, said as one. `persona_created` is an unrecognized

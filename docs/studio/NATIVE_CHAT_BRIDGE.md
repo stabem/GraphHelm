@@ -10,6 +10,36 @@ Studio can send a work request for a selected graph step to an existing native C
 4. Enter a bounded work request and press **Send work**.
 5. Read the request state and the actual chat reply in the inspector.
 
+The catalog shows the most recently updated native chats first, with stable thread identity as
+the tie breaker. Pagination preserves the selected recipient. Node inspectors show the newest
+twenty history records first and keep older records behind **Older history**.
+
+## Activity personas
+
+After selecting a native chat, enter its **Role** and **Personality**, then press **Add persona
+to activity**. This owner declaration links the existing chat identity to the selected activity
+and step. It sends no native turn. The canvas lists explicitly declared personas; process
+identities such as deployers remain in recorded technical history rather than becoming people.
+
+Open the persona to see its name, source project and activity charter. Its **Work message**
+composer sends only to the linked native thread. Each explicit order includes that activity's
+charter within the existing 2,000-character request limit. The first charter wins; a later
+membership record cannot silently replace that persona's role. Reloading replays the sealed
+owner declarations. Switching activities clears the previous activity's projected membership.
+
+Membership uses the public signal API with `native_persona_linked`, an owner source and a sealed
+JSON description identified by `graphhelm-native-persona-v1`. The description carries
+`executionId`, `nodeId`, `threadId`, `title`, `sourceDirectory` and `charter`; the envelope's `to`
+must match the native UUID. Malformed, unopenable, agent-authored or cross-activity declarations
+do not create personas. The declaration is separate from `persona_created`, so it cannot start
+the legacy persona host. Native dispatch still verifies the live thread and project metadata.
+
+Activity membership and native order receipts do not prove automatic conversation between
+native chats. Existing addressed messages preserve their actual sender and delivery status;
+Studio never invents native acknowledgements or maps a shared `codex` actor to a thread UUID.
+The [persona journey](../acceptance/studio-personas-journey-2026-10-02.json) describes the required
+browser observations. These remain ordinary evidence, without JPD certification.
+
 The native catalog is bounded. A stored chat is not proof that the Desktop is idle or that its agent is connected. Native resume/writer-lock refusals remain failures; the bridge never forks, restarts or replaces the selected thread to bypass them.
 
 ## Separate facts

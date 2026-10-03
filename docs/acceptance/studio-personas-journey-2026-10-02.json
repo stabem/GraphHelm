@@ -1,0 +1,284 @@
+{
+  "contractId": "studio-personas-230",
+  "version": 1,
+  "title": "Activity personas and recent conversations",
+  "taskScope": "Owner finds recent native chats, declares an activity persona, replays membership and sends an explicit order to its fixed native recipient.",
+  "actors": [
+    {
+      "actorId": "owner",
+      "name": "Project owner",
+      "goal": "See activity personas and give an individual chat an order"
+    }
+  ],
+  "preconditions": [
+    "Authenticated owner Runtime with sealed keyring and selected execution/node",
+    "Trusted native binary and native SQLite directory configured in Runtime launcher",
+    "Existing native thread accepts read/resume without permission or provider overrides"
+  ],
+  "steps": [
+    {
+      "stepId": "recent",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Connect existing chat"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Membership or native outcome could not be confirmed.",
+        "safeStop": "Preserve durable identity and do not repeat an uncertain external effect.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Automatic native turns on membership",
+          "Source project, history, permission or provider changes",
+          "Inferring native UUID from shared actor",
+          "Claiming JPD certification without an evidence matcher"
+        ]
+      }
+    },
+    {
+      "stepId": "history",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Recent messages"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Membership or native outcome could not be confirmed.",
+        "safeStop": "Preserve durable identity and do not repeat an uncertain external effect.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Automatic native turns on membership",
+          "Source project, history, permission or provider changes",
+          "Inferring native UUID from shared actor",
+          "Claiming JPD certification without an evidence matcher"
+        ]
+      }
+    },
+    {
+      "stepId": "link",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Add persona to activity"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Membership or native outcome could not be confirmed.",
+        "safeStop": "Preserve durable identity and do not repeat an uncertain external effect.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Automatic native turns on membership",
+          "Source project, history, permission or provider changes",
+          "Inferring native UUID from shared actor",
+          "Claiming JPD certification without an evidence matcher"
+        ]
+      }
+    },
+    {
+      "stepId": "replay",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "People"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Membership or native outcome could not be confirmed.",
+        "safeStop": "Preserve durable identity and do not repeat an uncertain external effect.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Automatic native turns on membership",
+          "Source project, history, permission or provider changes",
+          "Inferring native UUID from shared actor",
+          "Claiming JPD certification without an evidence matcher"
+        ]
+      }
+    },
+    {
+      "stepId": "order",
+      "actorId": "owner",
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "strategy": "accessible_name",
+          "value": "Send work"
+        }
+      },
+      "expectedStates": [
+        "success",
+        "error",
+        "loading"
+      ],
+      "failureContract": {
+        "timeoutSeconds": 60,
+        "visibleError": "Membership or native outcome could not be confirmed.",
+        "safeStop": "Preserve durable identity and do not repeat an uncertain external effect.",
+        "recoveryAction": {
+          "kind": "recover",
+          "target": {
+            "strategy": "accessible_name",
+            "value": "Refresh request status"
+          }
+        },
+        "prohibitedSideEffects": [
+          "Automatic native turns on membership",
+          "Source project, history, permission or provider changes",
+          "Inferring native UUID from shared actor",
+          "Claiming JPD certification without an evidence matcher"
+        ]
+      }
+    }
+  ],
+  "promises": [
+    {
+      "promiseId": "recent-promise",
+      "stepId": "recent",
+      "statement": "The catalog starts with the most recently updated native chats and retains selection.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.activity_personas",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "history-promise",
+      "stepId": "history",
+      "statement": "The node inspector shows recent messages first and keeps older history reachable.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.activity_personas",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "link-promise",
+      "stepId": "link",
+      "statement": "An owner links a real native chat with role and personality without starting a native turn.",
+      "requiredFact": "state_persisted",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.activity_personas",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "replay-promise",
+      "stepId": "replay",
+      "statement": "Reload preserves declared personas; unrelated technical sessions do not become personas.",
+      "requiredFact": "content_rendered",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.activity_personas",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    },
+    {
+      "promiseId": "order-promise",
+      "stepId": "order",
+      "statement": "An explicit persona order targets only its linked native thread and preserves native settings.",
+      "requiredFact": "control_operable",
+      "requiredEvidenceKinds": [
+        "interaction_trace",
+        "visual_capture"
+      ],
+      "requiredObserverCapability": "studio.browser.activity_personas",
+      "statesToObserve": [
+        "success",
+        "error"
+      ],
+      "maxEvidenceAgeSeconds": 86400
+    }
+  ],
+  "riskSignals": [
+    "authentication",
+    "critical_ux",
+    "external_delivery",
+    "recovery"
+  ],
+  "outOfScope": [
+    "Automatic delivery between native chats",
+    "Native tool hosting",
+    "Governor assignment or step completion",
+    "JPD certification"
+  ]
+}

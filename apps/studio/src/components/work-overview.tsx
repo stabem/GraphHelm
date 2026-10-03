@@ -19,7 +19,7 @@ import type { RunTeamReadModel } from "../runtime/run-team";
 import type { RecordedActorSession } from "../runtime/session";
 import type { WorkMessage } from "../runtime/work-conversation";
 
-type CrewMember = { id: string; charter: string | null; lastAt?: string | null };
+type CrewMember = { id: string; charter: string | null; name?: string; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
 type RecordedActivity = { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null };
 type AgentReport = { sequence: number; occurredAt: string | null; text: string | null };
@@ -160,6 +160,13 @@ export function WorkOverview({
         : `Event #${latestRecordedUpdate.sequence} · recorded ${fullInstant(latestRecordedUpdate.occurredAt)}`;
   const joinedMembers = runTeam?.unavailable ? [] : runTeam?.members ?? [];
   const knownActors = new Set(crew.map((agent) => agent.id));
+  const recentSpeakers = [...workMessages].reverse().reduce<WorkMessage[]>((latest, message) => {
+    if (knownActors.has(message.sender) && !latest.some((item) =>
+      item.sender === message.sender && (item.transportSession ?? null) === (message.transportSession ?? null))) {
+      latest.push(message);
+    }
+    return latest;
+  }, []).slice(0, 6);
   const [stepFocus, setStepFocus] = useState({ runId, actor: selectedAgent });
   const focusActor = stepFocus.runId === runId ? stepFocus.actor : null;
   const assignedNodeIds = focusActor === null
@@ -181,13 +188,6 @@ export function WorkOverview({
     if (assigned !== undefined) onSelectNode(assigned.id);
     openGraph();
   };
-  const recentSpeakers = [...workMessages].reverse().reduce<WorkMessage[]>((latest, message) => {
-    if (knownActors.has(message.sender) && !latest.some((item) =>
-      item.sender === message.sender && (item.transportSession ?? null) === (message.transportSession ?? null))) {
-      latest.push(message);
-    }
-    return latest;
-  }, []).slice(0, 6);
   const orderedNodes = [...model.nodes].sort((left, right) => {
     const leftActive = ["running", "queued", "linting"].includes(left.state) ? 0 : 1;
     const rightActive = ["running", "queued", "linting"].includes(right.state) ? 0 : 1;
@@ -287,6 +287,16 @@ export function WorkOverview({
         </section>
       <section className="work-primary-roster" aria-label="People and reported work">
         <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>People</h2></div></div>
+        {crew.some((member) => member.name !== undefined) && <>
+          <p className="work-roster-note">Explicit personas and native chat links recorded for this activity.</p>
+          <div className="work-primary-people">{crew.filter((member) => member.name !== undefined).map((member) => <article key={member.id}>
+            <strong>{member.name ?? member.id}</strong><small>{member.name === undefined ? "Legacy persona" : "Native chat persona"}</small>
+            <p>{member.charter ?? "No persona charter recorded"}</p>
+            <small>{member.id}</small>
+            <button type="button" onClick={() => onSelectAgent?.(member.id)}>Open direct chat</button>
+            <button type="button" onClick={() => openAssignedSteps(member.id)}>Open assigned steps</button>
+          </article>)}</div>
+        </>}
         {runTeam?.unavailable && <p className="work-caution" role="note">Team records unavailable; joined membership is unknown. Only readable message senders can appear here.</p>}
         {joinedMembers.length > 0 ? <>
           <p className="work-roster-note">Explicitly joined sessions. Work state is what each session last reported, not a live heartbeat.</p>
@@ -300,16 +310,13 @@ export function WorkOverview({
             {model.nodes.every((node) => node.assignedActor?.id !== member.actorId) && <small>No assigned graph steps recorded</small>}
           </article>)}</div>
         </> : recentSpeakers.length > 0 ? <>
-          <p className="work-roster-note">Observed actor IDs from recorded messages. Matching MCP record keys separate transport sources; neither proves a native chat or live session.</p>
+          <p className="work-roster-note">Observed work reports from explicitly known actors. These reports do not prove native chat membership or live session state.</p>
           <div className="work-primary-people">{recentSpeakers.map((latest) => {
             const actorId = latest.sender;
             const transport = latest.transportSession ?? null;
-            const declared = transport !== null && recordedSessions.some((entry) =>
-              entry.actorId === actorId && entry.session === transport);
+            const declared = transport !== null && recordedSessions.some((entry) => entry.actorId === actorId && entry.session === transport);
             return <article key={JSON.stringify([runId, actorId, transport])}>
-              <strong>{actorId}</strong><small>{transport === null
-                ? "Observed actor · session unverified"
-                : `Recorded MCP transport ${transport} · ${declared ? "typed declaration recorded" : "declaration not recorded"} · native chat unverified`}</small>
+              <strong>{actorId}</strong><small>{transport === null ? "Observed actor · session unverified" : `Recorded MCP transport ${transport} · ${declared ? "typed declaration recorded" : "declaration not recorded"} · native chat unverified`}</small>
               <span>Task not reported</span><details className="work-person-report"><summary>Last recorded report</summary><p>{latest.text}</p></details>
               <small>Message stored · {ago(latest.at)}</small>
               <button type="button" onClick={() => onSelectAgent?.(actorId)}>Open actor chat</button>

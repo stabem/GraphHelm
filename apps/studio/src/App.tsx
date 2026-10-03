@@ -46,6 +46,7 @@ import type {
   ExecutionSummary,
   ReplySuggestions,
   MutationEvidence,
+  NativeChatSummary,
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
 import type { AnswerOutcome } from "./components/answer";
@@ -69,7 +70,7 @@ import {
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
@@ -1729,15 +1730,35 @@ export default function App({
     [loadExecution, selected],
   );
 
+  const linkNativePersona = useCallback(async (nodeId: string, chat: NativeChatSummary, charter: string) => {
+    const client = clientRef.current;
+    const executionId = selected;
+    if (!client || executionId === "" || selectedRef.current !== executionId) throw new Error("The project is not connected to a selected execution.");
+    const record = JSON.stringify({
+      protocol: "graphhelm-native-persona-v1",
+      executionId,
+      nodeId,
+      threadId: chat.id,
+      title: chat.title,
+      sourceDirectory: chat.projectDirectory,
+      charter,
+    });
+    const evidence = await client.signal(executionId, record, { to: chat.id, kind: "native_persona_linked" });
+    if (evidence.result !== "succeeded") throw new Error(evidence.diagnostics[0]?.message ?? "The persona link was not confirmed in the activity log.");
+    if (clientRef.current !== client || selectedRef.current !== executionId) return;
+    await loadExecution(executionId);
+  }, [loadExecution, selected]);
+
   // The crew: personas chartered in this run's log plus the agents the thread has heard from.
   // Derived AT THIS LEVEL because the crew lives on the canvas, not inside the chat panel.
   const personas = usePersonas(eventList, selected === "" ? undefined : selected, openEvidence);
+  const nativePersonaLinks = useNativePersonaLinks(eventList, selected === "" ? undefined : selected, openEvidence);
   // When each actor was last heard from - the blobs dim with silence, honestly. MEMOIZED, like
   // every O(events) derivation below: these run inside the component body and App re-renders at
   // pointer-move frequency during a rail drag - rebuilding five full-array scans per frame was
   // main-thread work for data that only changes when the events identity does (round-4).
   const crew = useMemo<
-    Array<{ id: string; charter: string | null; lastAt: string | null; presence: AgentPresence | null }>
+    Array<{ id: string; charter: string | null; name?: string; nativeChat?: NativeChatSummary; nodeId?: string; lastAt: string | null; presence: AgentPresence | null }>
   >(() => {
     const lastHeard = new Map<string, string>();
     for (const event of eventList) {
@@ -1754,13 +1775,19 @@ export default function App({
         lastAt: lastHeard.get(id) ?? null,
         presence: presence[id] ?? null,
       })),
-      ...[...new Set(eventList
-        .filter((event) => event.actorType === "agent" && event.actorId !== null)
-        .map((event) => event.actorId as string))]
-        .filter((id) => !personas[id])
-        .map((id) => ({ id, charter: null, lastAt: lastHeard.get(id) ?? null, presence: presence[id] ?? null })),
+      ...Object.entries(nativePersonaLinks)
+        .filter(([id]) => !personas[id])
+        .map(([id, link]) => ({
+          id,
+          charter: link.charter,
+          name: link.chat.title,
+          nativeChat: link.chat,
+          nodeId: link.nodeId,
+          lastAt: lastHeard.get(id) ?? null,
+          presence: presence[id] ?? null,
+        })),
     ];
-  }, [eventList, personas]);
+  }, [eventList, nativePersonaLinks, personas]);
 
   // THE CONVERSATIONS, SORTED BY WHO IS TALKING TO WHOM. Three kinds, kept apart because reading
   // them mixed is what made the room illegible: the ROOM (said to nobody in particular - you are
@@ -2703,14 +2730,25 @@ export default function App({
                   // KEYED BY WHO IT BELONGS TO: a prop change re-addressed a LIVE composer
                   // without remounting - agent A's half-typed draft stood one Enter from
                   // shipping to agent B (round-4).
-                  key={`agent-${focus.id}`}
+                  key={`agent-${selected}-${focus.id}`}
                   agentId={focus.id}
-                  charter={personas[focus.id] ?? null}
+                  charter={nativePersonaLinks[focus.id]?.charter ?? personas[focus.id] ?? null}
+                  name={nativePersonaLinks[focus.id]?.chat.title}
+                  nativeChats={nativePersonaLinks[focus.id] === undefined ? undefined : (
+                    <NativeChats
+                      client={clientRef.current}
+                      executionId={selected}
+                      nodeId={nativePersonaLinks[focus.id].nodeId}
+                      boundChat={nativePersonaLinks[focus.id].chat}
+                      personaCharter={nativePersonaLinks[focus.id].charter}
+                      refreshSequence={status?.headSequence ?? 0}
+                    />
+                  )}
                   events={eventList}
                   executionId={selected === "" ? undefined : selected}
                   openEvidence={openEvidence}
                   onClose={() => setFocus({ kind: "none" })}
-                  onSay={(message, to) => void say(message, to, "agent")}
+                  onSay={nativePersonaLinks[focus.id] === undefined ? (message, to) => void say(message, to, "agent") : undefined}
                   saying={saying === "agent"}
                   sayError={sayError?.via === "agent" ? sayError.text : ""}
                 />
@@ -3185,10 +3223,12 @@ export default function App({
                   }
                   nativeChats={
                     <NativeChats
+                      key={`native-${selected}-${node.id}`}
                       client={clientRef.current}
                       executionId={selected}
                       nodeId={node.id}
                       refreshSequence={status?.headSequence ?? 0}
+                      onLinkPersona={(chat, charter) => linkNativePersona(node.id, chat, charter)}
                     />
                   }
                 />

@@ -1765,7 +1765,7 @@ export class RuntimeClient {
   async signal(
     executionId: string,
     message: string,
-    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string } = {},
+    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; kind?: "operator_note" | "native_persona_linked" } = {},
   ): Promise<MutationEvidence> {
     const id = checkedId(executionId, "executionId");
     if (typeof message !== "string" || message.trim().length === 0) {
@@ -1775,6 +1775,13 @@ export class RuntimeClient {
       throw new RuntimeError(`A message must be at most ${MAX_MESSAGE_LENGTH} characters.`, 0, []);
     }
     const actor = options.actor ?? OPERATOR_ACTOR;
+    const kind = options.kind ?? "operator_note";
+    if (kind !== "operator_note" && kind !== "native_persona_linked") {
+      throw new RuntimeError("The signal kind is unsupported.", 0, []);
+    }
+    if (kind === "native_persona_linked" && actor.type !== "owner") {
+      throw new RuntimeError("Native persona links must be recorded by the owner.", 0, []);
+    }
     // THE BODY IS PART OF THE IDENTITY. The Runtime folds the canonical request body into its
     // derived idempotency key, so a retry under the same key must send byte-identical bytes -
     // a fresh envelope id or timestamp turns "the same logical action" into a 409 divergent
@@ -1793,7 +1800,7 @@ export class RuntimeClient {
           // would forge provenance into immutable history (PR #467 review). The schema's enum
           // has no "agent", so the tool surface speaks as "tool".
           source: { type: actor.type === "owner" ? "user" : "tool", id: actor.id },
-          type: "operator_note",
+          type: kind,
           severity: "low",
           description: message,
           // `minItems: 1`, and the execution being spoken about is the one thing a message from

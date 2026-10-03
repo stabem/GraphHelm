@@ -141,8 +141,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const generation = useRef(0);
   const scopeRef = useRef("");
   const reading = useRef(false);
-  const conversationRef = useRef<HTMLDivElement>(null);
-  const atBottomRef = useRef(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scopeKey = executionId;
 
   const byChat = useMemo(() => new Map(personas.map((persona) => [persona.chat.id, persona])), [personas]);
@@ -153,6 +152,8 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const teamTargets = personas.filter((persona) => persona.chat.id !== selected?.chat.id);
   const activeRows = rows;
   const blockedByPending = activeRows.some((row) => isPending(row.state));
+  const latestBlocked = activeRows.filter((row) => row.state === "blocked").at(-1);
+  const statusRequest = activeRows.filter((row) => isPending(row.state)).at(-1) ?? latestBlocked;
   const hasReceiptPending = activeRows.some((row) => isPending(row.state));
   const canSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
@@ -295,12 +296,6 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer); };
   }, [client, executionId, hasReceiptPending, nativeApiAvailable, refreshNonce, refreshSequence, scopeKey]);
 
-  const conversationSignature = activeRows.map((row) => `${keyOf(row)}\0${row.state}\0${row.text ?? ""}`).join("\x01");
-  useEffect(() => {
-    const conversation = conversationRef.current;
-    if (conversation !== null && atBottomRef.current) conversation.scrollTop = conversation.scrollHeight;
-  }, [conversationSignature]);
-
   const send = async (fanout: boolean) => {
     if (!canSend || selected === null || client === null || !nativeApiAvailable) return;
     const recipients = fanout ? teamTargets : [selected];
@@ -394,31 +389,62 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
       <h3>JEV · Suggested next step</h3>
       {replyLoading ? <p role="status">Preparing JEV suggestions…</p> : suggestedDrafts.length === 2 ? <>
         <p>Advice for the current run. Using a suggestion only fills your draft; check the selected recipient before sending.</p>
-        {suggestedDrafts.map((suggestion, index) => <article key={index}>
-          <p>{suggestion.draft}</p><p className="main-chat-team-targets">{suggestion.reason}</p>
-          <button type="button" disabled={message !== "" || suggestion.draft.length > messageLimit} onClick={() => setMessage(suggestion.draft)}>Use suggestion {index + 1}</button>
-        </article>)}
+        <article>
+          <p>{suggestedDrafts[0].draft}</p><p className="main-chat-team-targets">{suggestedDrafts[0].reason}</p>
+          <button type="button" disabled={message !== "" || suggestedDrafts[0].draft.length > messageLimit} onClick={() => { setMessage(suggestedDrafts[0].draft); textareaRef.current?.focus(); }}>Use suggestion 1</button>
+        </article>
+        <details>
+          <summary>Another suggestion</summary>
+          <article>
+            <p>{suggestedDrafts[1].draft}</p><p className="main-chat-team-targets">{suggestedDrafts[1].reason}</p>
+            <button type="button" disabled={message !== "" || suggestedDrafts[1].draft.length > messageLimit} onClick={() => { setMessage(suggestedDrafts[1].draft); textareaRef.current?.focus(); }}>Use suggestion 2</button>
+          </article>
+        </details>
         {message !== "" && <p>Clear your instruction to use a suggestion. Your draft will not be overwritten.</p>}
       </> : <p role="status">{replyIssue ?? currentAdvice?.reason ?? (currentAdvice?.state === "not_needed" ? "JEV has no suggested reply for this run right now." : "JEV suggestions are unavailable for the current run. You can write your own instruction.")}</p>}
     </section>
-    <div aria-label="Main chat conversation" className="main-chat-conversation" ref={conversationRef} onScroll={(event) => {
-      const element = event.currentTarget;
-      atBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-    }}>
-      {activeRows.map((row) => <article key={keyOf(row)} className={`main-chat-request main-chat-request-${row.state}`}>
-        {row.ownerMessage && <p><strong>You</strong>: {row.ownerMessage}</p>}
-        <strong>{stateLabel(row.state)}</strong><span> {row.title} · <code>{row.requestId}</code></span>
-        {row.text && <p>{row.text}</p>}{row.detail && <p role="status">{row.detail}</p>}
-      </article>)}
-      {activeRows.length === 0 && <p className="main-chat-empty">No orders sent yet. Your next message will appear here.</p>}
-    </div>
     <label htmlFor="main-chat-message">Instruction</label>
-    <textarea id="main-chat-message" value={message} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
+    <textarea ref={textareaRef} id="main-chat-message" aria-describedby="main-chat-request-status" value={message} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
     <p>{message.length}/{messageLimit} characters</p>
     <p className="main-chat-team-targets">Team targets: {teamTargets.length === 0 ? "none" : teamTargets.map((persona) => persona.chat.title).join(", ")}</p>
-    <div className="main-chat-actions"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
-    {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
-    {blockedByPending && <p role="status">Sending is paused until the previous request is confirmed. You can keep writing your next instruction.</p>}
+    <section id="main-chat-request-status" className="main-chat-request-status" aria-label="Request status">
+      <strong>Request status</strong>
+      <p role="status">{readFailed ? "Request status could not be checked. Refresh before sending. Your instruction remains editable."
+        : blockedByPending ? "Sending is paused until the previous request is confirmed. You can keep writing your next instruction."
+        : latestBlocked ? "The previous request needs attention in Codex. Check the original chat before sending another instruction."
+        : "No pending native requests."}</p>
+      {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
+      {statusRequest && <details className="main-chat-technical-details">
+        <summary>Technical details</summary>
+        <p>{statusRequest.title} · <code>{statusRequest.requestId}</code></p>
+        <p>{statusRequest.detail ?? stateLabel(statusRequest.state)}</p>
+      </details>}
+    </section>
+    <div className="main-chat-actions" aria-describedby="main-chat-request-status"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
+    <details className="main-chat-history">
+      <summary>Request history ({activeRows.length})</summary>
+      <div aria-label="Main chat conversation" className="main-chat-conversation">
+        {activeRows.map((row) => <article key={keyOf(row)} className={`main-chat-request main-chat-request-${row.state}`}>
+          {row.ownerMessage && <p><strong>You</strong>: {row.ownerMessage}</p>}
+          <strong>{stateLabel(row.state)}</strong><span> {row.title}</span>
+          {row.text && <p>{row.text}</p>}
+          <details className="main-chat-technical-details">
+            <summary>Technical details</summary>
+            <dl>
+              <dt>Request ID</dt><dd><code>{row.requestId}</code></dd>
+              <dt>Node ID</dt><dd><code>{row.nodeId}</code></dd>
+              <dt>Thread ID</dt><dd><code>{row.threadId}</code></dd>
+              <dt>Execution ID</dt><dd><code>{executionId}</code></dd>
+              {row.turnId && <><dt>Turn ID</dt><dd><code>{row.turnId}</code></dd></>}
+              <dt>Source directory</dt><dd><code>{row.sourceDirectory}</code></dd>
+              <dt>State</dt><dd>{row.state}</dd>
+              {row.detail && <><dt>Diagnostic</dt><dd>{row.detail}</dd></>}
+            </dl>
+          </details>
+        </article>)}
+        {activeRows.length === 0 && <p className="main-chat-empty">No orders sent yet. Your next message will appear here.</p>}
+      </div>
+    </details>
   </section>;
 }

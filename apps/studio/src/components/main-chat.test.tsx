@@ -42,9 +42,15 @@ describe("MainChat", () => {
     const view = render(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={7} replySuggestions={suggestions} />);
     const advice = await screen.findByRole("region", { name: "JEV next step" });
     expect(advice).toHaveTextContent("No work split was recorded.");
+    const history = screen.getByText("Request history (1)").closest("details")!;
+    expect(history.open).toBe(false);
+    expect(screen.getByText("Another suggestion").closest("details")?.open).toBe(false);
+    expect(screen.getByLabelText("Instruction").compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Use suggestion 1" }));
     expect(screen.getByLabelText("Instruction")).toHaveValue(suggestions.suggestions[0].draft);
+    fireEvent.click(screen.getByText("Another suggestion"));
     expect(screen.getByRole("button", { name: "Use suggestion 2" })).toBeDisabled();
+    expect(screen.getByLabelText("Instruction")).toHaveFocus();
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
     expect(client.sendNativeChat).not.toHaveBeenCalled();
     view.rerender(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={8} replySuggestions={suggestions} replyIssue="Waiting for fresh JEV advice." />);
@@ -177,13 +183,13 @@ describe("MainChat", () => {
     let terminal = false;
     const client = runtime({ listNativeChatRequests: vi.fn(() => terminal ? Promise.resolve({ requests: [{ requestId: "request-unknown", nodeId: "node-removed", threadId: "removed", title: "Recovered", sourceDirectory: "", state: "completed" as const }] }) : Promise.resolve({ requests: [] })) });
     const first = render(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 2)} />);
-    await screen.findByText(/Retained native chat request/);
-    expect(screen.getByText(/request-unknown/)).toBeInTheDocument();
+    await screen.findAllByText(/Retained native chat request/);
+    expect(screen.getAllByText(/request-unknown/)[0]).toBeInTheDocument();
     first.rerender(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 1)} />);
-    expect(screen.getByText(/request-unknown/)).toBeInTheDocument();
+    expect(screen.getAllByText(/request-unknown/)[0]).toBeInTheDocument();
     first.unmount();
     render(<MainChat client={client} executionId="run-reload" personas={personas.slice(0, 1)} />);
-    expect(await screen.findByText(/request-unknown/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/request-unknown/))[0]).toBeInTheDocument();
     expect(JSON.parse(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`)!)).toEqual([
       { executionId: "run-reload", requestId: "request-unknown", nodeId: "node-removed", threadId: "removed" },
     ]);
@@ -236,7 +242,7 @@ describe("MainChat", () => {
     const client = runtime({ listNativeChatRequests: vi.fn().mockRejectedValue(new Error("ledger unavailable")) });
     render(<MainChat client={client} executionId="run-offline" personas={personas} />);
     await screen.findByText("ledger unavailable");
-    expect(screen.getByText(/pending-offline/)).toBeInTheDocument();
+    expect(screen.getAllByText(/pending-offline/)[0]).toBeInTheDocument();
     expect(screen.getByLabelText("Instruction")).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Do not repeat" } });
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();

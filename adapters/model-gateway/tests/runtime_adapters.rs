@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use graphhelm_gateway::call::ModelCall;
 use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_gateway::taxonomy::{GatewayError, outcome_for_error};
+use graphhelm_model_gateway::native_chats::{self, NativeChatConfig};
 use graphhelm_model_gateway::runtime::RuntimeAdapter;
 use graphhelm_protocols::NodeOutcome;
 
@@ -136,6 +137,27 @@ fn ok_env(shape: &str) -> Vec<(String, String)> {
 
 fn mode_env(mode: &str) -> Vec<(String, String)> {
     vec![("FAKE_RUNTIME_MODE".to_owned(), mode.to_owned())]
+}
+
+#[test]
+fn native_resume_rejection_is_blocked_before_turn_start() {
+    let source = std::env::current_dir().expect("test source directory must exist");
+    let config = NativeChatConfig {
+        program: PathBuf::from(fake_runtime_path()),
+        sqlite_home: None,
+    };
+    let error = native_chats::send(
+        &config,
+        "019fdfe7-b5fa-7ca1-89c8-9651ad856819",
+        "hello",
+        &source,
+        |_| Ok(()),
+    )
+    .expect_err("resume rejection must stop before turn dispatch");
+    assert_eq!(
+        error,
+        "blocked: native thread resume was rejected; no instruction was dispatched"
+    );
 }
 
 /// A validated single-route `direct_api` manifest — used only by

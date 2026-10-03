@@ -116,6 +116,51 @@ describe("RuntimeClient reads", () => {
     }
   });
 
+  it("lets the read-only reply suggestions call outlive the ordinary deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveBody!: (value: unknown) => void;
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: () => new Promise<unknown>((resolve) => { resolveBody = resolve; }),
+      }) as Response) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const read = client.getReplySuggestions("demo", "judge");
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      resolveBody({ ok: true, command: "execution.reply_suggestions", data: {
+        executionId: "demo", headSequence: 3, state: "ready", suggestions: [],
+      }, diagnostics: [] });
+      await expect(read).resolves.toMatchObject({ state: "ready", headSequence: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the capped reply suggestions deadline and keeps ordinary reads at ten seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const client = new RuntimeClient("tok", { fetch: fetchImpl });
+      const suggestions = client.getReplySuggestions("demo", "judge");
+      const rejection = expect(suggestions).rejects.toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
+      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(120_000 - RUNTIME_REQUEST_TIMEOUT_MS);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports disposal as disconnect while a suggestions read is pending", async () => {
+    const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    const suggestions = client.getReplySuggestions("demo", "judge");
+    client.dispose();
+    await expect(suggestions).rejects.toBeInstanceOf(DisconnectedError);
+  });
+
   it("unwraps the four-key envelope and returns only its data", async () => {
     const { fetchImpl } = scriptedFetch([
       { match: (call) => call.url === "/v1/executions", reply: ok({ executions: [], hasMore: false, nextCursor: null }, "execution.list") },

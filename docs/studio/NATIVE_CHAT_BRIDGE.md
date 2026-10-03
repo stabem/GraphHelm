@@ -32,8 +32,11 @@ The composer stays locked until the request ledger has been read successfully. A
 read leaves it locked. Before dispatch, the browser saves only recovery identities in session
 storage: execution, node, thread and request IDs. It does not save message text, charters, replies,
 project paths or credentials. A reload or roster change preserves an uncertain request even if
-its intent is absent from the ledger. Only an exact authoritative terminal receipt releases that
-recovery identity; refreshing does not send the work again.
+its intent is absent from the ledger. An exact authoritative terminal receipt releases that
+recovery identity. A typed `GHCLI001_ARGUMENT_INVALID` refusal from `serve-cli` with HTTP 400 also
+releases it when its public diagnostic identifies pre-intent validation of the actor, metadata,
+thread or node. An immutable request-ID conflict or opaque HTTP error remains uncertain.
+Refreshing does not send the work again.
 
 The [principal conversation journey](../acceptance/studio-main-chat-journey-2026-10-03.json)
 defines rendering, target isolation, actual native replies and partial-failure recovery. Fan-out

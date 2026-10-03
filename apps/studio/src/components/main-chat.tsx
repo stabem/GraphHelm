@@ -350,6 +350,15 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
         window.clearTimeout(timeout);
       }
     }));
+    // These public diagnostics reject a fresh request before durable intent/native dispatch.
+    // An opaque HTTP error or immutable request-ID conflict remains uncertain.
+    const rejectedBeforeDispatch = outcomes.map((result) => result.status === "rejected" &&
+      result.reason instanceof RuntimeError && result.reason.httpStatus === 400 &&
+      result.reason.diagnostics.some((diagnostic) => diagnostic.code === "GHCLI001_ARGUMENT_INVALID" &&
+        diagnostic.source === "serve-cli" && ["/actorType", "/idempotencyKey", "/nativeChats", "/threadId", "/execution", "/nodeId"].includes(diagnostic.path)));
+    requests.forEach((request, index) => {
+      if (rejectedBeforeDispatch[index]) removeRecovery({ executionId, requestId: request.requestId, nodeId: request.nodeId, threadId: request.threadId });
+    });
     if (run !== generation.current) return;
     setRows((current) => current.map((row) => {
       const index = requests.findIndex((request) => request.requestId === row.requestId);
@@ -357,7 +366,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
       if (!result || row.local !== true) return row;
       if (row.state === "completed" || row.state === "blocked") return row;
       if (result.status === "fulfilled") return row;
-      const definitive = result.reason instanceof RuntimeError && result.reason.httpStatus >= 400 && result.reason.httpStatus < 500;
+      const definitive = rejectedBeforeDispatch[index];
       return { ...row, state: definitive ? "blocked" : "unobserved", detail: definitive ? errorText(result.reason) : "Send outcome is unobserved. Reconcile this request id before trying again." };
     }));
     const failed = outcomes.filter((outcome) => outcome.status === "rejected").length;

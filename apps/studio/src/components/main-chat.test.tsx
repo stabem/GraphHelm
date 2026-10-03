@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MainChat, type MainChatProps } from "./main-chat";
+import { RuntimeError } from "../runtime/client";
 
 /* Meaningful-test audit: these tests observe the user-facing dispatch and receipt boundary. They
  * catch wrong principal/fanout targets, missing charter prefixes, duplicate retries, stale scope
@@ -165,6 +166,42 @@ describe("MainChat", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh request status" }));
     await screen.findByText(/Completed · chat reply received/);
     expect(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:run-reload`)).toBe("[]");
+  });
+
+  it("releases typed pre-intent refusals across reload but retains ambiguous HTTP errors", async () => {
+    const refusal = new RuntimeError("A native turn is already in flight", 400, [{
+      code: "GHCLI001_ARGUMENT_INVALID", severity: "error", message: "Busy thread", path: "/threadId", source: "serve-cli",
+    }]);
+    const client = runtime({ sendNativeChat: vi.fn().mockRejectedValue(refusal) });
+    const first = render(<MainChat client={client} executionId="run-refused" personas={personas} />);
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Rejected work" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
+    await screen.findByText(/Blocked · action needed/);
+    first.unmount();
+    const restored = render(<MainChat client={client} executionId="run-refused" personas={personas} />);
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Explicit new instruction" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
+    expect(screen.queryByText(/Unobserved · outcome not proven/)).not.toBeInTheDocument();
+    expect(client.sendNativeChat).toHaveBeenCalledTimes(1);
+    restored.unmount();
+
+    for (const [id, error] of [
+      ["timeout", new RuntimeError("Unknown HTTP failure", 408, [])],
+      ["opaque", new RuntimeError("Opaque HTTP refusal", 400, [])],
+      ["conflict", new RuntimeError("Immutable request-ID conflict", 400, [{ code: "GHCLI001_ARGUMENT_INVALID", severity: "error", message: "Reused ID", path: "/requestId", source: "serve-cli" }])],
+    ] as const) {
+      const execution = `run-ambiguous-${id}`;
+      const ambiguous = runtime({ sendNativeChat: vi.fn().mockRejectedValue(error) });
+      const view = render(<MainChat client={ambiguous} executionId={execution} personas={personas} />);
+      fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Keep the original ID" } });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
+      await screen.findByText(/Unobserved · outcome not proven/);
+      expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+      expect(JSON.parse(sessionStorage.getItem(`graphhelm.main-chat.recovery:${location.origin}:${execution}`)!)).toHaveLength(1);
+      view.unmount();
+    }
   });
 
   it("shows a retained request identity even when ledger reconciliation fails", async () => {

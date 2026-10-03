@@ -68,6 +68,8 @@ export const MAX_MESSAGE_LENGTH = 4000;
 
 /** Every Runtime round trip, including reading its response body, has a finite silence budget. */
 export const RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
+/** Reply suggestions are a read-only advisory whose judge call may take longer than ordinary reads. */
+const REPLY_SUGGESTIONS_REQUEST_TIMEOUT_MS = 120_000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
@@ -308,6 +310,7 @@ interface RequestOptions {
   path: string;
   body?: unknown;
   headers?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string
@@ -489,7 +492,7 @@ export class RuntimeClient {
     return "[RuntimeClient]";
   }
 
-  async #request<T>({ method, path, body, headers = {} }: RequestOptions): Promise<T> {
+  async #request<T>({ method, path, body, headers = {}, timeoutMs = RUNTIME_REQUEST_TIMEOUT_MS }: RequestOptions): Promise<T> {
     const token = this.#token;
     if (token === null) throw new DisconnectedError();
     const controller = new AbortController();
@@ -501,7 +504,7 @@ export class RuntimeClient {
         deadlineReached = true;
         controller.abort();
         reject(new RequestDeadlineError());
-      }, RUNTIME_REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
     });
     const cancelled = new Promise<never>((_, reject) => {
       controller.signal.addEventListener("abort", () => {
@@ -662,6 +665,7 @@ export class RuntimeClient {
       return await this.#request<ReplySuggestions>({
         method: "GET",
         path: `/v1/executions/${encodeURIComponent(id)}/reply-suggestions?judgeRoute=${encodeURIComponent(judge)}`,
+        timeoutMs: REPLY_SUGGESTIONS_REQUEST_TIMEOUT_MS,
       });
     } catch (reason) {
       if (

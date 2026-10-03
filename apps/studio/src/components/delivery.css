@@ -125,7 +125,9 @@
   .app[data-document-open="true"] > .grip { display: none; }
 }
 .main-chat-rail { flex: 0 0 clamp(320px, 27vw, 400px); min-width: 0; height: 100%; border-right: 1px solid #35343b; background: #19191d; overflow-y: auto; }
-.main-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; padding: 20px; box-sizing: border-box; font-size: 14px; }
+.main-chat { display: flex; flex-direction: column; height: auto; min-height: 100%; gap: 10px; padding: 20px; box-sizing: border-box; font-size: 14px; }
+.main-chat > * { flex-shrink: 0; }
+.main-chat :focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
 .main-chat h2 { margin: 0; font-size: 19px; }
 .main-chat p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .main-chat header p { color: #b8b6c6; margin-top: 8px; }
@@ -135,7 +137,7 @@
 .main-chat textarea { flex-shrink: 0; min-height: 100px; resize: vertical; }
 .main-chat button { min-height: 44px; border: 1px solid #60566f; border-radius: 10px; padding: 9px 12px; cursor: pointer; }
 .main-chat button:disabled { cursor: default; opacity: .5; }
-.main-chat-conversation { flex: 1; min-height: 100px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+.main-chat-conversation { display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
 .main-chat-request { border: 1px solid #494451; border-radius: 12px; padding: 12px; background: #242329; overflow-wrap: anywhere; }
 .main-chat-request p + strong { display: block; margin-top: 8px; }
 .main-chat-request span { display: block; font-size: 12px; color: #b8b6c6; margin: 6px 0; }
@@ -144,18 +146,26 @@
 .main-chat-request-blocked, .main-chat-request-unobserved { border-color: #957541; }
 .main-chat-request-requested, .main-chat-request-received { border-color: #665285; }
 .main-chat-empty { color: #b8b6c6; padding: 16px 0; }
-.main-chat-guidance { flex-shrink: 0; max-height: 240px; overflow-y: auto; padding: 12px; border: 1px solid #60566f; border-radius: 12px; background: #24212c; }
+.main-chat-guidance { padding: 12px; border: 1px solid #60566f; border-radius: 12px; background: #24212c; }
 .main-chat-guidance h3 { margin: 0 0 8px; font-size: 14px; }
 .main-chat-guidance article { margin-top: 10px; padding-top: 10px; border-top: 1px solid #494451; }
 .main-chat-guidance article p + p, .main-chat-guidance article button { margin-top: 8px; }
+.main-chat-guidance summary, .main-chat-history summary, .main-chat-technical-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.main-chat-guidance summary:focus-visible, .main-chat-history summary:focus-visible, .main-chat-technical-details summary:focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
 .main-chat-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .main-chat-team-targets { font-size: 12px; color: #b8b6c6; }
-.main-chat-refresh { flex-shrink: 0; background: #242329; color: #eeeaf8; }
+.main-chat-request-status { display: grid; gap: 8px; padding: 12px; border: 1px solid #494451; border-radius: 10px; background: #242329; }
+.main-chat-refresh { background: #242329; color: #eeeaf8; }
 .main-chat-actions button:first-child { background: #7352a0; color: white; }
+.main-chat-history { margin-top: 4px; }
+.main-chat-history > summary { color: #c9b4ff; }
+.main-chat-technical-details { margin-top: 10px; }
+.main-chat-technical-details summary { color: #c9b4ff; font-size: 12px; }
+.main-chat-technical-details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 10px; margin: 0; padding: 0 0 4px 18px; color: #b8b6c6; font-size: 12px; }
+.main-chat-technical-details dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 900px) {
   .split:has(> .main-chat-rail) { flex-direction: column; overflow-y: auto; }
-  .main-chat-rail { flex: 0 0 auto; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid #35343b; }
-  .main-chat { height: auto; min-height: 620px; }
-  .main-chat-conversation { flex: 0 1 auto; max-height: 300px; }
+  .main-chat-rail { flex: 0 0 auto; width: 100%; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid #35343b; }
   .split:has(> .main-chat-rail) > .scene { flex: 0 0 650px; min-height: 650px; }
 }
+@media (max-width: 800px) { .main-chat textarea { font-size: 16px; } }

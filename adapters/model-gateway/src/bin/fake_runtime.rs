@@ -79,7 +79,7 @@
 //! An unset or unrecognized `FAKE_RUNTIME_MODE` is a fixture misuse, not a case any adapter
 //! behavior needs to classify: it prints a short diagnostic to stderr and exits `2`.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -90,6 +90,10 @@ const HANG_FALLBACK: Duration = Duration::from_secs(120);
 const HANG_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn main() {
+    if std::env::args().any(|arg| arg == "app-server") {
+        run_native_resume_rejection();
+        return;
+    }
     let mode = std::env::var("FAKE_RUNTIME_MODE").unwrap_or_default();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match mode.as_str() {
@@ -147,6 +151,51 @@ fn main() {
             eprintln!("fake_runtime: unrecognized FAKE_RUNTIME_MODE '{other}'");
             std::process::exit(2);
         }
+    }
+}
+
+/// Minimal JSON-RPC app-server fixture for native chat recovery tests. It rejects resume and
+/// exits if a caller dispatches `turn/start`, making the no-dispatch contract observable.
+fn run_native_resume_rejection() {
+    let thread_id = "019fdfe7-b5fa-7ca1-89c8-9651ad856819";
+    let cwd = std::env::current_dir()
+        .expect("fake_runtime: current directory is unavailable")
+        .to_string_lossy()
+        .to_string();
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut line = String::new();
+    while input
+        .read_line(&mut line)
+        .expect("fake_runtime: failed to read RPC")
+        != 0
+    {
+        let request: serde_json::Value =
+            serde_json::from_str(&line).expect("fake_runtime: malformed RPC request");
+        line.clear();
+        let Some(method) = request.get("method").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(id) = request.get("id").cloned() else {
+            continue;
+        };
+        let response = match method {
+            "initialize" => serde_json::json!({"id": id, "result": {}}),
+            "thread/read" => serde_json::json!({
+                "id": id,
+                "result": {"thread": {"id": thread_id, "cwd": cwd}}
+            }),
+            "thread/resume" => serde_json::json!({
+                "id": id,
+                "error": {"code": -32000, "message": "thread is unavailable"}
+            }),
+            "turn/start" => std::process::exit(42),
+            _ => serde_json::json!({"id": id, "result": {}}),
+        };
+        println!("{response}");
+        std::io::stdout()
+            .flush()
+            .expect("fake_runtime: failed to flush RPC response");
     }
 }
 

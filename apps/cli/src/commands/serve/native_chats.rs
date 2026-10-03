@@ -6,6 +6,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 use super::{ServeState, mutation_bad_request, respond, respond_failure};
 use crate::commands::execution::signal::SignalKeyring;
@@ -14,6 +15,9 @@ use crate::output::Outcome;
 
 const COMMAND: &str = "serve.native_chats";
 const MAX_MESSAGE: usize = 2_000;
+const LEGACY_RESUME_ERROR: &str = "Codex request thread/resume failed: server error";
+const RESUME_BLOCKED_DETAIL: &str =
+    "native thread resume was rejected; no instruction was dispatched";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -445,6 +449,7 @@ async fn load_receipts(
     let opener = super::ports::build_opener(Some(sealing))
         .map_err(|message| execution::execution_state(&message, "/keyring"))?;
     let mut records: Vec<Receipt> = Vec::new();
+    let mut observed_requests = HashSet::new();
     for event in history {
         let graphhelm_protocols::EventKind::SignalRecorded(signal) = &event.kind else {
             continue;
@@ -499,6 +504,19 @@ async fn load_receipts(
                 )
             })?;
             receipt.state = signal.kind.trim_start_matches("native_chat_").to_owned();
+            if matches!(receipt.state.as_str(), "received" | "completed")
+                || receipt.turn_id.is_some()
+            {
+                observed_requests.insert(receipt.request_id.clone());
+            }
+            if receipt.state == "unobserved"
+                && receipt.turn_id.is_none()
+                && receipt.detail.as_deref() == Some(LEGACY_RESUME_ERROR)
+                && !observed_requests.contains(&receipt.request_id)
+            {
+                receipt.state = "blocked".into();
+                receipt.detail = Some(RESUME_BLOCKED_DETAIL.into());
+            }
             if let Some(index) = records
                 .iter()
                 .position(|prior| prior.request_id == receipt.request_id)

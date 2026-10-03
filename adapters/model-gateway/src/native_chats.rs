@@ -169,10 +169,18 @@ where
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| bounded_string(thread_id, MAX_TITLE));
     // Deliberately pass no model, provider, sandbox, approval, or other setting: server metadata owns them.
-    rpc.request(
+    match rpc.request(
         "thread/resume",
         json!({"threadId": thread_id, "excludeTurns": true}),
-    )?;
+    ) {
+        Ok(_) => {}
+        Err(error) if error == "Codex request thread/resume failed: server error" => {
+            return Err(
+                "blocked: native thread resume was rejected; no instruction was dispatched".into(),
+            );
+        }
+        Err(error) => return Err(error),
+    }
     let turn_result = rpc.request(
         "turn/start",
         json!({"threadId": thread_id, "input": [{"type":"text","text":message}]}),

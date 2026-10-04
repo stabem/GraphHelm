@@ -32,6 +32,27 @@ describe("MainChat", () => {
     sessionStorage.clear();
   });
 
+  // Mocked ledger/DOM only: an uncertain worker must not lock a different coordinator.
+  // Existing same-chat recovery tests miss this cross-recipient lock. This protects both
+  // independent dispatch and duplicate prevention, with no production seam or network.
+  it("lets the coordinator send while keeping an uncertain worker and team locked", async () => {
+    const client = runtime({ listNativeChatRequests: vi.fn().mockResolvedValue({ requests: [
+      { requestId: "worker-unknown", nodeId: "node-two", threadId: "two", title: "Builder", sourceDirectory: "C:/two", state: "unobserved" },
+    ] }) });
+    render(<MainChat client={client} executionId="run-independent" personas={personas} />);
+    await screen.findByText("Request history (1)");
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Report the next step" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send to team (3 others)" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Main recipient"), { target: { value: "two" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Main recipient"), { target: { value: "main" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to main chat" }));
+    await waitFor(() => expect(client.sendNativeChat).toHaveBeenCalledTimes(1));
+    expect(client.sendNativeChat.mock.calls[0][1].threadId).toBe("main");
+    expect(screen.getByText("Request history (2)")).toBeInTheDocument();
+  });
+
   // DOM-only: protects advisory/current-head advice and draft-only use while dispatch is locked.
   it("offers current JEV drafts without sending or overwriting a draft and rejects stale advice", async () => {
     const client = runtime({ listNativeChatRequests: vi.fn().mockResolvedValue({ requests: [{ requestId: "unknown", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "unobserved" }] }) });

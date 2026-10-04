@@ -76,9 +76,44 @@ fn config() -> Result<graphhelm_model_gateway::native_chats::NativeChatConfig, S
             Ok::<PathBuf, String>(path)
         })
         .transpose()?;
+    let desktop_keys = [
+        "GRAPHHELM_CODEX_DESKTOP_NODE",
+        "GRAPHHELM_CODEX_DESKTOP_PIPE",
+        "GRAPHHELM_CODEX_DESKTOP_CALLER_THREAD",
+        "GRAPHHELM_CODEX_DESKTOP_CALLER_TURN",
+    ];
+    let desktop_values: Vec<_> = desktop_keys.iter().map(std::env::var).collect();
+    let desktop = if desktop_values
+        .iter()
+        .all(|value| matches!(value, Err(std::env::VarError::NotPresent)))
+    {
+        None
+    } else {
+        let values: Vec<String> = desktop_values
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .map_err(|_| "Desktop chat transport requires all four trusted server settings")?;
+        let node = PathBuf::from(&values[0]);
+        if !node.is_absolute() {
+            return Err("GRAPHHELM_CODEX_DESKTOP_NODE must be absolute".into());
+        }
+        let node = node
+            .canonicalize()
+            .map_err(|_| "GRAPHHELM_CODEX_DESKTOP_NODE must name an existing executable")?;
+        if !node.is_file() {
+            return Err("GRAPHHELM_CODEX_DESKTOP_NODE must name an existing executable".into());
+        }
+        Some(graphhelm_model_gateway::native_chats::DesktopChatConfig {
+            node_program: node,
+            pipe_path: values[1].clone(),
+            caller_thread_id: values[2].clone(),
+            caller_turn_id: values[3].clone(),
+        })
+    };
     Ok(graphhelm_model_gateway::native_chats::NativeChatConfig {
         program,
         sqlite_home,
+        desktop,
     })
 }
 
@@ -358,6 +393,7 @@ pub(super) async fn send(
                 &body.thread_id,
                 &body.message,
                 &source,
+                &body.request_id,
                 |event| {
                     let phase = event
                         .get("phase")
@@ -394,6 +430,15 @@ pub(super) async fn send(
             Err(_) => Some("native worker stopped before its outcome was confirmed".to_owned()),
         };
         if let Some(message) = failure {
+            // Observation can stop after the native turn started. Keep its proven identity
+            // in the failure receipt rather than sending the owner back to an unknown chat.
+            if let Ok(known) = load_receipts(&state.events, &execution_id, &sealing).await
+                && let Some(prior) = known
+                    .iter()
+                    .find(|row| row.request_id == receipt.request_id)
+            {
+                receipt.turn_id = prior.turn_id.clone();
+            }
             receipt.state = if message.starts_with("blocked:") {
                 "blocked"
             } else {

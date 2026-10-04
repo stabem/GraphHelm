@@ -2,6 +2,38 @@
 
 A lifecycle outcome is not a description of the work. Agents can record deliveries progressively, without waiting for a node to finish. Reports are sealed evidence attached to their source node; the Studio displays what changed, why, and the reported document/journey/business-rule relationships.
 
+## Existing Desktop chats
+
+The main chat sends owner instructions to the selected existing chat. A refused request stays in
+history; it does not get resent. Native delivery does not assign or complete an operational node.
+
+Desktop-owned chats can reject a second standalone app-server writer. On a Windows Desktop host
+that supplies its app-tools capability, the Runtime can explicitly use that owning host instead.
+The owner configures all four trusted server environment variables:
+
+| Variable | Value |
+|---|---|
+| `GRAPHHELM_CODEX_DESKTOP_NODE` | Absolute path to an existing Node executable. |
+| `GRAPHHELM_CODEX_DESKTOP_PIPE` | The actual `CODEX_APP_TOOLS_PIPE_PATH` supplied by the Desktop to the authorized calling session. |
+| `GRAPHHELM_CODEX_DESKTOP_CALLER_THREAD` | That session's actual `CODEX_THREAD_ID`. |
+| `GRAPHHELM_CODEX_DESKTOP_CALLER_TURN` | That session's actual current native turn ID. |
+
+These values are host configuration, never browser input. Do not invent caller identities or
+probe unrelated pipes. The capability belongs to the authorizing session and is version-sensitive;
+an unavailable or expired capability must be re-established by the owning Desktop session. The
+standalone catalog still uses `GRAPHHELM_CODEX_HOST_PROGRAM` and optional
+`GRAPHHELM_CODEX_SQLITE_HOME`. With no Desktop settings, the standalone sending path is unchanged.
+
+The Desktop path validates the original chat ID and project directory, preserves its model,
+reasoning, sandbox and approval settings, and includes a visible GraphHelm request marker. Only
+a native turn containing that request and caller identity can produce a received receipt. A
+completed receipt additionally requires that same turn's completion and final reply. An accepted
+tool call alone proves neither. Individual host calls stop within ten seconds. The background
+Desktop observer waits at most thirty minutes for work to finish, while the Studio can read its
+received state; the ordinary standalone observer keeps its existing deadline. An uncertain send
+never falls back to another writer, retries, or creates a replacement chat. Read the original chat
+before attempting another instruction when delivery remains unobserved.
+
 ## Record a delivery
 
 After a meaningful change, write a UTF-8 JSON report:

@@ -76,6 +76,28 @@ describe("MainChat", () => {
     ]);
   });
 
+  // Mocked Runtime admission is exclusive, as the real durable-intent lock is. Concurrent
+  // requests spend their confirmation window queued behind one another. Existing immediate
+  // responses miss that pressure. Cost: three 20ms I/O delays and jsdom, no real server.
+  it("gets all team admissions confirmed when the Runtime accepts one intent at a time", async () => {
+    let admitting = false;
+    const client = runtime({ sendNativeChat: vi.fn(async (_execution, request) => {
+      if (admitting) throw new Error("Runtime admission deadline elapsed while queued");
+      admitting = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      admitting = false;
+      return { requestId: request.requestId };
+    }) });
+    render(<MainChat client={client} executionId="run-admission" personas={personas} />);
+    await waitFor(() => expect(client.listNativeChatRequests).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Take your own lane" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to team (3 others)" }));
+    await screen.findByText("The request was accepted. Waiting for authoritative chat receipts.");
+    expect(client.sendNativeChat).toHaveBeenCalledTimes(3);
+    expect(client.sendNativeChat.mock.calls.map(([, request]) => request.threadId)).toEqual(["one", "two", "three"]);
+    expect(screen.queryByText(/could not be proven; no request was retried/)).not.toBeInTheDocument();
+  });
+
   it("keeps partial failures truthful and never retries a failed recipient", async () => {
     const client = runtime({ sendNativeChat: vi.fn()
       .mockResolvedValueOnce({ requestId: "ok" })

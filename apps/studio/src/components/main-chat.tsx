@@ -345,17 +345,22 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
     const pendingRows: Row[] = requests.map((request) => ({ ...request, state: "requested", local: true }));
     setRows((current) => [...current, ...pendingRows]);
     setMessage("");
-    const outcomes = await Promise.allSettled(requests.map(async (request) => {
+    // The Runtime serializes durable admission. Give each recipient its own confirmation
+    // window instead of spending all three windows while the same intent lock is held.
+    const outcomes: PromiseSettledResult<Awaited<ReturnType<MainChatClient["sendNativeChat"]>>>[] = [];
+    for (const request of requests) {
       let timeout!: number;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeout = window.setTimeout(() => reject(new Error("Timed out before the Runtime confirmed this request.")), TIMEOUT_MS);
       });
       try {
-        return await Promise.race([client.sendNativeChat(executionId, request), timeoutPromise]);
+        outcomes.push({ status: "fulfilled", value: await Promise.race([client.sendNativeChat(executionId, request), timeoutPromise]) });
+      } catch (reason) {
+        outcomes.push({ status: "rejected", reason });
       } finally {
         window.clearTimeout(timeout);
       }
-    }));
+    }
     // These public diagnostics reject a fresh request before durable intent/native dispatch.
     // An opaque HTTP error or immutable request-ID conflict remains uncertain.
     const rejectedBeforeDispatch = outcomes.map((result) => result.status === "rejected" &&

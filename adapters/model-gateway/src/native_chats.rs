@@ -1,4 +1,4 @@
-//! Bounded bridge to the official Codex app-server JSON-RPC interface.
+//! Bounded transports for existing native Codex chats.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -21,6 +21,16 @@ const POLL: Duration = Duration::from_millis(20);
 pub struct NativeChatConfig {
     pub program: PathBuf,
     pub sqlite_home: Option<PathBuf>,
+    pub desktop: Option<DesktopChatConfig>,
+}
+
+/// Trusted, opt-in connection to the Desktop host app-tools pipe. The caller identity is
+/// supplied by the host/runtime, never derived from the destination thread.
+pub struct DesktopChatConfig {
+    pub node_program: PathBuf,
+    pub pipe_path: String,
+    pub caller_thread_id: String,
+    pub caller_turn_id: String,
 }
 
 pub fn list(config: &NativeChatConfig, cursor: Option<&str>) -> Result<Value, String> {
@@ -92,11 +102,22 @@ pub fn send<F>(
     thread_id: &str,
     message: &str,
     expected_source_directory: &Path,
+    request_id: &str,
     observe: F,
 ) -> Result<(), String>
 where
     F: FnMut(Value) -> Result<(), String>,
 {
+    if let Some(desktop) = &config.desktop {
+        return desktop_chats_send(
+            desktop,
+            thread_id,
+            message,
+            expected_source_directory,
+            request_id,
+            observe,
+        );
+    }
     send_impl(
         config,
         thread_id,
@@ -230,6 +251,132 @@ where
     }
 }
 
+fn desktop_chats_send<F>(
+    config: &DesktopChatConfig,
+    thread_id: &str,
+    message: &str,
+    expected_source_directory: &Path,
+    request_id: &str,
+    mut observe: F,
+) -> Result<(), String>
+where
+    F: FnMut(Value) -> Result<(), String>,
+{
+    if !valid_uuid(thread_id)
+        || !valid_request_id(request_id)
+        || !valid_uuid(&config.caller_thread_id)
+        || !valid_uuid(&config.caller_turn_id)
+    {
+        return Err("blocked: Desktop chat identity is invalid".into());
+    }
+    if message.is_empty() || message.chars().count() > MAX_MESSAGE {
+        return Err("blocked: message must contain 1..2000 characters".into());
+    }
+    if !config.pipe_path.starts_with(r"\\.\pipe\")
+        || config.pipe_path.len() > MAX_PATH
+        || config.pipe_path.chars().any(char::is_control)
+    {
+        return Err("blocked: Desktop app-tools pipe is invalid".into());
+    }
+    let node = config
+        .node_program
+        .canonicalize()
+        .map_err(|_| "blocked: configured Node program is unavailable".to_owned())?;
+    if !node.is_file() {
+        return Err("blocked: configured Node program is not a file".into());
+    }
+    let source = expected_source_directory
+        .canonicalize()
+        .map_err(|_| "blocked: selected source directory is unavailable".to_owned())?;
+    if !source.is_dir() {
+        return Err("blocked: selected source directory is not a directory".into());
+    }
+    let mut cmd = Command::new(node);
+    cmd.args([
+        "--input-type=module",
+        "-e",
+        include_str!("desktop_chats.mjs"),
+        "--",
+        "--graphhelm-desktop-main",
+    ]);
+    let mut rpc = Rpc::spawn_command(cmd).map_err(|_| {
+        "blocked: Desktop bridge could not be started with process containment".to_owned()
+    })?;
+    // Unlike a foreground standalone turn, a Desktop work turn can run for many minutes.
+    // Each host call is bounded inside the helper; this also bounds its complete lifetime.
+    rpc.deadline = Instant::now() + Duration::from_secs(30 * 60);
+    rpc.write(json!({
+        "threadId": thread_id,
+        "message": message,
+        "sourceDirectory": source.to_string_lossy(),
+        "requestId": request_id,
+        "pipePath": config.pipe_path,
+        "callerThreadId": config.caller_thread_id,
+        "callerTurnId": config.caller_turn_id,
+    }))?;
+    let mut received_turn: Option<String> = None;
+    loop {
+        // A working Desktop turn need not produce stdout every IO_TIMEOUT seconds.
+        // The lifetime deadline still kills only our helper, never the Desktop-owned turn.
+        let bytes = rpc.rx.recv_timeout(rpc.remaining()?).map_err(|_| {
+            "Desktop bridge outcome was not confirmed before its deadline".to_owned()
+        })??;
+        let result: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| "Desktop bridge returned malformed JSON".to_owned())?;
+        if let Some(error) = result.get("error").and_then(Value::as_str) {
+            return Err(
+                if result.get("errorKind").and_then(Value::as_str) == Some("before_dispatch") {
+                    format!("blocked: {}", bounded_string(error, 256))
+                } else {
+                    format!("Desktop outcome unobserved: {}", bounded_string(error, 256))
+                },
+            );
+        }
+        let turn = result
+            .get("turnId")
+            .and_then(Value::as_str)
+            .filter(|id| valid_uuid(id))
+            .ok_or_else(|| "Desktop bridge returned no stable turn id".to_owned())?;
+        let cwd = result
+            .get("sourceDirectory")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty() && path.len() <= MAX_PATH)
+            .ok_or_else(|| "Desktop bridge returned no source directory".to_owned())?;
+        let actual = Path::new(cwd)
+            .canonicalize()
+            .map_err(|_| "Desktop bridge source directory is unavailable".to_owned())?;
+        if result.get("threadId").and_then(Value::as_str) != Some(thread_id)
+            || result.get("sourceId").and_then(Value::as_str) != Some(thread_id)
+            || actual != source
+            || result.get("sourceCwd").and_then(Value::as_str) != Some(cwd)
+        {
+            return Err("Desktop bridge returned mismatched native identity".into());
+        }
+        match result.get("phase").and_then(Value::as_str) {
+            Some("received") if received_turn.is_none() => {
+                received_turn = Some(turn.to_owned());
+                observe(result)?;
+            }
+            Some("completed") if received_turn.as_deref() == Some(turn) => {
+                let reply = result
+                    .get("finalText")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty() && text.chars().count() <= MAX_MESSAGE)
+                    .ok_or_else(|| {
+                        "Desktop turn completed without a bounded final reply".to_owned()
+                    })?;
+                let mut result = result.clone();
+                result["finalText"] = Value::String(reply.to_owned());
+                observe(result)?;
+                // Cleanup cannot turn an already observed native completion into a send failure.
+                let _ = rpc.finish();
+                return Ok(());
+            }
+            _ => return Err("Desktop bridge returned an uncorrelated phase".into()),
+        }
+    }
+}
+
 struct Rpc {
     child: Child,
     group: graphhelm_process_tree::ProcessGroup,
@@ -275,8 +422,11 @@ impl Rpc {
             let value = format!("sqlite_home={escaped}");
             cmd.args(["-c", &value]);
         }
-        cmd.arg("app-server")
-            .stdin(Stdio::piped())
+        cmd.arg("app-server");
+        Self::spawn_command(cmd)
+    }
+    fn spawn_command(mut cmd: Command) -> Result<Self, String> {
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for (key, _) in std::env::vars_os() {
@@ -513,6 +663,12 @@ fn valid_uuid(s: &str) -> bool {
         && b.iter()
             .enumerate()
             .all(|(i, c)| [8, 13, 18, 23].contains(&i) || c.is_ascii_hexdigit())
+}
+fn valid_request_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 fn is_blocking_request(v: &Value) -> bool {
     v.get("method").and_then(Value::as_str).is_some_and(|m| {

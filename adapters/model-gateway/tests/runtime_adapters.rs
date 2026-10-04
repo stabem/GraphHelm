@@ -145,12 +145,14 @@ fn native_resume_rejection_is_blocked_before_turn_start() {
     let config = NativeChatConfig {
         program: PathBuf::from(fake_runtime_path()),
         sqlite_home: None,
+        desktop: None,
     };
     let error = native_chats::send(
         &config,
         "019fdfe7-b5fa-7ca1-89c8-9651ad856819",
         "hello",
         &source,
+        "019fdfe7-b5fa-7ca1-89c8-9651ad856819",
         |_| Ok(()),
     )
     .expect_err("resume rejection must stop before turn dispatch");

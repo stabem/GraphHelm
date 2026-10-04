@@ -80,14 +80,14 @@ function connect(pipePath, deadline) {
     socket.once('error', (error) => { clearTimeout(timer); reject(error); });
   });
 }
-function rpc(socket, id, method, params, deadline) {
+function rpc(socket, id, method, params, deadline, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
     let settled = false;
     const finish = (callback, value) => { if (settled) return; settled = true; clearTimeout(timer); socket.off('data', onData); socket.off('error', onError); socket.off('close', onClose); callback(value); };
     const onError = () => finish(reject, new Error('app-tools pipe failed'));
     const onClose = () => finish(reject, new Error('app-tools pipe closed'));
-    const timer = setTimeout(() => { socket.destroy(); finish(reject, new Error('app-tools call timed out')); }, Math.min(10_000, Math.max(1, deadline - Date.now())));
+    const timer = setTimeout(() => { socket.destroy(); finish(reject, new Error('app-tools call timed out')); }, Math.min(timeoutMs, Math.max(1, deadline - Date.now())));
     const onData = (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length > MAX_FRAME + 4) { socket.destroy(); finish(reject, new Error('app-tools response exceeded limit')); return; }
@@ -105,7 +105,9 @@ function rpc(socket, id, method, params, deadline) {
   });
 }
 async function callTool(socket, sequence, input, tool, args, deadline) {
-  const result = await rpc(socket, sequence, 'tools/call', { callerSource: 'codex', hostId: 'local', namespace: 'codex_app', threadId: input.callerThreadId, turnId: input.callerTurnId, callId: `${input.requestId}-${sequence}`, tool, arguments: args }, deadline);
+  // The Desktop host may take up to 120 seconds to start an unloaded Codex chat.
+  // Discovery and reads stay at rpc's 10-second bound; the outer run deadline still caps all work.
+  const result = await rpc(socket, sequence, 'tools/call', { callerSource: 'codex', hostId: 'local', namespace: 'codex_app', threadId: input.callerThreadId, turnId: input.callerTurnId, callId: `${input.requestId}-${sequence}`, tool, arguments: args }, deadline, tool === 'send_message_to_thread' ? 120_000 : 10_000);
   if (result?.success !== true) fail(`Desktop app-tool ${tool} failed`);
   return result;
 }
@@ -125,7 +127,7 @@ export async function run(input, io = {}) {
     const listed = await rpc(socket, 1, 'tools/list', { threadStartKind: 'all' }, deadline);
     const names = new Set((Array.isArray(listed?.tools) ? listed.tools : []).map((tool) => `${tool.namespace}/${tool.name}`));
     if (!names.has('codex_app/read_thread') || !names.has('codex_app/send_message_to_thread')) fail('required Desktop app-tools are unavailable', 'before_dispatch');
-    const before = payload(await callTool(socket, 2, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 10 }, deadline));
+    const before = payload(await callTool(socket, 2, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 1 }, deadline));
     const expectedCwd = canonicalPath(input.sourceDirectory);
     const meta = validateRead(before, input, expectedCwd);
     if (!['idle', 'notLoaded'].includes(meta.status.type)) fail('target native chat is already running', 'before_dispatch');
@@ -136,7 +138,7 @@ export async function run(input, io = {}) {
     let readSequence = 4;
     let received = null;
     while (Date.now() < deadline) {
-      const read = payload(await callTool(socket, readSequence++, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 10 }, deadline));
+      const read = payload(await callTool(socket, readSequence++, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 1 }, deadline));
       validateRead(read, input, expectedCwd, 'after_dispatch');
       if (matchingTurns(read, { ...input, message: prompt }).length > 1) fail('multiple native turns match this request');
       const turn = isNewCorrelatedTurn(read, { ...input, message: prompt }, baseline);

@@ -220,8 +220,9 @@ graphhelm setup --project "<project>" --home "<home>" --install-observer playwri
 
 This runs `npm install --save-dev @playwright/test` and `npx playwright install chromium` in
 `<project>` (network access) and then reports readiness again. `--install-observer e2e` adds the
-optional tester.army `e2e` runner, whose agent steps need a model key. Run journeys with
-`python tools/playwright-observer/playwright_observe.py --project <project>`.
+optional tester.army `e2e` runner, whose agent steps need a model key. It also writes the observer
+script to `<project>/.graphhelm/observers/`. Run journeys with
+`python <project>/.graphhelm/observers/playwright_observe.py --project <project>`.
 
 **Verify:** `data.observers.browser.status` is `ready`.
 

@@ -20,6 +20,7 @@ and deleted before each run, so an earlier report never stands in. The evidence 
 and its exit code, the report's sha256, and one line per test (`status: title path`).
 
 Setup: `graphhelm setup --project <app dir> --home <home> --install-observer playwright`, or by
-hand `npm install --save-dev @playwright/test` then `npx playwright install chromium`.
+hand `npm install --save-dev @playwright/test` then `npx playwright install chromium`. The CLI ships this script and writes it to
+`<app dir>/.graphhelm/observers/` on install, so a GraphHelm checkout is not needed.
 `--command` or `GRAPHHELM_PLAYWRIGHT_COMMAND` overrides the default
 `npx --no-install playwright test --reporter=json`.

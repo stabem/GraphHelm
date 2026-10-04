@@ -52,6 +52,12 @@ class HostSocket extends EventEmitter {
         result = payload({ threadId: ids.threadId });
       } else {
         this.reads += 1;
+        if (this.mode === 'history' && request.params.arguments.turnLimit !== 1) {
+          const oversized = Buffer.alloc(8 * 1024 * 1024 + 1);
+          oversized.writeUInt32LE(8 * 1024 * 1024 + 1, 0);
+          this.emit('data', oversized);
+          return;
+        }
         const meta = metadata();
         if (this.mode === 'cwd') meta.cwd = fileURLToPath(new URL('../src', import.meta.url));
         const turns = this.reads === 1 ? (this.mode === 'old' ? [turn(oldId, 'completed')] : []) : [turn(this.mode === 'old' ? oldId : newId, this.mode === 'running' && this.reads === 2 ? 'inProgress' : 'completed')];
@@ -91,6 +97,15 @@ test('receives an active turn then completes that exact turn without setting ove
   assert.equal(result.phase, 'completed'); assert.equal(result.turnId, newId); assert.equal(result.finalText, 'done');
   assert.deepEqual(socket.sends, [{ threadId: ids.threadId, prompt: expectedPrompt }]);
   assert.ok(socket.requests.filter((request) => request.method === 'tools/call').every((request) => request.params.threadId === ids.callerThreadId && request.params.turnId === ids.callerTurnId));
+});
+test('uses one latest turn when the native chat has oversized history', async () => {
+  const socket = new HostSocket('history');
+  const events = [];
+  const result = await run(input, { socket, observe: (event) => events.push(event) });
+  assert.deepEqual(events.map((event) => [event.phase, event.turnId]), [['received', newId]]);
+  assert.equal(result.turnId, newId);
+  assert.equal(result.finalText, 'done');
+  assert.equal(socket.sends.length, 1);
 });
 test('does not replay an ambiguous dispatch', async () => {
   const socket = new HostSocket('ambiguous');

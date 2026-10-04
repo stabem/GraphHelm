@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MainChat, type MainChatProps } from "./main-chat";
@@ -96,9 +96,41 @@ describe("MainChat", () => {
     const client = runtime({ listNativeChatRequests: vi.fn().mockImplementation((execution: string) => execution === "old" ? old : Promise.resolve({ requests: [{ requestId: "new", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "completed" as const, text: "new reply" }] })) });
     const view = render(<MainChat client={client} executionId="old" personas={personas} />);
     view.rerender(<MainChat client={client} executionId="new" personas={personas} />);
-    await screen.findByText("new reply");
+    await screen.findAllByText("new reply");
     resolveOld({ requests: [] });
     expect(screen.queryByText("old")).not.toBeInTheDocument();
+  });
+
+  // DOM-only: protects the operator-facing current outcome against stale blocked history.
+  // A credible regression is selecting the last blocked row unconditionally, which makes a
+  // proven newer reply look blocked and hides the reply in a collapsed disclosure. Existing
+  // request-history tests do not cover ordering across terminal outcomes or this visible surface.
+  // Cost: mocked ledger read and jsdom only; completes in milliseconds with no network.
+  it("shows the newer completed reply as current while retaining an older blocked request in history", async () => {
+    sessionStorage.setItem(`graphhelm.main-chat.recovery:${location.origin}:run-ordered`, JSON.stringify([
+      { executionId: "run-ordered", requestId: "new-completed", nodeId: "node-main", threadId: "main" },
+    ]));
+    let reads = 0;
+    const client = runtime({ listNativeChatRequests: vi.fn().mockImplementation(() => {
+      const pending = reads++ < 2;
+      return Promise.resolve({ requests: [
+        { requestId: "old-blocked", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "blocked" as const, detail: "native resume rejected" },
+        { requestId: "new-completed", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: pending ? "received" as const : "completed" as const, ...(pending ? {} : { text: "The next step is ready." }) },
+      ] });
+    }) });
+    render(<MainChat client={client} executionId="run-ordered" personas={personas} />);
+
+    await screen.findByText("Received · waiting for chat reply");
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Wait for the coordinator" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh request status" }));
+    expect(await screen.findByRole("region", { name: "Latest chat reply" })).toHaveTextContent("The next step is ready.");
+    expect(within(screen.getByLabelText("Request status")).getByRole("status")).toHaveTextContent("latest request completed");
+    expect(screen.queryByText("Check the original chat before sending another instruction.")).not.toBeInTheDocument();
+    const history = screen.getByText("Request history (2)").closest("details")!;
+    expect(history.open).toBe(false);
+    fireEvent.click(history.querySelector("summary")!);
+    expect(screen.getByText("native resume rejected")).toBeInTheDocument();
   });
 
   it("does not call the Runtime when there are no linked personas", () => {

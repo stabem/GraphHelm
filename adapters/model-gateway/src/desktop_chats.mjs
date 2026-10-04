@@ -125,7 +125,7 @@ export async function run(input, io = {}) {
     const listed = await rpc(socket, 1, 'tools/list', { threadStartKind: 'all' }, deadline);
     const names = new Set((Array.isArray(listed?.tools) ? listed.tools : []).map((tool) => `${tool.namespace}/${tool.name}`));
     if (!names.has('codex_app/read_thread') || !names.has('codex_app/send_message_to_thread')) fail('required Desktop app-tools are unavailable', 'before_dispatch');
-    const before = payload(await callTool(socket, 2, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 10 }, deadline));
+    const before = payload(await callTool(socket, 2, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 1 }, deadline));
     const expectedCwd = canonicalPath(input.sourceDirectory);
     const meta = validateRead(before, input, expectedCwd);
     if (!['idle', 'notLoaded'].includes(meta.status.type)) fail('target native chat is already running', 'before_dispatch');
@@ -136,7 +136,7 @@ export async function run(input, io = {}) {
     let readSequence = 4;
     let received = null;
     while (Date.now() < deadline) {
-      const read = payload(await callTool(socket, readSequence++, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 10 }, deadline));
+      const read = payload(await callTool(socket, readSequence++, input, 'read_thread', { threadId: input.threadId, includeOutputs: true, maxOutputCharsPerItem: 8192, turnLimit: 1 }, deadline));
       validateRead(read, input, expectedCwd, 'after_dispatch');
       if (matchingTurns(read, { ...input, message: prompt }).length > 1) fail('multiple native turns match this request');
       const turn = isNewCorrelatedTurn(read, { ...input, message: prompt }, baseline);

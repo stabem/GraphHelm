@@ -127,6 +127,45 @@ function withCharter(charter: string, message: string): string {
   return `${prefix}${message.trim()}`;
 }
 
+function recoveredRow(recoveryId: RecoveryId, personas: MainChatPersona[]): Row {
+  const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
+  return {
+    requestId: recoveryId.requestId,
+    nodeId: recoveryId.nodeId,
+    threadId: recoveryId.threadId,
+    title: persona?.chat.title ?? "Retained native chat request",
+    sourceDirectory: persona?.chat.projectDirectory ?? "",
+    state: "unobserved",
+    detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
+    local: true,
+  };
+}
+
+function mergeRows(current: Row[], requests: NativeChatRequest[], recoveryEntries: RecoveryId[], personas: MainChatPersona[]): Row[] {
+  const currentByKey = new Map(current.map((row) => [keyOf(row), row]));
+  const requestKeys = new Set(requests.map(keyOf));
+  const ordered: Row[] = requests.map((request) => {
+    const old = currentByKey.get(keyOf(request));
+    return { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local };
+  });
+  // The ledger order is authoritative. Keep only local/recovery rows absent from this page after it
+  // so a pending send cannot disappear while its receipt is still being reconciled.
+  const retainedKeys = new Set(ordered.map(keyOf));
+  for (const row of current) {
+    if (row.local === true && !requestKeys.has(keyOf(row)) && !retainedKeys.has(keyOf(row))) {
+      ordered.push(row);
+      retainedKeys.add(keyOf(row));
+    }
+  }
+  for (const recoveryId of recoveryEntries) {
+    if (!requestKeys.has(keyOf(recoveryId)) && !retainedKeys.has(keyOf(recoveryId))) {
+      ordered.push(recoveredRow(recoveryId, personas));
+      retainedKeys.add(keyOf(recoveryId));
+    }
+  }
+  return ordered;
+}
+
 export function MainChat({ client, executionId, personas, refreshSequence = 0, replySuggestions = null, replyLoading = false, replyIssue = null, onConnect }: MainChatProps) {
   const principal = personas[0] ?? null;
   const [selectedId, setSelectedId] = useState(principal?.chat.id ?? "");
@@ -153,7 +192,15 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const activeRows = rows;
   const blockedByPending = activeRows.some((row) => isPending(row.state));
   const latestBlocked = activeRows.filter((row) => row.state === "blocked").at(-1);
-  const statusRequest = activeRows.filter((row) => isPending(row.state)).at(-1) ?? latestBlocked;
+  // Rows are merged in ledger order and local sends append at the end. Keep the latest
+  // observed chat outcome ahead of older blocked history so a stale refusal cannot become
+  // the current instruction for the operator.
+  const latestActual = activeRows.filter((row) => row.state === "received" || row.state === "completed").at(-1);
+  const latestActualIndex = latestActual === undefined ? -1 : activeRows.lastIndexOf(latestActual);
+  const latestBlockedIndex = latestBlocked === undefined ? -1 : activeRows.lastIndexOf(latestBlocked);
+  const latestReply = activeRows.filter((row) => row.state === "completed" && row.text).at(-1) ?? null;
+  const statusRequest = activeRows.filter((row) => isPending(row.state)).at(-1) ??
+    (latestBlockedIndex > latestActualIndex ? latestBlocked : latestActual);
   const hasReceiptPending = activeRows.some((row) => isPending(row.state));
   const canSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
@@ -189,34 +236,12 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
         return;
       }
       setRows((current) => {
-        const merged = new Map(current.map((row) => [keyOf(row), row]));
-        for (const recoveryId of recovery.entries) {
-          if (merged.has(keyOf(recoveryId))) continue;
-          const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
-          merged.set(keyOf(recoveryId), {
-            requestId: recoveryId.requestId,
-            nodeId: recoveryId.nodeId,
-            threadId: recoveryId.threadId,
-            title: persona?.chat.title ?? "Retained native chat request",
-            sourceDirectory: persona?.chat.projectDirectory ?? "",
-            state: "unobserved",
-            detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
-            local: true,
-          });
-        }
-        return [...merged.values()];
+        return mergeRows(current, [], recovery.entries, personas);
       });
       try {
         const page = await client.listNativeChatRequests(executionId);
         if (cancelled || run !== generation.current) return;
-        setRows((current) => {
-          const merged = new Map(current.map((row) => [keyOf(row), row]));
-          for (const request of page.requests) {
-            const old = merged.get(keyOf(request));
-            merged.set(keyOf(request), { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local });
-          }
-          return [...merged.values()];
-        });
+        setRows((current) => mergeRows(current, page.requests, recovery.entries, personas));
         for (const request of page.requests) {
           if (request.state === "completed" || request.state === "blocked") removeRecovery({ ...request, executionId });
         }
@@ -255,26 +280,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
         const page = await client.listNativeChatRequests(executionId);
         if (cancelled || run !== generation.current) return;
         setRows((current) => {
-          const merged = new Map(current.map((row) => [keyOf(row), row]));
-          for (const recoveryId of recovery.entries) {
-            if (merged.has(keyOf(recoveryId))) continue;
-            const persona = personas.find((entry) => entry.nodeId === recoveryId.nodeId && entry.chat.id === recoveryId.threadId);
-            merged.set(keyOf(recoveryId), {
-              requestId: recoveryId.requestId,
-              nodeId: recoveryId.nodeId,
-              threadId: recoveryId.threadId,
-              title: persona?.chat.title ?? "Retained native chat request",
-              sourceDirectory: persona?.chat.projectDirectory ?? "",
-              state: "unobserved",
-              detail: "Recovered request. Refresh until an authoritative receipt appears; it will not be resent automatically.",
-              local: true,
-            });
-          }
-          for (const request of page.requests) {
-            const old = merged.get(keyOf(request));
-            merged.set(keyOf(request), { ...old, ...request, ownerMessage: old?.ownerMessage, local: old?.local });
-          }
-          return [...merged.values()];
+          return mergeRows(current, page.requests, recovery.entries, personas);
         });
         for (const request of page.requests) {
           if (request.state === "completed" || request.state === "blocked") removeRecovery({ ...request, executionId });
@@ -411,7 +417,8 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
       <strong>Request status</strong>
       <p role="status">{readFailed ? "Request status could not be checked. Refresh before sending. Your instruction remains editable."
         : blockedByPending ? "Sending is paused until the previous request is confirmed. You can keep writing your next instruction."
-        : latestBlocked ? "The previous request needs attention in Codex. Check the original chat before sending another instruction."
+        : latestBlockedIndex > latestActualIndex ? "The previous request needs attention in Codex. Check the original chat before sending another instruction."
+        : latestReply ? "The latest request completed. Review the reply below before sending the next instruction."
         : "No pending native requests."}</p>
       {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
       {statusRequest && <details className="main-chat-technical-details">
@@ -420,6 +427,10 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
         <p>{statusRequest.detail ?? stateLabel(statusRequest.state)}</p>
       </details>}
     </section>
+    {latestReply && <section className="main-chat-latest-reply" aria-label="Latest chat reply">
+      <strong>Latest reply · {latestReply.title}</strong>
+      <p>{latestReply.text}</p>
+    </section>}
     <div className="main-chat-actions" aria-describedby="main-chat-request-status"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
     <details className="main-chat-history">

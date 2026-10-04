@@ -126,3 +126,11 @@ the nearest `Cargo.toml` with a `[package]`, and grafts an inline test by counti
 it cannot place is `unproven` with the reason, never silently dropped.
 The pathogen suite `tools/pathogens/src/keel_scope.rs` holds two specimens the check must refuse:
 an edit to a file the card does not list, and an extra test file added outside the card.
+
+## The Stop gate
+
+The `graphhelm` plugin runs `plugins/graphhelm/hooks/keel_stop_hook.py` on the host's `Stop` event.
+When the branch changes more than five lines outside docs since its merge base with `main`, the
+turn may not end until a card exists at `.graphhelm/keel-card.json` (ignored by git); when the
+`graphhelm` CLI is on `PATH`, that card must also pass `keel check` on `<merge-base>..HEAD`. The
+hook blocks at most once in a row (`stop_hook_active`) and lets the turn end when it cannot run.

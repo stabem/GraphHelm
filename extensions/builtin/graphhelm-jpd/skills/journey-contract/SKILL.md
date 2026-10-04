@@ -26,6 +26,11 @@ a graph, approve work, activate a skill, or claim that the journey passed. A fil
 inside the user-approved workspace and remains a proposal until normal GraphHelm governance accepts
 it.
 
+Inside a GraphHelm execution, the accepted contract is also recorded on its node with `tool:signal`:
+one `jpd.journey` signal, then one `jpd.obligation` signal per promise with `replyTo` set to the
+journey signal id (`docs/keel/RECORDS.md` in the GraphHelm repository). A signal records the
+contract; it does not approve or start anything.
+
 ## Method
 
 1. Name the actor, goal, entry point, preconditions, data assumptions, and boundary conditions.

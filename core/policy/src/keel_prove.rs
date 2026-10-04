@@ -637,17 +637,33 @@ fn run_command(
             outcome: RunOutcome::Passed,
             detail: format!("`{line}` exited 0"),
         },
-        Ok(Some((false, stdout, stderr))) => RunResult {
-            outcome: RunOutcome::Failed,
-            detail: stderr
+        Ok(Some((false, stdout, stderr))) => {
+            // Only a runner that reports the named test red is a failure. A missing command, a
+            // script absent on this side, or a collection error never names the test, so it is
+            // not a red run and must not earn the proof.
+            let named = stdout
                 .lines()
-                .chain(stdout.lines())
-                .rev()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("exited non-zero")
-                .trim()
-                .to_owned(),
-        },
+                .chain(stderr.lines())
+                .find(|l| l.contains(name) && !l.contains("not found"));
+            match named {
+                Some(l) => RunResult {
+                    outcome: RunOutcome::Failed,
+                    detail: l.trim().to_owned(),
+                },
+                None => RunResult {
+                    outcome: RunOutcome::NotRun,
+                    detail: format!(
+                        "`{line}` exited non-zero without naming the test: {}",
+                        stderr
+                            .lines()
+                            .chain(stdout.lines())
+                            .find(|l| !l.trim().is_empty())
+                            .unwrap_or("no output")
+                            .trim()
+                    ),
+                },
+            }
+        }
         Ok(None) => RunResult {
             outcome: RunOutcome::TimedOut,
             detail: format!("killed after {}s", options.timeout.as_secs()),

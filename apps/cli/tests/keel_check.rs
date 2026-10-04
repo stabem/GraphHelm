@@ -423,6 +423,7 @@ fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_hea
         "it('reads fixed', () => {});\n",
     )
     .unwrap();
+    fs::write(repo.path().join("run.sh"), "exit 0\n").unwrap();
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "fix"]);
     let run = |command: &str| {
@@ -447,10 +448,20 @@ fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_hea
         assert_eq!(proof["name"], "reads fixed", "{reply}");
         proof
     };
-    let proof = run("test -f {file} && test {name} = 'reads fixed' && grep -q fixed value.txt");
+    let proof = run(
+        "test -f {file} && grep -q fixed value.txt || { echo FAIL {file} '>' {name}; exit 1; }",
+    );
     assert_eq!(proof["parent"]["outcome"], "failed", "{proof}");
     assert_eq!(proof["head"]["outcome"], "passed", "{proof}");
     assert_eq!(proof["verdict"], "earned", "{proof}");
     let proof = run("test -f {file}");
     assert_eq!(proof["verdict"], "green_on_parent", "{proof}");
+    // #269 review: a runner that cannot start on the parent is not a red test.
+    let proof = run("no-such-runner-keel {file} {name}");
+    assert_eq!(proof["parent"]["outcome"], "not_run", "{proof}");
+    assert_eq!(proof["verdict"], "unproven", "{proof}");
+    let proof = run("sh run.sh {name}");
+    assert_eq!(proof["parent"]["outcome"], "not_run", "{proof}");
+    assert_eq!(proof["head"]["outcome"], "passed", "{proof}");
+    assert_eq!(proof["verdict"], "unproven", "{proof}");
 }

@@ -134,3 +134,10 @@ When the branch changes more than five lines outside docs since its merge base w
 turn may not end until a card exists at `.graphhelm/keel-card.json` (ignored by git); when the
 `graphhelm` CLI is on `PATH`, that card must also pass `keel check` on `<merge-base>..HEAD`. The
 hook blocks at most once in a row (`stop_hook_active`) and lets the turn end when it cannot run.
+
+## The edit gate
+
+Before the Stop gate, `plugins/graphhelm/hooks/keel_pretool_hook.py` runs on `PreToolUse` for
+`Edit`, `Write` and `MultiEdit`. When the edit targets a file outside docs and the branch's code
+change plus the lines the edit writes pass five, the edit is denied until
+`.graphhelm/keel-card.json` exists. Writing the card is always allowed; a hook failure allows the edit.

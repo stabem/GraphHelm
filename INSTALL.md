@@ -207,6 +207,24 @@ servers. Start Claude Code in that project and complete any host-required MCP ap
 Then go to step 7. User-scope registration and an instruction block are optional additions;
 they are not prerequisites for this project-scoped connection.
 
+#### Browser journey observer
+
+Without a browser observer, every browser journey ends `OBSERVER_MISSING`. The setup preview
+(`--dry-run`) reports `data.observers`: whether Playwright, the default observer, is ready in
+`<project>` (Node and npm on PATH, `@playwright/test` installed, a Playwright Chromium build),
+what is missing, and the exact install commands. To install it:
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --install-observer playwright --json
+```
+
+This runs `npm install --save-dev @playwright/test` and `npx playwright install chromium` in
+`<project>` (network access) and then reports readiness again. `--install-observer e2e` adds the
+optional tester.army `e2e` runner, whose agent steps need a model key. Run journeys with
+`python tools/playwright-observer/playwright_observe.py --project <project>`.
+
+**Verify:** `data.observers.browser.status` is `ready`.
+
 #### Optional: user-scope registration and instructions with `graphhelm setup`
 
 Use this only when the user wants a Claude Code user-scope registration or GraphHelm instruction

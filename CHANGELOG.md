@@ -1,5 +1,15 @@
 # Specification Changelog
 
+## Setup makes the browser observer ready, #256 - 2026-10-04
+
+Browser journeys ended `OBSERVER_MISSING` on every fresh project because no runner was installed.
+
+- `graphhelm setup --dry-run` reports `observers`: Playwright (default, no model key) and `e2e`
+  (opt-in), each `ready` or `missing` with what is missing and the exact install commands.
+- `graphhelm setup --install-observer playwright|e2e` runs those commands in the project.
+- `tools/playwright-observer/playwright_observe.py` turns `playwright test` into `keel.proof`
+  evidence with the same passed / failed / observer_missing contract as the `e2e` adapter.
+
 ## Answering a node that waits for you, #1186 - 2026-09-21
 
 The Studio could say a node needed a person and gave them nowhere to say so. The panel turned an

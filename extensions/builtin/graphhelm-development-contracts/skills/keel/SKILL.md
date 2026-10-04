@@ -28,6 +28,10 @@ change needs: a docs or one-line change needs nothing beyond the task record.
 8. Removing a test needs the `test-audit` skill's deletion record naming the observer that still
    covers its obligation. No record, no removal.
 
+Record the card and the proof where the hooks and the Studio can see them: inside a GraphHelm
+execution, as `keel.card` and `keel.proof` signals threaded by `replyTo`; outside one, the card at
+`.graphhelm/keel-card.json`. Shape: `docs/keel/RECORDS.md` in the GraphHelm repository.
+
 The full rules (the card and its bounds, surface counting, the verdict and its causes, the index,
 where to spend time): `REFERENCE.md` beside this file. Read it only when this digest does not
 answer your question.

@@ -26,6 +26,10 @@ a graph, approve work, activate a skill, or claim that the journey passed. A fil
 inside the user-approved workspace and remains a proposal until normal GraphHelm governance accepts
 it.
 
+This skill stays read-only on the Runtime. Inside a GraphHelm execution, `journey-verifier` records
+the accepted contract on its node as one `jpd.journey` signal and one `jpd.obligation` signal per
+promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
+
 ## Method
 
 1. Name the actor, goal, entry point, preconditions, data assumptions, and boundary conditions.

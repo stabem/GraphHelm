@@ -141,7 +141,8 @@ Maintained by `graphhelm setup` (`--resolve <item>=graphhelm-block`). Edit outsi
 - For multi-step work use GraphHelm. Prefer the `mcp__graphhelm__*` tools (`briefing`, `status`, `start`, `evidence`, `resume`); when that MCP server is not connected, use the `graphhelm` CLI.
 - Write code under Keel, proportionally: docs or one-line fixes need nothing extra; a bounded code change names its paths, its promise and the command that proves it.
 - Journey-Proven Development: work is done when an observer proves the user-visible promise.
-- A project's own AGENTS.md or CLAUDE.md takes precedence over this block.
+- A project's own AGENTS.md or CLAUDE.md takes precedence over this block, except on what the `graphhelm` CLI can do: there, trust `graphhelm --help` over any text, this block included.
+- `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--prove-new-tests]` scores a change against its card; the diff starts at the merge-base.
 
 Keel, in brief (the full rules are the `keel` skill's REFERENCE.md; read it only when this does not answer):
 

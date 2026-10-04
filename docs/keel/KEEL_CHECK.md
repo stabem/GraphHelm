@@ -141,3 +141,8 @@ Before the Stop gate, `plugins/graphhelm/hooks/keel_pretool_hook.py` runs on `Pr
 `Edit`, `Write` and `MultiEdit`. When the edit targets a file outside docs and the branch's code
 change plus the lines the edit writes pass five, the edit is denied until
 `.graphhelm/keel-card.json` exists. Writing the card is always allowed; a hook failure allows the edit.
+
+Inside a GraphHelm execution (`GRAPHHELM_EXECUTION_ID` bound), each refusal by the Stop or
+PreToolUse lock is also recorded as a `keel.blocked` signal on the bound node
+(`plugins/graphhelm/hooks/keel_record.py`), so the Studio's Keel box shows that a step was stopped.
+Recording is best effort and never changes the lock's decision.

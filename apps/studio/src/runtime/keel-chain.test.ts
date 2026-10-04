@@ -43,3 +43,12 @@ describe("keelChain", () => {
     expect(keelChain([signal("keel.card", "low", "deploy")], "implementation").active).toBe(false);
   });
 });
+
+describe("keelChain lock refusals", () => {
+  it("shows a lock refusal even before any card exists", () => {
+    const chain = keelChain([signal("keel.blocked", "medium"), signal("keel.blocked", "medium")], "implementation");
+    expect(chain.active).toBe(true);
+    expect(chain.blocked).toBe(2);
+    expect(chain.gaps).toEqual(["A Keel lock stopped this agent 2 times."]);
+  });
+});

@@ -116,6 +116,7 @@ export function describe(event: RuntimeEvent): string | null {
       if (signalKind === "jpd.journey") return "Recorded the journey this change serves:";
       if (signalKind === "jpd.obligation") return "Recorded an obligation of the journey:";
       if (signalKind === "keel.card") return "Recorded a Keel card:";
+      if (signalKind === "keel.blocked") return "A Keel lock stopped a skipped step:";
       if (signalKind === "keel.proof") return severity === "high" || severity === "critical" ? "Recorded a failed proof:" : "Recorded a proof:";
       if (signalKind === null) return "Recorded a signal against this run.";
       return severity === null

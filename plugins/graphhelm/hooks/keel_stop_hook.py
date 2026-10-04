@@ -106,6 +106,8 @@ def main() -> int:
     except (subprocess.SubprocessError, OSError, ValueError):
         return 0
     if reason:
+        from keel_record import record_block
+        record_block("stop", reason, payload)
         print(json.dumps({"decision": "block", "reason": reason}))
     return 0
 

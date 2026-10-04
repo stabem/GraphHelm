@@ -56,6 +56,8 @@ def main() -> int:
     except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
         return 0
     if reason:
+        from keel_record import record_block
+        record_block("pretool", reason, payload)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                  "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}))

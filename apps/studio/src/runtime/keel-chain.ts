@@ -21,6 +21,8 @@ export interface KeelChain {
   steps: { kind: KeelStepKind; label: string; state: KeelStepState; count: number }[];
   /** A card or proof exists, so this node did Keel work; false means nothing to show. */
   active: boolean;
+  /** How many times a Keel lock (Stop or PreToolUse hook) refused this node's agent. */
+  blocked: number;
   /** Steps missing before the last recorded one, plus a missing or red proof once a card exists. */
   gaps: string[];
 }
@@ -44,7 +46,10 @@ export function isKeelSignal(event: RuntimeEvent): boolean {
 export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
   const counts = new Map<KeelStepKind, number>();
   let lastProofSeverity: string | null = null;
+  let blocked = 0;
   for (const event of events) {
+    const payload = event.payload as Record<string, unknown> | null;
+    if (event.kind === "signal_recorded" && payload?.kind === "keel.blocked" && payload.sourceKind === "node" && payload.sourceId === nodeId) blocked += 1;
     const found = keelKind(event, nodeId);
     if (found === null) continue;
     counts.set(found.kind, (counts.get(found.kind) ?? 0) + 1);
@@ -61,7 +66,7 @@ export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
     return { kind, label, state, count };
   });
   const card = counts.has("keel.card");
-  const active = card || counts.has("keel.proof");
+  const active = card || counts.has("keel.proof") || blocked > 0;
   const gaps: string[] = [];
   if (active) {
     const lastIndex = Math.max(...steps.map((step, index) => (step.count > 0 ? index : -1)));
@@ -76,6 +81,7 @@ export function keelChain(events: RuntimeEvent[], nodeId: string): KeelChain {
     const proof = steps[3];
     if (card && proof.state === "missing") gaps.push("Card has no proof yet.");
     if (proof.state === "red") gaps.push("Latest proof failed.");
+    if (blocked > 0) gaps.push(`A Keel lock stopped this agent ${blocked === 1 ? "once" : `${blocked} times`}.`);
   }
-  return { steps, active, gaps };
+  return { steps, active, blocked, gaps };
 }

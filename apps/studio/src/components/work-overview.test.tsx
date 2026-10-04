@@ -155,7 +155,7 @@ describe("organized work overview", () => {
     render(<WorkOverview model={{ ...model, nodes: [review] }} selectedNode={null} onSelectNode={vi.fn()} />);
     const card = screen.getByRole("button", { name: /Open node review_browser_evidence/ });
     expect(card).toHaveTextContent("Review browser evidence");
-    expect(card).toHaveTextContent("Declared role · evaluator");
+    expect(card).toHaveTextContent("Role · evaluator");
     expect(card).toHaveTextContent("Model · route review-route");
     expect(card).toHaveTextContent("Recorded by Runtime");
     expect(card).toHaveTextContent("review needed");

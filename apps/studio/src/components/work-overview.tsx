@@ -259,7 +259,7 @@ export function WorkOverview({
                       <span className="work-node-topline"><span className={statusClass(node)} title={nodeStatusLabel(node) === "review needed" ? "Runtime state: succeeded; acceptance not verified" : undefined}>{nodeStatusLabel(node) ?? (node.state === "unknown" ? "Awaiting event" : readable(node.state))}</span><span>{node.touches} event{node.touches === 1 ? "" : "s"}</span></span>
                       <strong className="work-node-id">{node.declaredName ?? node.id}</strong>
                       {node.declaredName && node.declaredName !== node.id && <span className="work-muted">{node.id}</span>}
-                      {node.declaredRole && <span className="work-muted">Declared role · {node.declaredRole}</span>}
+                      {node.declaredRole && <span className="work-muted">Role · {node.declaredRole}</span>}
                       {objective !== null && objective.trim().length > 0 && isFirstEntryNode(model, node.id) && (
                         <q className="work-node-objective" title={objective}>{objective}</q>
                       )}

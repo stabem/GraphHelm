@@ -58,7 +58,7 @@ export function Connect({
           )}
           <button className="act" type="submit" disabled={busy || !value.trim()}>
             {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
-            {busy ? "connecting" : "connect"}
+            {busy ? "Connecting…" : "Connect"}
           </button>
         </form>
         <p className="gate-note">

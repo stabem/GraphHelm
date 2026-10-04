@@ -7,8 +7,8 @@ works for (`tool:signal`, or `cli:execution signal` offline). The signals form o
 
 | Step | Skill | Signal `type` | `replyTo` |
 |---|---|---|---|
-| Journey | `journey-contract` | `jpd.journey` | none (thread root) |
-| Obligation | `journey-contract` (one per promise) | `jpd.obligation` | the journey signal id |
+| Journey | `journey-verifier` (from the `journey-contract` draft) | `jpd.journey` | none (thread root) |
+| Obligation | `journey-verifier` (one per promise) | `jpd.obligation` | the journey signal id |
 | Card | `keel` | `keel.card` | the obligation it serves (or none for a change with no journey) |
 | Proof | `journey-verifier`, `keel` | `keel.proof` | the card signal id |
 

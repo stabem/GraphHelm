@@ -28,8 +28,10 @@ journey; it does not repair an incomplete contract by lowering its promises.
 ## Mutations and effects
 
 - `tool:start` begins the validated journey execution.
-- Each obligation's result is recorded as a `keel.proof` signal replying to its card (or to the
-  `jpd.obligation` signal when no card exists), red results included (`docs/keel/RECORDS.md` in the
+- Before the first observation, the accepted journey contract is recorded with `tool:signal` as one
+  `jpd.journey` signal and one `jpd.obligation` signal per promise, each obligation replying to the
+  journey. Each obligation's result is then recorded as a `keel.proof` signal replying to its card
+  (or to its `jpd.obligation` signal when no card exists), red results included (`docs/keel/RECORDS.md` in the
   GraphHelm repository).
 - `tool:signal`, `tool:pause`, and `tool:resume` act only within their declared public contracts and
   granted authority. A `tool:pause` with `mode: "immediate"` requires explicit confirmation before

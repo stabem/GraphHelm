@@ -42,6 +42,8 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     if shutil.which(argv[0]) is None:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{argv[0]}` is not on PATH"]}
+    # A report left by an earlier run must never stand in for this one.
+    (project / REPORT).unlink(missing_ok=True)
     try:
         result = subprocess.run(argv, cwd=project, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

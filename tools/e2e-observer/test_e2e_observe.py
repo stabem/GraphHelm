@@ -53,6 +53,12 @@ class E2EObserve(unittest.TestCase):
         code, out = self.run_observer(0, write_report=False)
         self.assertEqual((code, out["verdict"]), (2, "observer_missing"))
 
+    def test_stale_report_from_an_earlier_run_is_not_a_pass(self):
+        self.run_observer(0)
+        code, out = self.run_observer(0, write_report=False)
+        self.assertEqual((code, out["verdict"]), (2, "observer_missing"))
+        self.assertFalse((self.project / ".e2e" / "report.json").exists())
+
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", "definitely-not-installed-e2e run"],

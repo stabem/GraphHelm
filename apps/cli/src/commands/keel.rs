@@ -70,6 +70,14 @@ pub(super) fn check(
     if range.starts_with('-') || !range.contains("..") {
         return input_error("--diff takes a git range `<base>..<head>`", "/diff");
     }
+    if let Some(command) = prove.as_ref().and_then(|args| args.command.as_deref())
+        && !command.contains("{report}")
+    {
+        return input_error(
+            "--prove-command must write a JUnit report to `{report}`; only that report decides",
+            "/proveCommand",
+        );
+    }
     let card = match card_path.map(read_card).transpose() {
         Ok(card) => card,
         Err(outcome) => return *outcome,

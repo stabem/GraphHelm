@@ -406,11 +406,12 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
     }
 }
 
-/// ml-saas trial: a TypeScript regression test is proven with the caller's runner, red on the
-/// parent and green on the head; a test the parent already passes is `green_on_parent`.
+/// ml-saas trial: a TypeScript regression test is proven from the runner's JUnit report, red on
+/// the parent and green on the head. Only the report decides (#269 review): a runner that cannot
+/// start, or one that never reports the test, is `not_run`, even for a one-letter test name.
 #[cfg(unix)]
 #[test]
-fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_head() {
+fn prove_command_proves_a_typescript_test_from_its_junit_report() {
     let repo = tempfile::tempdir().unwrap();
     git(repo.path(), &["init", "-q"]);
     fs::write(repo.path().join("value.txt"), "broken\n").unwrap();
@@ -420,7 +421,7 @@ fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_hea
     fs::create_dir_all(repo.path().join("tests")).unwrap();
     fs::write(
         repo.path().join("tests/value.test.ts"),
-        "it('reads fixed', () => {});\n",
+        "it('t', () => {});\n",
     )
     .unwrap();
     fs::write(repo.path().join("run.sh"), "exit 0\n").unwrap();
@@ -444,24 +445,41 @@ fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_hea
             .output()
             .unwrap();
         let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.code().unwrap(), reply)
+    };
+    let proof = |command: &str| {
+        let (_, reply) = run(command);
         let proof = reply["data"]["testProof"]["proofs"][0].clone();
-        assert_eq!(proof["name"], "reads fixed", "{reply}");
+        assert_eq!(proof["name"], "t", "{reply}");
         proof
     };
-    let proof = run(
-        "test -f {file} && grep -q fixed value.txt || { echo FAIL {file} '>' {name}; exit 1; }",
+    // A runner that reports `t` failing on the parent and passing on the head.
+    let junit = "if grep -q fixed value.txt; then body=''; else body='<failure/>'; fi; \
+                 printf '<testsuite><testcase name=\"%s\">%s</testcase></testsuite>' {name} \"$body\" > {report}";
+    let earned = proof(junit);
+    assert_eq!(earned["parent"]["outcome"], "failed", "{earned}");
+    assert_eq!(earned["head"]["outcome"], "passed", "{earned}");
+    assert_eq!(earned["verdict"], "earned", "{earned}");
+    let green = proof("printf '<testsuite><testcase name=\"%s\"/></testsuite>' {name} > {report}");
+    assert_eq!(green["verdict"], "green_on_parent", "{green}");
+    // Cannot start: the error text names `t` ("not found", "test") but writes no report.
+    let missing = proof("no-such-runner-keel {file} {name} {report}");
+    assert_eq!(missing["parent"]["outcome"], "not_run", "{missing}");
+    assert_eq!(missing["verdict"], "unproven", "{missing}");
+    // Script only on the head: the parent run writes no report; the head reports a pass.
+    let absent = proof(
+        "sh run.sh && printf '<testsuite><testcase name=\"%s\"/></testsuite>' {name} > {report}",
     );
-    assert_eq!(proof["parent"]["outcome"], "failed", "{proof}");
-    assert_eq!(proof["head"]["outcome"], "passed", "{proof}");
-    assert_eq!(proof["verdict"], "earned", "{proof}");
-    let proof = run("test -f {file}");
-    assert_eq!(proof["verdict"], "green_on_parent", "{proof}");
-    // #269 review: a runner that cannot start on the parent is not a red test.
-    let proof = run("no-such-runner-keel {file} {name}");
-    assert_eq!(proof["parent"]["outcome"], "not_run", "{proof}");
-    assert_eq!(proof["verdict"], "unproven", "{proof}");
-    let proof = run("sh run.sh {name}");
-    assert_eq!(proof["parent"]["outcome"], "not_run", "{proof}");
-    assert_eq!(proof["head"]["outcome"], "passed", "{proof}");
-    assert_eq!(proof["verdict"], "unproven", "{proof}");
+    assert_eq!(absent["parent"]["outcome"], "not_run", "{absent}");
+    assert_eq!(absent["head"]["outcome"], "passed", "{absent}");
+    assert_eq!(absent["verdict"], "unproven", "{absent}");
+    // A report that fails some other test, whose name contains `t`, does not fail `t`.
+    let other = proof(
+        "printf '<testsuite><testcase name=\"other test\"><failure/></testcase></testsuite>' > {report}",
+    );
+    assert_eq!(other["parent"]["outcome"], "not_run", "{other}");
+    assert_eq!(other["verdict"], "unproven", "{other}");
+    // A command with no report placeholder is refused before anything runs.
+    let (code, reply) = run("true {file} {name}");
+    assert_eq!(code, 3, "{reply}");
 }

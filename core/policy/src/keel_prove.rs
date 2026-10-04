@@ -272,9 +272,11 @@ pub struct ProveOptions {
     pub scratch_root: PathBuf,
     /// Bound on one `cargo test` run, build included.
     pub timeout: Duration,
-    /// How to run one non-Rust test, e.g. `npx vitest run {file} -t {name}`. `{file}` and `{name}`
-    /// are replaced, shell-quoted, and the line runs under `sh -c` in each worktree; exit 0 is a
-    /// pass and any other exit a failure. Without it those tests stay unproven.
+    /// How to run one non-Rust test and write a JUnit report, e.g.
+    /// `npx vitest run {file} -t {name} --reporter=junit --outputFile={report}`. The placeholders
+    /// are replaced, shell-quoted, and the line runs under `sh -c` in each worktree. Only the
+    /// report decides: the testcase named exactly `{name}` failed, passed or was skipped; no
+    /// report or no such testcase is `not_run`. Without it those tests stay unproven.
     pub command: Option<String>,
 }
 
@@ -622,9 +624,15 @@ fn run_command(
     options: &ProveOptions,
     runner: ProveRunner,
 ) -> RunResult {
+    let side = tree
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let report = tree.with_file_name(format!("{side}-report.xml"));
+    let _ = std::fs::remove_file(&report);
     let line = template
         .replace("{file}", &shell_quote(path))
-        .replace("{name}", &shell_quote(name));
+        .replace("{name}", &shell_quote(name))
+        .replace("{report}", &shell_quote(&report.to_string_lossy()));
     let mut command = Command::new("sh");
     command
         .current_dir(tree)
@@ -633,37 +641,18 @@ fn run_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     match runner(command, options.timeout) {
-        Ok(Some((true, _, _))) => RunResult {
-            outcome: RunOutcome::Passed,
-            detail: format!("`{line}` exited 0"),
+        // The exit code and the console text are never read as the verdict: only the JUnit
+        // report the runner wrote says whether the named test ran and how it ended.
+        Ok(Some(_)) => match std::fs::read_to_string(&report) {
+            Ok(xml) => junit_outcome(&xml, name).unwrap_or_else(|| RunResult {
+                outcome: RunOutcome::NotRun,
+                detail: format!("the report has no testcase named {name:?}"),
+            }),
+            Err(error) => RunResult {
+                outcome: RunOutcome::NotRun,
+                detail: format!("`{line}` wrote no readable report: {error}"),
+            },
         },
-        Ok(Some((false, stdout, stderr))) => {
-            // Only a runner that reports the named test red is a failure. A missing command, a
-            // script absent on this side, or a collection error never names the test, so it is
-            // not a red run and must not earn the proof.
-            let named = stdout
-                .lines()
-                .chain(stderr.lines())
-                .find(|l| l.contains(name) && !l.contains("not found"));
-            match named {
-                Some(l) => RunResult {
-                    outcome: RunOutcome::Failed,
-                    detail: l.trim().to_owned(),
-                },
-                None => RunResult {
-                    outcome: RunOutcome::NotRun,
-                    detail: format!(
-                        "`{line}` exited non-zero without naming the test: {}",
-                        stderr
-                            .lines()
-                            .chain(stdout.lines())
-                            .find(|l| !l.trim().is_empty())
-                            .unwrap_or("no output")
-                            .trim()
-                    ),
-                },
-            }
-        }
         Ok(None) => RunResult {
             outcome: RunOutcome::TimedOut,
             detail: format!("killed after {}s", options.timeout.as_secs()),
@@ -672,6 +661,70 @@ fn run_command(
             outcome: RunOutcome::NotRun,
             detail,
         },
+    }
+}
+
+/// The outcome of the `<testcase>` whose `name` attribute is exactly `name` in a JUnit report:
+/// `<failure>` or `<error>` inside it is a failure, `<skipped>` an ignored test, anything else a
+/// pass. `None` when no such testcase exists. Several matches: a failure wins.
+fn junit_outcome(xml: &str, name: &str) -> Option<RunResult> {
+    let mut found: Option<RunOutcome> = None;
+    let mut rest = xml;
+    while let Some(start) = rest.find("<testcase") {
+        rest = &rest[start + "<testcase".len()..];
+        let open_end = rest.find('>')?;
+        let attrs = &rest[..open_end];
+        let self_closing = attrs.ends_with('/');
+        let body = if self_closing {
+            ""
+        } else {
+            let close = rest.find("</testcase>").unwrap_or(rest.len());
+            &rest[open_end..close]
+        };
+        if junit_attr(attrs, "name").as_deref() != Some(name) {
+            continue;
+        }
+        let outcome = if body.contains("<failure") || body.contains("<error") {
+            RunOutcome::Failed
+        } else if body.contains("<skipped") {
+            RunOutcome::Ignored
+        } else {
+            RunOutcome::Passed
+        };
+        found = Some(match (found, outcome) {
+            (Some(RunOutcome::Failed), _) | (_, RunOutcome::Failed) => RunOutcome::Failed,
+            (_, other) => other,
+        });
+    }
+    found.map(|outcome| RunResult {
+        outcome,
+        detail: format!("JUnit testcase {name:?}: {outcome:?}"),
+    })
+}
+
+fn junit_attr(attrs: &str, key: &str) -> Option<String> {
+    let mut rest = attrs;
+    loop {
+        let at = rest.find(key)?;
+        let before_ok = at == 0 || rest[..at].ends_with(char::is_whitespace);
+        let after = rest[at + key.len()..].trim_start();
+        if before_ok && let Some(value) = after.strip_prefix('=') {
+            let value = value.trim_start();
+            let quote = value.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                let inner = &value[1..];
+                let end = inner.find(quote)?;
+                return Some(
+                    inner[..end]
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&quot;", "\"")
+                        .replace("&apos;", "'")
+                        .replace("&amp;", "&"),
+                );
+            }
+        }
+        rest = &rest[at + key.len()..];
     }
 }
 

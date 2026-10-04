@@ -106,11 +106,14 @@ Each test is reported in `data.testProof.proofs` with `name`, `path`, `line`, `p
 All three signals are warnings; none changes the exit code. A parent compilation failure alone
 cannot establish that the production subject is new: an inline graft can omit a sibling test
 helper. The reviewer reads `parent.detail` and treats that experiment as unproven. A TypeScript or Python test the diff adds is listed as `unproven`
-unless `--prove-command` names how to run one test, for example
-`--prove-command "npx vitest run {file} -t {name}"`. `{file}` and `{name}` are replaced
-(shell-quoted) and the line runs under `sh -c` in each worktree: the parent gets the head's whole
-test file, a root `node_modules` is linked into both trees, exit 0 is `passed` and any other exit
-`failed`. The verdict table above then applies as for Rust. A setup failure (a revision that does
+unless `--prove-command` names how to run one test and write a JUnit report, for example
+`--prove-command "npx vitest run {file} -t {name} --reporter=junit --outputFile={report}"`
+(pytest: `pytest {file} -k {name} --junitxml={report}`). `{file}`, `{name}` and `{report}` are
+replaced (shell-quoted) and the line runs under `sh -c` in each worktree: the parent gets the
+head's whole test file and a root `node_modules` is linked into both trees. Only the report
+decides, never the exit code or console text: the `<testcase>` whose `name` is exactly the test's
+name is `failed` (`<failure>`/`<error>`), `ignored` (`<skipped>`) or `passed`. No report, or no
+such testcase, is `not_run`, so a runner that cannot start on the parent never earns the proof. The verdict table above then applies as for Rust. A setup failure (a revision that does
 not resolve, a worktree that cannot be added) is input error `GHCLI031_KEEL_CHECK_INPUT`, exit 3.
 
 Cleanup is by exact path. The two worktrees live in `keel-prove-<pid>-<nanos>/parent` and `/head`

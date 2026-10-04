@@ -2984,3 +2984,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .main-chat-latest-reply { display: grid; gap: 4px; margin: 10px 0; padding: 12px 14px; border: 1px solid var(--edge); border-radius: var(--r); background: var(--raised); }
 .main-chat-latest-reply strong { color: var(--dim); font-size: 11px; font-weight: 600; }
 .main-chat-latest-reply p { margin: 0; white-space: pre-wrap; overflow-wrap: break-word; }
+.keel-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0; padding: 0; list-style: none; }
+.keel-step { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: var(--high); color: var(--text); font-size: 12px; }
+.keel-step.missing { background: transparent; border: 1px dashed var(--edge); color: var(--faint); }
+.keel-step.green { background: color-mix(in oklab, var(--live) 22%, var(--raised)); }
+.keel-step.red { background: color-mix(in oklab, var(--danger) 26%, var(--raised)); }

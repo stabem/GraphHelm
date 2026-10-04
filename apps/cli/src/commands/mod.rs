@@ -12,6 +12,7 @@ mod init;
 mod keel;
 mod lint;
 mod mcp;
+mod observers;
 mod quality;
 pub(crate) mod remediation;
 mod replay;

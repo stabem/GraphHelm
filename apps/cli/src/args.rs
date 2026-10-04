@@ -164,6 +164,17 @@ pub struct AdoptionSetupArgs {
     /// Reconcile an interrupted transaction using its private journal.
     #[arg(long, requires = "state_root", conflicts_with = "apply")]
     pub recover: Option<String>,
+    /// Install a browser journey observer in `--project` by running the install commands the
+    /// preview lists under `observers` (npm and npx, network). `playwright` is the default
+    /// observer; `e2e` is opt-in and needs a model key for agent steps. Repeatable.
+    #[arg(long = "install-observer", value_enum, conflicts_with_all = ["apply", "recover", "verify", "plan", "resolve", "out"])]
+    pub install_observers: Vec<ObserverKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ObserverKind {
+    Playwright,
+    E2e,
 }
 
 #[derive(Debug, Args)]

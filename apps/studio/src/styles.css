@@ -2319,11 +2319,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 @media (max-width: 600px) {
   .topstrip { flex-wrap: wrap; padding: 8px; gap: 6px; }
   .topstrip .strip-card { padding: 6px 8px; }
-  .topstrip .strip-card:first-of-type { flex-basis: calc(100% - 110px); }
-  .topstrip .right { margin-left: auto; max-width: 100%; }
+  /* One toolbar row (menus left, actions right), then the run title full width under it, so
+   * no row holds a lone cluster of icons. */
+  .topstrip .strip-card:first-of-type { order: 3; flex-basis: 100%; }
+  .topstrip .right { margin-left: auto; max-width: 100%; padding: 0; background: none; border: 0; }
   .topstrip .run-name { font-size: 12px; }
   .topstrip .tag { font-size: 10px; }
-  .app > .rail { top: 126px; }
+  .app > .rail { top: 56px; } /* drops from the toolbar row, over the run title */
   .stage { border-radius: 12px; }
   .talk, .chat-col, .node-col { width: 100%; }
   .panel-head { padding: 10px 12px; }

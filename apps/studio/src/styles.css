@@ -2430,11 +2430,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-identity span { color: #a5a1b1; font-size: 11px; }
 .work-identity strong { color: #f0eaf9; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .work-snapshot { margin: 0 0 24px; padding: 18px; border: 1px solid #494052; border-radius: 14px; background: #241f2b; }
-.work-next-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; padding: 16px 18px; border: 1px solid #95643c; border-radius: 14px; background: #33271f; }
-.work-next-action div { min-width: 0; }
+.work-next-action { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 0 0 18px; padding: 16px 18px; border: 1px solid #95643c; border-radius: 14px; background: #33271f; }
+.work-next-action div { flex: 1 1 220px; min-width: 0; }
 .work-next-action span { display: block; color: #f3bd89; font-size: 11px; }
 .work-next-action strong { display: block; margin-top: 3px; font-size: 17px; }
-.work-next-action p { margin: 4px 0 0; color: #ead7c6; font-size: 12px; overflow-wrap: anywhere; }
+.work-next-action p { margin: 4px 0 0; color: #ead7c6; font-size: 12px; overflow-wrap: break-word; }
 .work-next-action button { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; border: 0; border-radius: 9px; background: #f39b45; color: #17120e; font: 600 12px var(--sans); }
 .work-snapshot-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .work-snapshot-grid > div { display: grid; align-content: start; gap: 4px; padding: 11px 12px; border-radius: 9px; background: #1a1920; min-width: 0; }
@@ -2469,6 +2469,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-note { margin: 0 0 20px; padding: 12px 16px; border: 1px solid #36363d; background: #1c1c20; color: #b9b9c4; border-radius: 10px; font-size: 12px; }
 .node-result-summary { display: grid; gap: 5px; margin: 12px; padding: 12px; border: 1px solid #484052; border-radius: 10px; background: #24202a; color: #c9c4d1; font: 12px/1.45 var(--sans); }
 .node-result-summary strong { color: #f0eaf7; font-size: 13px; }
+.keel-chain strong { overflow-wrap: anywhere; }
 .assignment-summary { display: grid; gap: 8px; margin: 12px; padding: 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--raised); color: var(--dim); font: 12px/1.45 var(--sans); }
 .assignment-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .assignment-state { color: var(--dim); text-transform: capitalize; }

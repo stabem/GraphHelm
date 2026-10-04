@@ -59,6 +59,12 @@ def main() -> int:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                  "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}))
+        # The decision is already printed: recording comes after it and can never undo it.
+        try:
+            from keel_record import record_block
+            record_block("pretool", reason, payload)
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 

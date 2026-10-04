@@ -107,6 +107,12 @@ def main() -> int:
         return 0
     if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
+        # The decision is already printed: recording comes after it and can never undo it.
+        try:
+            from keel_record import record_block
+            record_block("stop", reason, payload)
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 

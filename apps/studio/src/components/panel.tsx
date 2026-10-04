@@ -28,6 +28,7 @@ import { isClaudeTaskSignal } from "../runtime/team-tasks";
 import { workConversation, type WorkMessage } from "../runtime/work-conversation";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
 import { address_of, readable_content } from "../graph/ledger";
+import { keelChain } from "../runtime/keel-chain";
 import {
   LIFECYCLE_STATES,
   clock,
@@ -111,6 +112,12 @@ export function describe(event: RuntimeEvent): string | null {
       // A persona's birth certificate: the envelope's `to` names who was chartered, and its
       // description is the charter. Unrecognized kind, like the notes - recorded, never steers.
       if (signalKind === "persona_created") return "A new persona joined:";
+      // Keel/JPD records (docs/keel/RECORDS.md): one step of the journey -> proof chain each.
+      if (signalKind === "jpd.journey") return "Recorded the journey this change serves:";
+      if (signalKind === "jpd.obligation") return "Recorded an obligation of the journey:";
+      if (signalKind === "keel.card") return "Recorded a Keel card:";
+      if (signalKind === "keel.blocked") return "A Keel lock stopped a skipped step:";
+      if (signalKind === "keel.proof") return severity === "high" || severity === "critical" ? "Recorded a failed proof:" : "Recorded a proof:";
       if (signalKind === null) return "Recorded a signal against this run.";
       return severity === null
         ? `Raised ${readable(signalKind)}.`
@@ -1146,6 +1153,18 @@ function SayBox({
   );
 }
 
+/** The node's journey -> obligation -> card -> proof chain, so a skipped step shows without reading the thread. */
+export function KeelChainView({ events, nodeId }: { events: RuntimeEvent[]; nodeId: string }) {
+  const chain = keelChain(events, nodeId);
+  if (!chain.active) return null;
+  return (
+    <section className="node-result-summary keel-chain" aria-label="Keel chain">
+      <strong>Keel · {chain.steps.map((step) => `${step.label} ${step.state === "missing" ? "missing" : step.state === "red" ? "failed" : step.state === "green" ? "passed" : "recorded"}`).join(" → ")}</strong>
+      {chain.gaps.length === 0 ? <span>Every step is recorded.</span> : chain.gaps.map((gap) => <span key={gap}>{gap}</span>)}
+    </section>
+  );
+}
+
 export function NodePanel({
   node,
   events,
@@ -1248,6 +1267,7 @@ export function NodePanel({
         />
       )}
 
+      <KeelChainView events={events} nodeId={node.id} />
       {nativeChats}
       {historyEvents.length > 0 && <section className="node-recent-conversation" aria-label="Recent messages"><h3>Recent messages · newest first</h3><Thread newestFirst events={historyEvents.slice(-20)} executionId={executionId} openEvidence={openEvidence} />{historyEvents.length > 20 && <details><summary>Older history · {historyEvents.length - 20} records</summary><Thread newestFirst events={historyEvents.slice(0, -20)} executionId={executionId} openEvidence={openEvidence} /></details>}</section>}
       {executionId && openEvidence && onOpenDocument && <NodeDeliveries nodeId={node.id} executionId={executionId} events={events} openEvidence={openEvidence} onOpenDocument={onOpenDocument} />}

@@ -120,6 +120,10 @@ pub enum KeelCommand {
         /// Bound, in seconds, on one `cargo test` run (build included).
         #[arg(long, default_value_t = 900, requires = "prove_new_tests")]
         prove_timeout_secs: u64,
+        /// How to run one non-Rust new test, e.g. `npx vitest run {file} -t {name}`; run under
+        /// `sh -c` in each worktree, exit 0 = pass. Without it those tests are reported unproven.
+        #[arg(long, requires = "prove_new_tests")]
+        prove_command: Option<String>,
     },
 }
 

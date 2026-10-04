@@ -272,6 +272,10 @@ pub struct ProveOptions {
     pub scratch_root: PathBuf,
     /// Bound on one `cargo test` run, build included.
     pub timeout: Duration,
+    /// How to run one non-Rust test, e.g. `npx vitest run {file} -t {name}`. `{file}` and `{name}`
+    /// are replaced, shell-quoted, and the line runs under `sh -c` in each worktree; exit 0 is a
+    /// pass and any other exit a failure. Without it those tests stay unproven.
+    pub command: Option<String>,
 }
 
 /// The process runner is supplied by the CLI so policy stays independent of operating-system
@@ -419,19 +423,29 @@ pub fn prove_new_tests(
     if !tests.is_empty() {
         proofs.extend(prove_rust(diff, &tests, &base, &head, options, runner)?);
     }
-    for (name, path) in unsupported_new_tests(diff) {
-        let not_run = RunResult {
-            outcome: RunOutcome::NotRun,
-            detail: "no runner for this language yet; only Rust #[test] is proven".into(),
-        };
-        proofs.push(TestProof {
-            name,
-            path,
-            line: 0,
-            parent: not_run.clone(),
-            head: not_run,
-            verdict: TestVerdict::Unproven,
-        });
+    let others = unsupported_new_tests(diff);
+    match options.command.as_deref() {
+        Some(template) if !others.is_empty() => {
+            proofs.extend(prove_with_command(
+                template, &others, &base, &head, options, runner,
+            )?);
+        }
+        _ => {
+            for (name, path) in others {
+                let not_run = RunResult {
+                    outcome: RunOutcome::NotRun,
+                    detail: "no runner for this language; pass --prove-command to run it".into(),
+                };
+                proofs.push(TestProof {
+                    name,
+                    path,
+                    line: 0,
+                    parent: not_run.clone(),
+                    head: not_run,
+                    verdict: TestVerdict::Unproven,
+                });
+            }
+        }
     }
     let findings = proofs
         .iter()
@@ -467,32 +481,7 @@ fn prove_rust(
     options: &ProveOptions,
     runner: ProveRunner,
 ) -> Result<Vec<TestProof>, String> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    clear_stale_records(&options.repo, &options.scratch_root);
-    let dir = options
-        .scratch_root
-        .join(format!("keel-prove-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("scratch {} not created: {error}", dir.display()))?;
-    let mut scratch = Scratch {
-        repo: options.repo.clone(),
-        dir: dir.clone(),
-        worktrees: Vec::new(),
-    };
-    let parent_tree = dir.join("parent");
-    let head_tree = dir.join("head");
-    for (tree, rev) in [(&parent_tree, base), (&head_tree, head)] {
-        let tree_arg = tree.to_string_lossy().into_owned();
-        // Recorded before the add: an add that fails halfway can still leave a record, and the
-        // drop removes it by this exact path.
-        scratch.worktrees.push(tree.clone());
-        git(
-            &options.repo,
-            &["worktree", "add", "--detach", "--quiet", &tree_arg, rev],
-        )?;
-    }
+    let (scratch, parent_tree, head_tree) = scratch(base, head, options)?;
     let grafted = graft_onto_parent(diff, tests, &parent_tree, &head_tree);
     // Every parent run first, then every head run, so each side's build is reused by the next test.
     let parent_runs: Vec<RunResult> = tests
@@ -522,6 +511,152 @@ fn prove_rust(
         .collect();
     drop(scratch);
     Ok(proofs)
+}
+
+/// Makes the scratch directory with a `parent` worktree at `base` and a `head` worktree at `head`.
+fn scratch(
+    base: &str,
+    head: &str,
+    options: &ProveOptions,
+) -> Result<(Scratch, PathBuf, PathBuf), String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    clear_stale_records(&options.repo, &options.scratch_root);
+    let dir = options
+        .scratch_root
+        .join(format!("keel-prove-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("scratch {} not created: {error}", dir.display()))?;
+    let mut scratch = Scratch {
+        repo: options.repo.clone(),
+        dir: dir.clone(),
+        worktrees: Vec::new(),
+    };
+    let parent_tree = dir.join("parent");
+    let head_tree = dir.join("head");
+    for (tree, rev) in [(&parent_tree, base), (&head_tree, head)] {
+        let tree_arg = tree.to_string_lossy().into_owned();
+        // Recorded before the add: an add that fails halfway can still leave a record, and the
+        // drop removes it by this exact path.
+        scratch.worktrees.push(tree.clone());
+        git(
+            &options.repo,
+            &["worktree", "add", "--detach", "--quiet", &tree_arg, rev],
+        )?;
+    }
+    Ok((scratch, parent_tree, head_tree))
+}
+
+/// Proves non-Rust tests with the caller's command line. The parent tree gets the head's whole
+/// test file; a `node_modules` directory at the repository root is linked into both trees so the
+/// runner finds its dependencies.
+fn prove_with_command(
+    template: &str,
+    tests: &[(String, String)],
+    base: &str,
+    head: &str,
+    options: &ProveOptions,
+    runner: ProveRunner,
+) -> Result<Vec<TestProof>, String> {
+    let (scratch, parent_tree, head_tree) = scratch(base, head, options)?;
+    for tree in [&parent_tree, &head_tree] {
+        link_dependencies(&options.repo, tree);
+    }
+    let mut proofs = Vec::new();
+    for (name, path) in tests {
+        let grafted = std::fs::read(head_tree.join(path)).and_then(|bytes| {
+            let target = parent_tree.join(path);
+            if let Some(dir) = target.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(target, bytes)
+        });
+        let parent = match grafted {
+            Ok(()) => run_command(&parent_tree, template, name, path, options, runner),
+            Err(error) => RunResult {
+                outcome: RunOutcome::NotRun,
+                detail: format!("test file not copied to the parent: {error}"),
+            },
+        };
+        let head_run = run_command(&head_tree, template, name, path, options, runner);
+        proofs.push(TestProof {
+            name: name.clone(),
+            path: path.clone(),
+            line: 0,
+            verdict: verdict(parent.outcome, head_run.outcome),
+            parent,
+            head: head_run,
+        });
+    }
+    drop(scratch);
+    Ok(proofs)
+}
+
+#[cfg(unix)]
+fn link_dependencies(repo: &Path, tree: &Path) {
+    let source = repo.join("node_modules");
+    if source.is_dir() && !tree.join("node_modules").exists() {
+        let _ = std::os::unix::fs::symlink(source, tree.join("node_modules"));
+    }
+}
+
+#[cfg(windows)]
+fn link_dependencies(repo: &Path, tree: &Path) {
+    let source = repo.join("node_modules");
+    if source.is_dir() && !tree.join("node_modules").exists() {
+        let _ = std::os::windows::fs::symlink_dir(source, tree.join("node_modules"));
+    }
+}
+
+/// Single-quotes `text` for `sh`.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn run_command(
+    tree: &Path,
+    template: &str,
+    name: &str,
+    path: &str,
+    options: &ProveOptions,
+    runner: ProveRunner,
+) -> RunResult {
+    let line = template
+        .replace("{file}", &shell_quote(path))
+        .replace("{name}", &shell_quote(name));
+    let mut command = Command::new("sh");
+    command
+        .current_dir(tree)
+        .args(["-c", &line])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match runner(command, options.timeout) {
+        Ok(Some((true, _, _))) => RunResult {
+            outcome: RunOutcome::Passed,
+            detail: format!("`{line}` exited 0"),
+        },
+        Ok(Some((false, stdout, stderr))) => RunResult {
+            outcome: RunOutcome::Failed,
+            detail: stderr
+                .lines()
+                .chain(stdout.lines())
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("exited non-zero")
+                .trim()
+                .to_owned(),
+        },
+        Ok(None) => RunResult {
+            outcome: RunOutcome::TimedOut,
+            detail: format!("killed after {}s", options.timeout.as_secs()),
+        },
+        Err(detail) => RunResult {
+            outcome: RunOutcome::NotRun,
+            detail,
+        },
+    }
 }
 
 /// Puts the head's test code into the parent tree: every changed test-path file whole, and each

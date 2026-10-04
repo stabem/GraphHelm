@@ -557,6 +557,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 prove_new_tests,
                 prove_target_dir,
                 prove_timeout_secs,
+                prove_command,
             } => keel::check(
                 &repo,
                 &diff,
@@ -564,6 +565,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 prove_new_tests.then_some(keel::ProveArgs {
                     target_dir: prove_target_dir,
                     timeout_secs: prove_timeout_secs,
+                    command: prove_command,
                 }),
             ),
         },

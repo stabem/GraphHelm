@@ -405,3 +405,52 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
         assert!(codes(&reply).is_empty(), "{range}: {reply}");
     }
 }
+
+/// ml-saas trial: a TypeScript regression test is proven with the caller's runner, red on the
+/// parent and green on the head; a test the parent already passes is `green_on_parent`.
+#[cfg(unix)]
+#[test]
+fn prove_command_proves_a_typescript_test_red_on_the_parent_and_green_on_the_head() {
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q"]);
+    fs::write(repo.path().join("value.txt"), "broken\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    fs::write(repo.path().join("value.txt"), "fixed\n").unwrap();
+    fs::create_dir_all(repo.path().join("tests")).unwrap();
+    fs::write(
+        repo.path().join("tests/value.test.ts"),
+        "it('reads fixed', () => {});\n",
+    )
+    .unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "fix"]);
+    let run = |command: &str| {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--prove-new-tests",
+                "--prove-command",
+                command,
+                "--repo",
+            ])
+            .arg(repo.path())
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let proof = reply["data"]["testProof"]["proofs"][0].clone();
+        assert_eq!(proof["name"], "reads fixed", "{reply}");
+        proof
+    };
+    let proof = run("test -f {file} && test {name} = 'reads fixed' && grep -q fixed value.txt");
+    assert_eq!(proof["parent"]["outcome"], "failed", "{proof}");
+    assert_eq!(proof["head"]["outcome"], "passed", "{proof}");
+    assert_eq!(proof["verdict"], "earned", "{proof}");
+    let proof = run("test -f {file}");
+    assert_eq!(proof["verdict"], "green_on_parent", "{proof}");
+}

@@ -52,6 +52,7 @@ fn input_error(message: impl Into<String>, path: &str) -> Outcome {
 pub(super) struct ProveArgs {
     pub(super) target_dir: Option<PathBuf>,
     pub(super) timeout_secs: u64,
+    pub(super) command: Option<String>,
 }
 
 /// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]
@@ -159,6 +160,7 @@ pub(super) fn check(
                 target_dir,
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),
+                command: args.command,
             };
             match keel_prove::prove_new_tests(&diff, &options, graphhelm_process_tree::run_bounded)
             {

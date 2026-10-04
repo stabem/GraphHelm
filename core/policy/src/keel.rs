@@ -185,7 +185,9 @@ pub struct Finding {
 pub struct Classification {
     pub policy_version: String,
     pub charges: Vec<Charge>,
+    /// What the diff spent, per kind.
     pub totals: BTreeMap<Debit, u32>,
+    /// What the diff was allowed to spend: a limit, not a charge.
     pub budget: SurfaceBudget,
     pub findings: Vec<Finding>,
     /// True when any BLOCKING finding exists. A refusal is a property of the findings, never a

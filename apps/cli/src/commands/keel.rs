@@ -73,6 +73,35 @@ pub(super) fn check(
         Ok(card) => card,
         Err(outcome) => return *outcome,
     };
+    // Both spellings mean "what the head branch changed": the diff starts at the merge-base, so
+    // commits that reached the base after the branch was cut are never charged to it.
+    let (base, head) = range
+        .split_once("...")
+        .or_else(|| range.split_once(".."))
+        .unwrap_or((range, "HEAD"));
+    let base = if base.is_empty() { "HEAD" } else { base };
+    let head = if head.is_empty() { "HEAD" } else { head };
+    let merge_base = match Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["merge-base", base, head])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        }
+        Ok(output) => {
+            return input_error(
+                format!(
+                    "git merge-base {base} {head} failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+                "/diff",
+            );
+        }
+        Err(error) => return input_error(format!("git did not start: {error}"), "/repo"),
+    };
+    let diff_range = format!("{merge_base}..{head}");
     let output = match Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -86,7 +115,7 @@ pub(super) fn check(
             "--find-renames",
             "--src-prefix=a/",
             "--dst-prefix=b/",
-            range,
+            &diff_range,
             "--",
         ])
         .output()
@@ -118,10 +147,6 @@ pub(super) fn check(
     let proof = match prove {
         None => None,
         Some(args) => {
-            let (base, head) = range
-                .split_once("...")
-                .or_else(|| range.split_once(".."))
-                .unwrap_or((range, "HEAD"));
             let scratch_root = std::env::temp_dir();
             let target_dir = args
                 .target_dir
@@ -129,8 +154,8 @@ pub(super) fn check(
                 .unwrap_or_else(|| scratch_root.join("graphhelm-keel-prove-target"));
             let options = ProveOptions {
                 repo: repo.to_path_buf(),
-                base: if base.is_empty() { "HEAD" } else { base }.to_owned(),
-                head: if head.is_empty() { "HEAD" } else { head }.to_owned(),
+                base: merge_base.clone(),
+                head: head.to_owned(),
                 target_dir,
                 scratch_root,
                 timeout: Duration::from_secs(args.timeout_secs),

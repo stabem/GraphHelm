@@ -376,3 +376,32 @@ fn prove_new_tests_reports_parameterized_typescript_tests_as_unproven() {
         assert_eq!(proof["head"]["outcome"], "not_run", "{reply}");
     }
 }
+
+#[test]
+fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it() {
+    let repo = repository(&[]);
+    git(repo.path(), &["branch", "-q", "feature"]);
+    git(repo.path(), &["checkout", "-q", "-b", "main", "HEAD~1"]);
+    fs::create_dir_all(repo.path().join("tests")).unwrap();
+    fs::write(
+        repo.path().join("tests/someone_else.rs"),
+        "#[test]\nfn theirs() {}\n",
+    )
+    .unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "someone else merged"]);
+    let card = card(repo.path(), &["src/lib.rs"]);
+    for range in ["main..feature", "main...feature"] {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args(["--json", "keel", "check", "--diff", range, "--repo"])
+            .arg(repo.path())
+            .arg("--card")
+            .arg(&card)
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.code(), Some(0), "{range}: {reply}");
+        assert!(codes(&reply).is_empty(), "{range}: {reply}");
+    }
+}

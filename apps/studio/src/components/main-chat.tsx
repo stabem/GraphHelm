@@ -190,7 +190,10 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const messageLimit = messageLimitFor(selected);
   const teamTargets = personas.filter((persona) => persona.chat.id !== selected?.chat.id);
   const activeRows = rows;
-  const blockedByPending = activeRows.some((row) => isPending(row.state));
+  const blockedByPending = activeRows.some((row) => isPending(row.state) &&
+    (row.threadId === selected?.chat.id || !byChat.has(row.threadId)));
+  const teamBlockedByPending = activeRows.some((row) => isPending(row.state) &&
+    (teamTargets.some((persona) => persona.chat.id === row.threadId) || !byChat.has(row.threadId)));
   const latestBlocked = activeRows.filter((row) => row.state === "blocked").at(-1);
   // Rows are merged in ledger order and local sends append at the end. Keep the latest
   // observed chat outcome ahead of older blocked history so a stale refusal cannot become
@@ -202,7 +205,9 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const statusRequest = activeRows.filter((row) => isPending(row.state)).at(-1) ??
     (latestBlockedIndex > latestActualIndex ? latestBlocked : latestActual);
   const hasReceiptPending = activeRows.some((row) => isPending(row.state));
-  const canSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending && !blockedByPending;
+  const canPrepareSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending;
+  const canSend = canPrepareSend && !blockedByPending;
+  const canSendTeam = canPrepareSend && !teamBlockedByPending && teamTargets.length > 0;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
   const currentAdvice = replySuggestions?.executionId === executionId && replySuggestions.headSequence === refreshSequence ? replySuggestions : null;
   const suggestedDrafts = currentAdvice?.state === "ready" && currentAdvice.suggestions.length === 2 ? currentAdvice.suggestions : [];
@@ -303,7 +308,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   }, [client, executionId, hasReceiptPending, nativeApiAvailable, refreshNonce, refreshSequence, scopeKey]);
 
   const send = async (fanout: boolean) => {
-    if (!canSend || selected === null || client === null || !nativeApiAvailable) return;
+    if (!(fanout ? canSendTeam : canSend) || selected === null || client === null || !nativeApiAvailable) return;
     const recipients = fanout ? teamTargets : [selected];
     if (recipients.length === 0) {
       setNotice({ tone: "bad", text: "There are no other linked personas to receive this team message." });
@@ -393,7 +398,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
       ? "Next step: refresh the previous request's status. You can prepare your next instruction below; sending waits for confirmation."
       : "Next step: review JEV's advice or write your own instruction, then choose who receives it."}</p></header>
     <label htmlFor="main-chat-recipient">Main recipient</label>
-    <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending || blockedByPending} onChange={(event) => setSelectedId(event.target.value)}>
+    <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending} onChange={(event) => setSelectedId(event.target.value)}>
       {personas.map((persona) => <option key={persona.chat.id} value={persona.chat.id}>{persona.chat.title} · {persona.chat.id}</option>)}
     </select>
     <section className="main-chat-guidance" aria-label="JEV next step">
@@ -422,6 +427,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
       <strong>Request status</strong>
       <p role="status">{readFailed ? "Request status could not be checked. Refresh before sending. Your instruction remains editable."
         : blockedByPending ? "Sending is paused until the previous request is confirmed. You can keep writing your next instruction."
+        : hasReceiptPending ? "Another chat has an unresolved request. You can send to this recipient; team sending waits for its recipients to be confirmed."
         : latestBlockedIndex > latestActualIndex ? "The previous request needs attention in Codex. Check the original chat before sending another instruction."
         : latestReply ? "The latest request completed. Review the reply below before sending the next instruction."
         : "No pending native requests."}</p>
@@ -436,7 +442,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
       <strong>Latest reply · {latestReply.title}</strong>
       <p>{latestReply.text}</p>
     </section>}
-    <div className="main-chat-actions" aria-describedby="main-chat-request-status"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSend || teamTargets.length === 0} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
+    <div className="main-chat-actions" aria-describedby="main-chat-request-status"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSendTeam} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
     <details className="main-chat-history">
       <summary>Request history ({activeRows.length})</summary>

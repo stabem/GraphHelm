@@ -76,6 +76,12 @@ function statusData(overrides: Record<string, unknown> = {}) {
 }
 
 describe("RuntimeClient reads", () => {
+  it("says in words that no Runtime answers when the dev proxy replies 502 with no JSON", async () => {
+    const fetchImpl = vi.fn(async () => new Response("", { status: 502 })) as unknown as typeof fetch;
+    const client = new RuntimeClient("tok", { fetch: fetchImpl });
+    await expect(client.listExecutions()).rejects.toThrow(/cannot reach the Runtime\. Start graphhelm serve/);
+  });
+
   it("bounds a fetch that never resolves headers", async () => {
     vi.useFakeTimers();
     try {

@@ -536,6 +536,9 @@ export class RuntimeClient {
         throw new RuntimeError(
           response.status === 401
             ? "The bearer token was refused."
+            // 502/503/504 with no JSON is the dev proxy (or a gateway) with no Runtime behind it.
+            : response.status >= 502 && response.status <= 504
+            ? "The Studio cannot reach the Runtime. Start graphhelm serve (and set GRAPHHELM_RUNTIME_URL to its address), then connect again."
             : `The Runtime replied ${response.status} with a body this client could not read.`,
           response.status,
           [],

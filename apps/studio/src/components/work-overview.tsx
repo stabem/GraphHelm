@@ -235,7 +235,7 @@ export function WorkOverview({
                 : model.edgesKnown
                   ? `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"} and verified neighbors`
                   : `Showing ${assignedNodeIds.size} assigned step${assignedNodeIds.size === 1 ? "" : "s"}; dependency evidence unavailable`
-              : model.edgesKnown ? `${model.edges.length} dependencies` : unverified}</span>
+              : model.edgesKnown ? `${model.edges.length} ${model.edges.length === 1 ? "dependency" : "dependencies"}` : unverified}</span>
             {focusActor !== null && <button type="button" className="work-reset-filter" onClick={() => setStepFocus({ runId, actor: null })}>Clear actor focus</button>}
           </div>
           {model.nodes.some((node) => nodeStatusLabel(node) === "review needed") && (

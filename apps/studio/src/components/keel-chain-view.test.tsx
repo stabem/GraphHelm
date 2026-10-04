@@ -14,7 +14,9 @@ function signal(sequence: number, kind: string, severity = "low"): RuntimeEvent 
 describe("KeelChainView", () => {
   it("shows the chain and the skipped step in the node panel", () => {
     const html = renderToStaticMarkup(<KeelChainView nodeId="implementation" events={[signal(1, "jpd.journey"), signal(2, "keel.card")]} />);
-    expect(html).toContain("Journey recorded → Obligation missing → Card recorded → Proof missing");
+    expect(html).toContain(`aria-label="Journey recorded"`);
+    expect(html).toContain(`aria-label="Obligation missing"`);
+    expect(html).toContain(`aria-label="Proof missing"`);
     expect(html).toContain("Obligation was skipped.");
     expect(html).toContain("Card has no proof yet.");
   });

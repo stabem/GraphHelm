@@ -579,7 +579,7 @@ describe("unavailable dependency evidence is not a claim about the run's past", 
     const { rerender } = render(
       <WorkOverview model={{ ...succeeded, edgesKnown: true }} ended selectedNode={null} onSelectNode={vi.fn()} />,
     );
-    expect(screen.getByText("1 dependencies")).toBeInTheDocument();
+    expect(screen.getByText("1 dependency")).toBeInTheDocument();
 
     // The proof goes away — a re-selection, or a graph read that failed. The run's past did not.
     rerender(<WorkOverview model={succeeded} ended selectedNode={null} onSelectNode={vi.fn()} />);

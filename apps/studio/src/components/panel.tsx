@@ -1159,7 +1159,13 @@ export function KeelChainView({ events, nodeId }: { events: RuntimeEvent[]; node
   if (!chain.active) return null;
   return (
     <section className="node-result-summary keel-chain" aria-label="Keel chain">
-      <strong>Keel · {chain.steps.map((step) => `${step.label} ${step.state === "missing" ? "missing" : step.state === "red" ? "failed" : step.state === "green" ? "passed" : "recorded"}`).join(" → ")}</strong>
+      <strong>Keel</strong>
+      <ol className="keel-steps">
+        {chain.steps.map((step) => {
+          const word = step.state === "missing" ? "missing" : step.state === "red" ? "failed" : step.state === "green" ? "passed" : "recorded";
+          return <li key={step.kind} className={`keel-step ${step.state}`} aria-label={`${step.label} ${word}`}><span aria-hidden="true">{step.state === "missing" ? "○" : step.state === "red" ? "✕" : "✓"}</span>{step.label}</li>;
+        })}
+      </ol>
       {chain.gaps.length === 0 ? <span>Every step is recorded.</span> : chain.gaps.map((gap) => <span key={gap}>{gap}</span>)}
     </section>
   );

@@ -9,8 +9,10 @@ joins them with the scope rule). The rules and their version are in
 graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <dir>]
 ```
 
-- `--diff` is a git range. The command runs `git diff` on it in `--repo` (default: the current
-  directory), with fixed `a/` and `b/` prefixes and rename detection.
+- `--diff` is a git range, `<base>..<head>` or `<base>...<head>`; both mean the same thing. The
+  command diffs from `git merge-base <base> <head>` to `<head>` in `--repo` (default: the current
+  directory), with fixed `a/` and `b/` prefixes and rename detection, so commits that reached the
+  base after the branch was cut are never charged to it.
 - `--card` is optional. Without it, the scope rule does not run and only the surface counts are
   reported.
 
@@ -54,6 +56,12 @@ symbol), `findings` and `refused`. Each finding is also a diagnostic whose `code
 `newModules`, `newPublicSymbols`, `newDependencies`, `cardScopePaths`, `cardExportedSymbols`, and
 `undeclaredPublicSymbols` (public symbols the diff adds that the card does not name; reported,
 never refused).
+
+Inside `classification`, `totals` is what the diff **spent** per kind and `budget` is what it was
+**allowed** to spend (the `keel.yaml` `surface` plus any card `allowance`). `budget` is a limit,
+not a charge: `budget.newPublicFn: 4` with `totals.newPublicFn: 0` means nothing was spent out of
+four allowed. A kind is over budget only when its `totals` value exceeds its `budget` value, and
+then a `keel.surface.<kind>_over_budget` finding names both numbers.
 
 | Exit | Meaning |
 |---|---|

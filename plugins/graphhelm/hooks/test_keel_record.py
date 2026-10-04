@@ -60,3 +60,35 @@ class RecordBlockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LockFailsClosedTest(unittest.TestCase):
+    """A broken recorder must never turn a lock's refusal into a silent pass."""
+
+    def _run(self, hook, payload):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            git = lambda *a: subprocess.run(["git", "-C", tmp, "-c", "user.email=a@b", "-c", "user.name=a", *a], check=True, capture_output=True)
+            git("init", "-q", "-b", "main"); git("commit", "-q", "--allow-empty", "-m", "base"); git("checkout", "-q", "-b", "feat")
+            (repo / "src").mkdir(); (repo / "src" / "a.py").write_text("\n".join(f"x={i}" for i in range(40)))
+            shadow = repo / "shadow"; shadow.mkdir()
+            (shadow / "keel_record.py").write_text("raise ImportError('broken recorder')\n")
+            here = Path(__file__).resolve().parent
+            env = {**os.environ, "PYTHONPATH": str(shadow), "GRAPHHELM_EXECUTION_ID": ""}
+            # Copy the hook beside the broken recorder so the script's own dir resolves it first.
+            for name in ("keel_stop_hook.py", "keel_pretool_hook.py"):
+                (shadow / name).write_text((here / name).read_text())
+            payload = {**payload, "cwd": tmp}
+            return subprocess.run([sys.executable, str(shadow / hook)], input=json.dumps(payload),
+                                  capture_output=True, text=True, env=env, cwd=tmp)
+
+    def test_stop_still_blocks_when_the_recorder_cannot_import(self):
+        result = self._run("keel_stop_hook.py", {"stop_hook_active": False})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+
+    def test_pretool_still_denies_when_the_recorder_cannot_import(self):
+        result = self._run("keel_pretool_hook.py", {"tool_name": "Write", "tool_input": {"file_path": "src/b.py", "content": "y\n" * 10}})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")

@@ -66,6 +66,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/keel_stop_hook.py\"",
+            "timeout": 70
+          }
+        ]
+      }
     ]
   }
 }

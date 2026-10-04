@@ -17,6 +17,22 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
     if args.recover.is_some() {
         return mutation(args, None);
     }
+    if !args.install_observers.is_empty() {
+        let (data, ok) =
+            super::observers::install(&args.install_observers, &args.project, &args.home);
+        if ok {
+            return Outcome::success(COMMAND, data);
+        }
+        return Outcome::application(
+            COMMAND,
+            Diagnostic::error(
+                REFUSED,
+                format!("an observer install command failed: {data}"),
+                "/observers/install",
+                SOURCE,
+            ),
+        );
+    }
     let provisioning = match super::init::describe(&crate::args::InitArgs {
         project: Some(args.project.clone()),
         bind: "127.0.0.1:8791".into(),
@@ -52,6 +68,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 "plan": plan,
                 "provisioning": provisioning,
                 "suggestedResolutions": suggestions(&inventory),
+                "observers": super::observers::readiness(&args.project, &args.home),
             }));
         }
         // A resolved plan carries the reviewed after-bytes. They go to the private file only;

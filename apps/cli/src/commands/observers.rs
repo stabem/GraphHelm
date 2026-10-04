@@ -1,0 +1,287 @@
+//! Browser journey observers for `graphhelm setup`: whether one is ready in the project, the exact
+//! commands that make it ready, and (only on `--install-observer`) running them.
+//!
+//! Playwright is the default observer: deterministic, no model, no AI cost
+//! (`tools/playwright-observer`). `e2e` (tester.army) is opt-in: it needs a model key for agent
+//! steps (`tools/e2e-observer`). Readiness reads files and PATH only; nothing runs without the flag.
+
+use std::path::{Path, PathBuf};
+
+use crate::args::ObserverKind;
+
+struct Spec {
+    id: &'static str,
+    package: &'static str,
+    install: [&'static str; 2],
+    runner: &'static str,
+    note: &'static str,
+    /// The observer script, shipped inside the binary and written into the project on install,
+    /// so a user without a GraphHelm checkout still has it.
+    script_name: &'static str,
+    script: &'static str,
+}
+
+/// Where `--install-observer` writes the observer scripts, relative to the project.
+const SCRIPT_DIR: &str = ".graphhelm/observers";
+
+const PLAYWRIGHT: Spec = Spec {
+    id: "playwright",
+    package: "@playwright/test",
+    install: [
+        "npm install --save-dev @playwright/test",
+        "npx playwright install chromium",
+    ],
+    runner: "python .graphhelm/observers/playwright_observe.py --project <project>",
+    note: "default: deterministic browser tests, no model key",
+    script_name: "playwright_observe.py",
+    script: include_str!("../../../../tools/playwright-observer/playwright_observe.py"),
+};
+
+const E2E: Spec = Spec {
+    id: "e2e",
+    package: "e2e",
+    install: ["npm install --save-dev e2e", "npx e2e-web install chromium"],
+    runner: "python .graphhelm/observers/e2e_observe.py --project <project>",
+    note: "optional: agent steps need a model key (see the e2e docs)",
+    script_name: "e2e_observe.py",
+    script: include_str!("../../../../tools/e2e-observer/e2e_observe.py"),
+};
+
+fn spec(kind: ObserverKind) -> &'static Spec {
+    match kind {
+        ObserverKind::Playwright => &PLAYWRIGHT,
+        ObserverKind::E2e => &E2E,
+    }
+}
+
+fn on_path(program: &str) -> bool {
+    let names: Vec<String> = if cfg!(windows) {
+        ["exe", "cmd"]
+            .iter()
+            .map(|ext| format!("{program}.{ext}"))
+            .collect()
+    } else {
+        vec![program.to_owned()]
+    };
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| names.iter().any(|name| dir.join(name).is_file()))
+    })
+}
+
+/// Where Playwright keeps browsers: `PLAYWRIGHT_BROWSERS_PATH`, else the per-OS cache under `home`.
+fn browser_roots(project: &Path, home: &Path) -> Vec<PathBuf> {
+    if let Some(path) = std::env::var_os("PLAYWRIGHT_BROWSERS_PATH") {
+        if path == "0" {
+            return vec![project.join("node_modules/playwright-core/.local-browsers")];
+        }
+        return vec![PathBuf::from(path)];
+    }
+    let mut roots = vec![
+        home.join(".cache/ms-playwright"),
+        home.join("Library/Caches/ms-playwright"),
+        home.join("AppData/Local/ms-playwright"),
+    ];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("ms-playwright"));
+    }
+    roots
+}
+
+fn has_chromium(roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| {
+        std::fs::read_dir(root).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry.file_name().to_string_lossy().starts_with("chromium") && entry.path().is_dir()
+            })
+        })
+    })
+}
+
+fn check(spec: &Spec, project: &Path, roots: &[PathBuf], node: bool) -> serde_json::Value {
+    let mut missing = Vec::new();
+    if !node {
+        missing.push("node and npm on PATH (install Node.js 18 or newer)".to_owned());
+    }
+    if !project
+        .join("node_modules")
+        .join(spec.package)
+        .join("package.json")
+        .is_file()
+    {
+        missing.push(format!("{} in the project's node_modules", spec.package));
+    }
+    // Both runners drive Playwright's Chromium build.
+    if !has_chromium(roots) {
+        missing.push("a Playwright Chromium build".to_owned());
+    }
+    if std::fs::read(script_path(spec, project)).ok().as_deref() != Some(spec.script.as_bytes()) {
+        missing.push(format!(
+            "{SCRIPT_DIR}/{} (this GraphHelm version)",
+            spec.script_name
+        ));
+    }
+    serde_json::json!({
+        "id": spec.id,
+        "status": if missing.is_empty() { "ready" } else { "missing" },
+        "missing": missing,
+        "install": spec.install,
+        "installFlag": format!("--install-observer {}", spec.id),
+        "runner": spec.runner,
+        "note": spec.note,
+    })
+}
+
+/// The `observers` section of the setup preview. Reads only.
+pub(super) fn readiness(project: &Path, home: &Path) -> serde_json::Value {
+    let node = on_path("node") && on_path("npm");
+    let roots = browser_roots(project, home);
+    let browser = check(&PLAYWRIGHT, project, &roots, node);
+    let summary = if browser["status"] == "ready" {
+        "The browser journey observer (Playwright) is ready."
+    } else {
+        "No browser journey observer is ready: browser journeys end OBSERVER_MISSING. Run setup with --install-observer playwright, or the install commands yourself."
+    };
+    serde_json::json!({
+        "browser": browser,
+        "optional": [check(&E2E, project, &roots, node)],
+        "summary": summary,
+    })
+}
+
+fn script_path(spec: &Spec, project: &Path) -> PathBuf {
+    project.join(SCRIPT_DIR).join(spec.script_name)
+}
+
+/// Writes the shipped observer script into the project, replacing an older copy.
+fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
+    let path = script_path(spec, project);
+    std::fs::create_dir_all(project.join(SCRIPT_DIR))?;
+    std::fs::write(path, spec.script)
+}
+
+fn run_step(command: &str, project: &Path) -> std::io::Result<std::process::ExitStatus> {
+    let mut words = command.split_whitespace();
+    let program = words.next().unwrap_or_default();
+    let mut process = if cfg!(windows) {
+        let mut process = std::process::Command::new("cmd");
+        process.args(["/C", program]);
+        process
+    } else {
+        std::process::Command::new(program)
+    };
+    // The child's output would corrupt the JSON on stdout; it goes to stderr for the owner.
+    process
+        .args(words)
+        .current_dir(project)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::io::stderr())
+        .status()
+}
+
+/// Runs each requested observer's install commands in `project`, stopping at the first failure,
+/// then re-reads readiness. Returns the steps run and whether all succeeded.
+pub(super) fn install(
+    kinds: &[ObserverKind],
+    project: &Path,
+    home: &Path,
+) -> (serde_json::Value, bool) {
+    let mut steps = Vec::new();
+    let mut ok = true;
+    let mut seen = Vec::new();
+    'outer: for kind in kinds {
+        let spec = spec(*kind);
+        if seen.contains(&spec.id) {
+            continue;
+        }
+        seen.push(spec.id);
+        let written = write_script(spec, project);
+        steps.push(serde_json::json!({
+            "observer": spec.id,
+            "wrote": format!("{SCRIPT_DIR}/{}", spec.script_name),
+            "error": written.as_ref().err().map(ToString::to_string),
+        }));
+        if written.is_err() {
+            ok = false;
+            break;
+        }
+        for command in spec.install {
+            let (exit, error) = match run_step(command, project) {
+                Ok(status) => (status.code(), None),
+                Err(error) => (None, Some(error.to_string())),
+            };
+            steps.push(serde_json::json!({
+                "observer": spec.id, "command": command, "exitCode": exit, "error": error,
+            }));
+            if exit != Some(0) {
+                ok = false;
+                break 'outer;
+            }
+        }
+    }
+    (
+        serde_json::json!({
+            "installed": steps,
+            "observers": readiness(project, home),
+        }),
+        ok,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().expect("tempdir");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&home).expect("home");
+        (root, project, home)
+    }
+
+    #[test]
+    fn an_empty_project_names_each_missing_piece_and_the_commands() {
+        let (_root, project, home) = fixture();
+        let browser = check(&PLAYWRIGHT, &project, &[home.join("cache")], false);
+        assert_eq!(browser["status"], "missing");
+        let missing = browser["missing"].as_array().expect("missing");
+        assert_eq!(missing.len(), 4, "{missing:?}");
+        assert_eq!(browser["install"][1], "npx playwright install chromium");
+        assert_eq!(browser["installFlag"], "--install-observer playwright");
+    }
+
+    #[test]
+    fn package_plus_chromium_plus_node_is_ready() {
+        let (_root, project, home) = fixture();
+        let package = project.join("node_modules/@playwright/test");
+        std::fs::create_dir_all(&package).expect("package");
+        std::fs::write(package.join("package.json"), "{}").expect("manifest");
+        write_script(&PLAYWRIGHT, &project).expect("script");
+        let roots = [home.join("cache")];
+        std::fs::create_dir_all(roots[0].join("chromium-1200")).expect("chromium");
+        let browser = check(&PLAYWRIGHT, &project, &roots, true);
+        assert_eq!(browser["status"], "ready", "{browser}");
+        // e2e is a different package, so it stays missing: it is opt-in.
+        assert_eq!(check(&E2E, &project, &roots, true)["status"], "missing");
+    }
+
+    #[test]
+    fn the_shipped_script_lands_in_the_project_and_a_stale_copy_is_missing() {
+        let (_root, project, _home) = fixture();
+        write_script(&PLAYWRIGHT, &project).expect("script");
+        let written =
+            std::fs::read_to_string(project.join(SCRIPT_DIR).join("playwright_observe.py"))
+                .expect("written");
+        assert!(written.contains("def observe("));
+        assert_eq!(written, PLAYWRIGHT.script);
+        std::fs::write(script_path(&PLAYWRIGHT, &project), "old").expect("stale");
+        let browser = check(&PLAYWRIGHT, &project, &[], true);
+        assert!(
+            browser["missing"]
+                .to_string()
+                .contains("playwright_observe.py"),
+            "{browser}"
+        );
+    }
+}

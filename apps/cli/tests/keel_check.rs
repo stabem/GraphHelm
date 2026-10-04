@@ -405,3 +405,81 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
         assert!(codes(&reply).is_empty(), "{range}: {reply}");
     }
 }
+
+/// ml-saas trial: a TypeScript regression test is proven from the runner's JUnit report, red on
+/// the parent and green on the head. Only the report decides (#269 review): a runner that cannot
+/// start, or one that never reports the test, is `not_run`, even for a one-letter test name.
+#[cfg(unix)]
+#[test]
+fn prove_command_proves_a_typescript_test_from_its_junit_report() {
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q"]);
+    fs::write(repo.path().join("value.txt"), "broken\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    fs::write(repo.path().join("value.txt"), "fixed\n").unwrap();
+    fs::create_dir_all(repo.path().join("tests")).unwrap();
+    fs::write(
+        repo.path().join("tests/value.test.ts"),
+        "it('t', () => {});\n",
+    )
+    .unwrap();
+    fs::write(repo.path().join("run.sh"), "exit 0\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "fix"]);
+    let run = |command: &str| {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--prove-new-tests",
+                "--prove-command",
+                command,
+                "--repo",
+            ])
+            .arg(repo.path())
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.code().unwrap(), reply)
+    };
+    let proof = |command: &str| {
+        let (_, reply) = run(command);
+        let proof = reply["data"]["testProof"]["proofs"][0].clone();
+        assert_eq!(proof["name"], "t", "{reply}");
+        proof
+    };
+    // A runner that reports `t` failing on the parent and passing on the head.
+    let junit = "if grep -q fixed value.txt; then body=''; else body='<failure/>'; fi; \
+                 printf '<testsuite><testcase name=\"%s\">%s</testcase></testsuite>' {name} \"$body\" > {report}";
+    let earned = proof(junit);
+    assert_eq!(earned["parent"]["outcome"], "failed", "{earned}");
+    assert_eq!(earned["head"]["outcome"], "passed", "{earned}");
+    assert_eq!(earned["verdict"], "earned", "{earned}");
+    let green = proof("printf '<testsuite><testcase name=\"%s\"/></testsuite>' {name} > {report}");
+    assert_eq!(green["verdict"], "green_on_parent", "{green}");
+    // Cannot start: the error text names `t` ("not found", "test") but writes no report.
+    let missing = proof("no-such-runner-keel {file} {name} {report}");
+    assert_eq!(missing["parent"]["outcome"], "not_run", "{missing}");
+    assert_eq!(missing["verdict"], "unproven", "{missing}");
+    // Script only on the head: the parent run writes no report; the head reports a pass.
+    let absent = proof(
+        "sh run.sh && printf '<testsuite><testcase name=\"%s\"/></testsuite>' {name} > {report}",
+    );
+    assert_eq!(absent["parent"]["outcome"], "not_run", "{absent}");
+    assert_eq!(absent["head"]["outcome"], "passed", "{absent}");
+    assert_eq!(absent["verdict"], "unproven", "{absent}");
+    // A report that fails some other test, whose name contains `t`, does not fail `t`.
+    let other = proof(
+        "printf '<testsuite><testcase name=\"other test\"><failure/></testcase></testsuite>' > {report}",
+    );
+    assert_eq!(other["parent"]["outcome"], "not_run", "{other}");
+    assert_eq!(other["verdict"], "unproven", "{other}");
+    // A command with no report placeholder is refused before anything runs.
+    let (code, reply) = run("true {file} {name}");
+    assert_eq!(code, 3, "{reply}");
+}

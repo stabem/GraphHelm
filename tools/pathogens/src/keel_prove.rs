@@ -152,6 +152,7 @@ impl EvidenceGate<KeelProveEvidence> for KeelProveGate {
             target_dir: self.root.join("target"),
             scratch_root: self.root.clone(),
             timeout: Duration::from_secs(300),
+            command: None,
         };
         let report = match prove_new_tests(&diff, &options, graphhelm_process_tree::run_bounded) {
             Ok(report) => report,

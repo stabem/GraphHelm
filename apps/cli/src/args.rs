@@ -120,6 +120,11 @@ pub enum KeelCommand {
         /// Bound, in seconds, on one `cargo test` run (build included).
         #[arg(long, default_value_t = 900, requires = "prove_new_tests")]
         prove_timeout_secs: u64,
+        /// How to run one non-Rust new test and write a JUnit report to `{report}`, e.g.
+        /// `npx vitest run {file} -t {name} --reporter=junit --outputFile={report}`. Only the
+        /// report's testcase named exactly `{name}` decides. Without it those tests are unproven.
+        #[arg(long, requires = "prove_new_tests")]
+        prove_command: Option<String>,
     },
 }
 

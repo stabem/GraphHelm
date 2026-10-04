@@ -1215,9 +1215,8 @@ export function NodePanel({
         <i aria-hidden="true" />
         <div style={{ minWidth: 0 }}>
           <h2>{node.declaredName ?? node.id}</h2>
-          {node.declaredName && <p className="lbl">Node · {node.id}</p>}
-          {node.declaredRole && <p className="lbl">Declared role · {node.declaredRole}</p>}
-          <p className="lbl">{nodeStatusLabel(node) === "review needed" ? node.resultSource === "model_reply" ? "Reply received · review needed" : "Finished · review needed" : nodeStatusLabel(node) ?? readable(node.state)}</p>
+          {(node.declaredName || node.declaredRole) && <p className="lbl">{[node.declaredName ? `Node · ${node.id}` : null, node.declaredRole ? `Role · ${node.declaredRole}` : null].filter(Boolean).join(" · ")}</p>}
+          <p className="panel-state">{nodeStatusLabel(node) === "review needed" ? node.resultSource === "model_reply" ? "Reply received · review needed" : "Finished · review needed" : nodeStatusLabel(node) ?? readable(node.state)}</p>
         </div>
         <button type="button" className="ghost close" onClick={onClose} aria-label="Close this node" autoFocus>
           <X aria-hidden="true" />

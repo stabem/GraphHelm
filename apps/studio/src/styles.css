@@ -2991,3 +2991,5 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .keel-step.missing { background: transparent; border: 1px dashed var(--edge); color: var(--faint); }
 .keel-step.green { background: color-mix(in oklab, var(--live) 22%, var(--raised)); }
 .keel-step.red { background: color-mix(in oklab, var(--danger) 26%, var(--raised)); }
+/* The node's state reads as a sentence under its name, not a third shouted label. */
+.panel-state { margin: 3px 0 0; color: var(--dim); font-size: 12px; }

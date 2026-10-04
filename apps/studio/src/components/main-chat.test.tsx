@@ -133,6 +133,28 @@ describe("MainChat", () => {
     expect(screen.getByText("native resume rejected")).toBeInTheDocument();
   });
 
+  // DOM-only: a roster refresh must not discard an authoritative unresolved receipt while its
+  // next read is pending. Existing recovery tests cover local IDs, not ledger-only requests.
+  // Cost: one unresolved mocked I/O read and jsdom; no network or production-only seam.
+  it("keeps ledger-only pending requests locked while a changed roster is being reread", async () => {
+    let rereading = false;
+    const client = runtime({ listNativeChatRequests: vi.fn().mockImplementation(() => rereading
+      ? new Promise(() => {})
+      : Promise.resolve({ requests: [{ requestId: "ledger-pending", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "unobserved" as const }] })) });
+    const view = render(<MainChat client={client} executionId="run-roster" personas={personas} />);
+    await screen.findAllByText("Unobserved · outcome not proven");
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Keep this draft" } });
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    const previousReads = client.listNativeChatRequests.mock.calls.length;
+    rereading = true;
+    view.rerender(<MainChat client={client} executionId="run-roster" personas={[...personas]} />);
+    await waitFor(() => expect(client.listNativeChatRequests.mock.calls.length).toBeGreaterThan(previousReads));
+    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+    expect(screen.getByLabelText("Instruction")).toHaveValue("Keep this draft");
+    expect(screen.getAllByText("Unobserved · outcome not proven").length).toBeGreaterThan(0);
+    expect(client.sendNativeChat).not.toHaveBeenCalled();
+  });
+
   it("does not call the Runtime when there are no linked personas", () => {
     const client = runtime();
     const onConnect = vi.fn();

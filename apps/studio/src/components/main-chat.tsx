@@ -236,7 +236,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
         return;
       }
       setRows((current) => {
-        return mergeRows(current, [], recovery.entries, personas);
+        return mergeRows(current, current, recovery.entries, personas);
       });
       try {
         const page = await client.listNativeChatRequests(executionId);

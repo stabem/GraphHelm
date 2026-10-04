@@ -12,9 +12,9 @@ python tools/e2e-observer/e2e_observe.py --project <app dir>
 |---|---|---|
 | 0 | `passed` | e2e exited 0 and wrote `.e2e/report.json` |
 | 1 | `failed` | e2e exited 1 (a test failed) and wrote the report |
-| 2 | `observer_missing` | e2e not installed, timed out, exited 2/3/4/130, or wrote no report |
+| 2 | `observer_missing` | e2e not installed, timed out, exited 2/3/4/130, or the report is missing, broken, empty or disagrees with the exit |
 
-Only a written report with exit 0 or 1 is an observation of the journey. A config, credential,
+Only a written, well-formed report-1 with results, whose `run.status` matches exit 0 or 1, is an observation of the journey. A config, credential,
 engine or model-provider failure is not a red journey; it is `OBSERVER_MISSING`.
 
 The evidence lists the command and its exit code, the report's sha256, and one line per result

@@ -55,10 +55,23 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     if report_path.is_file():
         raw = report_path.read_bytes()
         evidence.append(f"{REPORT.as_posix()} sha256:{hashlib.sha256(raw).hexdigest()}")
+        problem = None
         try:
-            evidence.extend(_tests(json.loads(raw)))
+            report = json.loads(raw)
+            run = report.get("run") if isinstance(report, dict) else None
+            if not isinstance(run, dict) or report.get("schemaVersion") != "report-1":
+                problem = "is not an e2e report-1"
+            elif not isinstance(run.get("results"), list) or not run["results"]:
+                problem = "lists no results"
+            elif verdict != "observer_missing" and run.get("status") != verdict:
+                problem = f"says run.status {run.get('status')!r}, but e2e exited {result.returncode}"
+            else:
+                evidence.extend(_tests(report))
         except ValueError:
-            evidence.append(f"{REPORT.as_posix()} is not JSON")
+            problem = "is not JSON"
+        if problem:
+            verdict = "observer_missing"
+            evidence.append(f"{REPORT.as_posix()} {problem}")
     elif verdict != "observer_missing":
         verdict = "observer_missing"
         evidence.append(f"no {REPORT.as_posix()} was written, so no test was observed")

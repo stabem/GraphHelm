@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).with_name("e2e_observe.py")
-REPORT = {"schemaVersion": "report-1", "run": {"results": [
+REPORT = {"schemaVersion": "report-1", "run": {"status": "passed", "results": [
     {"titlePath": ["checkout", "user signs in"], "status": "passed"},
     {"titlePath": ["checkout", "user pays"], "status": "failed"}]}}
 
@@ -21,11 +21,15 @@ class E2EObserve(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_observer(self, exit_code, write_report=True):
+    def run_observer(self, exit_code, write_report=True, report=None):
+        if report is None:
+            report = json.dumps(dict(REPORT, run=dict(
+                REPORT["run"], status="passed" if exit_code == 0 else "failed")))
+        (self.project / "next_report.json").write_text(report)
         fake = self.project / "fake_e2e.py"
         fake.write_text(
-            "import json, os, sys\n"
-            + (f"os.makedirs('.e2e', exist_ok=True); open('.e2e/report.json','w').write({json.dumps(json.dumps(REPORT))})\n"
+            "import os, shutil, sys\n"
+            + ("os.makedirs('.e2e', exist_ok=True); shutil.copy('next_report.json', '.e2e/report.json')\n"
                if write_report else "")
             + f"sys.stderr.write('runner says {exit_code}\\n'); sys.exit({exit_code})\n")
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
@@ -58,6 +62,16 @@ class E2EObserve(unittest.TestCase):
         code, out = self.run_observer(0, write_report=False)
         self.assertEqual((code, out["verdict"]), (2, "observer_missing"))
         self.assertFalse((self.project / ".e2e" / "report.json").exists())
+
+    def test_broken_or_incomplete_report_is_never_a_pass(self):
+        cases = {"not json": "{oops",
+                 "wrong schema": json.dumps({"run": {"status": "passed", "results": [{}]}}),
+                 "no results": json.dumps({"schemaVersion": "report-1", "run": {"status": "passed", "results": []}}),
+                 "status disagrees": json.dumps({"schemaVersion": "report-1", "run": {
+                     "status": "failed", "results": [{"titlePath": ["t"], "status": "failed"}]}})}
+        for name, report in cases.items():
+            code, out = self.run_observer(0, report=report)
+            self.assertEqual((code, out["verdict"]), (2, "observer_missing"), name)
 
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),

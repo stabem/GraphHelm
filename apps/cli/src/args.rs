@@ -67,6 +67,17 @@ pub enum TopLevel {
     /// The Studio: `graphhelm studio start` brings the GraphHelm clone up to date and opens the
     /// Studio for the project in the current directory, starting its Runtime when none answers.
     Studio(StudioArgs),
+    /// Update GraphHelm itself: fast-forward the clone this binary comes from to `origin/main`
+    /// (only a clean `main`), then reinstall the CLI from it with `cargo install`.
+    Update(UpdateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
+    /// The GraphHelm clone. Defaults to `GRAPHHELM_SOURCE`, then to the clone this binary was
+    /// built from.
+    #[arg(long)]
+    pub source: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

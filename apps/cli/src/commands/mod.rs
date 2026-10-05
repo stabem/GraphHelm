@@ -538,6 +538,7 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
         TopLevel::Init(args) => init::run(&args),
+        TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),
         },

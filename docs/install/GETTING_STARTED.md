@@ -269,6 +269,11 @@ cd C:\path\to\your-project
 graphhelm studio start
 ```
 
+To update GraphHelm itself (the clone and the installed CLI), run `graphhelm update`: the same
+conservative fast-forward, then `cargo install --locked --path apps/cli` inside the clone. On
+Windows the running `graphhelm.exe` is renamed to `graphhelm.old.exe` first, and restored if the
+install fails.
+
 The same launch by hand. Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
 starts one; installs dependencies on the first run; opens the browser connected:
 

@@ -53,7 +53,16 @@ pub(super) fn resolve_source(candidates: &[Option<PathBuf>]) -> Option<PathBuf> 
         .iter()
         .flatten()
         .find(|candidate| candidate.join(LAUNCHER).is_file())
-        .map(|found| std::fs::canonicalize(found).unwrap_or_else(|_| found.clone()))
+        .map(|found| plain(std::fs::canonicalize(found).unwrap_or_else(|_| found.clone())))
+}
+
+/// Drops Windows' verbatim prefix (`\\\\?\\F:\\...`) that `canonicalize` adds: PowerShell's
+/// `Split-Path`/`Join-Path` cannot read it, and `studio-up.ps1` failed on it (2026-10-05).
+pub(super) fn plain(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 /// What the clone's state allows. Pure, so the decision is tested without git.
@@ -352,7 +361,10 @@ mod tests {
         std::fs::create_dir_all(clone.path().join("apps/studio/tools")).unwrap();
         std::fs::write(clone.path().join(LAUNCHER), "").unwrap();
         let found = resolve_source(&[None, Some(empty.path().into()), Some(clone.path().into())]);
-        assert_eq!(found, Some(std::fs::canonicalize(clone.path()).unwrap()));
+        assert_eq!(
+            found,
+            Some(plain(std::fs::canonicalize(clone.path()).unwrap()))
+        );
         assert_eq!(resolve_source(&[Some(empty.path().into())]), None);
     }
 
@@ -368,6 +380,22 @@ mod tests {
             None
         );
         assert_eq!(install_root(None), None);
+    }
+
+    #[test]
+    fn drops_the_windows_verbatim_prefix_powershell_cannot_read() {
+        assert_eq!(
+            plain(PathBuf::from(r"\\?\F:\github\GraphHelm")),
+            PathBuf::from(r"F:\github\GraphHelm")
+        );
+        assert_eq!(
+            plain(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(
+            plain(PathBuf::from("/home/u/GraphHelm")),
+            PathBuf::from("/home/u/GraphHelm")
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ mod schema;
 mod secret_file;
 mod serve;
 mod simulate;
+mod studio;
 mod tool;
 mod topology;
 mod validate;
@@ -537,6 +538,9 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
         TopLevel::Init(args) => init::run(&args),
+        TopLevel::Studio(args) => match args.command {
+            crate::args::StudioCommand::Start(start) => studio::start(&start),
+        },
         TopLevel::Setup(args) => adoption::run(&args),
         TopLevel::Backup(args) => adoption::backup(&args),
         TopLevel::Restore(args) => adoption::restore(&args),

@@ -257,7 +257,19 @@ the right key. You learn at start, not at the first message.
 Node 22+ and npm are needed from here on, and only from here on. Run these from the **GraphHelm
 clone** (the Studio lives in `apps/studio`), not from your project.
 
-Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
+Shortest path, from your project folder: `graphhelm studio start`. It finds the GraphHelm clone
+(`--source`, else `GRAPHHELM_SOURCE`, else the clone the binary was built from), fast-forwards it
+to `origin/main` when it is on a clean `main` (otherwise it warns how many commits it is behind and
+leaves it alone; `--no-update` skips the check), reruns `npm ci` when the Studio's lock file moved,
+and then runs `studio-up.ps1` below with this project's events, keyring and key. It needs
+PowerShell (`powershell` on Windows, `pwsh` elsewhere).
+
+```powershell
+cd C:\path\to\your-project
+graphhelm studio start
+```
+
+The same launch by hand. Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
 starts one; installs dependencies on the first run; opens the browser connected:
 
 ```powershell

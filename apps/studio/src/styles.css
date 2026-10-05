@@ -2993,3 +2993,11 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .keel-step.red { background: color-mix(in oklab, var(--danger) 26%, var(--raised)); }
 /* The node's state reads as a sentence under its name, not a third shouted label. */
 .panel-state { margin: 3px 0 0; color: var(--dim); font-size: 12px; }
+
+/* Group and sort menu of the projects rail (Day / Status / None, Last activity / Started). */
+.icon-action.on { color: var(--signal); }
+.rail-view-menu { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; padding: 6px; border: 1px solid var(--edge); border-radius: var(--r); background: color-mix(in oklab, var(--text) 3%, transparent); }
+.rail-view-menu .lbl { margin: 6px 6px 2px; }
+.rail-view-menu button { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rail-view-menu button:hover, .rail-view-menu button[aria-pressed="true"] { background: color-mix(in oklab, var(--text) 7%, transparent); }
+.rail-view-menu button svg { width: 14px; height: 14px; }

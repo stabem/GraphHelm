@@ -21,10 +21,62 @@
  */
 
 import { useEffect, useState } from "react";
-import { Activity, Check, Folder, FolderPlus, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
+import { Activity, Check, Folder, FolderPlus, ListFilter, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary } from "../runtime/types";
 import { hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
+
+/** How the rail groups its runs. "day" is the default: the work of each day together, the day
+ * touched last on top, so the run being worked on now is the first thing on the list. */
+export type RailGroup = "day" | "status" | "none";
+/** Which clock orders runs inside a group: the last recorded event, or the start. */
+export type RailSort = "activity" | "started";
+const VIEW_KEY = "graphhelm.studio.rail-view";
+
+function loadView(): { group: RailGroup; sort: RailSort } {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(VIEW_KEY) ?? "null");
+    const value = (parsed ?? {}) as { group?: unknown; sort?: unknown };
+    return {
+      group: value.group === "status" || value.group === "none" ? value.group : "day",
+      sort: value.sort === "started" ? "started" : "activity",
+    };
+  } catch {
+    return { group: "day", sort: "activity" };
+  }
+}
+
+function saveView(view: { group: RailGroup; sort: RailSort }): void {
+  try {
+    window.localStorage.setItem(VIEW_KEY, JSON.stringify(view));
+  } catch {
+    // A browser that refuses storage still gets the choice for this page; it just is not kept.
+  }
+}
+
+function timeOf(value: string | null | undefined): number {
+  const parsed = value ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : -Infinity;
+}
+
+/** The local calendar day a time falls on, as a sortable key and a label ("Today", "Oct 2"). */
+export function dayOf(time: number, now: Date = new Date()): { key: string; label: string } {
+  const date = new Date(time);
+  const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const daysAgo = Math.round((midnight - dayStart) / 86_400_000);
+  const label = daysAgo === 0 ? "Today" : daysAgo === 1 ? "Yesterday"
+    : new Intl.DateTimeFormat(undefined, {
+      month: "short", day: "numeric", ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+    }).format(date);
+  return { key, label };
+}
+
+function sortedBy(runs: ExecutionSummary[], sort: RailSort): ExecutionSummary[] {
+  const clock = (run: ExecutionSummary) => timeOf(sort === "started" ? run.startedAt : run.lastEventAt);
+  return [...runs].sort((a, b) => clock(b) - clock(a) || (a.executionId < b.executionId ? -1 : a.executionId > b.executionId ? 1 : 0));
+}
 
 function recentFirst(runs: ExecutionSummary[]): ExecutionSummary[] {
   return [...runs].sort((a, b) => {
@@ -106,6 +158,13 @@ export function ProjectRail({
   const [draftName, setDraftName] = useState(projectName ?? "");
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<"auto" | "shown" | "hidden">("auto");
+  const [view, setView] = useState(loadView);
+  const [viewMenu, setViewMenu] = useState(false);
+  const chooseView = (next: Partial<{ group: RailGroup; sort: RailSort }>) => {
+    const merged = { ...view, ...next };
+    setView(merged);
+    saveView(merged);
+  };
   useEffect(() => setDraftName(projectName ?? ""), [projectName]);
   const saveName = () => {
     if (onRenameProject?.(draftName) !== false) setEditing(false);
@@ -166,6 +225,16 @@ export function ProjectRail({
                   and the tooltip, where it costs no width. */}
               <button
                 type="button"
+                className={`icon-action ${viewMenu ? "on" : ""}`}
+                onClick={() => setViewMenu((open) => !open)}
+                aria-label="Group and sort tasks"
+                aria-expanded={viewMenu}
+                title="Group and sort"
+              >
+                <ListFilter aria-hidden="true" />
+              </button>
+              <button
+                type="button"
                 className="icon-action"
                 onClick={onNewTask}
                 disabled={!connected}
@@ -175,6 +244,22 @@ export function ProjectRail({
                 <Plus aria-hidden="true" />
               </button>
             </div>
+            {viewMenu && (
+              <div className="rail-view-menu" role="group" aria-label="Group and sort tasks">
+                <p className="lbl">Group by</p>
+                {([["day", "Day"], ["status", "Status"], ["none", "None"]] as const).map(([value, text]) => (
+                  <button key={value} type="button" aria-pressed={view.group === value} onClick={() => chooseView({ group: value })}>
+                    <span>{text}</span>{view.group === value && <Check aria-hidden="true" />}
+                  </button>
+                ))}
+                <p className="lbl">Sort by</p>
+                {([["activity", "Last activity"], ["started", "Started"]] as const).map(([value, text]) => (
+                  <button key={value} type="button" aria-pressed={view.sort === value} onClick={() => chooseView({ sort: value })}>
+                    <span>{text}</span>{view.sort === value && <Check aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="project-path" title={project.path ?? "Project folder path unavailable"}>
               {project.path ?? "Project folder path unavailable"}
             </div>
@@ -254,6 +339,26 @@ export function ProjectRail({
                   </div>
                 );
                 });
+                if (view.group !== "status") {
+                  const ordered = sortedBy(project.runs, view.sort);
+                  if (view.group === "none") return <div role="group" aria-label={`All runs (${ordered.length})`}>{renderRows(ordered)}</div>;
+                  // DAY GROUPS follow the same clock as the sort, so a run sits under the day it
+                  // was last touched (or started) and the newest day is always on top.
+                  const days: { key: string; label: string; runs: ExecutionSummary[] }[] = [];
+                  const undated: ExecutionSummary[] = [];
+                  for (const run of ordered) {
+                    const time = timeOf(view.sort === "started" ? run.startedAt : run.lastEventAt);
+                    if (time === -Infinity) { undated.push(run); continue; }
+                    const day = dayOf(time);
+                    const last = days[days.length - 1];
+                    if (last && last.key === day.key) last.runs.push(run);
+                    else days.push({ ...day, runs: [run] });
+                  }
+                  return <>
+                    {days.map((day) => <div key={day.key} role="group" aria-label={`${day.label} (${day.runs.length})`}><p className="lbl run-group-title">{day.label}</p>{renderRows(day.runs)}</div>)}
+                    {undated.length > 0 && <div role="group" aria-label={`Date unknown (${undated.length})`}><p className="lbl run-group-title">Date unknown</p>{renderRows(undated)}</div>}
+                  </>;
+                }
                 return <>
                   {ongoing.length > 0 && <div role="group" aria-label={`Ongoing runs (${ongoing.length})`}><p className="lbl run-group-title">Ongoing ({ongoing.length})</p>{renderRows(ongoing)}</div>}
                   {unknown.length > 0 && <div role="group" aria-label={`Status unknown (${unknown.length})`}><p className="lbl run-group-title">Status unknown ({unknown.length})</p>{renderRows(unknown)}</div>}

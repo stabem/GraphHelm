@@ -110,7 +110,12 @@ function budgetSecondsLegal(typed: string | undefined): boolean {
 }
 
 /** Big enough that the board sees the whole roster on a normal run, and still one page. */
-const EVENT_PAGE_SIZE = 200;
+/** The Runtime's own page ceiling (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). Every page costs the
+ * Runtime a fresh store open plus a full stream replay, so fewer, larger pages are what make a
+ * big run open fast: 200 per page made a 5,000-event run cost 25 serial full replays. */
+const EVENT_PAGE_SIZE = 1000;
+/** How many tail pages are asked for at once once the first page has told us the head. */
+const EVENT_PAGE_PARALLEL = 4;
 const LIST_PAGE_SIZE = 20;
 
 /** What the window is showing, or `none` — which is the DEFAULT and the point: the board is what
@@ -433,12 +438,36 @@ export default function App({
     async (client: RuntimeClient, id: string, after: number): Promise<EventPage> => {
       const collected: EventPage = { head: 0, events: [] };
       let cursor = after;
-      for (let page = 0; page < 600; page += 1) {
-        const next = await client.getEvents(id, { after: cursor, limit: EVENT_PAGE_SIZE });
-        collected.head = next.head;
-        collected.events.push(...next.events);
-        if (next.events.length < EVENT_PAGE_SIZE) break;
-        cursor = collected.events[collected.events.length - 1].sequence;
+      // FIRST PAGE ALONE: it tells us the head. A stream's sequences are contiguous, so every
+      // remaining page's cursor is known up front and those pages are read in parallel batches
+      // instead of one round-trip (and one full Runtime replay) after another.
+      const first = await client.getEvents(id, { after: cursor, limit: EVENT_PAGE_SIZE });
+      collected.head = first.head;
+      collected.events.push(...first.events);
+      if (first.events.length < EVENT_PAGE_SIZE) return collected;
+      cursor = collected.events[collected.events.length - 1].sequence;
+      for (let round = 0; round < 600 && cursor < collected.head; round += 1) {
+        const cursors: number[] = [];
+        for (let next = cursor; next < collected.head && cursors.length < EVENT_PAGE_PARALLEL; next += EVENT_PAGE_SIZE) {
+          cursors.push(next);
+        }
+        const pages = await Promise.all(
+          cursors.map((pageAfter) => client.getEvents(id, { after: pageAfter, limit: EVENT_PAGE_SIZE })),
+        );
+        let short = false;
+        for (const [index, page] of pages.entries()) {
+          // A page asked from a cursor PAST the collected tail would leave a hole (an earlier
+          // page in the batch came back short or the stream is not contiguous): drop it and let
+          // the next round resume from the real tail, so the result never has a gap in it.
+          const tail = collected.events[collected.events.length - 1].sequence;
+          if (cursors[index] > tail) break;
+          collected.head = Math.max(collected.head, page.head);
+          collected.events.push(...page.events.filter((event) => event.sequence > tail));
+          if (page.events.length < EVENT_PAGE_SIZE) { short = true; break; }
+        }
+        const tail = collected.events[collected.events.length - 1].sequence;
+        if (short || tail === cursor) break;
+        cursor = tail;
       }
       return collected;
     },

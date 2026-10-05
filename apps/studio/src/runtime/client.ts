@@ -55,6 +55,9 @@ export const WEBMCP_ACTOR: Actor = { id: "studio-webmcp-adapter", type: "agent" 
 /** The largest event page the Studio will ask for. The API's own ceiling is 1000; this is the
  * Studio's smaller working bound, so a page always fits one render pass. */
 export const MAX_EVENT_LIMIT = 200;
+/** The Runtime's own ceiling for one events page (`MAX_EVENTS_LIMIT` in `serve/routes.rs`). The
+ * client's own loops keep `MAX_EVENT_LIMIT`; a caller may ask for up to this many at once. */
+export const RUNTIME_MAX_EVENT_LIMIT = 1000;
 /** The API refuses a list limit above 100. Mirrored here so a bad value is refused before it
  * costs a round trip, with the same wording the Runtime would have used. */
 export const MAX_LIST_LIMIT = 100;
@@ -723,8 +726,8 @@ export class RuntimeClient {
     if (!Number.isInteger(after) || after < 0) {
       throw new RuntimeError("after must be a non-negative integer.", 0, []);
     }
-    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_EVENT_LIMIT) {
-      throw new RuntimeError(`limit must be between 1 and ${MAX_EVENT_LIMIT}.`, 0, []);
+    if (!Number.isInteger(limit) || limit < 1 || limit > RUNTIME_MAX_EVENT_LIMIT) {
+      throw new RuntimeError(`limit must be between 1 and ${RUNTIME_MAX_EVENT_LIMIT}.`, 0, []);
     }
     const page = await this.#request<{ events: Record<string, unknown>[]; head: number }>({
       method: "GET",

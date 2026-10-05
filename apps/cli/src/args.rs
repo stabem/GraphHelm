@@ -64,6 +64,45 @@ pub enum TopLevel {
     Restore(AdoptionRestoreArgs),
     /// Build, verify, or query the Keel contract index, or check a diff against its card.
     Keel(KeelArgs),
+    /// The Studio: `graphhelm studio start` brings the GraphHelm clone up to date and opens the
+    /// Studio for the project in the current directory, starting its Runtime when none answers.
+    Studio(StudioArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StudioArgs {
+    #[command(subcommand)]
+    pub command: StudioCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StudioCommand {
+    /// Update the GraphHelm clone the Studio runs from (fast-forward of `main`, only when the
+    /// clone is clean and on `main`), then start the Runtime and the Studio for this project.
+    Start(StudioStartArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StudioStartArgs {
+    /// The project directory `graphhelm init` provisioned. Defaults to the current directory.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The GraphHelm clone holding `apps/studio`. Defaults to `GRAPHHELM_SOURCE`, then to the
+    /// clone this binary was built from.
+    #[arg(long)]
+    pub source: Option<PathBuf>,
+    /// The loopback address of the Runtime.
+    #[arg(long, default_value = "127.0.0.1:8791")]
+    pub bind: String,
+    /// The sealing key's id inside the project's keyring.
+    #[arg(long = "key-id", default_value = "studio")]
+    pub key_id: String,
+    /// Run the clone as it is, without fetching or fast-forwarding it.
+    #[arg(long)]
+    pub no_update: bool,
+    /// Do not open the browser.
+    #[arg(long)]
+    pub no_browser: bool,
 }
 
 #[derive(Debug, Args)]

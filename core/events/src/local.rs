@@ -336,6 +336,10 @@ pub struct LocalEventRepository {
     /// needs the exclusive lock — an append cannot land between this handle's check
     /// and its use.
     verified: Arc<Mutex<Option<VerifiedPrefix>>>,
+    /// How long a verified prefix may be REUSED before the next load re-verifies the whole
+    /// journal from genesis. `None` for a per-operation handle (its lifetime is the bound);
+    /// set by [`PrefixCache`] when one prefix outlives its handle (#87's named trigger).
+    prefix_max_age: Option<std::time::Duration>,
     #[cfg(test)]
     load_count: Arc<AtomicU64>,
     #[cfg(test)]
@@ -535,7 +539,24 @@ impl LocalEventRepository {
             ids,
             None,
             crate::ReadBudget::unbounded(),
+            None,
         )
+    }
+
+    /// [`Self::open`], reusing the journal verification an earlier handle on the same
+    /// [`PrefixCache`] already proved, so a long-running reader (`graphhelm serve`) verifies
+    /// each journal byte once per cache age window instead of once per request. The handle
+    /// itself is still per-operation: it takes and drops the store locks exactly as
+    /// [`Self::open`] does, so no lock outlives the operation.
+    /// `budget` is [`Self::open_within`]'s; pass [`crate::ReadBudget::unbounded`] for none.
+    pub fn open_with_prefix_cache(
+        root: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        budget: crate::ReadBudget,
+        cache: &PrefixCache,
+    ) -> Result<Self, EventRepositoryError> {
+        Self::open_inner(root.into(), clock, ids, None, budget, Some(cache))
     }
 
     /// [`Self::open`], with a wall-clock budget on every journal walk this handle performs -
@@ -551,7 +572,7 @@ impl LocalEventRepository {
         ids: Arc<dyn IdGenerator>,
         budget: crate::ReadBudget,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None, budget)
+        Self::open_inner(root.into(), clock, ids, None, budget, None)
     }
 
     pub fn open_with_failpoint(
@@ -566,6 +587,7 @@ impl LocalEventRepository {
             ids,
             Some(failpoint),
             crate::ReadBudget::unbounded(),
+            None,
         )
     }
 
@@ -575,6 +597,7 @@ impl LocalEventRepository {
         ids: Arc<dyn IdGenerator>,
         failpoint: Option<LocalFailpoint>,
         read_budget: crate::ReadBudget,
+        prefix_cache: Option<&PrefixCache>,
     ) -> Result<Self, EventRepositoryError> {
         let schemas = graphhelm_schema::repository_schema_set()
             .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
@@ -655,7 +678,11 @@ impl LocalEventRepository {
             clock,
             ids,
             temp_counter: Arc::new(AtomicU64::new(0)),
-            verified: Arc::new(Mutex::new(None)),
+            verified: prefix_cache.map_or_else(
+                || Arc::new(Mutex::new(None)),
+                |cache| Arc::clone(&cache.slot),
+            ),
+            prefix_max_age: prefix_cache.map(|cache| cache.max_age),
             #[cfg(test)]
             load_count: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
@@ -1721,9 +1748,13 @@ impl LocalEventRepository {
         // waits — a CONTENTION exposure distinct from the staleness one above, arriving
         // at the same commit.
         let reusable = verified.take().filter(|prefix| {
-            prefix.journal_identity == self.journal_identity && prefix.verified_offset <= length
+            prefix.journal_identity == self.journal_identity
+                && prefix.verified_offset <= length
+                && self
+                    .prefix_max_age
+                    .is_none_or(|max_age| prefix.full_verified_at.elapsed() < max_age)
         });
-        let (mut ctx, offset) = match reusable {
+        let (mut ctx, offset, full_verified_at) = match reusable {
             Some(prefix) if prefix.verified_offset == length => {
                 let state = prefix.state.clone();
                 *verified = Some(prefix);
@@ -1737,14 +1768,15 @@ impl LocalEventRepository {
                 #[cfg(test)]
                 self.record_load_kind(kind, LoadPath::Suffix);
                 let offset = prefix.verified_offset;
-                (VerifyCtx::from_prefix(prefix), offset)
+                let full_verified_at = prefix.full_verified_at;
+                (VerifyCtx::from_prefix(prefix), offset, full_verified_at)
             }
             None => {
                 #[cfg(test)]
                 self.full_load_count.fetch_add(1, Ordering::SeqCst);
                 #[cfg(test)]
                 self.record_load_kind(kind, LoadPath::Full);
-                (VerifyCtx::fresh(), 0)
+                (VerifyCtx::fresh(), 0, std::time::Instant::now())
             }
         };
         let bytes = read_bounded_range(&mut journal, offset, length)?;
@@ -1755,7 +1787,7 @@ impl LocalEventRepository {
         }
         self.verify_lines(&bytes, &mut ctx)?;
         let state = ctx.state.clone();
-        *verified = Some(ctx.into_prefix(self.journal_identity, length));
+        *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at));
         Ok(state)
     }
 
@@ -2835,12 +2867,51 @@ enum LoadPath {
     Hit,
 }
 
+/// A verified prefix shared by successive handles on one events directory (#87's named
+/// trigger: "when handles become long-lived (the serve commit)").
+///
+/// Handles stay per-operation, so no lock is held between requests; only the PROOF is
+/// shared. The reuse test is the per-handle one (same journal file identity, length not
+/// shrunk), which cannot see an in-place rewrite of already-verified bytes. That exposure
+/// used to be bounded by handle lifetime (milliseconds); here it is bounded by `max_age`:
+/// a prefix older than that is discarded and the next load re-verifies from genesis.
+/// Contention: the slot mutex is held across a suffix read, so concurrent handles on one
+/// cache serialize their journal walk; a caught-up cache makes that walk empty.
+#[derive(Clone)]
+pub struct PrefixCache {
+    slot: Arc<Mutex<Option<VerifiedPrefix>>>,
+    max_age: std::time::Duration,
+}
+
+impl PrefixCache {
+    /// A cache whose prefix is re-verified from genesis once it is `max_age` old.
+    #[must_use]
+    pub fn new(max_age: std::time::Duration) -> Self {
+        Self {
+            slot: Arc::new(Mutex::new(None)),
+            max_age,
+        }
+    }
+}
+
+impl std::fmt::Debug for PrefixCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PrefixCache")
+            .field("max_age", &self.max_age)
+            .finish_non_exhaustive()
+    }
+}
+
 /// #87: the verified prefix, retained per handle between loads. Everything here was
 /// proven by the same per-line verification the full path runs; `verified_offset`
 /// advances only past fully verified lines, so it always ends on a newline boundary.
 struct VerifiedPrefix {
     journal_identity: FileIdentity,
     verified_offset: u64,
+    /// When the journal was last verified from genesis. Suffix loads keep it; only a full
+    /// load moves it. [`PrefixCache`] bounds reuse by its age.
+    full_verified_at: std::time::Instant,
     state: Arc<LoadedState>,
     budget: LoadBudget,
     counted_evidence: BTreeSet<String>,
@@ -2884,10 +2955,16 @@ impl VerifyCtx {
         }
     }
 
-    fn into_prefix(self, journal_identity: FileIdentity, verified_offset: u64) -> VerifiedPrefix {
+    fn into_prefix(
+        self,
+        journal_identity: FileIdentity,
+        verified_offset: u64,
+        full_verified_at: std::time::Instant,
+    ) -> VerifiedPrefix {
         VerifiedPrefix {
             journal_identity,
             verified_offset,
+            full_verified_at,
             state: self.state,
             budget: self.budget,
             counted_evidence: self.counted_evidence,
@@ -7971,6 +8048,69 @@ mod limit_tests {
 
     fn cache_repository(directory: &std::path::Path) -> LocalEventRepository {
         LocalEventRepository::open(directory, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap()
+    }
+
+    fn shared_repository(directory: &std::path::Path, cache: &PrefixCache) -> LocalEventRepository {
+        LocalEventRepository::open_with_prefix_cache(
+            directory,
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            crate::ReadBudget::unbounded(),
+            cache,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_prefix_cache_carries_verification_across_handles() {
+        // serve opens a handle per request; with a shared cache the second open must not
+        // walk the journal from genesis again, and an append by a rival handle must be
+        // verified as a suffix, not a full reload.
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        let first = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&first),
+            (1, 0),
+            "the cold cache pays one full load"
+        );
+        drop(first);
+        let second = shared_repository(directory.path(), &cache);
+        assert_eq!(counters(&second), (0, 0), "a warm cache is a hit on open");
+        drop(second);
+        let rival = cache_repository(directory.path());
+        rival
+            .append_atomic(&wake_append(2, "wake-shared-1"))
+            .unwrap();
+        drop(rival);
+        let third = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&third),
+            (0, 1),
+            "new lines are verified as a suffix"
+        );
+        assert_eq!(third.next_sequence(&wake_scope(), "stream-1").unwrap(), 3);
+    }
+
+    #[test]
+    fn an_expired_prefix_cache_reverifies_from_genesis() {
+        // #87's bound: a shared prefix cannot see an in-place rewrite, so its reuse is
+        // limited by age; past it, every load re-verifies the whole journal.
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::ZERO);
+        drop(shared_repository(directory.path(), &cache));
+        let again = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&again),
+            (1, 0),
+            "an expired prefix is never reused"
+        );
     }
 
     fn counters(repository: &LocalEventRepository) -> (u64, u64) {

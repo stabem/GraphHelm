@@ -242,7 +242,7 @@ describe("Studio organization and responsive navigation", () => {
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "fixture-project" })} />);
     const people = await screen.findByRole("region", { name: "People and reported work" });
-    expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown.");
+    await waitFor(() => expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown."));
     expect(people).not.toHaveTextContent("Observed actor IDs from recorded messages.");
     expect(people).not.toHaveTextContent("Checking the latest work result.");
     expect(people).not.toHaveTextContent("Explicitly joined sessions.");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mcpTransportFromRecordKey, workConversation } from "./work-conversation";
+import { agentLanes, mcpTransportFromRecordKey, workConversation } from "./work-conversation";
 import type { RunTeamReadModel } from "./run-team";
 import type { RuntimeEvent } from "./types";
 
@@ -63,5 +63,19 @@ describe("work conversation", () => {
     ]);
     expect(workConversation("run-b", events, envelopes, team).map((item) => item.sequence)).toEqual([3, 8]);
     expect(workConversation("run-a", events, {}, null)).toEqual([]);
+  });
+});
+
+describe("agentLanes (#294)", () => {
+  const note = (sequence: number, actorId: string, actorType = "agent") => ({
+    sequence, kind: "signal_recorded", payload: { kind: "operator_note" }, occurredAt: `2026-10-01T00:00:${String(sequence).padStart(2, "0")}Z`,
+    actorId, actorType, idempotencyKey: null, eventId: `e${sequence}`, evidenceRefs: [],
+  }) as unknown as Parameters<typeof agentLanes>[0][number];
+  it("groups notes per agent, newest lane first, counting sealed notes too", () => {
+    const lanes = agentLanes([note(1, "codex-lojakit-1"), note(2, "codex-lojakit-3"), note(3, "codex-lojakit-1"),
+      note(4, "studio-operator", "owner")], { 1: { text: "first" }, 2: { text: "  checkout done \n more" } });
+    expect(lanes.map((lane) => [lane.actorId, lane.count])).toEqual([["codex-lojakit-1", 2], ["codex-lojakit-3", 1]]);
+    expect(lanes[0]).toMatchObject({ latestSequence: 3, latestText: "first" });
+    expect(lanes[1].latestText).toBe("checkout done \n more");
   });
 });

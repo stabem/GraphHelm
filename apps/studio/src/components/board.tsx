@@ -135,6 +135,7 @@ export function Board({
   crew = [],
   recordedSessions = [],
   workMessages = [],
+  agentWork = [],
   selectedAgent = null,
   onSelectAgent,
   talks = [],
@@ -187,6 +188,7 @@ export function Board({
   crew?: Array<{ id: string; charter: string | null; name?: string; lastAt?: string | null; presence?: AgentPresence | null }>;
   recordedSessions?: WorkOverviewProps["recordedSessions"];
   workMessages?: WorkOverviewProps["workMessages"];
+  agentWork?: WorkOverviewProps["agentWork"];
   selectedAgent?: string | null;
   onSelectAgent?: (agentId: string | null) => void;
   /** The room's conversations, each one a bubble standing on the board. Derived by App from
@@ -820,7 +822,7 @@ export function Board({
         <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
       </div>
       {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} recordedSessions={recordedSessions} workMessages={workMessages} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
+        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} recordedSessions={recordedSessions} workMessages={workMessages} agentWork={agentWork} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
         <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
       </div>}
       <div className="free-canvas-content" hidden={organized}>

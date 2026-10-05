@@ -33,7 +33,7 @@ import {
   newIdempotencyKey,
 } from "./runtime/client";
 import { devSession, newestPresenceByActor, recordedActorSessions, type AgentPresence, type DevSession } from "./runtime/session";
-import { workConversation } from "./runtime/work-conversation";
+import { agentLanes, workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
@@ -1828,6 +1828,7 @@ export default function App({
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const workMessages = useMemo(() => workConversation(selected, eventList, envelopes,
     runTeamRead?.executionId === selected ? runTeamRead : null), [selected, eventList, envelopes, runTeamRead]);
+  const agentWork = useMemo(() => agentLanes(eventList, envelopes), [eventList, envelopes]);
   const hasRecordedAgentWork = useMemo(() => {
     const agentSequences = new Set(eventList.filter((event) =>
       event.kind === "signal_recorded" && event.actorType === "agent").map((event) => event.sequence));
@@ -2835,6 +2836,7 @@ export default function App({
               crew={crew}
               recordedSessions={recordedSessions}
               workMessages={workMessages}
+              agentWork={agentWork}
               activity={recentActivity}
               latestEvent={latestEvent}
               subagents={subagentRead?.executionId === selected ? subagentRead : null}

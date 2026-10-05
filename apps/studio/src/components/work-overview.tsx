@@ -17,7 +17,7 @@ import type { SubagentReadModel } from "../runtime/subagents";
 import type { ClaudeTaskReadModel } from "../runtime/team-tasks";
 import type { RunTeamReadModel } from "../runtime/run-team";
 import type { RecordedActorSession } from "../runtime/session";
-import type { WorkMessage } from "../runtime/work-conversation";
+import type { AgentLane, WorkMessage } from "../runtime/work-conversation";
 
 type CrewMember = { id: string; charter: string | null; name?: string; lastAt?: string | null };
 type Talk = { key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null };
@@ -38,6 +38,8 @@ export interface WorkOverviewProps {
   crew?: CrewMember[];
   recordedSessions?: RecordedActorSession[];
   workMessages?: WorkMessage[];
+  /** One lane per agent that recorded notes, newest first (#294). */
+  agentWork?: AgentLane[];
   talks?: Talk[];
   activity?: RecordedActivity[];
   agentReports?: Record<string, AgentReport>;
@@ -84,6 +86,12 @@ export function isFirstEntryNode(model: GraphModel, nodeId: string): boolean {
   return isEntryNode(model, nodeId);
 }
 
+/** The first line of a note, clipped, so a lane reads as a headline rather than a transcript. */
+function summaryOf(text: string): string {
+  const line = text.split(/\r?\n/).find((part) => part.trim().length > 0)?.trim() ?? "";
+  return line.length > 160 ? `${line.slice(0, 157)}...` : line;
+}
+
 function latestNodeEvent(node: GraphNode) {
   return node.history.at(-1);
 }
@@ -105,6 +113,7 @@ export function WorkOverview({
   crew = [],
   recordedSessions = [],
   workMessages = [],
+  agentWork = [],
   talks = [],
   activity = [],
   agentReports = {},
@@ -218,6 +227,13 @@ export function WorkOverview({
         {runId && <small>Run {runId}</small>}
         <small>{runStatus === null ? "State not recorded" : readable(runStatus)} &middot; {recordedUpdate}</small>
       </header>
+      <section className="work-plain-summary" aria-label="Summary">
+        <p>{agentWork.length === 0
+          ? "No agent has recorded any work in this run yet."
+          : `${agentWork.length} agent${agentWork.length === 1 ? " is" : "s are"} recording work. Most recent: ${agentWork[0].actorId}, ${ago(agentWork[0].latestAt)}.`}</p>
+        {agentWork[0]?.latestText && <p>Latest note from {agentWork[0].actorId}: {summaryOf(agentWork[0].latestText)}</p>}
+        <p>{nextAction ? `Waiting for you: ${nextAction.label}.` : "Nothing is waiting for you right now."}</p>
+      </section>
       <nav className="work-primary-navigation" aria-label="Mission navigation">
         <button type="button" onClick={openGraph}>Open graph and steps</button>
         <span>Select a step for outputs and proof</span>
@@ -285,6 +301,15 @@ export function WorkOverview({
             </div>
           )}
         </section>
+      {agentWork.length > 0 && <section className="work-agent-lanes" aria-label="Agent work">
+        <div className="work-section-heading"><div><MessageCircle aria-hidden="true" size={17} /><h2>Agent work</h2></div><span>Newest first</span></div>
+        <ul>{agentWork.map((lane) => <li key={lane.actorId}>
+          <strong>{lane.actorId}</strong>
+          <span>{lane.latestText === null ? "Note sealed; not opened yet" : summaryOf(lane.latestText)}</span>
+          <small>{lane.count} note{lane.count === 1 ? "" : "s"} · last {ago(lane.latestAt)}</small>
+          <button type="button" onClick={() => onSelectAgent?.(lane.actorId)}>Open notes</button>
+        </li>)}</ul>
+      </section>}
       <section className="work-primary-roster" aria-label="People and reported work">
         <div className="work-section-heading"><div><Users aria-hidden="true" size={17} /><h2>People</h2></div></div>
         {crew.some((member) => member.name !== undefined) && <>
@@ -292,7 +317,6 @@ export function WorkOverview({
           <div className="work-primary-people">{crew.filter((member) => member.name !== undefined).map((member) => <article key={member.id}>
             <strong>{member.name ?? member.id}</strong><small>{member.name === undefined ? "Legacy persona" : "Native chat persona"}</small>
             <p>{member.charter ?? "No persona charter recorded"}</p>
-            <small>{member.id}</small>
             <button type="button" onClick={() => onSelectAgent?.(member.id)}>Open direct chat</button>
             <button type="button" onClick={() => openAssignedSteps(member.id)}>Open assigned steps</button>
           </article>)}</div>

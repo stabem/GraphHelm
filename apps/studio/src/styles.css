@@ -2371,6 +2371,16 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .work-primary-navigation button { border: 0; background: transparent; cursor: pointer; text-decoration: underline; }
 .work-reset-filter { border: 0; background: transparent; cursor: pointer; }
 .work-primary-roster { margin-top: 32px; margin-bottom: 24px; }
+.work-plain-summary { margin: 12px 0 20px; display: grid; gap: 4px; }
+.work-plain-summary p { margin: 0; }
+.work-agent-lanes { margin-top: 24px; }
+.work-agent-lanes ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
+.work-agent-lanes li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 12px; border: 1px solid #494052; border-radius: 10px; background: #25212b; color: #ddd4e8; font-size: 12px; }
+.work-agent-lanes li > strong { color: #f0eaf9; font-size: 13px; }
+.work-agent-lanes li > small { color: #bcb3c7; font-size: 11px; }
+.work-agent-lanes li > span { grid-column: 1; overflow-wrap: anywhere; }
+.work-agent-lanes li > small { grid-column: 1; }
+.work-agent-lanes li > button { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
 .work-person-report { margin: 4px 0; padding-top: 4px; border-top: 1px solid #3c3745; }
 .work-person-report > summary { min-height: 44px; display: flex; align-items: center; color: #cbb7ee; font-size: 12px; cursor: pointer; }
 .work-roster-note { margin: 0 0 12px; color: #bcb3c7; font-size: 12px; }

@@ -588,3 +588,32 @@ describe("unavailable dependency evidence is not a claim about the run's past", 
     expect(screen.getAllByText("Dependency evidence is unavailable in this view.")).toHaveLength(2);
   });
 });
+
+describe("agent work lanes and plain summary (#294)", () => {
+  const graph = { nodes: [], edges: [], edgesKnown: false, entrypoints: [], rosterDeclared: false, lint: [] } as unknown as GraphModel;
+  it("lists each agent's latest note newest first and says what waits for the owner", () => {
+    const select = vi.fn();
+    render(<WorkOverview model={graph} selectedNode={null} onSelectNode={vi.fn()} onSelectAgent={select}
+      nextAction={{ label: "Answer codex", detail: "Which theme?" }}
+      agentWork={[
+        { actorId: "codex-lojakit-3", count: 12, latestSequence: 90, latestAt: "2026-10-01T10:00:00Z", latestText: "Leva 4 checkout green\nlong detail", latestTextAt: null },
+        { actorId: "codex-lojakit-1", count: 1, latestSequence: 5, latestAt: null, latestText: null, latestTextAt: null },
+      ]} />);
+    const summary = screen.getByRole("region", { name: "Summary" });
+    expect(summary).toHaveTextContent("2 agents are recording work. Most recent: codex-lojakit-3");
+    expect(summary).toHaveTextContent("Latest note from codex-lojakit-3: Leva 4 checkout green");
+    expect(summary).toHaveTextContent("Waiting for you: Answer codex.");
+    const items = within(screen.getByRole("region", { name: "Agent work" })).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("codex-lojakit-3");
+    expect(items[0]).toHaveTextContent("12 notes");
+    expect(items[0]).not.toHaveTextContent("long detail");
+    expect(items[1]).toHaveTextContent("Note sealed; not opened yet");
+    fireEvent.click(within(items[1]).getByRole("button", { name: "Open notes" }));
+    expect(select).toHaveBeenCalledWith("codex-lojakit-1");
+  });
+  it("says plainly when no agent has recorded work", () => {
+    render(<WorkOverview model={graph} selectedNode={null} onSelectNode={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Summary" })).toHaveTextContent("No agent has recorded any work in this run yet.Nothing is waiting for you right now.");
+    expect(screen.queryByRole("region", { name: "Agent work" })).not.toBeInTheDocument();
+  });
+});

@@ -52,3 +52,43 @@ export function workConversation(
   }
   return messages.sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id));
 }
+
+export interface AgentLane {
+  actorId: string;
+  /** Every operator note this agent recorded in the run, opened or not. */
+  count: number;
+  latestSequence: number;
+  latestAt: string | null;
+  /** The newest note whose sealed words have been opened; null while none is readable yet. */
+  latestText: string | null;
+  latestTextAt: string | null;
+}
+
+/** One lane per agent that recorded operator notes, newest activity first (#294). Counts come
+ * from the log itself, so an agent appears even before its sealed words are opened. */
+export function agentLanes(
+  events: RuntimeEvent[],
+  envelopes: Record<number, { text: string }>,
+): AgentLane[] {
+  const lanes = new Map<string, AgentLane>();
+  for (const event of events) {
+    const payload = event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? event.payload as Record<string, unknown> : null;
+    if (event.kind !== "signal_recorded" || payload?.kind !== "operator_note"
+        || event.actorType !== "agent" || event.actorId === null) continue;
+    const lane = lanes.get(event.actorId) ?? { actorId: event.actorId, count: 0, latestSequence: 0,
+      latestAt: null, latestText: null, latestTextAt: null };
+    lane.count += 1;
+    if (event.sequence >= lane.latestSequence) {
+      lane.latestSequence = event.sequence;
+      lane.latestAt = event.occurredAt;
+    }
+    const text = envelopes[event.sequence]?.text?.trim();
+    if (text) {
+      lane.latestText = text;
+      lane.latestTextAt = event.occurredAt;
+    }
+    lanes.set(event.actorId, lane);
+  }
+  return [...lanes.values()].sort((a, b) => b.latestSequence - a.latestSequence);
+}

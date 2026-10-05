@@ -123,7 +123,8 @@ struct ServeState {
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
-    /// `commands::event_store` — exactly the call every CLI command makes — does its one command's
+    /// `commands::event_store` (which, under `serve`, reuses the journal verification an earlier
+    /// request proved, for up to `SHARED_PREFIX_MAX_AGE`; no lock is shared) — exactly the call every CLI command makes — does its one command's
     /// work, and lets the handle drop before the response is sent. `ServeState` deliberately does
     /// *not* cache an open repository handle: Milestone 05a Task 1 confirmed empirically that
     /// `LocalEventRepository::open` holds an OS-level exclusive lock for the handle's entire
@@ -170,6 +171,8 @@ struct ServeState {
 /// connections it runs until the process is killed, by design (there is no shutdown endpoint in
 /// this milestone).
 pub fn run(args: &ServeArgs) -> Outcome {
+    // Requests still open and drop their own store; only the journal proof is shared.
+    super::enable_shared_prefix_cache();
     match execute(args) {
         Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
         Err(failure) => failure.into_outcome(COMMAND),

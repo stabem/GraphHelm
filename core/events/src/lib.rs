@@ -39,7 +39,7 @@ pub use key::{
 };
 pub use limits::STATUS_READ_BUDGET_MILLIS;
 pub use local::{
-    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, ReadLockHeld,
+    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, PrefixCache, ReadLockHeld,
     journal_line_roundtrips, with_repository_read_lock,
 };
 pub use memory::{

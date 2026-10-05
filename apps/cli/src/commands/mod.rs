@@ -606,7 +606,41 @@ impl IdGenerator for UuidIds {
 pub(super) fn event_store(
     path: &std::path::Path,
 ) -> Result<LocalEventRepository, EventRepositoryError> {
-    LocalEventRepository::open(path, Arc::new(SystemClock), Arc::new(UuidIds))
+    match shared_prefix_cache(path) {
+        Some(cache) => LocalEventRepository::open_with_prefix_cache(
+            path,
+            Arc::new(SystemClock),
+            Arc::new(UuidIds),
+            graphhelm_events::ReadBudget::unbounded(),
+            &cache,
+        ),
+        None => LocalEventRepository::open(path, Arc::new(SystemClock), Arc::new(UuidIds)),
+    }
+}
+
+/// How long `serve` reuses one journal verification before re-verifying from genesis.
+const SHARED_PREFIX_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Set once by `serve`: a long-running process opens a store per request, and without a
+/// shared verified prefix every request re-verifies the whole journal (a large journal then
+/// misses the Studio's read deadline). One-shot commands leave it off, so their per-open
+/// verification is unchanged.
+static SHARED_PREFIX_CACHES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, graphhelm_events::PrefixCache>>,
+> = std::sync::OnceLock::new();
+
+pub(super) fn enable_shared_prefix_cache() {
+    let _ = SHARED_PREFIX_CACHES.set(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+}
+
+fn shared_prefix_cache(path: &std::path::Path) -> Option<graphhelm_events::PrefixCache> {
+    let mut caches = SHARED_PREFIX_CACHES.get()?.lock().ok()?;
+    Some(
+        caches
+            .entry(path.to_path_buf())
+            .or_insert_with(|| graphhelm_events::PrefixCache::new(SHARED_PREFIX_MAX_AGE))
+            .clone(),
+    )
 }
 
 /// [`event_store`] for a read that declares a wall-clock budget (#750).
@@ -617,7 +651,21 @@ pub(super) fn budgeted_event_store(
     path: &std::path::Path,
     budget: graphhelm_events::ReadBudget,
 ) -> Result<LocalEventRepository, EventRepositoryError> {
-    LocalEventRepository::open_within(path, Arc::new(SystemClock), Arc::new(UuidIds), budget)
+    match shared_prefix_cache(path) {
+        Some(cache) => LocalEventRepository::open_with_prefix_cache(
+            path,
+            Arc::new(SystemClock),
+            Arc::new(UuidIds),
+            budget,
+            &cache,
+        ),
+        None => LocalEventRepository::open_within(
+            path,
+            Arc::new(SystemClock),
+            Arc::new(UuidIds),
+            budget,
+        ),
+    }
 }
 
 /// The budget one status read declares.

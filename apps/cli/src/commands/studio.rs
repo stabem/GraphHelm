@@ -53,7 +53,30 @@ pub(super) fn resolve_source(candidates: &[Option<PathBuf>]) -> Option<PathBuf> 
         .iter()
         .flatten()
         .find(|candidate| candidate.join(LAUNCHER).is_file())
-        .map(|found| std::fs::canonicalize(found).unwrap_or_else(|_| found.clone()))
+        .map(|found| plain(std::fs::canonicalize(found).unwrap_or_else(|_| found.clone())))
+}
+
+/// Drops Windows' verbatim prefix (`\\\\?\\F:\\...`) that `canonicalize` adds: PowerShell's
+/// `Split-Path`/`Join-Path` cannot read it, and `studio-up.ps1` failed on it (2026-10-05).
+pub(super) fn plain(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// The first enabled route in the project's manifest that can write text: what `serve --route`
+/// needs (cognitive nodes and suggested replies draft on it). A `typesafe` route only judges, so
+/// it is never picked; it is still listed, because `serve` reads the whole manifest.
+pub(super) fn text_route(manifest: &Path) -> Option<String> {
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest).ok()?).ok()?;
+    document["routes"].as_array()?.iter().find_map(|route| {
+        let enabled = route["enabled"].as_bool().unwrap_or(true);
+        (enabled && route["provider"].as_str() != Some("typesafe"))
+            .then(|| route["id"].as_str().map(str::to_owned))
+            .flatten()
+    })
 }
 
 /// What the clone's state allows. Pure, so the decision is tested without git.
@@ -286,6 +309,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     }
     let keyring = state.join(super::init::KEYRING_DIRECTORY);
     let key = std::fs::read_to_string(state.join(super::init::KEY_FILE)).ok();
+    let sealed = keyring.is_dir() && key.is_some();
     if let (true, Some(key)) = (keyring.is_dir(), key) {
         // The key travels in the child's environment only, as `init` prints it; never as an
         // argument, never printed.
@@ -294,6 +318,24 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
             .arg("-Keyring")
             .arg(&keyring)
             .args(["-KeyId", &args.key_id]);
+    }
+    // The model half, when `gateway setup` wired one: without it the Runtime lists no routes and
+    // the Studio's suggested replies say no Jev model is set up.
+    let manifest = state.join("manifest.json");
+    let broker = state.join("broker");
+    // Only beside the keyring: `serve` refuses a model half without `--keyring`/`--key-id`, so a
+    // keyless project keeps opening read-and-drive instead of not opening at all (#282 review).
+    if let (true, true, Some(route)) = (sealed, broker.is_dir(), text_route(&manifest)) {
+        eprintln!(
+            "[studio] model routes from {} (text route {route})",
+            manifest.display()
+        );
+        launch
+            .arg("-Manifest")
+            .arg(&manifest)
+            .arg("-Broker")
+            .arg(&broker)
+            .args(["-Route", &route]);
     }
     if args.no_browser {
         launch.arg("-NoBrowser");
@@ -352,7 +394,10 @@ mod tests {
         std::fs::create_dir_all(clone.path().join("apps/studio/tools")).unwrap();
         std::fs::write(clone.path().join(LAUNCHER), "").unwrap();
         let found = resolve_source(&[None, Some(empty.path().into()), Some(clone.path().into())]);
-        assert_eq!(found, Some(std::fs::canonicalize(clone.path()).unwrap()));
+        assert_eq!(
+            found,
+            Some(plain(std::fs::canonicalize(clone.path()).unwrap()))
+        );
         assert_eq!(resolve_source(&[Some(empty.path().into())]), None);
     }
 
@@ -368,6 +413,37 @@ mod tests {
             None
         );
         assert_eq!(install_root(None), None);
+    }
+
+    #[test]
+    fn drops_the_windows_verbatim_prefix_powershell_cannot_read() {
+        assert_eq!(
+            plain(PathBuf::from(r"\\?\F:\github\GraphHelm")),
+            PathBuf::from(r"F:\github\GraphHelm")
+        );
+        assert_eq!(
+            plain(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(
+            plain(PathBuf::from("/home/u/GraphHelm")),
+            PathBuf::from("/home/u/GraphHelm")
+        );
+    }
+
+    #[test]
+    fn picks_the_first_enabled_text_route_never_the_judge() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("manifest.json");
+        std::fs::write(&manifest, r#"{"routes":[{"id":"judge","provider":"typesafe"},{"id":"off","provider":"anthropic","enabled":false},{"id":"claude","provider":"anthropic","enabled":true}]}"#).unwrap();
+        assert_eq!(text_route(&manifest), Some("claude".to_owned()));
+        std::fs::write(
+            &manifest,
+            r#"{"routes":[{"id":"judge","provider":"typesafe"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(text_route(&manifest), None);
+        assert_eq!(text_route(&dir.path().join("missing.json")), None);
     }
 
     #[test]

@@ -29,6 +29,13 @@ param(
     # travels in GRAPHHELM_GATEWAY_KEY / GRAPHHELM_EVENTS_KEY, never as a parameter).
     [string] $Keyring = "",
     [string] $KeyId = "",
+    # The model half (`serve --manifest --broker --route`, all-or-none): the project's
+    # `.graphhelm/manifest.json`, `.graphhelm/broker`, and the text route cognitive nodes and
+    # suggested replies draft with. Without them the Runtime lists no model routes, so the Studio
+    # says "no Jev model set up" even when `gateway setup --provider typesafe` ran (2026-10-05).
+    [string] $Manifest = "",
+    [string] $Broker = "",
+    [string] $Route = "",
     [switch] $NoBrowser
 )
 
@@ -93,6 +100,7 @@ if (-not $alive) {
     $serveArgs = @("serve", "--events", $Events, "--bind", $Bind)
     if ($Keyring) { $serveArgs += @("--keyring", $Keyring) }
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
+    if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
     Write-Host "[up] starting: $GraphHelm $($serveArgs -join ' ')"
     Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds(20)
@@ -113,9 +121,16 @@ if (-not $alive) {
     }
 }
 
-# 2 - dependencies, only on a cold tree.
-if (-not (Test-Path (Join-Path $studio "node_modules"))) {
-    Write-Host "[up] installing Studio dependencies (npm ci, first run only)"
+# 2 - dependencies, on a cold tree OR a stale one. A tree installed before the lock file moved
+# (a `git pull` that changed package-lock.json) starts with a missing `vite` and nothing else to
+# go on (2026-10-05), so npm's own install record is compared with the lock file.
+$modules = Join-Path $studio "node_modules"
+$installed = Join-Path $modules ".package-lock.json"
+$lock = Join-Path $studio "package-lock.json"
+$stale = -not (Test-Path $installed) -or -not (Test-Path (Join-Path $modules ".bin\vite*")) -or
+    ((Get-Item $lock).LastWriteTimeUtc -gt (Get-Item $installed).LastWriteTimeUtc)
+if (-not (Test-Path $modules) -or $stale) {
+    Write-Host "[up] installing Studio dependencies (npm ci: missing or older than package-lock.json)"
     Push-Location $studio
     try { npm ci } finally { Pop-Location }
 }

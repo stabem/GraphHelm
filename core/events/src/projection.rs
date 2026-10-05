@@ -601,9 +601,14 @@ pub struct ExecutionProjection {
     pub agent_presence: BTreeMap<String, AgentPresence>,
     /// ADR-040 (#290): failed mechanical checks per node in this execution -- the count of
     /// `gate_verdict` events with `passed: false` naming that node. This is the `red_checks` the
-    /// Runtime hands `delegation::choose` at dispatch. Skipped when empty so histories written
-    /// before it existed keep their projection digests.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// Runtime hands `delegation::choose` at dispatch.
+    ///
+    /// NEVER serialized, not merely skipped when empty: it is folded from `gate_verdict`, an event
+    /// that predates ADR-040, so any older history with a failing verdict would otherwise emit a
+    /// non-empty `redChecks` and move its projection digest. It is a fold-time derivation the
+    /// dispatch path reads from a fresh replay; a persisted generation loads it empty, and the
+    /// replay that every dispatch performs refills it.
+    #[serde(skip)]
     pub red_checks: BTreeMap<String, u32>,
     /// ADR-040 (#290): the newest `delegation_chosen` per node, with the sequence that carried
     /// it. Last-wins: a re-dispatch after a red check records a new choice, and the newest is the

@@ -22,6 +22,10 @@ pub use graphhelm_protocols::DelegationTier as Tier;
 /// Reasoning budget. Ordered: `Low < Medium < High`. Owned by `graphhelm-protocols`.
 pub use graphhelm_protocols::DelegationEffort as Effort;
 
+/// Which policy this is, as the `delegation_chosen` event records it. Owned by
+/// `graphhelm-protocols` (ADR-040).
+pub use graphhelm_protocols::DelegationPolicyId as PolicyId;
+
 /// Raises `tier` by `steps`, capped at `Large`.
 fn raised(tier: Tier, steps: u32) -> Tier {
     let index: u32 = match tier {
@@ -48,6 +52,8 @@ pub struct DelegationRule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DelegationPolicy {
+    /// The policy's identity, recorded on every choice it produces.
+    pub id: PolicyId,
     pub explorer: DelegationRule,
     pub implementer: DelegationRule,
     pub reviewer: DelegationRule,
@@ -62,6 +68,7 @@ impl DelegationPolicy {
     #[must_use]
     pub const fn routed() -> Self {
         Self {
+            id: PolicyId::Routed,
             explorer: DelegationRule {
                 tier: Tier::Small,
                 effort: Effort::Low,

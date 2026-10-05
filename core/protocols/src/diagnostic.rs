@@ -321,6 +321,7 @@ fn valid_authoring_node(tokens: &[String]) -> bool {
                 | "isolation"
                 | "completion"
                 | "retry"
+                | "delegation"
                 | "timeoutSeconds"
                 | "userEditable"
                 | "userOverrideAllowed"

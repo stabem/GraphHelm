@@ -11,9 +11,10 @@ use std::sync::{
 use chrono::{TimeZone, Utc};
 use graphhelm_events::{LocalEventRepository, PreparedAppend, replay};
 use graphhelm_protocols::{
-    ActorId, Clock, DelegationChosen, DelegationEffort, DelegationTier, EventKind, ExecutionId,
-    GateFinding, GateVerdict, IdGenerator, NewEvent, OpaqueId, PersistedActor, PersistedActorType,
-    ProjectId, RepositoryScope, Sensitivity, SignalSeverity, SubagentKind, WorkspaceId,
+    ActorId, Clock, DelegationChosen, DelegationEffort, DelegationPolicyId, DelegationTier,
+    EventKind, ExecutionId, GateFinding, GateVerdict, IdGenerator, NewEvent, OpaqueId,
+    PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity, SignalSeverity,
+    SubagentKind, WorkspaceId,
 };
 
 fn scope() -> RepositoryScope {
@@ -56,6 +57,7 @@ fn event(key: &str, kind: EventKind) -> NewEvent {
 fn chosen(node: &str, tier: DelegationTier, red_checks: u32) -> EventKind {
     EventKind::DelegationChosen(DelegationChosen {
         node_id: OpaqueId::parse(node).unwrap(),
+        policy: DelegationPolicyId::Routed,
         kind: SubagentKind::Implementer,
         tier,
         effort: if red_checks == 0 {
@@ -138,15 +140,61 @@ fn the_newest_delegation_choice_per_node_and_the_red_checks_rebuild_from_events(
     assert_eq!(projection, again);
     let wire = serde_json::to_value(&projection).unwrap();
     assert!(wire.get("delegationChoices").is_some());
+    // `redChecks` is never on the wire (it is re-folded by every replay), so the restored
+    // projection equals the replayed one minus that fold-time derivation.
+    assert!(wire.get("redChecks").is_none());
     let restored: graphhelm_events::ExecutionProjection = serde_json::from_value(wire).unwrap();
-    assert_eq!(restored, projection);
+    assert!(restored.red_checks.is_empty());
+    let mut without_red_checks = projection.clone();
+    without_red_checks.red_checks.clear();
+    assert_eq!(restored, without_red_checks);
 }
 
 #[test]
 fn a_history_without_delegation_projects_no_delegation_fields() {
     let projection = graphhelm_events::ExecutionProjection::default();
     let wire = serde_json::to_value(&projection).unwrap();
-    // Skipped when empty, so every projection digest written before ADR-040 is unchanged.
+    // `delegationChoices` is skipped when empty; `redChecks` is never serialized (see the next
+    // test for why that is what keeps pre-ADR-040 digests unchanged).
     assert!(wire.get("delegationChoices").is_none());
     assert!(wire.get("redChecks").is_none());
+}
+
+/// Defect guarded: `red_checks` is folded from `gate_verdict`, which predates ADR-040. If it were
+/// serialized, every older history with a failing verdict would gain a `redChecks` key and its
+/// projection digest would move. The fold still counts it (the dispatch path needs it); the wire
+/// form is exactly what it was before the field existed.
+#[test]
+fn a_failing_gate_verdict_without_delegation_serializes_as_before_adr_040() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let stream = OpaqueId::parse("stream-1").unwrap();
+    store
+        .append_atomic(
+            &PreparedAppend::new(
+                scope(),
+                stream.clone(),
+                1,
+                vec![event("event-1", verdict("implement", false))],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let history = store.read_replay_stream(&scope(), stream.as_str()).unwrap();
+    let projection = replay(&scope(), stream.as_str(), &history).unwrap();
+    assert_eq!(projection.red_checks.get("implement"), Some(&1));
+    assert!(projection.delegation_choices.is_empty());
+
+    let wire = serde_json::to_value(&projection).unwrap();
+    let mut before = wire.clone();
+    before.as_object_mut().unwrap().remove("redChecks");
+    before.as_object_mut().unwrap().remove("delegationChoices");
+    assert_eq!(wire, before, "no ADR-040 key reaches the wire");
 }

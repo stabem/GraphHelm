@@ -51,6 +51,22 @@ pub enum DelegationEffort {
     High,
 }
 
+/// Which delegation policy produced a recorded choice. Closed: today the Runtime has exactly one
+/// built-in policy (`routed`), and a choice that cannot say which policy made it cannot be
+/// re-derived from the journal once a second policy exists.
+///
+/// `Default` is `Routed` ONLY so a `delegation_chosen` written before this field existed (between
+/// #295 and its review follow-up) still reads: it can only have come from `routed`, the one policy
+/// there has ever been. Writers always emit the field.
+#[derive(
+    Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationPolicyId {
+    #[default]
+    Routed,
+}
+
 /// A node's `delegation` block: which kind of subagent takes it. Closed (`deny_unknown_fields`),
 /// mirroring the schema's `additionalProperties: false`, because a typo here must be a refusal and
 /// never a silent "no delegation".
@@ -68,6 +84,11 @@ pub struct NodeDelegation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DelegationChosen {
     pub node_id: crate::OpaqueId,
+    /// The policy that produced this choice. Always written; optional on read (absent reads as
+    /// `routed`) because `delegation_chosen` already landed without it, and making it required
+    /// would be a breaking change to a landed schema (`baseline_origin`).
+    #[serde(default)]
+    pub policy: DelegationPolicyId,
     pub kind: SubagentKind,
     pub tier: DelegationTier,
     pub effort: DelegationEffort,

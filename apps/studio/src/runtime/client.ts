@@ -73,6 +73,10 @@ export const MAX_MESSAGE_LENGTH = 4000;
 export const RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
 /** Reply suggestions are a read-only advisory whose judge call may take longer than ordinary reads. */
 const REPLY_SUGGESTIONS_REQUEST_TIMEOUT_MS = 120_000;
+/** Reads that replay a run (its status, its event pages, the run list). Each one makes the
+ * Runtime reopen and re-verify the project's whole journal, so on a large project they take
+ * longer than the ordinary budget: 10s left a real run (2026-10-05) unopenable forever. */
+export const RUNTIME_READ_TIMEOUT_MS = 60_000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
@@ -608,6 +612,7 @@ export class RuntimeClient {
     return this.#request<ExecutionPage>({
       method: "GET",
       path: suffix ? `/v1/executions?${suffix}` : "/v1/executions",
+      timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
   }
 
@@ -616,6 +621,7 @@ export class RuntimeClient {
     return this.#request<ExecutionStatus>({
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}`,
+      timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
   }
 
@@ -732,6 +738,7 @@ export class RuntimeClient {
     const page = await this.#request<{ events: Record<string, unknown>[]; head: number }>({
       method: "GET",
       path: `/v1/executions/${encodeURIComponent(id)}/events?after=${after}&limit=${limit}`,
+      timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
     return {
       head: typeof page.head === "number" ? page.head : 0,

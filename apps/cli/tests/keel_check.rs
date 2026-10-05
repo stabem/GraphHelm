@@ -483,3 +483,27 @@ fn prove_command_proves_a_typescript_test_from_its_junit_report() {
     let (code, reply) = run("true {file} {name}");
     assert_eq!(code, 3, "{reply}");
 }
+
+/// ml-saas trial: the card lives as prose in the PR body. A `.md` card is read from its
+/// `Promise:` / `Scope:` / `Proof:` / `Exported:` lines, so the scope rule runs on it.
+#[test]
+fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
+    let repo = repository(&[("docs/notes.md", "an unplanned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Before: x.\n\nKeel card:\n- **Promise:** added() exists\n- **Scope:** `src/lib.rs`\n- **Proof:** `cargo test`\n- Exported: `added`\n\nCloses #1\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 2, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.scope.path_outside_card"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "docs/notes.md");
+    assert_eq!(reply["data"]["surface"]["cardScopePaths"], 1, "{reply}");
+    // Without a Scope line the card is refused with the missing field named, not run unscoped.
+    fs::write(&body, "- Promise: added() exists\n- Proof: `cargo test`\n").unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_ne!(code, 0, "{reply}");
+    assert!(reply.to_string().contains("scopePaths"), "{reply}");
+}

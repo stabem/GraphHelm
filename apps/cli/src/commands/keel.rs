@@ -228,12 +228,35 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
     }
     let bytes = std::fs::read(path)
         .map_err(|error| Box::new(input_error(format!("card unreadable: {error}"), "/card")))?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-        Box::new(input_error(
-            format!("card is not valid JSON: {error}"),
-            "/card",
-        ))
-    })?;
+    let is_markdown = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+    let (value, bytes) = if is_markdown {
+        let value = card_from_markdown(&String::from_utf8_lossy(&bytes));
+        let missing: Vec<&str> = ["promise", "scopePaths", "proof"]
+            .into_iter()
+            .filter(|key| value.get(key).is_none())
+            .collect();
+        if !missing.is_empty() {
+            return Err(Box::new(input_error(
+                format!(
+                    "markdown card lacks {}; write `Promise:`, `Scope:` and `Proof:` lines",
+                    missing.join(", ")
+                ),
+                "/card",
+            )));
+        }
+        let json = serde_json::to_vec(&value).unwrap_or_default();
+        (value, json)
+    } else {
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            Box::new(input_error(
+                format!("card is not valid JSON: {error}"),
+                "/card",
+            ))
+        })?;
+        (value, bytes)
+    };
     let schema: serde_json::Value = serde_json::from_str(KEEL_CARD_SCHEMA).map_err(|error| {
         Box::new(Outcome::internal(
             COMMAND,
@@ -257,6 +280,54 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
         ))
     })?;
     Ok((card, bytes.len() as u64))
+}
+
+/// Reads a card written as prose in a PR body (`.md`): the lines `Promise:`, `Scope:`, `Proof:`
+/// and optionally `Exported:`, each possibly a list item or bold. List fields take the backticked
+/// items on the line, else its comma-separated words; `Proof` drops one pair of backticks. A field
+/// that is missing stays missing, so the schema names it.
+fn card_from_markdown(text: &str) -> serde_json::Value {
+    let mut card = serde_json::Map::new();
+    for line in text.lines() {
+        let line = line
+            .trim()
+            .trim_start_matches(['-', '*', '+', ' '])
+            .replace("**", "");
+        let Some((label, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let rest = rest.trim();
+        let list = || {
+            let ticked: Vec<&str> = rest.split('`').skip(1).step_by(2).collect();
+            let items: Vec<String> = if ticked.is_empty() {
+                rest.split(',').map(str::trim).map(str::to_owned).collect()
+            } else {
+                ticked.into_iter().map(str::to_owned).collect()
+            };
+            serde_json::Value::from(
+                items
+                    .into_iter()
+                    .filter(|item| !item.is_empty())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let (key, value) = match label.trim().to_ascii_lowercase().as_str() {
+            "promise" => ("promise", serde_json::Value::from(rest)),
+            "scope" | "scope paths" | "paths" => ("scopePaths", list()),
+            "proof" => (
+                "proof",
+                serde_json::Value::from(
+                    rest.strip_prefix('`')
+                        .and_then(|r| r.strip_suffix('`'))
+                        .unwrap_or(rest),
+                ),
+            ),
+            "exported" | "exported symbols" => ("exportedSymbols", list()),
+            _ => continue,
+        };
+        card.entry(key).or_insert(value);
+    }
+    serde_json::Value::Object(card)
 }
 
 #[cfg(test)]

@@ -84,6 +84,35 @@ try {
     $null = Invoke-WebRequest -Uri "$runtimeUrl/health" -TimeoutSec 2 -UseBasicParsing
     $alive = $true
 } catch {}
+# A GraphHelm Runtime left over from an earlier start keeps the address after `graphhelm update`:
+# it serves the old binary, and an old Runtime on a large journal can be too slow to answer the
+# token probe below. A graphhelm process serving THESE events is stopped and replaced when its
+# executable is not the one this start would launch or when it fails the probe; another
+# project's Runtime or an unrelated service is refused, as before.
+function Get-RuntimeOccupant {
+    try {
+        $port = [int]($Bind.Split(":")[-1])
+        $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop | Select-Object -First 1 -ExpandProperty OwningProcess
+        $process = Get-Process -Id $owner -ErrorAction Stop
+        $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $owner" -ErrorAction Stop).CommandLine
+        # Only a Runtime serving THESE events is ours to replace.
+        if ($process.ProcessName -eq "graphhelm" -and $commandLine -and $commandLine.Contains($Events.TrimEnd("\", "/"))) { return $process }
+    } catch {}
+    return $null
+}
+function Stop-RuntimeOccupant($process, $why) {
+    Write-Host "[up] stopping the GraphHelm Runtime already at $runtimeUrl ($why): $($process.Path)"
+    Stop-Process -Id $process.Id -Force
+    $process.WaitForExit(10000) | Out-Null
+}
+if ($alive) {
+    $occupant = Get-RuntimeOccupant
+    $launching = (Get-Command $GraphHelm -ErrorAction SilentlyContinue).Source
+    if ($occupant -and $launching -and $occupant.Path -and ($occupant.Path -ne $launching)) {
+        Stop-RuntimeOccupant $occupant "it runs a different graphhelm than $launching"
+        $alive = $false
+    }
+}
 if ($alive) {
     $token = Get-EventsToken
     if (-not $token) {
@@ -93,7 +122,13 @@ if ($alive) {
         $null = Invoke-RestMethod -Uri "$runtimeUrl/v1/executions?limit=1" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 5
         Write-Host "[up] Runtime already answering at $runtimeUrl and this project's token opens it - reusing it"
     } catch {
-        throw "Something answers at $runtimeUrl but refuses this project's token - it is a different service or another project's Runtime. Stop it or pass a different -Bind."
+        $occupant = Get-RuntimeOccupant
+        if ($occupant) {
+            Stop-RuntimeOccupant $occupant "it did not open with this project's token: $($_.Exception.Message)"
+            $alive = $false
+        } else {
+            throw "Something answers at $runtimeUrl but refuses this project's token - it is a different service or another project's Runtime. Stop it or pass a different -Bind."
+        }
     }
 }
 if (-not $alive) {

@@ -748,11 +748,24 @@ async fn cognitive_work(
         history,
     };
     let reply = model.call(route_id, &call).await;
+    // #298: the provider refused a call that replayed a reused session's history as larger than
+    // its context window. Resending the same history can never succeed, and the node did not fail
+    // on its own briefing: drop the session and let the attempt machinery dispatch the node once
+    // more as a fresh subagent (the reuse decision then records `bound_exceeded`). A fresh call
+    // that overflows keeps `ContextTooLarge`'s terminal outcome — there is nothing left to shed.
+    let overflowed_session = matches!(
+        reply,
+        Err(graphhelm_gateway::taxonomy::GatewayError::ContextTooLarge)
+    ) && !call.history.is_empty();
     let reply_text = reply.as_ref().ok().map(|reply| reply.text.clone());
     let mut outcome = match work.judge.as_ref() {
         Some(judge) => judge_outcome(judge, reply),
         None => cognitive_outcome(reply, work.context.as_ref()),
     };
+    if overflowed_session && let Some(subagent) = session {
+        sessions.overflow(&subagent.subagent_id);
+        outcome.outcome = NodeOutcome::RetryableFailure;
+    }
     if let Some(subagent) = session {
         let replied = reply_text.filter(|_| outcome.outcome == NodeOutcome::Succeeded);
         let record = crate::session::SessionProvenanceRecord {

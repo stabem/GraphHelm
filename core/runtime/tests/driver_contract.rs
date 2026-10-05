@@ -4496,3 +4496,162 @@ fn a_malformed_delegation_fails_the_execution_with_a_journaled_diagnostic_and_re
             })
     )));
 }
+
+// ---------------------------------------------------------------------------------------------
+// #298: a reused session's history the provider refuses as too large.
+// ---------------------------------------------------------------------------------------------
+
+/// Answers `a` normally; refuses `b`'s calls with `ContextTooLarge` — every call that carries
+/// replayed history, and, when `fresh_overflows`, a fresh call too.
+struct OverflowingModelPort {
+    fresh_overflows: bool,
+    calls: std::sync::Mutex<Vec<ModelCall>>,
+}
+
+impl ModelPort for OverflowingModelPort {
+    fn call<'a>(
+        &'a self,
+        _route_id: &'a str,
+        call: &'a ModelCall,
+    ) -> Pin<Box<dyn Future<Output = Result<ModelReply, GatewayError>> + Send + 'a>> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(call.clone());
+        let is_b = call.prompt.contains("implement the change");
+        let reply = if is_b && (!call.history.is_empty() || self.fresh_overflows) {
+            Err(GatewayError::ContextTooLarge)
+        } else {
+            Ok(ModelReply {
+                termination: None,
+                text: format!("REPLY-{}", calls.len()),
+                usage: reported(Some(120), Some(30)),
+            })
+        };
+        Box::pin(async move { reply })
+    }
+}
+
+struct OverflowDrive {
+    a: graphhelm_protocols::SubagentReused,
+    /// Every `subagent_reused` journaled for `b`, in order.
+    b: Vec<graphhelm_protocols::SubagentReused>,
+    calls: Vec<ModelCall>,
+    b_state: graphhelm_protocols::NodeState,
+}
+
+fn drive_overflowing_chain(fresh_overflows: bool) -> OverflowDrive {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            (
+                "a",
+                delegated_agent_graph_node("explore the module", "explorer"),
+            ),
+            (
+                "b",
+                delegated_agent_graph_node("implement the change", "implementer"),
+            ),
+        ],
+        vec![("a", "b")],
+        1,
+    );
+    let model = Arc::new(OverflowingModelPort {
+        fresh_overflows,
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let route = session_route(10_000);
+    let mut executor = port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    );
+    executor.route_tiers = route.tiers().to_vec();
+    executor.sessions = graphhelm_runtime::session::SubagentSessions::for_route(&route);
+    let executor = Arc::new(executor);
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let runtime = multi_thread_runtime();
+    let projection = runtime
+        .block_on(
+            graphhelm_runtime::driver::drive_to_quiescence_async_with_receipts(
+                opener(directory.path().to_path_buf()),
+                protector.clone(),
+                Arc::new(SequenceIds::default()),
+                driver_scope(),
+                OpaqueId::parse(DRIVER_STREAM).unwrap(),
+                execution_id,
+                spec,
+                executor.clone(),
+                driver_actor(),
+                std::collections::BTreeSet::new(),
+                driver_actor(),
+                cancel_rx,
+                None,
+                None,
+                Some(protector.clone()),
+            ),
+        )
+        .unwrap();
+    assert!(executor.sessions.held_ids().is_empty());
+    let store = opener(directory.path().to_path_buf())().unwrap();
+    let b = store
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap()
+        .into_iter()
+        .filter_map(|envelope| match envelope.kind {
+            EventKind::SubagentReused(record) if record.node_id.as_str() == "b" => Some(record),
+            _ => None,
+        })
+        .collect();
+    let calls = model.calls.lock().unwrap().clone();
+    OverflowDrive {
+        a: projection.subagents["a"].record.clone(),
+        b,
+        calls,
+        b_state: projection.node_states["b"],
+    }
+}
+
+// The provider refuses the reused session's history: the session is dropped and `b` is dispatched
+// exactly once more as a fresh subagent, recorded honestly. The oversized call is never resent.
+#[test]
+fn an_overflowing_reused_session_falls_back_to_one_fresh_subagent() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let drive = drive_overflowing_chain(false);
+    assert_eq!(drive.b.len(), 2, "{:?}", drive.b);
+    let (reused, fresh) = (&drive.b[0], &drive.b[1]);
+    assert_eq!(reused.basis, SubagentBasis::Reused);
+    assert_eq!(reused.subagent_id, drive.a.subagent_id);
+    assert_eq!(fresh.basis, SubagentBasis::BoundExceeded);
+    assert_ne!(fresh.subagent_id, drive.a.subagent_id);
+    assert_eq!(fresh.from_node_id, None);
+
+    // a, b with history, b fresh. Exactly one call ever carried the oversized history.
+    assert_eq!(drive.calls.len(), 3, "{:?}", drive.calls);
+    assert_eq!(
+        drive
+            .calls
+            .iter()
+            .filter(|call| !call.history.is_empty())
+            .count(),
+        1
+    );
+    assert!(!drive.calls[1].history.is_empty());
+    assert!(drive.calls[2].history.is_empty());
+    assert!(drive.calls[2].prompt.contains("implement the change"));
+    assert_eq!(drive.b_state, graphhelm_protocols::NodeState::Succeeded);
+}
+
+// A fresh call has nothing to shed: its overflow is terminal and is not retried at all.
+#[test]
+fn an_overflowing_fresh_call_fails_without_a_retry() {
+    let drive = drive_overflowing_chain(true);
+    // a (fresh), b with history (overflow, falls back), b fresh (overflow, terminal).
+    assert_eq!(drive.calls.len(), 3, "{:?}", drive.calls);
+    assert!(drive.calls[2].history.is_empty());
+    assert_eq!(drive.b.len(), 2);
+    assert_eq!(drive.b_state, graphhelm_protocols::NodeState::Failed);
+}

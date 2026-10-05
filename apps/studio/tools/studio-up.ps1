@@ -100,7 +100,7 @@ if (-not $alive) {
     $serveArgs = @("serve", "--events", $Events, "--bind", $Bind)
     if ($Keyring) { $serveArgs += @("--keyring", $Keyring) }
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
-    if ($Manifest -and $Broker -and $Route) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
+    if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
     Write-Host "[up] starting: $GraphHelm $($serveArgs -join ' ')"
     Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds(20)

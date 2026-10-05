@@ -309,6 +309,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     }
     let keyring = state.join(super::init::KEYRING_DIRECTORY);
     let key = std::fs::read_to_string(state.join(super::init::KEY_FILE)).ok();
+    let sealed = keyring.is_dir() && key.is_some();
     if let (true, Some(key)) = (keyring.is_dir(), key) {
         // The key travels in the child's environment only, as `init` prints it; never as an
         // argument, never printed.
@@ -322,7 +323,9 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     // the Studio's suggested replies say no Jev model is set up.
     let manifest = state.join("manifest.json");
     let broker = state.join("broker");
-    if let (true, Some(route)) = (broker.is_dir(), text_route(&manifest)) {
+    // Only beside the keyring: `serve` refuses a model half without `--keyring`/`--key-id`, so a
+    // keyless project keeps opening read-and-drive instead of not opening at all (#282 review).
+    if let (true, true, Some(route)) = (sealed, broker.is_dir(), text_route(&manifest)) {
         eprintln!(
             "[studio] model routes from {} (text route {route})",
             manifest.display()

@@ -338,6 +338,11 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             json!({"type":"agent_presence_declared","data":{"actorId":"owner-1","actorType":"owner","model":"claude-opus-5"}}),
             false,
         ),
+        // #290 (ADR-040): execution-scoped, every member required.
+        (
+            json!({"type":"delegation_chosen","data":{"nodeId":"implementation","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
+            false,
+        ),
         (
             json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
             false,
@@ -595,6 +600,49 @@ fn the_presence_models_bounds_are_enforced_by_the_schema_and_not_only_by_the_htt
     // Empty: refused by `minLength`, kept here because the two rules are separate and a reader
     // should see which cases each one owns.
     assert_schema_invalid(EVENT_ID, &presence(json!("")));
+}
+
+/// #290 (ADR-040): `delegation_chosen` is closed. A kind, tier or effort outside its closed set,
+/// a missing member and an extra member are each refused by the SCHEMA, with a control first so a
+/// refusal is about the value and not the fixture.
+#[test]
+fn delegation_chosen_is_a_closed_payload_in_the_schema_and_in_serde() {
+    let chosen =
+        |data: Value| event_fixture(json!({"type":"delegation_chosen","data":data}), false);
+    let control = json!({"nodeId":"implementation","kind":"implementer","tier":"large","effort":"high","escalated":true,"redChecks":2});
+    assert_schema_valid(EVENT_ID, &chosen(control.clone()));
+
+    for (field, bad) in [
+        ("kind", json!("planner")),
+        ("tier", json!("huge")),
+        ("effort", json!("max")),
+        ("redChecks", json!(-1)),
+        ("escalated", json!("yes")),
+    ] {
+        let mut data = control.clone();
+        data[field] = bad;
+        assert_schema_invalid(EVENT_ID, &chosen(data));
+    }
+    let mut missing = control.clone();
+    missing.as_object_mut().unwrap().remove("redChecks");
+    assert_schema_invalid(EVENT_ID, &chosen(missing.clone()));
+    let mut extra = control.clone();
+    extra["route"] = json!("claude-opus-5");
+    assert_schema_invalid(EVENT_ID, &chosen(extra.clone()));
+
+    // serde agrees with the schema at both edges.
+    assert!(
+        serde_json::from_value::<EventKind>(json!({"type":"delegation_chosen","data":control}))
+            .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<EventKind>(json!({"type":"delegation_chosen","data":extra}))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<EventKind>(json!({"type":"delegation_chosen","data":missing}))
+            .is_err()
+    );
 }
 
 fn assert_schema_valid(schema_id: &str, document: &Value) {

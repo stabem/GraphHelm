@@ -904,6 +904,11 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         vec![
             serde_json::json!({"type":"agent_presence_declared","data":{"actorId":"agent-planner","actorType":"agent","model":"claude-opus-5","effort":"high"}}),
         ],
+        // #290 (ADR-040): like a presence declaration, a delegation choice needs no prelude: the
+        // fold arm records the newest choice per node and touches no other state.
+        vec![
+            serde_json::json!({"type":"delegation_chosen","data":{"nodeId":"implementation","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
+        ],
     ];
     // The authoring snapshot arm is reached only after a valid publication. Reuse the checked-in
     // persisted-graph fixture and its typed hash/evidence machinery; no decrypted evidence is

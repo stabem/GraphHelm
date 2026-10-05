@@ -3809,3 +3809,232 @@ fn retry_receipts_retain_cache_usage_without_counting_lifecycle_hops() {
         before
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// #290 (ADR-040): a node that declares `delegation` records the deterministic choice at dispatch.
+// ---------------------------------------------------------------------------------------------
+
+fn delegated_agent_graph_node(objective: &str, kind: &str) -> GraphNode {
+    let mut node = agent_graph_node(objective);
+    node.properties
+        .insert("delegation".to_owned(), serde_json::json!({"kind": kind}));
+    node
+}
+
+/// Drives the chain `a -> b`, where only `a` declares `implementer`, after appending `red` failing
+/// gate verdicts against `a`. Returns the stream's story and the `delegation_chosen` payloads.
+fn drive_delegated_chain(
+    red: u32,
+) -> (
+    Vec<String>,
+    Vec<graphhelm_protocols::DelegationChosen>,
+    graphhelm_events::ExecutionProjection,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    if red > 0 {
+        let repository = opener(directory.path().to_path_buf())().unwrap();
+        let verdicts = (0..red)
+            .map(|index| {
+                plain_event(
+                    &format!("red-verdict-{index}"),
+                    EventKind::GateVerdict(graphhelm_protocols::GateVerdict {
+                        execution_id: execution_id.clone(),
+                        node_id: OpaqueId::parse("a").unwrap(),
+                        gate_id: OpaqueId::parse("keel-tests").unwrap(),
+                        passed: false,
+                        findings: vec![graphhelm_protocols::GateFinding {
+                            severity: graphhelm_protocols::SignalSeverity::High,
+                            claim: "the test suite is red".to_owned(),
+                            evidence: vec![],
+                            remediation: "fix the failing test".to_owned(),
+                        }],
+                    }),
+                )
+            })
+            .collect();
+        let request = PreparedAppend::new(
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            2,
+            verdicts,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        repository.append_atomic(&request).unwrap();
+    }
+    let spec = spec_with(
+        vec![
+            ("a", delegated_agent_graph_node("first", "implementer")),
+            ("b", agent_graph_node("second")),
+        ],
+        vec![("a", "b")],
+        1,
+    );
+    let executor = Arc::new(port_executor_with(
+        Arc::new(FakeModelPort {
+            result: Ok(reply("DELEGATED-REPLY")),
+            calls: AtomicUsize::new(0),
+        }),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            protector,
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Completed)
+    );
+    let history = opener(directory.path().to_path_buf())()
+        .unwrap()
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    let story = history
+        .iter()
+        .filter_map(|envelope| match &envelope.kind {
+            EventKind::NodeOutcomeRecorded(record) => Some(format!(
+                "{}:{:?}->{:?}",
+                record.node_id.as_str(),
+                record.outcome,
+                record.next_state
+            )),
+            EventKind::DelegationChosen(chosen) => {
+                Some(format!("{}:delegation_chosen", chosen.node_id.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    let chosen = history
+        .iter()
+        .filter_map(|envelope| match &envelope.kind {
+            EventKind::DelegationChosen(chosen) => Some(chosen.clone()),
+            _ => None,
+        })
+        .collect();
+    let replayed = replay(&driver_scope(), DRIVER_STREAM, &history).unwrap();
+    assert_eq!(
+        replayed, projection,
+        "the projection rebuilds from the journal"
+    );
+    (story, chosen, projection)
+}
+
+#[test]
+fn a_delegated_node_records_exactly_one_choice_per_dispatch_and_an_undelegated_one_none() {
+    use graphhelm_policy::delegation::{DelegationPolicy, SubagentKind, choose};
+
+    let (story, chosen, projection) = drive_delegated_chain(0);
+    // Exactly one, for `a` only, after its `Started` hops and before its outcome.
+    assert_eq!(
+        story,
+        vec![
+            "a:Approved->Ready",
+            "b:Approved->Ready",
+            "a:Started->Queued",
+            "a:Started->Running",
+            "a:delegation_chosen",
+            "a:Succeeded->Succeeded",
+            "b:Started->Queued",
+            "b:Started->Running",
+            "b:Succeeded->Succeeded",
+        ]
+    );
+    let expected = choose(&DelegationPolicy::routed(), SubagentKind::Implementer, 0);
+    assert_eq!(chosen.len(), 1);
+    let only = &chosen[0];
+    assert_eq!(only.node_id.as_str(), "a");
+    assert_eq!(only.kind, expected.kind);
+    assert_eq!(only.tier, expected.tier);
+    assert_eq!(only.effort, expected.effort);
+    assert_eq!(only.escalated, expected.escalated);
+    assert_eq!(only.red_checks, 0);
+    assert_eq!(projection.delegation_choices["a"].chosen, *only);
+    assert!(!projection.delegation_choices.contains_key("b"));
+}
+
+#[test]
+fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
+    use graphhelm_policy::delegation::{DelegationPolicy, SubagentKind, Tier, choose};
+
+    let (_, chosen, _) = drive_delegated_chain(2);
+    let expected = choose(&DelegationPolicy::routed(), SubagentKind::Implementer, 2);
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[0].red_checks, 2);
+    assert_eq!(chosen[0].tier, expected.tier);
+    assert_eq!(chosen[0].tier, Tier::Large);
+    assert_eq!(chosen[0].effort, expected.effort);
+    assert!(chosen[0].escalated);
+}
+
+#[test]
+fn a_malformed_delegation_is_refused_at_dispatch_and_records_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![("a", delegated_agent_graph_node("first", "planner"))],
+        vec![],
+        1,
+    );
+    let executor = Arc::new(port_executor_with(
+        Arc::new(FakeModelPort {
+            result: Ok(reply("NEVER")),
+            calls: AtomicUsize::new(0),
+        }),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    ));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(directory.path().to_path_buf()),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            executor,
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+    let history = opener(directory.path().to_path_buf())()
+        .unwrap()
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    assert!(history.iter().all(|envelope| !matches!(
+        envelope.kind,
+        EventKind::DelegationChosen(_)
+            | EventKind::NodeOutcomeRecorded(graphhelm_protocols::NodeOutcomeRecorded {
+                outcome: NodeOutcome::Started,
+                ..
+            })
+    )));
+}

@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, fmt};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ActorId, ArtifactReference, CustomsBudgets, DreamShadowRecorded, EventHash, EvidenceId,
-    EvidenceReference, ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType, OpaqueId,
-    PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersion,
+    ActorId, ArtifactReference, CustomsBudgets, DelegationChosen, DreamShadowRecorded, EventHash,
+    EvidenceId, EvidenceReference, ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType,
+    OpaqueId, PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersion,
     PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
     SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
@@ -243,6 +243,7 @@ pub enum EventKind {
     SweepPerformed(SweepPerformed),
     OverdueException(OverdueException),
     AgentPresenceDeclared(AgentPresenceDeclared),
+    DelegationChosen(DelegationChosen),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -469,6 +470,7 @@ wire_names! {
     SweepPerformed => "sweep_performed",
     OverdueException => "overdue_exception",
     AgentPresenceDeclared => "agent_presence_declared",
+    DelegationChosen => "delegation_chosen",
 }
 
 impl EventKind {

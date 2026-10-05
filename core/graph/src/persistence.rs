@@ -1252,7 +1252,8 @@ fn control_allowed_for_node(control_type: &str, node_type: &str) -> bool {
         "rollback_configuration" => node_type == "rollback",
         "node_common" | "input_contract" | "output_contract" | "node_model" | "node_context"
         | "node_permissions" | "node_isolation" | "node_retry" | "node_resources"
-        | "node_memory" | "node_completion" | "node_configuration" | "node_loop" => true,
+        | "node_memory" | "node_completion" | "node_configuration" | "node_loop"
+        | "node_delegation" => true,
         _ => false,
     }
 }
@@ -1266,6 +1267,7 @@ pub fn persisted_node_control_order(control_type: &str) -> Option<u8> {
         "agent_memory_policy" => 3,
         "agent_model_requirements" => 4,
         "node_agents" => 5,
+        "node_delegation" => 6,
         "input_contract" => 10,
         "output_contract" => 11,
         "node_model" => 20,
@@ -1388,6 +1390,18 @@ fn validate_control_shape(control: &PersistedControl) -> Result<(), GraphError> 
             .integers()
             .iter()
             .any(|(key, value)| key.as_str() == "maxIterations" && *value > 0)
+    {
+        return Err(GraphError::InvalidProjection);
+    }
+    // ADR-040: a persisted delegation names exactly one kind from the closed set.
+    if control_type == "node_delegation"
+        && !control.identifiers().iter().any(|(key, value)| {
+            key.as_str() == "kind"
+                && matches!(
+                    value.as_str(),
+                    "explorer" | "implementer" | "reviewer" | "verifier"
+                )
+        })
     {
         return Err(GraphError::InvalidProjection);
     }
@@ -1665,6 +1679,7 @@ fn identifier_key_allowed(control_type: &str, key: &str) -> bool {
             ) || indexed_any(key, &["capability.", "allowedTool.", "prohibitedAction."])
         }
         "node_agents" => indexed_key(key, "agentRef."),
+        "node_delegation" => key == "kind",
         "agent_model_requirements" | "node_model" => {
             matches!(key, "profile" | "routePolicy") || indexed_key(key, "independent.")
         }

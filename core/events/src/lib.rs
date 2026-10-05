@@ -48,11 +48,12 @@ pub use memory::{
     prepare_memory_record_superseded,
 };
 pub use projection::{
-    ClearanceOutcome, CustomsScan, CustomsStage, EvidenceAvailability, ExecutionProjection,
-    MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt, MemoryRecordProjection, OpenClaim,
-    OpenWait, OverdueStage, ProjectionGeneration, ProjectionRebuildRequest, ProjectionRebuilder,
-    ProjectionRepository, ProjectionWatermark, ReplayError, WakeMisBurn, claim_evidence_digest,
-    overdue_at, project_customs_stage, replay, replay_within,
+    ClearanceOutcome, CustomsScan, CustomsStage, DelegationRecord, EvidenceAvailability,
+    ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
+    MemoryRecordProjection, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
+    ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
+    ReplayError, WakeMisBurn, claim_evidence_digest, overdue_at, project_customs_stage, replay,
+    replay_within,
 };
 pub use repository::{
     ActiveVersion, ArtifactCatalog, AsyncEventRepository, AuthenticatedCheckpoint, EventPage,

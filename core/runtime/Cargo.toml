@@ -9,6 +9,7 @@ rust-version.workspace = true
 graphhelm-events = { path = "../events" }
 graphhelm-execution = { path = "../execution" }
 graphhelm-gateway = { path = "../gateway" }
+graphhelm-policy = { path = "../policy" }
 graphhelm-protocols = { path = "../protocols" }
 graphhelm-simulation = { path = "../simulation" }
 graphhelm-tool-broker = { path = "../tool-broker" }

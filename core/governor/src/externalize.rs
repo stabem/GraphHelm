@@ -747,6 +747,7 @@ fn collect_node_properties(
             }
             "agent" => collect_agent_content(node_id, value, collector)?,
             "agents" => collect_crew_references(value).map(drop)?,
+            "delegation" => validate_delegation(value)?,
             "input" | "output" => validate_schema_container(value)?,
             "prompt" => {
                 validate_string(value)?;
@@ -1182,6 +1183,9 @@ fn build_node_controls(
     if let Some(crew) = node.properties.get("agents") {
         controls.push(build_crew_control(crew)?);
     }
+    if let Some(delegation) = node.properties.get("delegation") {
+        controls.push(build_delegation_control(delegation)?);
+    }
     for key in ["input", "output"] {
         if let Some(value) = node.properties.get(key) {
             controls.push(build_contract_control(key, value)?);
@@ -1248,6 +1252,28 @@ fn build_node_controls(
         persisted_node_control_order(control.control_type().as_str()).unwrap_or(u8::MAX)
     });
     Ok(controls)
+}
+
+/// ADR-040: the closed `delegation` block. Exactly one member, `kind`, from the same closed set
+/// `node.schema.json` enumerates -- a typo is refused here, never read as "no delegation".
+const DELEGATION_KINDS: &[&str] = &["explorer", "implementer", "reviewer", "verifier"];
+
+fn validate_delegation(value: &Value) -> Result<(), GovernorError> {
+    let object = value.as_object().ok_or(GovernorError::InvalidAuthoring)?;
+    let kind = object.get("kind").and_then(Value::as_str);
+    if object.len() != 1 || !kind.is_some_and(|kind| DELEGATION_KINDS.contains(&kind)) {
+        return Err(GovernorError::InvalidAuthoring);
+    }
+    Ok(())
+}
+
+/// ADR-040: the delegation kind changes what runs, so it is canonical graph content: persisted as
+/// one `node_delegation` control and therefore part of the GraphVersion hash.
+fn build_delegation_control(value: &Value) -> Result<PersistedControl, GovernorError> {
+    validate_delegation(value)?;
+    let mut builder = ControlBuilder::default();
+    builder.enum_token("kind", &value["kind"], DELEGATION_KINDS)?;
+    builder.finish("node_delegation")
 }
 
 fn validate_loop_control(value: &Value) -> Result<(), GovernorError> {

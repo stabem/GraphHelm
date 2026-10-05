@@ -92,6 +92,7 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
         "graphhelm-events",
         "graphhelm-execution",
         "graphhelm-gateway",
+        "graphhelm-policy",
         "graphhelm-protocols",
         "graphhelm-simulation",
         "graphhelm-tool-broker",
@@ -121,7 +122,11 @@ fn the_runtime_crate_depends_on_exactly_the_declared_crates() {
     // (`production_dependencies` stops at the next `[section]` header): the gate cells still
     // choose geometry as the evaluator they wire into a test registry, and a test choosing a
     // concrete evaluator is not the crate depending on one.
-    assert_eq!(count, 12, "the dependency table grew or shrank: {table}");
+    //
+    // 13 since #290 (ADR-040): `graphhelm-policy` entered because the dispatch path calls
+    // `delegation::choose`, a pure function over a declared policy. It is a decision crate, not an
+    // adapter, and it depends only on `graphhelm-graph` and `graphhelm-protocols`.
+    assert_eq!(count, 13, "the dependency table grew or shrank: {table}");
 }
 
 #[test]

@@ -5666,6 +5666,32 @@ pub(super) async fn gateway_route_set(
             );
         }
     };
+    // ADR-041 (#298): absent or null leaves tiers unsaid (a replace keeps the replaced route's);
+    // an array, even an empty one, is written exactly.
+    let tiers = match payload.get("tiers") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Array(values)) => {
+            let Some(values) = values
+                .iter()
+                .map(|value| value.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+            else {
+                return bad_request(
+                    GATEWAY_ROUTE_SET_COMMAND,
+                    "\"tiers\" must be an array of strings when it is given",
+                    "/tiers",
+                );
+            };
+            Some(values)
+        }
+        Some(_) => {
+            return bad_request(
+                GATEWAY_ROUTE_SET_COMMAND,
+                "\"tiers\" must be an array of strings when it is given",
+                "/tiers",
+            );
+        }
+    };
     let (Some(enabled), Some(replace)) = (
         optional_flag(&payload, "enabled", true),
         optional_flag(&payload, "replace", false),
@@ -5689,6 +5715,7 @@ pub(super) async fn gateway_route_set(
         model: fields[3].clone(),
         credential_ref,
         profiles,
+        tiers,
         enabled,
         replace,
     };

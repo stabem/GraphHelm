@@ -68,6 +68,11 @@ pub(in crate::commands) struct RouteWrite {
     pub model: String,
     pub credential_ref: Option<String>,
     pub profiles: Option<Vec<String>>,
+    /// ADR-041 point 5: the delegation tiers the route serves. `None` means "not said": a new
+    /// route then declares no tier, and a replace KEEPS the tiers the replaced entry declared, so
+    /// rewriting a route's URL or model never silently unbinds tier-bound work from it. `Some`
+    /// (including an empty list, which clears them) is written exactly.
+    pub tiers: Option<Vec<String>>,
     pub enabled: bool,
     pub replace: bool,
 }
@@ -122,6 +127,12 @@ fn execute(path: &Path, write: &RouteWrite) -> Result<Value, Failure> {
             "model": write.model,
             "credentialRef": credential_ref,
             "enabled": write.enabled,
+            "tiers": manifest
+                .routes()
+                .iter()
+                .find(|route| route.id() == write.id)
+                .map(|route| route.tiers().to_vec())
+                .unwrap_or_default(),
         },
         "routes": listing(&manifest),
     }))
@@ -150,8 +161,19 @@ fn validate(write: &RouteWrite) -> Result<(), Failure> {
             "/credentialRef",
         ));
     }
+    if let Some(tiers) = &write.tiers
+        && let Some(unknown) = tiers.iter().find(|tier| !TIERS.contains(&tier.as_str()))
+    {
+        return Err(invalid(
+            &format!("tier {unknown:?} is not one of small, standard, large"),
+            "/tiers",
+        ));
+    }
     Ok(())
 }
+
+/// The closed `DelegationTier` set, as `ModelRoute.tiers` spells it on the wire.
+const TIERS: [&str; 3] = ["small", "standard", "large"];
 
 fn merged(
     path: &Path,
@@ -166,7 +188,7 @@ fn merged(
         Value::Array(routes) => routes,
         _ => return Err(unusable()),
     };
-    let entry = json!({
+    let mut entry = json!({
         "id": write.id,
         "provider": write.provider,
         "transport": "direct_api",
@@ -178,6 +200,9 @@ fn merged(
         "profiles": write.profiles.clone().unwrap_or_else(|| vec![PROFILE.to_owned()]),
         "enabled": write.enabled,
     });
+    if let Some(tiers) = &write.tiers {
+        entry["tiers"] = json!(tiers);
+    }
     let position = routes
         .iter()
         .position(|existing| existing.get("id").and_then(Value::as_str) == Some(write.id.as_str()));
@@ -193,8 +218,16 @@ fn merged(
             // A partial patch would let an operator correct a base URL while a stale model from a
             // previous life stays behind it, and the reply would name only the field they touched:
             // a route nobody declared as a whole is a route nobody reviewed as a whole.
+            // The one exception to the whole rewrite is `tiers` left unsaid (ADR-041, #298): the
+            // replaced entry's tiers are carried over, because dropping them would park every
+            // tier-bound node on this route without the operator having said a word about tiers.
             let previous = routes[index].clone();
             refuse_foreign_transport(&previous)?;
+            if write.tiers.is_none()
+                && let Some(tiers) = previous.get("tiers")
+            {
+                entry["tiers"] = tiers.clone();
+            }
             routes[index] = entry;
             ManifestState::Replaced
         }

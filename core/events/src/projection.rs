@@ -6,7 +6,7 @@ use graphhelm_protocols::{
     ExecutionId, ExecutionMode, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome,
     NodeState, OpaqueId, PersistedActor, PersistedGraphVersion, PersistedMemoryPublicationState,
     PersistedMemorySemanticState, PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope,
-    SafeCode, SimulationStatus, WireHash, WorkspaceId,
+    SafeCode, SimulationStatus, SubagentReused, WireHash, WorkspaceId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
@@ -615,6 +615,26 @@ pub struct ExecutionProjection {
     /// one the node is running under. Rebuildable from events like every field here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegation_choices: BTreeMap<String, DelegationRecord>,
+    /// ADR-041 (#298): the newest `subagent_reused` per node -- which subagent instance took it,
+    /// with the sequence that carried it. This is the ONLY authorship record the reuse rules read:
+    /// the envelope actor is the driver's and `agent_presence_declared` is self-declared.
+    /// Rebuildable from events; skipped when empty so older projection digests do not move.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub subagents: BTreeMap<String, SubagentRecord>,
+    /// ADR-041 (#298): `execution_started.graphVersion`, the graph-version member of the reuse
+    /// key. NEVER serialized, for the reason `red_checks` is not: it is folded from an event that
+    /// predates ADR-041, so serializing it would move every older projection digest. The dispatch
+    /// path reads it from the fresh replay it performs anyway.
+    #[serde(skip)]
+    pub started_graph_version: Option<u64>,
+}
+
+/// One node's newest subagent record, and the envelope sequence that recorded it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentRecord {
+    pub at_sequence: u64,
+    pub record: SubagentReused,
 }
 
 /// One node's newest delegation choice, and the envelope sequence that recorded it.
@@ -1571,6 +1591,7 @@ fn apply_projection_event(
             }
             projection.execution_id = Some(payload.execution_id.to_string());
             projection.mode = Some(payload.mode);
+            projection.started_graph_version = Some(payload.graph_version);
         }
         EventKind::ExecutionModeChanged(payload) => {
             // An unrooted stream must not acquire an autonomy mode. With no execution started both
@@ -2117,6 +2138,22 @@ fn apply_projection_event(
                 DelegationRecord {
                     at_sequence: event.sequence,
                     chosen: payload.clone(),
+                },
+            );
+        }
+        // ADR-041: recording, not state, exactly like `delegation_chosen`.
+        EventKind::SubagentReused(payload) => {
+            let node = payload.node_id.to_string();
+            if !projection.subagents.contains_key(&node)
+                && projection.subagents.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.subagents.insert(
+                node,
+                SubagentRecord {
+                    at_sequence: event.sequence,
+                    record: payload.clone(),
                 },
             );
         }

@@ -343,6 +343,12 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             json!({"type":"delegation_chosen","data":{"nodeId":"implementation","policy":"routed","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
             false,
         ),
+        // #298 (ADR-041): a fresh subagent carries no `fromNodeId`, `fromKind` or token members --
+        // absent keys, never nulls.
+        (
+            json!({"type":"subagent_reused","data":{"nodeId":"implementation","subagentId":"subagent-1","kind":"implementer","graphVersion":1,"basis":"bound_unavailable"}}),
+            false,
+        ),
         (
             json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
             false,
@@ -657,6 +663,44 @@ fn delegation_chosen_is_a_closed_payload_in_the_schema_and_in_serde() {
         serde_json::from_value::<EventKind>(json!({"type":"delegation_chosen","data":missing}))
             .is_err()
     );
+}
+
+/// #298 (ADR-041): `subagent_reused` is closed in the schema and in serde: an unknown basis or
+/// kind, a missing required member, an extra member and a null optional are each refused.
+#[test]
+fn subagent_reused_is_a_closed_payload_in_the_schema_and_in_serde() {
+    let reused = |data: Value| event_fixture(json!({"type":"subagent_reused","data":data}), false);
+    let control = json!({"nodeId":"implementation","subagentId":"subagent-1","kind":"implementer","graphVersion":1,"basis":"reused","fromNodeId":"exploration","fromKind":"explorer","tokensUsed":900,"tokensAllocated":1000});
+    assert_schema_valid(EVENT_ID, &reused(control.clone()));
+    assert!(
+        serde_json::from_value::<EventKind>(json!({"type":"subagent_reused","data":control}))
+            .is_ok()
+    );
+    let mut bad_values = vec![];
+    for (field, bad) in [
+        ("basis", json!("estimated")),
+        ("kind", json!("planner")),
+        ("fromKind", json!("planner")),
+        ("tokensUsed", json!(-1)),
+        ("fromNodeId", Value::Null),
+    ] {
+        let mut data = control.clone();
+        data[field] = bad;
+        bad_values.push(data);
+    }
+    let mut missing = control.clone();
+    missing.as_object_mut().unwrap().remove("subagentId");
+    bad_values.push(missing);
+    let mut extra = control.clone();
+    extra["route"] = json!("claude-opus-5");
+    bad_values.push(extra);
+    for data in bad_values {
+        assert_schema_invalid(EVENT_ID, &reused(data.clone()));
+        assert!(
+            serde_json::from_value::<EventKind>(json!({"type":"subagent_reused","data":data}))
+                .is_err()
+        );
+    }
 }
 
 fn assert_schema_valid(schema_id: &str, document: &Value) {

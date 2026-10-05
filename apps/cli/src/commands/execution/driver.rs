@@ -252,6 +252,25 @@ pub(super) fn drive_to_quiescence(
                     )
                 })?
                 .flatten();
+            // ADR-041: the subagent record, from the same projection. This driver's executor
+            // reports no token counts, so the bound is unmeasured and nothing is ever reused here.
+            let subagent = delegation
+                .as_ref()
+                .map(|chosen| {
+                    graphhelm_runtime::delegation::subagent_event(
+                        chosen,
+                        &projection,
+                        &graphhelm_runtime::delegation::ReuseBound::unmeasured(),
+                        idempotency_key("subagent"),
+                    )
+                })
+                .transpose()
+                .map_err(|_| {
+                    execution_state(
+                        "the execution's graph version is not recorded",
+                        "/execution/dispatch",
+                    )
+                })?;
             dispatch_hops(
                 store,
                 scope,
@@ -273,6 +292,21 @@ pub(super) fn drive_to_quiescence(
                         actor.clone(),
                         Sensitivity::Internal,
                         EventKind::DelegationChosen(chosen),
+                        vec![],
+                        vec![],
+                    ),
+                )?;
+            }
+            if let Some(record) = subagent {
+                append_event(
+                    store,
+                    scope,
+                    &stream_id,
+                    NewEvent::new(
+                        idempotency_key("subagent-reused"),
+                        actor.clone(),
+                        Sensitivity::Internal,
+                        EventKind::SubagentReused(record),
                         vec![],
                         vec![],
                     ),
@@ -806,5 +840,22 @@ mod tests {
             )
         );
         assert_eq!(chosen[0].red_checks, 0);
+        // ADR-041, on this driver too: one fresh subagent record for `first`, none for `second`.
+        let subagents: Vec<_> = store
+            .read_replay_stream(&scope(), EXECUTION)
+            .unwrap()
+            .into_iter()
+            .filter_map(|envelope| match envelope.kind {
+                EventKind::SubagentReused(record) => Some(record),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents[0].node_id.as_str(), "first");
+        assert_eq!(
+            subagents[0].basis,
+            graphhelm_protocols::SubagentBasis::NoEligibleSubagent
+        );
+        assert_eq!(subagents[0].from_node_id, None);
     }
 }

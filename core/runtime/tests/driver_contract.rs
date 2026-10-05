@@ -3841,6 +3841,21 @@ fn drive_delegated_chain(
     graphhelm_events::ExecutionProjection,
     usize,
 ) {
+    drive_delegated_chain_with(red, route_tiers, "implementer", None)
+}
+
+/// [`drive_delegated_chain`] with `a`'s kind and, when given, a delegation kind for `b`.
+fn drive_delegated_chain_with(
+    red: u32,
+    route_tiers: &[graphhelm_protocols::DelegationTier],
+    a_kind: &str,
+    b_kind: Option<&str>,
+) -> (
+    Vec<String>,
+    Vec<graphhelm_protocols::DelegationChosen>,
+    graphhelm_events::ExecutionProjection,
+    usize,
+) {
     let directory = tempfile::tempdir().unwrap();
     let execution_id = started_repository(directory.path());
     if red > 0 {
@@ -3877,8 +3892,14 @@ fn drive_delegated_chain(
     }
     let spec = spec_with(
         vec![
-            ("a", delegated_agent_graph_node("first", "implementer")),
-            ("b", agent_graph_node("second")),
+            ("a", delegated_agent_graph_node("first", a_kind)),
+            (
+                "b",
+                match b_kind {
+                    Some(kind) => delegated_agent_graph_node("second", kind),
+                    None => agent_graph_node("second"),
+                },
+            ),
         ],
         vec![("a", "b")],
         1,
@@ -3932,6 +3953,9 @@ fn drive_delegated_chain(
             EventKind::DelegationChosen(chosen) => {
                 Some(format!("{}:delegation_chosen", chosen.node_id.as_str()))
             }
+            EventKind::SubagentReused(record) => {
+                Some(format!("{}:subagent_reused", record.node_id.as_str()))
+            }
             _ => None,
         })
         .collect();
@@ -3981,6 +4005,7 @@ fn a_delegated_node_records_exactly_one_choice_per_dispatch_and_an_undelegated_o
             "a:Started->Queued",
             "a:Started->Running",
             "a:delegation_chosen",
+            "a:subagent_reused",
             "a:Succeeded->Succeeded",
             "b:Started->Queued",
             "b:Started->Running",
@@ -3998,6 +4023,18 @@ fn a_delegated_node_records_exactly_one_choice_per_dispatch_and_an_undelegated_o
     assert_eq!(only.red_checks, 0);
     assert_eq!(projection.delegation_choices["a"].chosen, *only);
     assert!(!projection.delegation_choices.contains_key("b"));
+    // ADR-041: the delegated node names a Runtime-minted fresh subagent; nothing came before it,
+    // so there is no candidate. The undelegated node gets no subagent record.
+    let subagent = &projection.subagents["a"].record;
+    assert_eq!(
+        subagent.basis,
+        graphhelm_protocols::SubagentBasis::NoEligibleSubagent
+    );
+    assert_eq!(subagent.from_node_id, None);
+    assert_eq!(subagent.kind, SubagentKind::Implementer);
+    assert_eq!(subagent.graph_version, 1);
+    assert!(subagent.subagent_id.as_str().starts_with("subagent"));
+    assert!(!projection.subagents.contains_key("b"));
 }
 
 #[test]
@@ -4012,6 +4049,44 @@ fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
     assert_eq!(chosen[0].tier, Tier::Large);
     assert_eq!(chosen[0].effort, expected.effort);
     assert!(chosen[0].escalated);
+}
+
+// ADR-041 points 1, 2 and 4, end to end on the async driver: `b` (implementer) follows a
+// finished explorer `a` on the same graph version, so `a`'s subagent matches the whole key. No
+// dispatch path measures the bound today, so `b` is recorded FRESH with `bound_unavailable` and a
+// different subagent id -- never reused on a guess.
+#[test]
+fn a_key_matching_candidate_is_not_reused_while_the_bound_is_unmeasured() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let (story, _, projection, _) =
+        drive_delegated_chain_with(0, ALL_TIERS, "explorer", Some("implementer"));
+    assert!(
+        story
+            .windows(2)
+            .any(|pair| pair == ["b:delegation_chosen", "b:subagent_reused"]),
+        "{story:?}"
+    );
+    let a = &projection.subagents["a"].record;
+    let b = &projection.subagents["b"].record;
+    assert_eq!(a.basis, SubagentBasis::NoEligibleSubagent);
+    assert_eq!(b.basis, SubagentBasis::BoundUnavailable);
+    assert_eq!(b.from_node_id, None);
+    assert_eq!((b.tokens_used, b.tokens_allocated), (None, None));
+    assert_ne!(a.subagent_id, b.subagent_id);
+}
+
+// ADR-041 point 3 on the driver: a reviewer after an authoring subagent is never handed to it.
+#[test]
+fn a_reviewer_after_an_authoring_subagent_gets_a_fresh_one() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let (_, _, projection, _) =
+        drive_delegated_chain_with(0, ALL_TIERS, "implementer", Some("reviewer"));
+    let a = &projection.subagents["a"].record;
+    let b = &projection.subagents["b"].record;
+    assert_eq!(b.basis, SubagentBasis::AuthorUnderReview);
+    assert_ne!(a.subagent_id, b.subagent_id);
 }
 
 // ADR-041: the chosen tier binds to a route only through the manifest's `tiers`.
@@ -4055,6 +4130,7 @@ fn a_delegated_node_with_no_route_for_its_tier_parks_needs_capacity_without_a_mo
             "a:Started->Queued",
             "a:Started->Running",
             "a:delegation_chosen",
+            "a:subagent_reused",
             "a:NeedsCapacity->WaitingCapacity",
         ]
     );

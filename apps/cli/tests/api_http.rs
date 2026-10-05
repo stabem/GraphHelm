@@ -9457,6 +9457,60 @@ fn route_replace_preserves_the_supplied_reference_and_profiles() {
     assert_eq!(route["profiles"], serde_json::json!(["critical_reasoning"]));
 }
 
+// #298 (ADR-041): the HTTP door takes `tiers` like the CLI does, and a replace whose body omits
+// them keeps the route's tiers rather than dropping them; a non-array `tiers` is refused.
+#[test]
+fn route_replace_without_tiers_keeps_the_routes_tiers() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let (_guard, base, token, manifest, _broker) =
+        serve_gateway_writer(directory.path(), &events, &[]);
+    let body = |model: &str, replace: bool| {
+        serde_json::json!({
+            "id": "deepseek_official",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": model,
+            "replace": replace,
+        })
+    };
+    let mut first = body("deepseek-v4-pro", false);
+    first["tiers"] = serde_json::json!(["small"]);
+    let (status, written) = put_json(&format!("{base}/v1/gateway/routes"), &token, &first);
+    assert_eq!(status, 200, "{written}");
+    assert_eq!(
+        written["data"]["route"]["tiers"],
+        serde_json::json!(["small"])
+    );
+    let (status, replaced) = put_json(
+        &format!("{base}/v1/gateway/routes"),
+        &token,
+        &body("deepseek-v5", true),
+    );
+    assert_eq!(status, 200, "{replaced}");
+    let listed = replaced["data"]["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == "deepseek_official")
+        .unwrap();
+    assert_eq!(listed["model"], "deepseek-v5");
+    assert_eq!(listed["tiers"], serde_json::json!(["small"]));
+    let file: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let stored = file["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == "deepseek_official")
+        .unwrap();
+    assert_eq!(stored["tiers"], serde_json::json!(["small"]));
+
+    let mut malformed = body("deepseek-v5", true);
+    malformed["tiers"] = serde_json::json!("small");
+    let (status, refused) = put_json(&format!("{base}/v1/gateway/routes"), &token, &malformed);
+    assert_eq!(status, 400, "{refused}");
+}
+
 #[test]
 fn http_credential_rotation_preserves_shared_route_scope() {
     let directory = tempfile::tempdir().unwrap();

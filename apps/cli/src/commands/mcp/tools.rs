@@ -680,6 +680,8 @@ fn route_set_schema() -> serde_json::Value {
                 "description": "Absent: true. False parks the route: listed, and refused at dispatch."},
             "replace": {"type": "boolean",
                 "description": "Absent: false, and an existing id is refused with the manifest left byte-identical."},
+            "tiers": {"type": "array", "items": {"enum": ["small", "standard", "large"]}, "uniqueItems": true,
+                "description": "Delegation tiers the route serves (ADR-041). Absent on a replace: the replaced route's tiers are kept; [] clears them."},
             "manifest": {"type": "string",
                 "description": "Manifest path override; absent, the Runtime's own."},
         }),
@@ -1713,7 +1715,7 @@ pub(crate) fn call(
                     body[field] = serde_json::Value::String(value.to_owned());
                 }
             }
-            for field in ["enabled", "replace"] {
+            for field in ["enabled", "replace", "tiers"] {
                 if let Some(value) = arguments.get(field) {
                     body[field] = value.clone();
                 }

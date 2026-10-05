@@ -168,6 +168,7 @@ fn top_level_command(argument: &str) -> Option<&'static str> {
         "init" => Some("init"),
         "keel" => Some("keel"),
         "studio" => Some("studio"),
+        "update" => Some("update"),
         _ => None,
     }
 }

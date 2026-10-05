@@ -20,7 +20,7 @@ use std::process::Command;
 use graphhelm_protocols::Diagnostic;
 use serde_json::json;
 
-use crate::args::StudioStartArgs;
+use crate::args::{StudioStartArgs, UpdateArgs};
 use crate::commands::gateway::keyring::SEALING_KEY_ENVIRONMENT;
 use crate::output::Outcome;
 
@@ -31,8 +31,12 @@ const LOCKFILE: &str = "apps/studio/package-lock.json";
 const BUILT_FROM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 fn refused(message: impl Into<String>, pointer: &str) -> Outcome {
+    refused_as(COMMAND, message, pointer)
+}
+
+fn refused_as(command: &'static str, message: impl Into<String>, pointer: &str) -> Outcome {
     Outcome::domain(
-        COMMAND,
+        command,
         vec![Diagnostic::error(
             crate::error_codes::GHCLI032_STUDIO_REFUSED,
             message,
@@ -152,6 +156,64 @@ fn update(source: &Path) -> serde_json::Value {
             json!({ "state": "updated", "commits": behind, "dependenciesReinstalled": lock_moved })
         }
     }
+}
+
+/// `graphhelm update`: the clone first (same conservative fast-forward as `studio start`), then
+/// `cargo install --locked --path apps/cli` from it, run inside the clone so its pinned toolchain
+/// applies. On Windows a running `graphhelm.exe` cannot be overwritten but can be renamed, so the
+/// running binary is moved aside to `graphhelm.old.exe` first and moved back if the install fails.
+pub fn update_cli(args: &UpdateArgs) -> Outcome {
+    const UPDATE: &str = "update";
+    let candidates = [
+        args.source.clone(),
+        std::env::var_os("GRAPHHELM_SOURCE").map(PathBuf::from),
+        Some(PathBuf::from(BUILT_FROM)),
+    ];
+    let Some(source) = resolve_source(&candidates) else {
+        return refused_as(
+            UPDATE,
+            format!(
+                "no GraphHelm clone with {LAUNCHER} was found; pass --source <your GraphHelm clone> or set GRAPHHELM_SOURCE"
+            ),
+            "/source",
+        );
+    };
+    eprintln!("[update] GraphHelm source: {}", source.display());
+    let clone = update(&source);
+    let moved_aside = if cfg!(windows) {
+        std::env::current_exe().ok().and_then(|exe| {
+            let old = exe.with_file_name("graphhelm.old.exe");
+            let _ = std::fs::remove_file(&old);
+            std::fs::rename(&exe, &old).ok().map(|()| (exe, old))
+        })
+    } else {
+        None
+    };
+    eprintln!("[update] installing the CLI (cargo install --locked --path apps/cli)");
+    let installed = Command::new("cargo")
+        .current_dir(&source)
+        .args(["install", "--locked", "--path", "apps/cli"])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !installed {
+        if let Some((exe, old)) = &moved_aside {
+            let _ = std::fs::rename(old, exe);
+        }
+        return refused_as(
+            UPDATE,
+            "cargo install failed; its output is above, and the old graphhelm is unchanged",
+            "/install",
+        );
+    }
+    Outcome::success(
+        UPDATE,
+        json!({
+            "source": source.display().to_string(),
+            "head": git(&source, &["rev-parse", "--short", "HEAD"]),
+            "update": clone,
+            "installed": true,
+        }),
+    )
 }
 
 pub fn start(args: &StudioStartArgs) -> Outcome {

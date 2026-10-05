@@ -200,7 +200,9 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         .args(["install", "--locked", "--path", "apps/cli"]);
     if let Some(root) = &root {
         eprintln!("[update] into {}", root.join("bin").display());
-        install.arg("--root").arg(root);
+        // `--force`: cargo refuses to overwrite a binary it did not install itself, and a
+        // versioned directory's binary was placed there by another installer (#281 review).
+        install.arg("--root").arg(root).arg("--force");
     }
     let installed = install.status().is_ok_and(|status| status.success());
     if !installed {

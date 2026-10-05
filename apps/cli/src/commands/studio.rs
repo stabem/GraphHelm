@@ -189,12 +189,20 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     } else {
         None
     };
+    // Install over THIS binary, wherever it lives: a graphhelm run from a versioned directory
+    // (`~/.graphhelm/versions/<sha>/bin`) updated into `~/.cargo/bin` would leave PATH on the old
+    // one, and on Windows with nothing at all once it was moved aside (2026-10-05).
+    let root = install_root(std::env::current_exe().ok().as_deref());
     eprintln!("[update] installing the CLI (cargo install --locked --path apps/cli)");
-    let installed = Command::new("cargo")
+    let mut install = Command::new("cargo");
+    install
         .current_dir(&source)
-        .args(["install", "--locked", "--path", "apps/cli"])
-        .status()
-        .is_ok_and(|status| status.success());
+        .args(["install", "--locked", "--path", "apps/cli"]);
+    if let Some(root) = &root {
+        eprintln!("[update] into {}", root.join("bin").display());
+        install.arg("--root").arg(root);
+    }
+    let installed = install.status().is_ok_and(|status| status.success());
     if !installed {
         if let Some((exe, old)) = &moved_aside {
             let _ = std::fs::rename(old, exe);
@@ -214,6 +222,13 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
             "installed": true,
         }),
     )
+}
+
+/// The `cargo install --root` that puts the new binary exactly where the running one is: the
+/// parent of its `bin` directory. `None` (cargo's default root) when the binary is not in a `bin`.
+pub(super) fn install_root(exe: Option<&Path>) -> Option<PathBuf> {
+    let bin = exe?.parent()?;
+    (bin.file_name()? == "bin").then(|| bin.parent().map(Path::to_path_buf))?
 }
 
 pub fn start(args: &StudioStartArgs) -> Outcome {
@@ -337,6 +352,20 @@ mod tests {
         let found = resolve_source(&[None, Some(empty.path().into()), Some(clone.path().into())]);
         assert_eq!(found, Some(std::fs::canonicalize(clone.path()).unwrap()));
         assert_eq!(resolve_source(&[Some(empty.path().into())]), None);
+    }
+
+    #[test]
+    fn installs_over_the_running_binary_wherever_its_bin_is() {
+        let versioned = Path::new("/home/u/.graphhelm/versions/26b8780/bin/graphhelm");
+        assert_eq!(
+            install_root(Some(versioned)),
+            Some(PathBuf::from("/home/u/.graphhelm/versions/26b8780"))
+        );
+        assert_eq!(
+            install_root(Some(Path::new("/repo/target/debug/graphhelm"))),
+            None
+        );
+        assert_eq!(install_root(None), None);
     }
 
     #[test]

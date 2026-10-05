@@ -809,6 +809,27 @@ fn customs_declaration_diagnostics(
     Ok(diagnostics)
 }
 
+/// ADR-040 (#290 review): every `delegation` block in the graph must be readable. Refused here,
+/// with a journaled diagnostic, rather than by quietly leaving the node undispatched while the
+/// execution stays `running`. Unconditional for the reason customs is: every dispatch of the node
+/// reads it. The condition and code are shared with the synchronous CLI driver.
+fn delegation_declaration_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for node_id in crate::delegation::malformed_delegation_nodes(spec) {
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/delegation"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            crate::delegation::DELEGATION_DECLARATION_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
+    }
+    Ok(diagnostics)
+}
+
 fn preflight_retry_causes(value: Option<&serde_json::Value>) -> (BTreeSet<&str>, bool) {
     let Some(value) = value else {
         return (BTreeSet::new(), false);
@@ -916,6 +937,7 @@ pub async fn drive_to_quiescence_async(
     let mut preflight_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
     preflight_diagnostics.extend(context_budget_diagnostics(&spec, context.is_some())?);
     preflight_diagnostics.extend(customs_declaration_diagnostics(&spec)?);
+    preflight_diagnostics.extend(delegation_declaration_diagnostics(&spec)?);
     if !preflight_diagnostics.is_empty() {
         let projection = reread_async(&store_open, &scope, &stream).await?;
         let already_terminal = matches!(
@@ -1187,8 +1209,9 @@ pub async fn drive_to_quiescence_async(
             }
             // ADR-040: the delegation choice is computed from the projection AT DISPATCH, so its
             // red-check count includes every failing gate verdict already in the journal. A
-            // malformed declaration refuses the node exactly like an unassemblable one: never a
-            // dispatch without the record the declaration asked for.
+            // malformed declaration was refused by the preflight above with a journaled
+            // `GHG018_DELEGATION_DECLARATION_INVALID`; this arm is the backstop that still never
+            // dispatches without the record the declaration asked for.
             let delegation = match spec.nodes.get(node).map(|graph_node| {
                 crate::delegation::delegation_event(node, graph_node, &at_dispatch)
             }) {

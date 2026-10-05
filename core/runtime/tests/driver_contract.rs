@@ -3988,7 +3988,7 @@ fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
 }
 
 #[test]
-fn a_malformed_delegation_is_refused_at_dispatch_and_records_nothing() {
+fn a_malformed_delegation_fails_the_execution_with_a_journaled_diagnostic_and_records_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let execution_id = started_repository(directory.path());
     let spec = spec_with(
@@ -4007,7 +4007,7 @@ fn a_malformed_delegation_is_refused_at_dispatch_and_records_nothing() {
         }),
     ));
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
-    multi_thread_runtime()
+    let projection = multi_thread_runtime()
         .block_on(drive_to_quiescence_async(
             opener(directory.path().to_path_buf()),
             Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
@@ -4029,6 +4029,29 @@ fn a_malformed_delegation_is_refused_at_dispatch_and_records_nothing() {
         .unwrap()
         .read_replay_stream(&driver_scope(), DRIVER_STREAM)
         .unwrap();
+    // #295 review: the refusal is visible, not a node silently left undispatched while the
+    // execution stays `running` -- the execution fails with a stable code at the node's field.
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Failed)
+    );
+    let diagnostics = history
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::GraphValidationFailed(failed) => Some(&failed.diagnostics),
+            _ => None,
+        })
+        .expect("the refusal diagnostic is journaled");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.path().as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            "GHG018_DELEGATION_DECLARATION_INVALID",
+            "/spec/nodes/a/delegation"
+        )]
+    );
     assert!(history.iter().all(|envelope| !matches!(
         envelope.kind,
         EventKind::DelegationChosen(_)

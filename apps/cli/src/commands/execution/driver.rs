@@ -87,6 +87,16 @@ pub(super) fn drive_to_quiescence(
         ));
     }
 
+    // ADR-040 (#290 review): a malformed `delegation` block is refused here, before any node
+    // runs, under the same condition and path the async driver's journaled preflight uses
+    // (`graphhelm_runtime::delegation::malformed_delegation_nodes`).
+    if let Some(node) = graphhelm_runtime::delegation::malformed_delegation_nodes(spec).first() {
+        return Err(execution_state(
+            "a node declares a delegation block that cannot be read",
+            &format!("/spec/nodes/{node}/delegation"),
+        ));
+    }
+
     loop {
         approve_untouched(store, scope, &stream_id, &execution_id, spec, actor)?;
 

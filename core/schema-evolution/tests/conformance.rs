@@ -2092,6 +2092,7 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             "delegation_chosen",
             json!({
                 "nodeId": "node-1",
+                "policy": "routed",
                 "kind": "implementer",
                 "tier": "large",
                 "effort": "high",

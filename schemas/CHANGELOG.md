@@ -16,7 +16,7 @@ schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json`) refuses 1
 step. The addition accumulates in the existing 1.1.0 candidate, as `agents` did.
 
 **`event-envelope`: `delegation_chosen` added and wired writable.** `$defs/delegationChosen`
-carries `nodeId`, `kind`, `tier` (`small | standard | large`), `effort` (`low | medium | high`),
+carries `nodeId`, `policy` (closed: `routed`, the policy that produced the choice; always written by the Runtime, optional in the schema because the kind landed before it, absent reads as `routed`), `kind`, `tier` (`small | standard | large`), `effort` (`low | medium | high`),
 `escalated` and `redChecks` (a `u32`), all required, `additionalProperties: false`. A new disjoint
 `oneOf` branch in `$defs/eventKind` (`composition widened`) and a top-level pairing with
 `scopeWithExecution`, so the kind is writable rather than matching zero branches. Same 1.1.0
@@ -25,8 +25,11 @@ candidate as `agent_presence_declared`; the schema-evolution conformance table p
 The Runtime appends one `delegation_chosen` per dispatch of a node that declares `delegation`,
 with the result of `graphhelm_policy::delegation::choose` over the built-in `routed()` policy.
 `redChecks` is the count of failing `gate_verdict` events already recorded for that node in the
-execution. Recording is not enforcement: no tier is mapped to a model route. The frozen 1.0.0
-release is unchanged.
+execution. Recording is not enforcement: no tier is mapped to a model route. A node whose
+`delegation` block cannot be read is refused before any node effect at
+`/spec/nodes/<id>/delegation` by both drivers (`GHG018_DELEGATION_DECLARATION_INVALID`, journaled,
+in the async Runtime driver). The projection's per-node red-check count is never serialized, so
+pre-existing projection digests are unchanged. The frozen 1.0.0 release is unchanged.
 
 ## event-envelope 1.0.0 - optional run topology snapshot
 

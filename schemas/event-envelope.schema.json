@@ -1025,6 +1025,7 @@
       "required": ["nodeId", "kind", "tier", "effort", "escalated", "redChecks"],
       "properties": {
         "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "policy": {"enum": ["routed"]},
         "kind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
         "tier": {"enum": ["small", "standard", "large"]},
         "effort": {"enum": ["low", "medium", "high"]},

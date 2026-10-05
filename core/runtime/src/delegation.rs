@@ -17,7 +17,22 @@
 
 use graphhelm_events::ExecutionProjection;
 use graphhelm_policy::delegation::{DelegationPolicy, choose};
-use graphhelm_protocols::{DelegationChosen, GraphNode, OpaqueId};
+use graphhelm_protocols::{DelegationChosen, GraphNode, GraphSpec, OpaqueId};
+
+/// A node's `delegation` block is not the closed schema shape. Shared by both drivers, which
+/// refuse such a graph before any node effect at `/spec/nodes/<id>/delegation`.
+pub const DELEGATION_DECLARATION_INVALID_CODE: &str = "GHG018_DELEGATION_DECLARATION_INVALID";
+
+/// The nodes whose `delegation` block cannot be read, in spec order. One condition for both
+/// drivers' preflights, so they cannot disagree about which graphs are refusable.
+#[must_use]
+pub fn malformed_delegation_nodes(spec: &GraphSpec) -> Vec<String> {
+    spec.nodes
+        .iter()
+        .filter(|(_, node)| node.delegation().is_err())
+        .map(|(id, _)| id.clone())
+        .collect()
+}
 
 /// Why a delegation choice could not be built for a node that is about to dispatch.
 #[derive(Debug, thiserror::Error)]
@@ -45,9 +60,11 @@ pub fn delegation_event(
         return Ok(None);
     };
     let red_checks = projection.red_checks.get(node_id).copied().unwrap_or(0);
-    let choice = choose(&DelegationPolicy::routed(), declared.kind, red_checks);
+    let policy = DelegationPolicy::routed();
+    let choice = choose(&policy, declared.kind, red_checks);
     Ok(Some(DelegationChosen {
         node_id: OpaqueId::parse(node_id).map_err(|_| DelegationError::NodeId)?,
+        policy: policy.id,
         kind: choice.kind,
         tier: choice.tier,
         effort: choice.effort,

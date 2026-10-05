@@ -340,7 +340,7 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
         ),
         // #290 (ADR-040): execution-scoped, every member required.
         (
-            json!({"type":"delegation_chosen","data":{"nodeId":"implementation","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
+            json!({"type":"delegation_chosen","data":{"nodeId":"implementation","policy":"routed","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
             false,
         ),
         (
@@ -609,10 +609,11 @@ fn the_presence_models_bounds_are_enforced_by_the_schema_and_not_only_by_the_htt
 fn delegation_chosen_is_a_closed_payload_in_the_schema_and_in_serde() {
     let chosen =
         |data: Value| event_fixture(json!({"type":"delegation_chosen","data":data}), false);
-    let control = json!({"nodeId":"implementation","kind":"implementer","tier":"large","effort":"high","escalated":true,"redChecks":2});
+    let control = json!({"nodeId":"implementation","policy":"routed","kind":"implementer","tier":"large","effort":"high","escalated":true,"redChecks":2});
     assert_schema_valid(EVENT_ID, &chosen(control.clone()));
 
     for (field, bad) in [
+        ("policy", json!("adaptive")),
         ("kind", json!("planner")),
         ("tier", json!("huge")),
         ("effort", json!("max")),
@@ -626,6 +627,19 @@ fn delegation_chosen_is_a_closed_payload_in_the_schema_and_in_serde() {
     let mut missing = control.clone();
     missing.as_object_mut().unwrap().remove("redChecks");
     assert_schema_invalid(EVENT_ID, &chosen(missing.clone()));
+    // `policy` landed after the kind did: an older event without it is valid and reads as the
+    // only policy there has ever been.
+    let mut no_policy = control.clone();
+    no_policy.as_object_mut().unwrap().remove("policy");
+    assert_schema_valid(EVENT_ID, &chosen(no_policy.clone()));
+    match serde_json::from_value::<EventKind>(json!({"type":"delegation_chosen","data":no_policy}))
+        .unwrap()
+    {
+        EventKind::DelegationChosen(read) => {
+            assert_eq!(read.policy, graphhelm_protocols::DelegationPolicyId::Routed);
+        }
+        other => panic!("unexpected kind {other:?}"),
+    }
     let mut extra = control.clone();
     extra["route"] = json!("claude-opus-5");
     assert_schema_invalid(EVENT_ID, &chosen(extra.clone()));

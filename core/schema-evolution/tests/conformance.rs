@@ -2101,6 +2101,22 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             false,
         ),
+        // #298 (ADR-041). Execution-scoped: appended right after the node's `delegation_chosen`.
+        (
+            "subagent_reused",
+            json!({
+                "nodeId": "node-2",
+                "subagentId": "subagent-1",
+                "kind": "implementer",
+                "graphVersion": 1,
+                "basis": "reused",
+                "fromNodeId": "node-1",
+                "fromKind": "explorer",
+                "tokensUsed": 900,
+                "tokensAllocated": 1000
+            }),
+            false,
+        ),
     ]
 }
 

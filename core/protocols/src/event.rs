@@ -7,7 +7,7 @@ use crate::{
     EvidenceId, EvidenceReference, ExecutionMode, FreshnessClass, NodeOutcome, NodeState, NodeType,
     OpaqueId, PersistedActor, PersistedActorType, PersistedDiagnostic, PersistedGraphVersion,
     PersistedTimestamp, PolicyWaiver, RawSha256, RepositoryScope, SemanticVersion, Sensitivity,
-    SignalSeverity, SignalSourceKind, SimulationStatus, WireHash,
+    SignalSeverity, SignalSourceKind, SimulationStatus, SubagentReused, WireHash,
     persistence::{PersistenceError, deserialize_optional_non_null},
 };
 
@@ -244,6 +244,7 @@ pub enum EventKind {
     OverdueException(OverdueException),
     AgentPresenceDeclared(AgentPresenceDeclared),
     DelegationChosen(DelegationChosen),
+    SubagentReused(SubagentReused),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,6 +472,7 @@ wire_names! {
     OverdueException => "overdue_exception",
     AgentPresenceDeclared => "agent_presence_declared",
     DelegationChosen => "delegation_chosen",
+    SubagentReused => "subagent_reused",
 }
 
 impl EventKind {

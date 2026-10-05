@@ -492,6 +492,8 @@ pub fn run(command: TopLevel) -> Outcome {
                     credential_ref,
                     disabled,
                     replace,
+                    tiers,
+                    no_tiers,
                 } => gateway::route::set(
                     &manifest,
                     &gateway::route::RouteWrite {
@@ -501,6 +503,15 @@ pub fn run(command: TopLevel) -> Outcome {
                         model,
                         credential_ref,
                         profiles: None,
+                        // `--no-tiers` clears; no tier flag at all leaves them unsaid, which a
+                        // replace reads as "keep the replaced route's tiers".
+                        tiers: if no_tiers {
+                            Some(Vec::new())
+                        } else if tiers.is_empty() {
+                            None
+                        } else {
+                            Some(tiers)
+                        },
                         // The flag is `--disabled` and the field is `enabled`, so the DEFAULT is
                         // the safe one to type: a route written without saying anything about its
                         // state is on, which is what an operator adding a provider means.

@@ -753,6 +753,68 @@ fn a_route_set_creates_the_manifest_and_the_listing_names_the_route() {
     assert_eq!(listed["data"]["routes"][0]["model"], "deepseek-v4-pro");
 }
 
+/// The `tiers` of route `id` as the FILE holds them, or `None` when the key is absent.
+fn file_tiers(manifest: &Path, id: &str) -> Option<serde_json::Value> {
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();
+    document["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == id)
+        .unwrap()
+        .get("tiers")
+        .cloned()
+}
+
+// #298 (ADR-041): `--tier` writes a route's delegation tiers; a replace that says nothing about
+// tiers KEEPS them (before this, it silently dropped them and parked every tier-bound node);
+// `--no-tiers` clears them; a tier outside the closed set is refused at `/tiers`.
+#[test]
+fn route_set_writes_tiers_and_a_replace_without_them_keeps_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let mut arguments = deepseek_arguments("deepseek_official");
+    arguments.extend(["--tier", "standard", "--tier", "large"].map(str::to_owned));
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        json(&output.stdout)["data"]["route"]["tiers"],
+        serde_json::json!(["standard", "large"])
+    );
+    assert_eq!(
+        file_tiers(&manifest, "deepseek_official"),
+        Some(serde_json::json!(["standard", "large"]))
+    );
+
+    let mut replace = deepseek_arguments("deepseek_official");
+    replace[7] = "deepseek-v5".to_owned();
+    replace.push("--replace".to_owned());
+    let output = route_set(&manifest, &as_str_arguments(&replace));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        file_tiers(&manifest, "deepseek_official"),
+        Some(serde_json::json!(["standard", "large"])),
+        "a replace that names no tier must keep the route's tiers"
+    );
+
+    replace.push("--no-tiers".to_owned());
+    let output = route_set(&manifest, &as_str_arguments(&replace));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        file_tiers(&manifest, "deepseek_official"),
+        Some(serde_json::json!([]))
+    );
+
+    let before = std::fs::read(&manifest).unwrap();
+    let mut unknown = deepseek_arguments("deepseek_official");
+    unknown.extend(["--replace", "--tier", "huge"].map(str::to_owned));
+    let output = route_set(&manifest, &as_str_arguments(&unknown));
+    assert!(!output.status.success());
+    assert_eq!(json(&output.stdout)["diagnostics"][0]["path"], "/tiers");
+    assert_eq!(std::fs::read(&manifest).unwrap(), before);
+}
+
 #[test]
 fn route_set_refuses_an_oversize_manifest_before_parsing_it() {
     let directory = tempfile::tempdir().unwrap();

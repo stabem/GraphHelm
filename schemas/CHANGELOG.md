@@ -1,5 +1,23 @@
 # Schema Changelog
 
+## event-envelope 1.1.0 - `subagent_reused` (ADR-041, #298)
+
+**`event-envelope`: `subagent_reused` added and wired writable.** `$defs/subagentReused` carries
+`nodeId`, `subagentId` (opaque, Runtime-minted), `kind` (the receiving node's delegation kind),
+`graphVersion` and `basis` (closed: `reused | no_eligible_subagent | author_under_review |
+bound_unavailable | bound_exceeded`), all required, plus optional `fromNodeId` and `fromKind`
+(present when the subagent was reused) and `tokensUsed` / `tokensAllocated` (present only when
+measured), `additionalProperties: false`. A new disjoint `oneOf` branch in `$defs/eventKind` and a
+top-level pairing with `scopeWithExecution`. Additive: a new `$defs` entry and branch, accumulated
+in the same unreleased 1.1.0 candidate as `delegation_chosen` (a 1.2.0 would be
+`GHC004_SEMVER_MISMATCH` against the frozen 1.0.0 baseline); `delegation_chosen` itself is not
+changed, so nothing already landed gains a required field (`GHC003`). The schema-evolution
+conformance table pins the new kind.
+
+The Runtime appends one `subagent_reused` right after every `delegation_chosen`, fresh subagents
+included, so every delegated node names its subagent instance. The frozen 1.0.0 release is
+unchanged.
+
 ## node 1.1.0 and event-envelope 1.1.0 - `delegation` and `delegation_chosen` (ADR-040, #290)
 
 **`node`: optional `delegation` object.** `additionalProperties: false`, one required member `kind`

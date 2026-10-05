@@ -14,7 +14,7 @@ use graphhelm_protocols::{
     ActorId, Clock, DelegationChosen, DelegationEffort, DelegationPolicyId, DelegationTier,
     EventKind, ExecutionId, GateFinding, GateVerdict, IdGenerator, NewEvent, OpaqueId,
     PersistedActor, PersistedActorType, ProjectId, RepositoryScope, Sensitivity, SignalSeverity,
-    SubagentKind, WorkspaceId,
+    SubagentBasis, SubagentKind, SubagentReused, WorkspaceId,
 };
 
 fn scope() -> RepositoryScope {
@@ -197,4 +197,75 @@ fn a_failing_gate_verdict_without_delegation_serializes_as_before_adr_040() {
     before.as_object_mut().unwrap().remove("redChecks");
     before.as_object_mut().unwrap().remove("delegationChoices");
     assert_eq!(wire, before, "no ADR-040 key reaches the wire");
+}
+
+fn subagent(node: &str, id: &str, basis: SubagentBasis) -> EventKind {
+    EventKind::SubagentReused(SubagentReused {
+        node_id: OpaqueId::parse(node).unwrap(),
+        subagent_id: OpaqueId::parse(id).unwrap(),
+        kind: SubagentKind::Implementer,
+        graph_version: 1,
+        basis,
+        from_node_id: None,
+        from_kind: None,
+        tokens_used: None,
+        tokens_allocated: None,
+    })
+}
+
+/// #298 (ADR-041): the per-node subagent record -- the only authorship evidence reuse reads --
+/// rebuilds from the journal, newest per node, and survives the persisted round trip. A history
+/// with no such record serializes no `subagents` key, so older projection digests do not move.
+#[test]
+fn the_newest_subagent_record_per_node_rebuilds_from_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let stream = OpaqueId::parse("stream-1").unwrap();
+    store
+        .append_atomic(
+            &PreparedAppend::new(
+                scope(),
+                stream.clone(),
+                1,
+                vec![
+                    event("event-1", chosen("implement", DelegationTier::Standard, 0)),
+                    event(
+                        "event-2",
+                        subagent("implement", "subagent-1", SubagentBasis::NoEligibleSubagent),
+                    ),
+                    event("event-3", chosen("implement", DelegationTier::Large, 1)),
+                    event(
+                        "event-4",
+                        subagent("implement", "subagent-2", SubagentBasis::BoundUnavailable),
+                    ),
+                ],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let history = store.read_replay_stream(&scope(), stream.as_str()).unwrap();
+    let projection = replay(&scope(), stream.as_str(), &history).unwrap();
+    let record = &projection.subagents["implement"];
+    assert_eq!(record.at_sequence, 4);
+    assert_eq!(record.record.subagent_id.as_str(), "subagent-2");
+    assert_eq!(projection.subagents.len(), 1);
+    assert_eq!(
+        projection,
+        replay(&scope(), stream.as_str(), &history).unwrap()
+    );
+    let wire = serde_json::to_value(&projection).unwrap();
+    assert!(wire.get("subagents").is_some());
+    assert!(wire.get("startedGraphVersion").is_none());
+    let restored: graphhelm_events::ExecutionProjection = serde_json::from_value(wire).unwrap();
+    assert_eq!(restored.subagents, projection.subagents);
+
+    let empty = serde_json::to_value(graphhelm_events::ExecutionProjection::default()).unwrap();
+    assert!(empty.get("subagents").is_none());
 }

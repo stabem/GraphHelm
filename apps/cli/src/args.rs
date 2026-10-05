@@ -1222,6 +1222,13 @@ pub enum RouteCommand {
         /// manifest is left byte-identical.
         #[arg(long)]
         replace: bool,
+        /// A delegation tier the route serves (`small`, `standard`, `large`); repeat for several.
+        /// Absent on a replace: the replaced route's tiers are kept (ADR-041).
+        #[arg(long = "tier", conflicts_with = "no_tiers")]
+        tiers: Vec<String>,
+        /// Write the route with no tiers, clearing any a replaced route declared.
+        #[arg(long = "no-tiers")]
+        no_tiers: bool,
     },
 }
 

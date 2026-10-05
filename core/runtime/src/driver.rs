@@ -1222,6 +1222,25 @@ pub async fn drive_to_quiescence_async(
                     continue;
                 }
             };
+            // ADR-041: which subagent takes the node, decided from the same dispatch-point
+            // projection. The bound is unmeasured on this path (see `ReuseBound`), so a candidate
+            // that passes the key is recorded fresh with `bound_unavailable`, never reused on a
+            // guess. A stream with no recorded graph version never dispatches a delegated node.
+            let subagent = match &delegation {
+                Some(chosen) => match crate::delegation::subagent_event(
+                    chosen,
+                    &at_dispatch,
+                    &crate::delegation::ReuseBound::unmeasured(),
+                    mint_key(ids.as_ref(), "subagent")?,
+                ) {
+                    Ok(record) => Some(record),
+                    Err(_) => {
+                        refused.insert(node.clone());
+                        continue;
+                    }
+                },
+                None => None,
+            };
             let current = at_dispatch
                 .node_states
                 .get(node)
@@ -1267,6 +1286,20 @@ pub async fn drive_to_quiescence_async(
                     "delegation-chosen",
                     None,
                     WireEventKind::DelegationChosen(chosen),
+                )
+                .await?;
+            }
+            // ADR-041: right after `delegation_chosen`, every delegated node names its subagent.
+            if let Some(record) = subagent {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "subagent-reused",
+                    None,
+                    WireEventKind::SubagentReused(record),
                 )
                 .await?;
             }

@@ -97,3 +97,72 @@ pub struct DelegationChosen {
     /// Failed mechanical checks already recorded for this node in this execution at dispatch.
     pub red_checks: u32,
 }
+
+/// ADR-041: why a delegated node got the subagent `subagent_reused` names. Closed: every value is
+/// a mechanical outcome of the reuse key, the authorship rule or the measured bound, never a
+/// judgement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentBasis {
+    /// An already-briefed subagent took the node: every key member matched and the measured
+    /// tokens were under the receiving budget. `fromNodeId` names its previous node.
+    Reused,
+    /// Fresh: no earlier subagent in this execution matched the whole reuse key (same graph
+    /// version, an allowlisted kind pair, its previous node finished).
+    NoEligibleSubagent,
+    /// Fresh: the node is a `reviewer` or `verifier` and an earlier subagent authored work in
+    /// this execution, so reusing it could make an author review its own result.
+    AuthorUnderReview,
+    /// Fresh: a candidate matched the key, but its token use or the receiving budget could not be
+    /// measured (a counter is `unavailable`), and an estimate is never substituted (D-043).
+    BoundUnavailable,
+    /// Fresh: a candidate matched the key, but its measured tokens reached the receiving budget.
+    BoundExceeded,
+}
+
+/// ADR-041: which subagent instance took one delegated node, appended right after the node's
+/// `delegation_chosen`. A fresh subagent has no `fromNodeId`; a reused one names the node it took
+/// before. The execution and repository scope members of the reuse key are the envelope's own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubagentReused {
+    pub node_id: crate::OpaqueId,
+    /// Opaque, Runtime-minted at the node's dispatch when the subagent is fresh; carried over
+    /// unchanged when it is reused.
+    pub subagent_id: crate::OpaqueId,
+    /// The receiving node's delegation kind.
+    pub kind: SubagentKind,
+    /// The graph version the execution runs (`execution_started.graphVersion`).
+    pub graph_version: u64,
+    pub basis: SubagentBasis,
+    /// The node the reused subagent took before. Present exactly when `basis` is `reused`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::persistence::deserialize_optional_non_null"
+    )]
+    pub from_node_id: Option<crate::OpaqueId>,
+    /// The kind of `fromNodeId`, so the kind pair is readable from this event alone.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::persistence::deserialize_optional_non_null"
+    )]
+    pub from_kind: Option<SubagentKind>,
+    /// Measured provider-reported input plus output tokens of the candidate subagent in this
+    /// execution. Absent when not measured.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::persistence::deserialize_optional_non_null"
+    )]
+    pub tokens_used: Option<u64>,
+    /// The receiving capsule's `tokenBudget.allocated` the bound was checked against. Absent
+    /// when not known.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::persistence::deserialize_optional_non_null"
+    )]
+    pub tokens_allocated: Option<u64>,
+}

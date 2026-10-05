@@ -909,6 +909,10 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         vec![
             serde_json::json!({"type":"delegation_chosen","data":{"nodeId":"implementation","policy":"routed","kind":"implementer","tier":"standard","effort":"medium","escalated":false,"redChecks":0}}),
         ],
+        // #298 (ADR-041): a subagent record is recording, not state, like `delegation_chosen`.
+        vec![
+            serde_json::json!({"type":"subagent_reused","data":{"nodeId":"implementation","subagentId":"subagent-1","kind":"implementer","graphVersion":1,"basis":"no_eligible_subagent"}}),
+        ],
     ];
     // The authoring snapshot arm is reached only after a valid publication. Reuse the checked-in
     // persisted-graph fixture and its typed hash/evidence machinery; no decrypted evidence is

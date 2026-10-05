@@ -1034,6 +1034,22 @@
       },
       "additionalProperties": false
     },
+    "subagentReused": {
+      "type": "object",
+      "required": ["nodeId", "subagentId", "kind", "graphVersion", "basis"],
+      "properties": {
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "subagentId": {"$ref": "#/$defs/opaqueId"},
+        "kind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
+        "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
+        "basis": {"enum": ["reused", "no_eligible_subagent", "author_under_review", "bound_unavailable", "bound_exceeded"]},
+        "fromNodeId": {"$ref": "#/$defs/opaqueId"},
+        "fromKind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
+        "tokensUsed": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "tokensAllocated": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+      },
+      "additionalProperties": false
+    },
     "eventKind": {
       "oneOf": [
         {
@@ -1503,6 +1519,15 @@
             "data": {"$ref": "#/$defs/delegationChosen"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "subagent_reused"},
+            "data": {"$ref": "#/$defs/subagentReused"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1559,7 +1584,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "sweep_performed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "delegation_chosen"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "delegation_chosen"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "subagent_reused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

@@ -194,6 +194,7 @@ fn eligibility_filters_disabled_unhealthy_wrong_profile_and_wrong_billing() {
         &Requirements {
             profile: WorkProfile::CriticalReasoning,
             subscription_only: false,
+            tier: None,
         },
     );
     assert_eq!(
@@ -209,6 +210,7 @@ fn eligibility_filters_disabled_unhealthy_wrong_profile_and_wrong_billing() {
         &Requirements {
             profile: WorkProfile::CriticalReasoning,
             subscription_only: true,
+            tier: None,
         },
     );
     assert_eq!(
@@ -218,4 +220,82 @@ fn eligibility_filters_disabled_unhealthy_wrong_profile_and_wrong_billing() {
             .collect::<Vec<_>>(),
         vec!["good_subscription"]
     );
+}
+
+#[test]
+fn a_tier_bound_requirement_admits_only_routes_declaring_that_exact_tier() {
+    use graphhelm_protocols::DelegationTier;
+
+    let manifest = RouteManifest::from_json(
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [
+                {
+                    "id": "small_sub", "provider": "anthropic", "transport": "native_runtime",
+                    "runtime": "claude_code", "authentication": "account_subscription",
+                    "billingMode": "subscription_quota",
+                    "command": { "program": "claude", "args": [] },
+                    "profiles": ["critical_reasoning"], "tiers": ["small"], "enabled": true
+                },
+                {
+                    "id": "standard_byok", "provider": "anthropic", "transport": "direct_api",
+                    "authentication": "api_key", "billingMode": "per_token",
+                    "baseUrl": "https://api.anthropic.com", "model": "claude-sonnet-5",
+                    "credentialRef": "secret_s", "profiles": ["critical_reasoning"],
+                    "tiers": ["standard"], "enabled": true
+                },
+                {
+                    "id": "standard_sub", "provider": "anthropic", "transport": "native_runtime",
+                    "runtime": "claude_code", "authentication": "account_subscription",
+                    "billingMode": "subscription_quota",
+                    "command": { "program": "claude", "args": [] },
+                    "profiles": ["critical_reasoning"], "tiers": ["standard", "large"],
+                    "enabled": true
+                },
+                {
+                    "id": "untiered_sub", "provider": "anthropic", "transport": "native_runtime",
+                    "runtime": "claude_code", "authentication": "account_subscription",
+                    "billingMode": "subscription_quota",
+                    "command": { "program": "claude", "args": [] },
+                    "profiles": ["critical_reasoning"], "enabled": true
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let health: HashMap<String, RouteHealth> = manifest
+        .routes()
+        .iter()
+        .map(|route| (route.id().to_owned(), RouteHealth::Available))
+        .collect();
+    let ids = |tier: Option<DelegationTier>, subscription_only: bool, health: &HashMap<_, _>| {
+        eligible_routes(
+            &manifest,
+            health,
+            &Requirements {
+                profile: WorkProfile::CriticalReasoning,
+                subscription_only,
+                tier,
+            },
+        )
+        .iter()
+        .map(|route| route.id().to_owned())
+        .collect::<Vec<_>>()
+    };
+
+    // Standard picks only routes declaring standard: not the small one, not the untiered one.
+    assert_eq!(
+        ids(Some(DelegationTier::Standard), false, &health),
+        vec!["standard_byok", "standard_sub"]
+    );
+    // Without delegation, selection is unchanged: every healthy route with the profile.
+    assert_eq!(ids(None, false, &health).len(), 4);
+
+    // The only subscription route serving standard is down: under subscription_only there is
+    // NO candidate (the caller parks NeedsCapacity). Neither the small route (a downgrade) nor
+    // the per_token route (a paid fallback) is offered in its place.
+    let mut degraded = health.clone();
+    degraded.insert("standard_sub".to_owned(), RouteHealth::WaitingReset);
+    assert!(ids(Some(DelegationTier::Standard), true, &degraded).is_empty());
 }

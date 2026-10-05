@@ -39,6 +39,10 @@ pub struct NodeWork {
     /// the `context-provenance@1` record beside the reply; `WorkSummary` carries none of its
     /// numbers (they live only in that sealed record and in the drive reply's `context.nodes`).
     pub context: Option<crate::context::NodeContextSummary>,
+    /// ADR-041: the tier `delegation_chosen` recorded for this dispatch, set by the driver for a
+    /// node that declares `delegation`; `None` otherwise. A model executor serves tier-bound work
+    /// only on a route whose manifest `tiers` list it, and parks it `NeedsCapacity` otherwise.
+    pub delegation_tier: Option<graphhelm_protocols::DelegationTier>,
 }
 
 /// A tool node's declaration for an honest, completed non-zero process exit.
@@ -178,6 +182,10 @@ pub struct PortExecutor {
     pub model: std::sync::Arc<dyn crate::ports::ModelPort>,
     pub tools: std::sync::Arc<dyn crate::ports::ToolPort>,
     pub route_id: String,
+    /// The delegation tiers the manifest declares for `route_id` (ADR-041,
+    /// [`graphhelm_gateway::manifest::ModelRoute::tiers`]). Empty: the route serves no
+    /// tier-bound node.
+    pub route_tiers: Vec<graphhelm_protocols::DelegationTier>,
     pub lease: graphhelm_tool_broker::lease::ToolLease,
     pub actor: String,
     /// The gates this binary can run (#668). The SAME registry the driver reads digests
@@ -381,12 +389,58 @@ fn tool_outcome(
     }
 }
 
+/// ADR-041 points 5-6: tier-bound work whose tier the wired route does not declare is parked
+/// `NeedsCapacity` (D-016) WITHOUT a model call — never served on a smaller or larger tier, and
+/// never moved to another (paid) route. The only route this executor holds is the one the
+/// deployment resolved, so "no enabled, healthy route declares the tier" is "this route does not".
+/// `UnsupportedCapability` names the cause: the route lacks the tier capability the node needs.
+/// No route served the node, so `model_route_id` stays `None`.
+fn unserved_tier(
+    work: &NodeWork,
+    route_tiers: &[graphhelm_protocols::DelegationTier],
+) -> Option<WorkOutcome> {
+    let tier = work.delegation_tier?;
+    if route_tiers.contains(&tier) {
+        return None;
+    }
+    Some(WorkOutcome {
+        outcome: NodeOutcome::NeedsCapacity,
+        sealables: vec![Sealable {
+            local_ref_suffix: "tier-route-unavailable",
+            media_type: "text/plain",
+            bytes: format!(
+                "no enabled route declares delegation tier {}",
+                serde_json::to_value(tier)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            )
+            .into_bytes(),
+        }],
+        summary: WorkSummary {
+            input_tokens: None,
+            output_tokens: None,
+            exit_code: None,
+            provider_usage: None,
+        },
+        reuse: None,
+        gate_verdict: None,
+        reason: Some(NodeOutcomeReason::UnsupportedCapability),
+        executor_kind: Some(AttemptExecutorKind::Model),
+        model_route_id: None,
+    })
+}
+
 /// The cognitive half of a real executor, on its own (#1066): a model port and the route it
 /// answers on. `Tool` and `GateCheck` work is `Unsupported` here — this executor is meant to be
 /// one arm of a [`SplitExecutor`], never the whole answer.
 pub struct ModelExecutor {
     pub model: std::sync::Arc<dyn crate::ports::ModelPort>,
     pub route_id: String,
+    /// The delegation tiers the manifest declares for `route_id` (ADR-041,
+    /// [`graphhelm_gateway::manifest::ModelRoute::tiers`]). Empty: the route serves no
+    /// tier-bound node.
+    pub route_tiers: Vec<graphhelm_protocols::DelegationTier>,
 }
 
 impl AsyncNodeExecutor for ModelExecutor {
@@ -401,6 +455,9 @@ impl AsyncNodeExecutor for ModelExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
+                    if let Some(parked) = unserved_tier(work, &self.route_tiers) {
+                        return Ok(parked);
+                    }
                     let mut outcome =
                         cognitive_work(self.model.as_ref(), &self.route_id, work).await;
                     outcome.executor_kind = Some(AttemptExecutorKind::Model);
@@ -667,6 +724,9 @@ impl AsyncNodeExecutor for PortExecutor {
         Box::pin(async move {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
+                    if let Some(parked) = unserved_tier(work, &self.route_tiers) {
+                        return Ok(parked);
+                    }
                     let mut outcome =
                         cognitive_work(self.model.as_ref(), &self.route_id, work).await;
                     outcome.executor_kind = Some(AttemptExecutorKind::Model);

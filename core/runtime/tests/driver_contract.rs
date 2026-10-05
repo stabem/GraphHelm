@@ -115,6 +115,7 @@ fn cognitive_work() -> NodeWork {
         gate_check: None,
         judge: None,
         context: None,
+        delegation_tier: None,
     }
 }
 
@@ -134,6 +135,7 @@ fn tool_work() -> NodeWork {
         gate_check: None,
         judge: None,
         context: None,
+        delegation_tier: None,
     }
 }
 
@@ -156,6 +158,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
             reuse: None,
         }),
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -173,6 +176,7 @@ fn executor_with_reuse(
         }),
         tools: Arc::new(FakeToolPort { disposition, reuse }),
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -1577,6 +1581,7 @@ fn drive_tool_fixture(
         }),
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -1754,6 +1759,7 @@ fn port_executor_with(model: Arc<dyn ModelPort>, tools: Arc<dyn ToolPort>) -> Po
         model,
         tools,
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -1806,6 +1812,7 @@ fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed(
         }),
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -1905,6 +1912,7 @@ fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
         }),
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
+        route_tiers: Vec::new(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -3822,13 +3830,16 @@ fn delegated_agent_graph_node(objective: &str, kind: &str) -> GraphNode {
 }
 
 /// Drives the chain `a -> b`, where only `a` declares `implementer`, after appending `red` failing
-/// gate verdicts against `a`. Returns the stream's story and the `delegation_chosen` payloads.
+/// gate verdicts against `a`, on a model route declaring `route_tiers` (ADR-041). Returns the
+/// stream's story, the `delegation_chosen` payloads, the projection and the model calls made.
 fn drive_delegated_chain(
     red: u32,
+    route_tiers: &[graphhelm_protocols::DelegationTier],
 ) -> (
     Vec<String>,
     Vec<graphhelm_protocols::DelegationChosen>,
     graphhelm_events::ExecutionProjection,
+    usize,
 ) {
     let directory = tempfile::tempdir().unwrap();
     let execution_id = started_repository(directory.path());
@@ -3872,16 +3883,19 @@ fn drive_delegated_chain(
         vec![("a", "b")],
         1,
     );
-    let executor = Arc::new(port_executor_with(
-        Arc::new(FakeModelPort {
-            result: Ok(reply("DELEGATED-REPLY")),
-            calls: AtomicUsize::new(0),
-        }),
+    let model = Arc::new(FakeModelPort {
+        result: Ok(reply("DELEGATED-REPLY")),
+        calls: AtomicUsize::new(0),
+    });
+    let mut executor = port_executor_with(
+        model.clone(),
         Arc::new(FakeToolPort {
             disposition: ToolDisposition::Completed { exit_code: 0 },
             reuse: None,
         }),
-    ));
+    );
+    executor.route_tiers = route_tiers.to_vec();
+    let executor = Arc::new(executor);
     let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
     let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
     let projection = multi_thread_runtime()
@@ -3902,10 +3916,6 @@ fn drive_delegated_chain(
             None,
         ))
         .unwrap();
-    assert_eq!(
-        projection.simulation_status,
-        Some(graphhelm_protocols::SimulationStatus::Completed)
-    );
     let history = opener(directory.path().to_path_buf())()
         .unwrap()
         .read_replay_stream(&driver_scope(), DRIVER_STREAM)
@@ -3937,14 +3947,31 @@ fn drive_delegated_chain(
         replayed, projection,
         "the projection rebuilds from the journal"
     );
-    (story, chosen, projection)
+    (
+        story,
+        chosen,
+        projection,
+        model.calls.load(Ordering::SeqCst),
+    )
 }
+
+/// Every tier: the route serves whatever the policy chooses, so ADR-040's recording is observed
+/// independently of ADR-041's binding.
+const ALL_TIERS: &[graphhelm_protocols::DelegationTier] = &[
+    graphhelm_protocols::DelegationTier::Small,
+    graphhelm_protocols::DelegationTier::Standard,
+    graphhelm_protocols::DelegationTier::Large,
+];
 
 #[test]
 fn a_delegated_node_records_exactly_one_choice_per_dispatch_and_an_undelegated_one_none() {
     use graphhelm_policy::delegation::{DelegationPolicy, SubagentKind, choose};
 
-    let (story, chosen, projection) = drive_delegated_chain(0);
+    let (story, chosen, projection, _) = drive_delegated_chain(0, ALL_TIERS);
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Completed)
+    );
     // Exactly one, for `a` only, after its `Started` hops and before its outcome.
     assert_eq!(
         story,
@@ -3977,7 +4004,7 @@ fn a_delegated_node_records_exactly_one_choice_per_dispatch_and_an_undelegated_o
 fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
     use graphhelm_policy::delegation::{DelegationPolicy, SubagentKind, Tier, choose};
 
-    let (_, chosen, _) = drive_delegated_chain(2);
+    let (_, chosen, _, _) = drive_delegated_chain(2, ALL_TIERS);
     let expected = choose(&DelegationPolicy::routed(), SubagentKind::Implementer, 2);
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].red_checks, 2);
@@ -3985,6 +4012,56 @@ fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
     assert_eq!(chosen[0].tier, Tier::Large);
     assert_eq!(chosen[0].effort, expected.effort);
     assert!(chosen[0].escalated);
+}
+
+// ADR-041: the chosen tier binds to a route only through the manifest's `tiers`.
+#[test]
+fn a_delegated_node_runs_only_on_a_route_declaring_its_tier_and_an_undelegated_one_is_unchanged() {
+    use graphhelm_protocols::DelegationTier;
+
+    // `implementer` with no red checks chooses `standard` under `routed`.
+    let (story, chosen, projection, calls) = drive_delegated_chain(0, &[DelegationTier::Standard]);
+    assert_eq!(chosen[0].tier, DelegationTier::Standard);
+    assert_eq!(
+        calls, 2,
+        "a on the standard route, and b (no delegation) as before"
+    );
+    assert!(story.contains(&"a:Succeeded->Succeeded".to_owned()));
+    assert!(story.contains(&"b:Succeeded->Succeeded".to_owned()));
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Completed)
+    );
+}
+
+#[test]
+fn a_delegated_node_with_no_route_for_its_tier_parks_needs_capacity_without_a_model_call() {
+    use graphhelm_protocols::DelegationTier;
+
+    // The route serves small and large but not standard: neither a downgrade nor an upgrade is
+    // taken, and no other route is tried. The node parks; nothing is sent to the model.
+    let (story, chosen, projection, calls) =
+        drive_delegated_chain(0, &[DelegationTier::Small, DelegationTier::Large]);
+    assert_eq!(chosen[0].tier, DelegationTier::Standard);
+    assert_eq!(
+        calls, 0,
+        "no model call for a node whose tier no route serves"
+    );
+    assert_eq!(
+        story,
+        vec![
+            "a:Approved->Ready",
+            "b:Approved->Ready",
+            "a:Started->Queued",
+            "a:Started->Running",
+            "a:delegation_chosen",
+            "a:NeedsCapacity->WaitingCapacity",
+        ]
+    );
+    assert_ne!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Completed)
+    );
 }
 
 #[test]

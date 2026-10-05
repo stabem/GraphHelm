@@ -331,3 +331,36 @@ fn cleartext_and_trailing_slash_errors_never_echo_the_base_url_value() {
     assert!(!error.to_string().contains(MARKER), "{error}");
     assert!(!format!("{error:?}").contains(MARKER), "{error:?}");
 }
+
+#[test]
+fn tiers_are_optional_closed_and_never_repeated() {
+    use graphhelm_protocols::DelegationTier;
+
+    // Absent: the route serves no tier-bound node, and nothing else about it changes.
+    let manifest = RouteManifest::from_json(&valid_manifest_json().to_string()).unwrap();
+    assert!(manifest.routes()[0].tiers().is_empty());
+
+    let mut declared = valid_manifest_json();
+    declared["routes"][1]["tiers"] = serde_json::json!(["small", "standard"]);
+    let manifest = RouteManifest::from_json(&declared.to_string()).unwrap();
+    assert_eq!(
+        manifest.routes()[1].tiers(),
+        &[DelegationTier::Small, DelegationTier::Standard]
+    );
+
+    // A value outside the closed set is a parse refusal, not a silently ignored tier.
+    let mut unknown = valid_manifest_json();
+    unknown["routes"][1]["tiers"] = serde_json::json!(["medium"]);
+    assert!(matches!(
+        RouteManifest::from_json(&unknown.to_string()).unwrap_err(),
+        ManifestError::Parse { .. }
+    ));
+
+    let mut repeated = valid_manifest_json();
+    repeated["routes"][1]["tiers"] = serde_json::json!(["large", "large"]);
+    assert!(matches!(
+        RouteManifest::from_json(&repeated.to_string()).unwrap_err(),
+        ManifestError::StructuralViolation { route_id, rule: "tiers must not repeat a tier" }
+            if route_id == "claude_subscription"
+    ));
+}

@@ -19,6 +19,10 @@ use crate::taxonomy::RouteHealth;
 pub struct Requirements {
     pub profile: WorkProfile,
     pub subscription_only: bool,
+    /// ADR-041: the delegation tier the dispatched node was given by `delegation_chosen`, or
+    /// `None` for a node without delegation (selection unchanged). When present, only a route
+    /// declaring exactly this tier qualifies: never a smaller or larger one.
+    pub tier: Option<graphhelm_protocols::DelegationTier>,
 }
 
 /// Returns the routes in `manifest` eligible to serve `requirements`, in manifest order.
@@ -32,7 +36,10 @@ pub struct Requirements {
 ///   state, including the route being absent from `health` entirely, excludes it: an unknown
 ///   health is not an available one;
 /// - it advertises `requirements.profile` among its [`ModelRoute::profiles`];
-/// - it is not a [`BillingMode::PerToken`] route while `requirements.subscription_only` is true.
+/// - it is not a [`BillingMode::PerToken`] route while `requirements.subscription_only` is true;
+/// - when `requirements.tier` is set, it lists that tier in [`ModelRoute::tiers`] (ADR-041). An
+///   empty result is the caller's `NeedsCapacity` (D-016): no other tier and no paid route is
+///   tried in its place.
 ///
 /// Full §8.2 candidate filtering (policy, capability, data-handling, provider-independence and
 /// context-size checks) and §8.3 scoring are out of scope for this milestone; see the plan's
@@ -55,6 +62,11 @@ pub fn eligible_routes<'a>(
         .filter(|route| route.profiles().contains(&requirements.profile))
         .filter(|route| {
             !(requirements.subscription_only && route.billing_mode() == BillingMode::PerToken)
+        })
+        .filter(|route| {
+            requirements
+                .tier
+                .is_none_or(|tier| route.tiers().contains(&tier))
         })
         .collect()
 }

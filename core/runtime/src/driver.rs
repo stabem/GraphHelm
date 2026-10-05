@@ -593,6 +593,7 @@ fn build_work(
         gate_check,
         judge,
         context: context_summary,
+        delegation_tier: None,
     })
 }
 
@@ -1255,6 +1256,7 @@ pub async fn drive_to_quiescence_async(
             // ADR-040: one `delegation_chosen` per dispatch of a node that declares delegation,
             // appended after the `Started` hop and before the executor future starts. A node
             // without the field appends nothing here.
+            let delegation_tier = delegation.as_ref().map(|chosen| chosen.tier);
             if let Some(chosen) = delegation {
                 append_plain(
                     &store_open,
@@ -1274,6 +1276,10 @@ pub async fn drive_to_quiescence_async(
                 ports.ledger.record(node, summary.clone());
             }
 
+            // ADR-041: the tier the policy chose travels with the work, so the executor serves it
+            // only on a route that declares it. `None` for a node without delegation.
+            let mut work = work;
+            work.delegation_tier = delegation_tier;
             let executor = executor.clone();
             let node_name = node.clone();
             in_flight_nodes.insert(node.clone());

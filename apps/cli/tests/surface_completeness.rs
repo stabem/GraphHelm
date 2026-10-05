@@ -192,7 +192,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 5] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 8] = [
     (
         "PUT",
         "/v1/gateway/credentials/{reference}",
@@ -220,6 +220,26 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 5] = [
         "Studio's owner-reply helper: it drafts candidate answers to an agent's pending question \
          for the HUMAN owner to pick from. Handing it to the chat surface would let the agent that \
          asked draft its own owner answer, which is self-validation, not a runtime verb",
+    ),
+    (
+        "GET",
+        "/v1/native-chats",
+        "Studio lists the OWNER's own Desktop chats so the owner can pick one to hand work to; \
+         it reads the human's host session list, not an execution, and an agent has no business \
+         enumerating the owner's other conversations",
+    ),
+    (
+        "GET",
+        "/v1/executions/{id}/native-chats",
+        "the receipts of the owner's hand-offs into Desktop chats, read by the same Studio panel \
+         that sends them; it is the owner's dispatch log, same reason as the list",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/native-chats",
+        "types an instruction into one of the OWNER's existing Desktop chats on the owner's \
+         behalf. On the chat surface an agent could push instructions into other sessions as if \
+         the owner had written them, which is impersonation, not a runtime verb",
     ),
 ];
 

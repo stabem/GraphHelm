@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 // Its own instance: see the helper for why this is not a shared const.
@@ -124,6 +124,9 @@ describe("naming rows on the rail", () => {
 });
 
 describe("activity-ordered run history", () => {
+  // These cover the lifecycle grouping, which the menu still offers as "Group by: Status".
+  beforeEach(() => window.localStorage.setItem("graphhelm.studio.rail-view", JSON.stringify({ group: "status", sort: "activity" })));
+  afterEach(() => window.localStorage.clear());
   const actions = {
     onSelect: vi.fn(), onLoadMore: vi.fn(), onNewTask: vi.fn(),
     onAddProject: vi.fn(), onOpenModels: vi.fn(),

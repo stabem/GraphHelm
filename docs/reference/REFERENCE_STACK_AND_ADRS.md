@@ -1318,3 +1318,24 @@ git grep -n 'is_loopback' origin/main -- apps/cli/src/commands/serve   one site,
 
 **Relationship:** temporarily amends ADR-002's SSH usage restriction only for operator access to the Milestone 05 loopback HTTP/bearer-token MVP. This exception ends when the mTLS Runtime API is implemented and verified, or an accepted superseding ADR replaces it. It is consistent with D-002 and ADR-037's systemd path (both reach the same loopback-bound server), records the choice PR #327 shipped, and preserves the architecture's mTLS and identity requirements for remote-production operation. An SSH tunnel is not evidence of that contract; a future non-loopback bind still requires a superseding ADR under the guardrail above.
 
+
+## 45. ADR-040 — A node may declare its delegation kind; the Runtime records the deterministic choice as `delegation_chosen`
+
+**Status:** proposed with issue #290; accepted on the merge of this ADR's PR.
+
+**Context:** #137 asks the core loop to choose, per node, which kind of subagent takes it, at which tier and effort, and to record that choice so every run can be replayed and costed per decision. #289 shipped the deterministic half: `graphhelm_policy::delegation::choose(policy, kind, red_checks)` over a declared `DelegationPolicy`, with no model, network or provider dependency. Nothing calls it. `schemas/node.schema.json` (1.1.0) has `type` (the node's graph role: `agent`, `gate`, `evaluator` …) and an open `model` object, but no field naming what kind of work an agent node asks for. Inferring the kind from `type`, `name` or `objective` would be an LLM-style guess in deterministic code, which the Policy Engine invariant forbids.
+
+**Decision:**
+
+1. `node.schema.json` gains an optional `delegation` object, `additionalProperties: false`, with one required member `kind` from the closed set `explorer | implementer | reviewer | verifier`. Additive: schema 1.1.0 → 1.2.0. A node without `delegation` dispatches exactly as today and produces no delegation event. The field is semantic (it changes what runs), so it is part of the canonical graph content and its hash.
+2. At dispatch of a node that declares `delegation`, the Runtime calls `delegation::choose` with the execution's policy (the built-in `routed()` policy until a policy source is configured) and the count of failed mechanical checks already recorded for that node in this execution, and appends one `delegation_chosen` event: `nodeId`, `kind`, `tier`, `effort`, `escalated`, `redChecks`. Additive event kind: event-envelope minor bump, with the schema-evolution conformance pins updated in the same change.
+3. A replay projection exposes the latest `delegation_chosen` per node. It is rebuildable from events like every projection.
+4. Recording is not enforcement. Mapping a `tier` to a concrete model route is the gateway's job and needs its own decision; until then the event says what the policy chose, and the route actually used stays what `agent_presence_declared` declares. Keel stays mechanical: the same checks judge a diff whatever tier produced it.
+
+**Affected contracts:** `schemas/node.schema.json`, `schemas/event-envelope.schema.json`, `schemas/CHANGELOG.md`, `core/protocols` (node and event types), `core/events` projection, the runtime dispatch path, `core/schema-evolution` conformance tests.
+
+**Alternatives considered:** (a) derive the kind from node `type` — rejected: `type` is the graph role, and `agent` covers every kind; (b) put `kind` inside the open `model` object — rejected: `model` is unvalidated (`additionalProperties: true`), so a typo would silently mean "no delegation"; (c) record the choice only in logs — rejected: #137's Pareto measure needs it replayable from the Event Store.
+
+**Consequences:** briefed-subagent reuse and the tier-to-route mapping remain open under #137. No existing graph changes meaning.
+
+**Relationship:** implements the second slice of #137; builds on #289.

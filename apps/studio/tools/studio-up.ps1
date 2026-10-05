@@ -113,9 +113,16 @@ if (-not $alive) {
     }
 }
 
-# 2 - dependencies, only on a cold tree.
-if (-not (Test-Path (Join-Path $studio "node_modules"))) {
-    Write-Host "[up] installing Studio dependencies (npm ci, first run only)"
+# 2 - dependencies, on a cold tree OR a stale one. A tree installed before the lock file moved
+# (a `git pull` that changed package-lock.json) starts with a missing `vite` and nothing else to
+# go on (2026-10-05), so npm's own install record is compared with the lock file.
+$modules = Join-Path $studio "node_modules"
+$installed = Join-Path $modules ".package-lock.json"
+$lock = Join-Path $studio "package-lock.json"
+$stale = -not (Test-Path $installed) -or -not (Test-Path (Join-Path $modules ".bin\vite*")) -or
+    ((Get-Item $lock).LastWriteTimeUtc -gt (Get-Item $installed).LastWriteTimeUtc)
+if (-not (Test-Path $modules) -or $stale) {
+    Write-Host "[up] installing Studio dependencies (npm ci: missing or older than package-lock.json)"
     Push-Location $studio
     try { npm ci } finally { Pop-Location }
 }

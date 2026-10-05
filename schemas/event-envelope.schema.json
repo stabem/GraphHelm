@@ -1042,7 +1042,7 @@
         "subagentId": {"$ref": "#/$defs/opaqueId"},
         "kind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
         "graphVersion": {"$ref": "#/$defs/positiveSafeInteger"},
-        "basis": {"enum": ["reused", "no_eligible_subagent", "author_under_review", "bound_unavailable", "bound_exceeded"]},
+        "basis": {"enum": ["reused", "no_eligible_subagent", "author_under_review", "bound_unavailable", "bound_exceeded", "session_unavailable"]},
         "fromNodeId": {"$ref": "#/$defs/opaqueId"},
         "fromKind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
         "tokensUsed": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},

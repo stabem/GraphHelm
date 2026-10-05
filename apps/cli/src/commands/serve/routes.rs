@@ -26,7 +26,7 @@ use graphhelm_protocols::{
     Actor, ActorId, ActorType, Diagnostic, EventKind, EvidenceId, OpaqueId, PersistedActor,
     PersistedActorType, ProjectId, RepositoryScope, Sensitivity, WorkspaceId,
 };
-use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen, drive_to_quiescence_async};
+use graphhelm_runtime::driver::{ImmediateCancelRequest, StoreOpen};
 use graphhelm_runtime::executor::{
     AsyncNodeExecutor, ModelExecutor, PortExecutor, SplitExecutor, ToolExecutor,
 };
@@ -598,6 +598,7 @@ struct ServeDraftModel {
 impl DraftModel for ServeDraftModel {
     fn draft(&self, prompt: &str) -> Result<DraftReply, ArchitectRefusal> {
         let call = ModelCall {
+            history: Vec::new(),
             stable_prefix: None,
             prompt: prompt.to_owned(),
             max_tokens: architect::MAX_TOKENS,
@@ -1010,7 +1011,7 @@ pub(super) async fn reply_suggestions(
             };
             let Ok(chat) = tokio::runtime::Handle::current().block_on(chat_port.call(
                 chat_route.id(),
-                &ModelCall { stable_prefix: None, prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None },
+                &ModelCall { stable_prefix: None, prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None, history: Vec::new() },
             )) else { continue };
             if chat.is_incomplete() { break; }
             let Some(candidates) = parse_reply_candidates(&chat.text) else { continue };
@@ -3566,6 +3567,7 @@ struct PreparedPorts {
         ServeModelPort,
         String,
         Vec<graphhelm_protocols::DelegationTier>,
+        graphhelm_runtime::session::SubagentSessions,
     )>,
     tools: Option<(ServeToolPort, ToolLease)>,
     /// #1065: the bounded search and reader over the project root this drive resolved, and the
@@ -3691,7 +3693,15 @@ async fn prepare_drive(
                     // The route the drive RESOLVED, never the startup default again: the
                     // executor stamps this id onto the work it dispatches, so a stale default
                     // here would label every call with a model that did not answer it.
-                    Some((port, route.id().to_owned(), route.tiers().to_vec()))
+                    Some((
+                        port,
+                        route.id().to_owned(),
+                        route.tiers().to_vec(),
+                        // ADR-042: sessions only on a route whose adapter replays a message
+                        // list, bounded by its declared window. Built per drive, so a session
+                        // never outlives it.
+                        graphhelm_runtime::session::SubagentSessions::for_route(&route),
+                    ))
                 }
                 None => None,
             };
@@ -3826,7 +3836,7 @@ async fn drive(
     let executor: Arc<dyn AsyncNodeExecutor> = match ports {
         // Both halves real: the all-real composition, unchanged.
         Some(PreparedPorts {
-            model: Some((model, route_id, route_tiers)),
+            model: Some((model, route_id, route_tiers, sessions)),
             tools: Some((tools, lease)),
             context: _,
         }) => Arc::new(PortExecutor {
@@ -3834,6 +3844,7 @@ async fn drive(
             tools: Arc::new(tools),
             route_id,
             route_tiers,
+            sessions,
             lease,
             actor: "runtime".to_owned(),
             // #668: the SAME registry object the drive call below reads digests from, so a
@@ -3850,10 +3861,11 @@ async fn drive(
             context: _,
         }) => {
             let cognitive: Arc<dyn AsyncNodeExecutor> = match model {
-                Some((model, route_id, route_tiers)) => Arc::new(ModelExecutor {
+                Some((model, route_id, route_tiers, sessions)) => Arc::new(ModelExecutor {
                     model: Arc::new(model),
                     route_id,
                     route_tiers,
+                    sessions,
                 }),
                 None => fixtures(),
             };
@@ -3896,7 +3908,7 @@ async fn drive(
         .await
         .insert(execution_id.to_owned(), cancel_tx);
 
-    let result = drive_to_quiescence_async(
+    let result = graphhelm_runtime::driver::drive_to_quiescence_async_with_receipts(
         store_open,
         sealer,
         ids,
@@ -3916,6 +3928,9 @@ async fn drive(
         // digest -- geometry's -- for every gate.
         Some(gates),
         context_ports.clone(),
+        // ADR-042 point 7: the sealed accounting receipts are read back at dispatch to measure a
+        // subagent's session. No keyring means no opener, and reuse is refused as unmeasured.
+        build_opener(state.sealing.as_deref()).ok(),
     )
     .await;
 
@@ -5692,6 +5707,21 @@ pub(super) async fn gateway_route_set(
             );
         }
     };
+    // ADR-042 (#298): absent or null leaves the window unsaid (a replace keeps the replaced
+    // route's); a non-negative integer is written, `0` clearing it.
+    let context_window_tokens = match payload.get("contextWindowTokens") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(window) => Some(window),
+            None => {
+                return bad_request(
+                    GATEWAY_ROUTE_SET_COMMAND,
+                    "\"contextWindowTokens\" must be a non-negative integer when it is given",
+                    "/contextWindowTokens",
+                );
+            }
+        },
+    };
     let (Some(enabled), Some(replace)) = (
         optional_flag(&payload, "enabled", true),
         optional_flag(&payload, "replace", false),
@@ -5716,6 +5746,7 @@ pub(super) async fn gateway_route_set(
         credential_ref,
         profiles,
         tiers,
+        context_window_tokens,
         enabled,
         replace,
     };

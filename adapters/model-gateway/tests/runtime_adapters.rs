@@ -89,6 +89,7 @@ fn fake_runtime_path() -> &'static str {
 
 fn call(prompt: &str) -> ModelCall {
     ModelCall {
+        history: Vec::new(),
         stable_prefix: None,
         prompt: prompt.to_owned(),
         max_tokens: 64,

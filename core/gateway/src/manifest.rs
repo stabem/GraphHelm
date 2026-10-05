@@ -170,6 +170,11 @@ pub struct ModelRoute {
     /// delegated node; a node without delegation is unaffected. Duplicates are refused.
     #[serde(default)]
     tiers: Vec<graphhelm_protocols::DelegationTier>,
+    /// ADR-042 point 6: the provider's documented input context window, in tokens, as the
+    /// operator declares it. Never inferred from the model name. Absent: a subagent session on
+    /// this route has no measurable bound, so reuse is refused with `bound_unavailable`.
+    #[serde(default)]
+    context_window_tokens: Option<std::num::NonZeroU64>,
 }
 
 const fn default_timeout_seconds() -> u64 {
@@ -237,6 +242,31 @@ impl ModelRoute {
     #[must_use]
     pub fn tiers(&self) -> &[graphhelm_protocols::DelegationTier] {
         &self.tiers
+    }
+
+    /// The operator-declared input context window (ADR-042), when one is declared.
+    #[must_use]
+    pub const fn context_window_tokens(&self) -> Option<std::num::NonZeroU64> {
+        self.context_window_tokens
+    }
+
+    /// ADR-042 point 6: the tokens a held subagent session may occupy on this route — the
+    /// declared window less the route's `maxOutputTokens` when that is declared, so a reused
+    /// call still has room to answer. `None` when no window is declared.
+    #[must_use]
+    pub fn session_allocated_tokens(&self) -> Option<u64> {
+        let window = self.context_window_tokens?.get();
+        let output = self.max_output_tokens.map_or(0, |cap| u64::from(cap.get()));
+        Some(window.saturating_sub(output))
+    }
+
+    /// ADR-042 point 4: whether this route's adapter accepts a replayed message list. Only the
+    /// stateless direct-API providers do (`anthropic`, `openai`); a native runtime or another
+    /// direct provider declares no session support.
+    #[must_use]
+    pub fn supports_replayed_history(&self) -> bool {
+        self.transport == Transport::DirectApi
+            && matches!(self.provider.as_str(), "anthropic" | "openai")
     }
 
     #[must_use]
@@ -487,6 +517,15 @@ fn validate_route(route: &ModelRoute) -> Result<(), ManifestError> {
         return Err(ManifestError::StructuralViolation {
             route_id: route.id.clone(),
             rule: "tiers must not repeat a tier",
+        });
+    }
+
+    if let (Some(window), Some(output)) = (route.context_window_tokens, route.max_output_tokens)
+        && window.get() <= u64::from(output.get())
+    {
+        return Err(ManifestError::StructuralViolation {
+            route_id: route.id.clone(),
+            rule: "contextWindowTokens must exceed maxOutputTokens",
         });
     }
 

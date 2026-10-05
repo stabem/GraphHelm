@@ -2117,6 +2117,20 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             false,
         ),
+        // #298 (ADR-042): the session the bound admitted is no longer held by the executor.
+        (
+            "subagent_reused",
+            json!({
+                "nodeId": "node-3",
+                "subagentId": "subagent-2",
+                "kind": "implementer",
+                "graphVersion": 1,
+                "basis": "session_unavailable",
+                "tokensUsed": 900,
+                "tokensAllocated": 1000
+            }),
+            false,
+        ),
     ]
 }
 

@@ -364,3 +364,39 @@ fn tiers_are_optional_closed_and_never_repeated() {
             if route_id == "claude_subscription"
     ));
 }
+
+// ADR-042 point 6: the declared window, less the output ceiling, is what a session may occupy. A
+// window that leaves no room to answer is refused; zero is not a window.
+#[test]
+fn a_context_window_bounds_sessions_and_must_leave_room_for_the_answer() {
+    let manifest = RouteManifest::from_json(&valid_manifest_json().to_string()).unwrap();
+    assert!(manifest.routes()[0].context_window_tokens().is_none());
+    assert_eq!(manifest.routes()[0].session_allocated_tokens(), None);
+
+    let mut declared = valid_manifest_json();
+    declared["routes"][0]["contextWindowTokens"] = serde_json::json!(200_000);
+    declared["routes"][0]["maxOutputTokens"] = serde_json::json!(8_000);
+    let manifest = RouteManifest::from_json(&declared.to_string()).unwrap();
+    assert_eq!(
+        manifest.routes()[0].session_allocated_tokens(),
+        Some(192_000)
+    );
+
+    let mut cramped = valid_manifest_json();
+    cramped["routes"][0]["contextWindowTokens"] = serde_json::json!(8_000);
+    cramped["routes"][0]["maxOutputTokens"] = serde_json::json!(8_000);
+    assert!(matches!(
+        RouteManifest::from_json(&cramped.to_string()).unwrap_err(),
+        ManifestError::StructuralViolation {
+            rule: "contextWindowTokens must exceed maxOutputTokens",
+            ..
+        }
+    ));
+
+    let mut zero = valid_manifest_json();
+    zero["routes"][0]["contextWindowTokens"] = serde_json::json!(0);
+    assert!(matches!(
+        RouteManifest::from_json(&zero.to_string()).unwrap_err(),
+        ManifestError::Parse { .. }
+    ));
+}

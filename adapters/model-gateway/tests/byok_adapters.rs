@@ -53,6 +53,7 @@ fn sentinel_key() -> SecretBytes {
 
 fn call(prompt: &str, max_tokens: u32) -> ModelCall {
     ModelCall {
+        history: Vec::new(),
         stable_prefix: None,
         prompt: prompt.to_owned(),
         max_tokens,
@@ -1046,4 +1047,54 @@ fn stable_prefix_cache_requests_preserve_text_and_are_provider_capability_aware(
         "promptCache":"anthropic_ephemeral"
     }]});
     assert!(RouteManifest::from_json(&native.to_string()).is_err());
+}
+
+/// ADR-042: a held session's turns reach both stateless providers as an ordered message list,
+/// prior user/assistant pairs first and the new briefing last; nothing is flattened into one
+/// prompt and no turn is dropped.
+#[test]
+fn a_replayed_session_reaches_the_provider_as_ordered_messages() {
+    for (provider, reply_body) in [
+        (
+            "anthropic",
+            r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}"#,
+        ),
+        (
+            "openai",
+            r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#,
+        ),
+    ] {
+        let (base_url, receiver) = fake_server(200, reply_body);
+        let manifest = build_manifest(&base_url, provider);
+        let adapter = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()));
+        let mut request = call("BRIEFING-2", 64);
+        request.history = vec![graphhelm_gateway::call::ModelTurn {
+            prompt: "BRIEFING-1".to_owned(),
+            reply: "REPLY-1".to_owned(),
+        }];
+        adapter
+            .call(&sentinel_key(), &request)
+            .unwrap_or_else(|error| panic!("{provider}: expected success: {error}"));
+        let captured = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let messages: Vec<(String, String)> = captured.body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|message| {
+                (
+                    message["role"].as_str().unwrap().to_owned(),
+                    message["content"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                ("user".to_owned(), "BRIEFING-1".to_owned()),
+                ("assistant".to_owned(), "REPLY-1".to_owned()),
+                ("user".to_owned(), "BRIEFING-2".to_owned()),
+            ],
+            "{provider}"
+        );
+    }
 }

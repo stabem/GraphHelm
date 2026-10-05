@@ -116,6 +116,7 @@ fn cognitive_work() -> NodeWork {
         judge: None,
         context: None,
         delegation_tier: None,
+        subagent: None,
     }
 }
 
@@ -136,6 +137,7 @@ fn tool_work() -> NodeWork {
         judge: None,
         context: None,
         delegation_tier: None,
+        subagent: None,
     }
 }
 
@@ -159,6 +161,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
         }),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -177,6 +180,7 @@ fn executor_with_reuse(
         tools: Arc::new(FakeToolPort { disposition, reuse }),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -1582,6 +1586,7 @@ fn drive_tool_fixture(
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -1760,6 +1765,7 @@ fn port_executor_with(model: Arc<dyn ModelPort>, tools: Arc<dyn ToolPort>) -> Po
         tools,
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -1813,6 +1819,7 @@ fn conflicting_retry_policy_refuses_before_every_node_effect_and_settles_failed(
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -1913,6 +1920,7 @@ fn malformed_conflicting_retry_policy_fails_closed_before_every_node_effect() {
         tools: port.clone(),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: ToolLease {
             actor: "agent-runtime".to_owned(),
             capabilities: [Capability::TestsExecute].into_iter().collect(),
@@ -4052,9 +4060,9 @@ fn red_checks_already_recorded_for_the_node_escalate_the_recorded_choice() {
 }
 
 // ADR-041 points 1, 2 and 4, end to end on the async driver: `b` (implementer) follows a
-// finished explorer `a` on the same graph version, so `a`'s subagent matches the whole key. No
-// dispatch path measures the bound today, so `b` is recorded FRESH with `bound_unavailable` and a
-// different subagent id -- never reused on a guess.
+// finished explorer `a` on the same graph version, so `a`'s subagent matches the whole key. This
+// executor holds no session and no receipts opener is wired, so the bound is unmeasured and `b` is
+// recorded FRESH with `bound_unavailable` and a different subagent id -- never reused on a guess.
 #[test]
 fn a_key_matching_candidate_is_not_reused_while_the_bound_is_unmeasured() {
     use graphhelm_protocols::SubagentBasis;
@@ -4074,6 +4082,280 @@ fn a_key_matching_candidate_is_not_reused_while_the_bound_is_unmeasured() {
     assert_eq!(b.from_node_id, None);
     assert_eq!((b.tokens_used, b.tokens_allocated), (None, None));
     assert_ne!(a.subagent_id, b.subagent_id);
+}
+
+// ---------------------------------------------------------------------------------------------
+// ADR-042 (#298): the observer. A reused subagent is a session the model executor holds for one
+// drive; the bound is the route's declared window against the SEALED provider counts.
+// ---------------------------------------------------------------------------------------------
+
+/// A model port that reports the configured token counts and records every call it receives, in
+/// order, so the test observes exactly what each node was sent.
+struct RecordingModelPort {
+    usage: Usage,
+    calls: std::sync::Mutex<Vec<ModelCall>>,
+}
+
+impl ModelPort for RecordingModelPort {
+    fn call<'a>(
+        &'a self,
+        _route_id: &'a str,
+        call: &'a ModelCall,
+    ) -> Pin<Box<dyn Future<Output = Result<ModelReply, GatewayError>> + Send + 'a>> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(call.clone());
+        let reply = ModelReply {
+            termination: None,
+            text: format!("REPLY-{}", calls.len()),
+            usage: self.usage,
+        };
+        Box::pin(async move { Ok(reply) })
+    }
+}
+
+/// One `direct_api` anthropic route declaring `window` and an output ceiling of 1000 tokens.
+fn session_route(window: u64) -> graphhelm_gateway::manifest::ModelRoute {
+    let manifest = graphhelm_gateway::manifest::RouteManifest::from_json(
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": "session_route",
+                "provider": "anthropic",
+                "transport": "direct_api",
+                "authentication": "api_key",
+                "billingMode": "per_token",
+                "baseUrl": "https://api.anthropic.com",
+                "model": "claude-test",
+                "credentialRef": "secret_session_route",
+                "profiles": ["balanced_reasoning"],
+                "enabled": true,
+                "tiers": ["small", "standard", "large"],
+                "maxOutputTokens": 1000,
+                "contextWindowTokens": window
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    manifest.routes()[0].clone()
+}
+
+struct SessionDrive {
+    a: graphhelm_protocols::SubagentReused,
+    b: graphhelm_protocols::SubagentReused,
+    calls: Vec<ModelCall>,
+    /// The explorer receipt's provider input plus output, opened from sealed Evidence.
+    explorer_receipt_total: Option<u64>,
+    replay: Result<graphhelm_runtime::session::SessionReplay, String>,
+}
+
+/// Drives `a (explorer) -> b (implementer)`, both delegated, through a session-holding
+/// `PortExecutor` on a route declaring `window`, with a port that reports `usage`, and the
+/// receipts opener wired. Everything returned is read from the journal, sealed Evidence, or the
+/// port's own observation.
+fn drive_session_chain(window: u64, usage: Usage) -> SessionDrive {
+    use graphhelm_events::EvidenceOpener as _;
+
+    let directory = tempfile::tempdir().unwrap();
+    let execution_id = started_repository(directory.path());
+    let spec = spec_with(
+        vec![
+            (
+                "a",
+                delegated_agent_graph_node("explore the module", "explorer"),
+            ),
+            (
+                "b",
+                delegated_agent_graph_node("implement the change", "implementer"),
+            ),
+        ],
+        vec![("a", "b")],
+        1,
+    );
+    let model = Arc::new(RecordingModelPort {
+        usage,
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let route = session_route(window);
+    let mut executor = port_executor_with(
+        model.clone(),
+        Arc::new(FakeToolPort {
+            disposition: ToolDisposition::Completed { exit_code: 0 },
+            reuse: None,
+        }),
+    );
+    executor.route_tiers = route.tiers().to_vec();
+    executor.sessions = graphhelm_runtime::session::SubagentSessions::for_route(&route);
+    let executor = Arc::new(executor);
+    let protector = Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default()));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let runtime = multi_thread_runtime();
+    let projection = runtime
+        .block_on(
+            graphhelm_runtime::driver::drive_to_quiescence_async_with_receipts(
+                opener(directory.path().to_path_buf()),
+                protector.clone(),
+                Arc::new(SequenceIds::default()),
+                driver_scope(),
+                OpaqueId::parse(DRIVER_STREAM).unwrap(),
+                execution_id,
+                spec,
+                executor.clone(),
+                driver_actor(),
+                std::collections::BTreeSet::new(),
+                driver_actor(),
+                cancel_rx,
+                None,
+                None,
+                Some(protector.clone()),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        projection.simulation_status,
+        Some(graphhelm_protocols::SimulationStatus::Completed)
+    );
+    // ADR-042 point 2: nothing outlives the drive.
+    assert!(executor.sessions.held_ids().is_empty());
+
+    let store = opener(directory.path().to_path_buf())().unwrap();
+    let history = store
+        .read_replay_stream(&driver_scope(), DRIVER_STREAM)
+        .unwrap();
+    let start = history
+        .iter()
+        .find(|envelope| matches!(envelope.kind, EventKind::ExecutionStarted(_)))
+        .unwrap();
+    let receipt_id = history
+        .iter()
+        .filter_map(|envelope| match &envelope.kind {
+            EventKind::NodeOutcomeRecorded(record) if record.node_id.as_str() == "a" => envelope
+                .evidence_refs
+                .iter()
+                .find(|reference| {
+                    reference
+                        .evidence_id()
+                        .as_str()
+                        .ends_with("-accounting-receipt")
+                })
+                .map(|reference| reference.evidence_id().clone()),
+            _ => None,
+        })
+        .next()
+        .expect("the explorer's attempt sealed an accounting receipt");
+    let graphhelm_events::EvidenceRead::Available(sealed) =
+        store.sealed_evidence(&driver_scope(), &receipt_id).unwrap()
+    else {
+        panic!("the explorer receipt is available");
+    };
+    let bytes = runtime
+        .block_on(protector.open(driver_scope(), &sealed))
+        .unwrap()
+        .consume(<[u8]>::to_vec);
+    let explorer_receipt_total =
+        graphhelm_runtime::context_accounting::ExecutionAccountingReceipt::from_stable_bytes(
+            &bytes, start,
+        )
+        .unwrap()
+        .provider_reported_total();
+    let replay = runtime
+        .block_on(graphhelm_runtime::session::verify_session_provenance(
+            &store,
+            protector.as_ref(),
+            &driver_scope(),
+            &OpaqueId::parse(DRIVER_STREAM).unwrap(),
+        ))
+        .map_err(|error| error.to_string());
+    let calls = model.calls.lock().unwrap().clone();
+    SessionDrive {
+        a: projection.subagents["a"].record.clone(),
+        b: projection.subagents["b"].record.clone(),
+        calls,
+        explorer_receipt_total,
+        replay,
+    }
+}
+
+fn reported(input: Option<u64>, output: Option<u64>) -> Usage {
+    Usage {
+        input_tokens: input,
+        output_tokens: output,
+        ..Usage::default()
+    }
+}
+
+// The ADR-042 proof: `b` is handed to `a`'s subagent, the second call carries the first call's
+// prompt and reply as prior turns, in order, before its own briefing, and the recorded
+// `tokensUsed` is the explorer's sealed provider input plus output. Replay verifies the replayed
+// turns' digests against sealed evidence without calling a model.
+#[test]
+fn an_implementer_after_an_explorer_resumes_its_session_under_the_declared_window() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let drive = drive_session_chain(10_000, reported(Some(120), Some(30)));
+    assert_eq!(drive.a.basis, SubagentBasis::NoEligibleSubagent);
+    assert_eq!(drive.b.basis, SubagentBasis::Reused, "{:?}", drive.b);
+    assert_eq!(drive.b.subagent_id, drive.a.subagent_id);
+    assert_eq!(
+        drive.b.from_node_id.as_ref().map(OpaqueId::as_str),
+        Some("a")
+    );
+    assert_eq!(
+        drive.b.from_kind,
+        Some(graphhelm_protocols::SubagentKind::Explorer)
+    );
+    // Allocated is the declared window less the route's output ceiling.
+    assert_eq!(drive.b.tokens_allocated, Some(9_000));
+    assert_eq!(drive.explorer_receipt_total, Some(150));
+    assert_eq!(drive.b.tokens_used, drive.explorer_receipt_total);
+    assert!(drive.b.tokens_used < drive.b.tokens_allocated);
+
+    assert_eq!(drive.calls.len(), 2);
+    let (first, second) = (&drive.calls[0], &drive.calls[1]);
+    assert!(first.history.is_empty());
+    assert_eq!(
+        second.history,
+        vec![graphhelm_gateway::call::ModelTurn {
+            prompt: first.prompt.clone(),
+            reply: "REPLY-1".to_owned(),
+        }]
+    );
+    assert!(second.prompt.contains("implement the change"));
+    assert!(!second.prompt.contains("explore the module"));
+
+    let replay = drive.replay.expect("the session records replay");
+    assert_eq!(replay.records, 2);
+    assert_eq!(replay.replayed_turns, 1);
+}
+
+// Sabotage: the provider reports no input count, so the bound cannot be measured. The candidate
+// matched the key, yet `b` is fresh and its call carries no prior turn.
+#[test]
+fn an_unreported_input_count_refuses_the_session_as_bound_unavailable() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let drive = drive_session_chain(10_000, reported(None, Some(30)));
+    assert_eq!(drive.b.basis, SubagentBasis::BoundUnavailable);
+    assert_ne!(drive.b.subagent_id, drive.a.subagent_id);
+    assert_eq!(drive.b.tokens_used, None);
+    assert_eq!(drive.calls.len(), 2);
+    assert!(drive.calls[1].history.is_empty());
+}
+
+// Sabotage: the declared window (less the output ceiling) is below the explorer's measured use.
+#[test]
+fn a_window_below_the_explorers_use_refuses_the_session_as_bound_exceeded() {
+    use graphhelm_protocols::SubagentBasis;
+
+    let drive = drive_session_chain(1_100, reported(Some(120), Some(30)));
+    assert_eq!(drive.b.basis, SubagentBasis::BoundExceeded);
+    assert_ne!(drive.b.subagent_id, drive.a.subagent_id);
+    assert_eq!(
+        (drive.b.tokens_used, drive.b.tokens_allocated),
+        (Some(150), Some(100))
+    );
+    assert_eq!(drive.calls.len(), 2);
+    assert!(drive.calls[1].history.is_empty());
 }
 
 // ADR-041 point 3 on the driver: a reviewer after an authoring subagent is never handed to it.

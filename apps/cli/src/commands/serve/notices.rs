@@ -63,6 +63,11 @@ impl AsyncNodeExecutor for OwnerNoticeExecutor {
     fn cancel_all(&self) {
         self.inner.cancel_all();
     }
+
+    // ADR-042: the wrapper holds no session of its own; the drive reads the inner executor's.
+    fn sessions(&self) -> Option<&graphhelm_runtime::session::SubagentSessions> {
+        self.inner.sessions()
+    }
 }
 
 #[cfg(test)]
@@ -100,6 +105,7 @@ mod tests {
             judge: None,
             context: None,
             delegation_tier: None,
+            subagent: None,
         }
     }
 

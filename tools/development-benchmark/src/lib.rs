@@ -1031,6 +1031,7 @@ pub fn live_arm_cost(
     route: &str,
 ) -> Result<graphhelm_runtime::context_accounting::CostField, BenchmarkRefusal> {
     let call = graphhelm_gateway::call::ModelCall {
+        history: Vec::new(),
         stable_prefix: None,
         prompt: prompt.to_owned(),
         max_tokens,

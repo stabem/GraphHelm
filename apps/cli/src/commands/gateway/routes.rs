@@ -48,6 +48,8 @@ fn render_route(route: &ModelRoute) -> serde_json::Value {
         "model": route.model(),
         "profiles": route.profiles(),
         "tiers": route.tiers(),
+        // ADR-042: the operator-declared input window that bounds session reuse; null when none.
+        "contextWindowTokens": route.context_window_tokens(),
         "enabled": route.enabled(),
     })
 }

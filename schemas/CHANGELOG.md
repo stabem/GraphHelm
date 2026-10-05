@@ -1,5 +1,20 @@
 # Schema Changelog
 
+## event-envelope 1.1.0 - `subagent_reused.basis` gains `session_unavailable` (ADR-042, #298)
+
+**`event-envelope`: one more `basis` value.** `$defs/subagentReused/properties/basis` widens its
+closed enum with `session_unavailable`: a candidate matched the reuse key and was under a measured
+bound, but the model executor no longer holds its session (the drive that held it ended or parked,
+it was cancelled, the process restarted, or the executor or route cannot hold sessions). Additive:
+an enum widening in the same unreleased 1.1.0 candidate that introduced `subagent_reused` (a
+1.2.0 would be `GHC004_SEMVER_MISMATCH` against the frozen 1.0.0 baseline); no field becomes
+required (`GHC003`). The schema-evolution conformance table pins a `session_unavailable` record.
+
+The sealed `session-provenance@1` record (media type
+`application/vnd.graphhelm.session-provenance+json`) is an Evidence document, not an event
+payload, and has no JSON schema in this catalog, like `context-provenance@1`. The frozen 1.0.0
+release is unchanged.
+
 ## event-envelope 1.1.0 - `subagent_reused` (ADR-041, #298)
 
 **`event-envelope`: `subagent_reused` added and wired writable.** `$defs/subagentReused` carries

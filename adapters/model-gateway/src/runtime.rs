@@ -124,7 +124,9 @@ impl<'a> RuntimeAdapter<'a> {
     /// exit within `route.timeout_seconds()`, and [`GatewayError::MalformedOutput`] if it exits
     /// `0` but its stdout does not parse as its `RuntimeKind`'s happy shape.
     pub fn call(&self, request: &ModelCall) -> Result<ModelReply, GatewayError> {
-        if request.max_output_tokens.is_some() {
+        // ADR-042 point 4: a native runtime takes one prompt on stdin and cannot accept a
+        // replayed message list, so a non-empty history is refused, never flattened.
+        if request.max_output_tokens.is_some() || !request.history.is_empty() {
             return Err(GatewayError::UnsupportedCapability);
         }
         if self.route.transport() != Transport::NativeRuntime

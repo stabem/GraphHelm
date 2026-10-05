@@ -43,6 +43,19 @@ pub struct NodeWork {
     /// node that declares `delegation`; `None` otherwise. A model executor serves tier-bound work
     /// only on a route whose manifest `tiers` list it, and parks it `NeedsCapacity` otherwise.
     pub delegation_tier: Option<graphhelm_protocols::DelegationTier>,
+    /// ADR-042: the subagent `subagent_reused` named for this dispatch, set by the driver for a
+    /// delegated node; `None` otherwise. When it was REUSED, `history` carries that subagent's
+    /// held turns (snapshotted at dispatch from the executor's own session store), which the
+    /// model call replays before this node's own briefing.
+    pub subagent: Option<SubagentWork>,
+}
+
+/// ADR-042: which subagent session a delegated attempt belongs to.
+#[derive(Clone, Debug)]
+pub struct SubagentWork {
+    pub subagent_id: String,
+    /// The prior turns replayed before the briefing: empty for a fresh subagent.
+    pub history: Vec<crate::session::SessionTurn>,
 }
 
 /// A tool node's declaration for an honest, completed non-zero process exit.
@@ -170,6 +183,12 @@ pub trait AsyncNodeExecutor: Send + Sync {
 
     /// Propagates immediate-stop to whatever the executor holds (Task 8). Default: nothing.
     fn cancel_all(&self) {}
+
+    /// ADR-042: the subagent sessions this executor holds for the drive. `None` for an executor
+    /// that holds none (tool, gate, fixture work); a wrapper forwards its inner executor's.
+    fn sessions(&self) -> Option<&crate::session::SubagentSessions> {
+        None
+    }
 }
 
 /// Legacy request hint, unchanged for calls without an explicit node or route ceiling.
@@ -186,6 +205,9 @@ pub struct PortExecutor {
     /// [`graphhelm_gateway::manifest::ModelRoute::tiers`]). Empty: the route serves no
     /// tier-bound node.
     pub route_tiers: Vec<graphhelm_protocols::DelegationTier>,
+    /// ADR-042: the subagent sessions held for this drive. Build it per drive
+    /// ([`crate::session::SubagentSessions::for_route`]); it dies with the executor.
+    pub sessions: crate::session::SubagentSessions,
     pub lease: graphhelm_tool_broker::lease::ToolLease,
     pub actor: String,
     /// The gates this binary can run (#668). The SAME registry the driver reads digests
@@ -441,11 +463,18 @@ pub struct ModelExecutor {
     /// [`graphhelm_gateway::manifest::ModelRoute::tiers`]). Empty: the route serves no
     /// tier-bound node.
     pub route_tiers: Vec<graphhelm_protocols::DelegationTier>,
+    /// ADR-042: see [`PortExecutor::sessions`].
+    pub sessions: crate::session::SubagentSessions,
 }
 
 impl AsyncNodeExecutor for ModelExecutor {
     fn cancel_all(&self) {
         self.model.cancel_all();
+        self.sessions.drop_all();
+    }
+
+    fn sessions(&self) -> Option<&crate::session::SubagentSessions> {
+        Some(&self.sessions)
     }
 
     fn execute<'a>(
@@ -456,10 +485,13 @@ impl AsyncNodeExecutor for ModelExecutor {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
                     if let Some(parked) = unserved_tier(work, &self.route_tiers) {
+                        // ADR-042 point 2: a park drops every held session.
+                        self.sessions.drop_all();
                         return Ok(parked);
                     }
                     let mut outcome =
-                        cognitive_work(self.model.as_ref(), &self.route_id, work).await;
+                        cognitive_work(self.model.as_ref(), &self.route_id, &self.sessions, work)
+                            .await;
                     outcome.executor_kind = Some(AttemptExecutorKind::Model);
                     outcome.model_route_id = Some(self.route_id.clone());
                     Ok(outcome)
@@ -525,6 +557,10 @@ impl AsyncNodeExecutor for SplitExecutor {
     fn cancel_all(&self) {
         self.cognitive.cancel_all();
         self.tool.cancel_all();
+    }
+
+    fn sessions(&self) -> Option<&crate::session::SubagentSessions> {
+        self.cognitive.sessions()
     }
 
     fn execute<'a>(
@@ -676,23 +712,91 @@ pub fn wire_prompt(prompt: &crate::prompt::AssembledPrompt) -> String {
 
 /// One cognitive attempt through a model port: the prompt on the wire, the plain or judge
 /// mapping on the way back. Shared by [`PortExecutor`] and [`ModelExecutor`].
+///
+/// ADR-042: a delegated attempt on a session-holding executor replays `work.subagent`'s held
+/// turns before its own briefing, seals a content-free `session-provenance@1` record, and on a
+/// plain success appends its own turn to the session. An outcome that parks the node drops every
+/// held session: a session never outlives a park.
 async fn cognitive_work(
     model: &dyn crate::ports::ModelPort,
     route_id: &str,
+    sessions: &crate::session::SubagentSessions,
     work: &NodeWork,
 ) -> WorkOutcome {
     let prompt = wire_prompt(&work.prompt);
+    let session = work
+        .subagent
+        .as_ref()
+        .filter(|_| sessions.supported() && work.judge.is_none());
+    let history: Vec<graphhelm_gateway::call::ModelTurn> = session
+        .map(|subagent| {
+            subagent
+                .history
+                .iter()
+                .map(|turn| graphhelm_gateway::call::ModelTurn {
+                    prompt: turn.prompt.clone(),
+                    reply: turn.reply.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let call = graphhelm_gateway::call::ModelCall {
         stable_prefix: Some(format!("{}\n", work.prompt.system)),
         prompt,
         max_tokens: DEFAULT_MAX_TOKENS,
         max_output_tokens: work.max_output_tokens,
+        history,
     };
     let reply = model.call(route_id, &call).await;
-    match work.judge.as_ref() {
+    let reply_text = reply.as_ref().ok().map(|reply| reply.text.clone());
+    let mut outcome = match work.judge.as_ref() {
         Some(judge) => judge_outcome(judge, reply),
         None => cognitive_outcome(reply, work.context.as_ref()),
+    };
+    if let Some(subagent) = session {
+        let replied = reply_text.filter(|_| outcome.outcome == NodeOutcome::Succeeded);
+        let record = crate::session::SessionProvenanceRecord {
+            schema: crate::session::SESSION_PROVENANCE_SCHEMA.to_owned(),
+            subagent_id: subagent.subagent_id.clone(),
+            node_id: work.node_id.clone(),
+            attempt: work.attempt,
+            prompt_digest: crate::session::text_digest(&call.prompt),
+            reply_digest: replied.as_deref().map(crate::session::text_digest),
+            replayed: subagent
+                .history
+                .iter()
+                .map(|turn| crate::session::TurnDigest {
+                    node_id: turn.node_id.clone(),
+                    attempt: turn.attempt,
+                    prompt_digest: crate::session::text_digest(&turn.prompt),
+                    reply_digest: crate::session::text_digest(&turn.reply),
+                })
+                .collect(),
+        };
+        outcome.sealables.push(Sealable {
+            local_ref_suffix: crate::session::SESSION_PROVENANCE_SUFFIX,
+            media_type: crate::session::SESSION_PROVENANCE_MEDIA_TYPE,
+            bytes: record.stable_bytes(),
+        });
+        if let Some(reply) = replied {
+            sessions.record(
+                &subagent.subagent_id,
+                crate::session::SessionTurn {
+                    node_id: work.node_id.clone(),
+                    attempt: work.attempt,
+                    prompt: call.prompt,
+                    reply,
+                },
+            );
+        }
     }
+    if matches!(
+        outcome.outcome,
+        NodeOutcome::NeedsCapacity | NodeOutcome::NeedsInput | NodeOutcome::Paused
+    ) {
+        sessions.drop_all();
+    }
+    outcome
 }
 
 /// One tool attempt through a tool port. Shared by [`PortExecutor`] and [`ToolExecutor`]: a
@@ -715,6 +819,11 @@ impl AsyncNodeExecutor for PortExecutor {
     fn cancel_all(&self) {
         self.model.cancel_all();
         self.tools.cancel_all();
+        self.sessions.drop_all();
+    }
+
+    fn sessions(&self) -> Option<&crate::session::SubagentSessions> {
+        Some(&self.sessions)
     }
 
     fn execute<'a>(
@@ -725,10 +834,13 @@ impl AsyncNodeExecutor for PortExecutor {
             match work.kind {
                 crate::classify::NodeWorkKind::Cognitive => {
                     if let Some(parked) = unserved_tier(work, &self.route_tiers) {
+                        // ADR-042 point 2: a park drops every held session.
+                        self.sessions.drop_all();
                         return Ok(parked);
                     }
                     let mut outcome =
-                        cognitive_work(self.model.as_ref(), &self.route_id, work).await;
+                        cognitive_work(self.model.as_ref(), &self.route_id, &self.sessions, work)
+                            .await;
                     outcome.executor_kind = Some(AttemptExecutorKind::Model);
                     outcome.model_route_id = Some(self.route_id.clone());
                     Ok(outcome)

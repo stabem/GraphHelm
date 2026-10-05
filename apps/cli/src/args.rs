@@ -1229,6 +1229,11 @@ pub enum RouteCommand {
         /// Write the route with no tiers, clearing any a replaced route declared.
         #[arg(long = "no-tiers")]
         no_tiers: bool,
+        /// The provider's documented input context window in tokens (ADR-042), which bounds
+        /// subagent session reuse on this route. `0` clears it. Absent on a replace: the replaced
+        /// route's window is kept.
+        #[arg(long = "context-window-tokens")]
+        context_window_tokens: Option<u64>,
     },
 }
 

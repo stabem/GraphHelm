@@ -17,3 +17,4 @@ target/
 # receipt store and the runners that committed it were retired on 2026-09-24; a local run's
 # manifest is scratch and never committed.
 /.factory/
+**/evals/results/

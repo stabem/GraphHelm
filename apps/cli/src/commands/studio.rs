@@ -65,6 +65,20 @@ pub(super) fn plain(path: PathBuf) -> PathBuf {
     }
 }
 
+/// The first enabled route in the project's manifest that can write text: what `serve --route`
+/// needs (cognitive nodes and suggested replies draft on it). A `typesafe` route only judges, so
+/// it is never picked; it is still listed, because `serve` reads the whole manifest.
+pub(super) fn text_route(manifest: &Path) -> Option<String> {
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest).ok()?).ok()?;
+    document["routes"].as_array()?.iter().find_map(|route| {
+        let enabled = route["enabled"].as_bool().unwrap_or(true);
+        (enabled && route["provider"].as_str() != Some("typesafe"))
+            .then(|| route["id"].as_str().map(str::to_owned))
+            .flatten()
+    })
+}
+
 /// What the clone's state allows. Pure, so the decision is tested without git.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Freshness {
@@ -304,6 +318,22 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
             .arg(&keyring)
             .args(["-KeyId", &args.key_id]);
     }
+    // The model half, when `gateway setup` wired one: without it the Runtime lists no routes and
+    // the Studio's suggested replies say no Jev model is set up.
+    let manifest = state.join("manifest.json");
+    let broker = state.join("broker");
+    if let (true, Some(route)) = (broker.is_dir(), text_route(&manifest)) {
+        eprintln!(
+            "[studio] model routes from {} (text route {route})",
+            manifest.display()
+        );
+        launch
+            .arg("-Manifest")
+            .arg(&manifest)
+            .arg("-Broker")
+            .arg(&broker)
+            .args(["-Route", &route]);
+    }
     if args.no_browser {
         launch.arg("-NoBrowser");
     }
@@ -396,6 +426,21 @@ mod tests {
             plain(PathBuf::from("/home/u/GraphHelm")),
             PathBuf::from("/home/u/GraphHelm")
         );
+    }
+
+    #[test]
+    fn picks_the_first_enabled_text_route_never_the_judge() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("manifest.json");
+        std::fs::write(&manifest, r#"{"routes":[{"id":"judge","provider":"typesafe"},{"id":"off","provider":"anthropic","enabled":false},{"id":"claude","provider":"anthropic","enabled":true}]}"#).unwrap();
+        assert_eq!(text_route(&manifest), Some("claude".to_owned()));
+        std::fs::write(
+            &manifest,
+            r#"{"routes":[{"id":"judge","provider":"typesafe"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(text_route(&manifest), None);
+        assert_eq!(text_route(&dir.path().join("missing.json")), None);
     }
 
     #[test]

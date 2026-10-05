@@ -29,6 +29,13 @@ param(
     # travels in GRAPHHELM_GATEWAY_KEY / GRAPHHELM_EVENTS_KEY, never as a parameter).
     [string] $Keyring = "",
     [string] $KeyId = "",
+    # The model half (`serve --manifest --broker --route`, all-or-none): the project's
+    # `.graphhelm/manifest.json`, `.graphhelm/broker`, and the text route cognitive nodes and
+    # suggested replies draft with. Without them the Runtime lists no model routes, so the Studio
+    # says "no Jev model set up" even when `gateway setup --provider typesafe` ran (2026-10-05).
+    [string] $Manifest = "",
+    [string] $Broker = "",
+    [string] $Route = "",
     [switch] $NoBrowser
 )
 
@@ -93,6 +100,7 @@ if (-not $alive) {
     $serveArgs = @("serve", "--events", $Events, "--bind", $Bind)
     if ($Keyring) { $serveArgs += @("--keyring", $Keyring) }
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
+    if ($Manifest -and $Broker -and $Route) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
     Write-Host "[up] starting: $GraphHelm $($serveArgs -join ' ')"
     Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds(20)

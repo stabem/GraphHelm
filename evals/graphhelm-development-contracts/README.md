@@ -1,9 +1,15 @@
 # Evals for the development-contracts skills
 
-Run from the repository root:
+These cases live outside the extension package on purpose: the package inventory is strict and
+refuses any top-level entry it does not know (`GHEX012_INVENTORY`), so an `evals/` directory inside
+the shipped package would make it fail validation. The eval runner reads cases from the plugin
+directory, so run it against a scratch copy. From the repository root:
 
 ```sh
-claude plugin eval extensions/builtin/graphhelm-development-contracts --trust-plugin
+tmp="$(mktemp -d)"
+cp -r extensions/builtin/graphhelm-development-contracts "$tmp/plugin"
+cp -r evals/graphhelm-development-contracts "$tmp/plugin/evals"
+claude plugin eval "$tmp/plugin" --trust-plugin
 ```
 
 Each case is `prompt.md` plus `graders/criteria.md` (an LLM judge). The runner adds a no-plugin

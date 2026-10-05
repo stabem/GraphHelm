@@ -545,6 +545,58 @@ fn openai_auth_failure_maps_to_auth_required() {
     assert_eq!(error, GatewayError::AuthRequired);
 }
 
+/// #298: each provider's documented context-overflow refusal is `ContextTooLarge` (terminal),
+/// never the retryable `MalformedOutput` catch-all that resent the same oversized request.
+#[test]
+fn documented_context_overflow_refusals_map_to_context_too_large() {
+    let cases = [
+        (
+            "anthropic",
+            400,
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#,
+        ),
+        (
+            "anthropic",
+            413,
+            r#"{"type":"error","error":{"type":"request_too_large","message":"Request exceeds the maximum allowed number of bytes."}}"#,
+        ),
+        (
+            "openai",
+            400,
+            r#"{"error":{"message":"This model's maximum context length is 128000 tokens.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}"#,
+        ),
+    ];
+    for (provider, status, body) in cases {
+        let (base_url, _receiver) = fake_server(status, body);
+        let manifest = build_manifest(&base_url, provider);
+        let adapter = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()));
+        let error = adapter.call(&sentinel_key(), &call("hi", 16)).unwrap_err();
+        assert_eq!(error, GatewayError::ContextTooLarge, "{provider} {status}");
+    }
+}
+
+/// #298: only the documented codes count. Another 400 stays on the existing catch-all.
+#[test]
+fn other_bad_requests_are_not_read_as_context_overflow() {
+    let cases = [
+        (
+            "anthropic",
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: field required"}}"#,
+        ),
+        (
+            "openai",
+            r#"{"error":{"type":"invalid_request_error","code":"invalid_value","message":"context length"}}"#,
+        ),
+    ];
+    for (provider, body) in cases {
+        let (base_url, _receiver) = fake_server(400, body);
+        let manifest = build_manifest(&base_url, provider);
+        let adapter = ByokAdapter::new(&manifest.routes()[0], Arc::new(UreqTransport::new()));
+        let error = adapter.call(&sentinel_key(), &call("hi", 16)).unwrap_err();
+        assert_eq!(error, GatewayError::MalformedOutput, "{provider}");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Transport-level protections.
 // ---------------------------------------------------------------------------------------------

@@ -106,6 +106,10 @@ pub struct ReuseBound {
     pub used: BTreeMap<String, Option<u64>>,
     /// ADR-042 point 2: the subagent ids whose session the model executor holds right now.
     pub held: std::collections::BTreeSet<String>,
+    /// #298: the subagent ids whose replayed history the provider refused as larger than its
+    /// context window during this drive. Such a candidate is never resumed: the provider's own
+    /// refusal is the measurement, so the node is recorded fresh with `bound_exceeded`.
+    pub overflowed: std::collections::BTreeSet<String>,
 }
 
 impl ReuseBound {
@@ -209,6 +213,12 @@ pub fn subagent_event(
         .copied()
         .flatten();
     let held = bound.held.contains(candidate.record.subagent_id.as_str());
+    if bound
+        .overflowed
+        .contains(candidate.record.subagent_id.as_str())
+    {
+        return Ok(fresh(SubagentBasis::BoundExceeded, used, bound.allocated));
+    }
     match (used, bound.allocated) {
         // ADR-042 point 2: under the bound but the executor no longer holds the session. Reuse
         // never reconstructs one from sealed evidence.
@@ -299,6 +309,7 @@ mod tests {
             allocated: Some(allocated),
             used: BTreeMap::from([("sa-1".to_owned(), used)]),
             held: std::collections::BTreeSet::from(["sa-1".to_owned()]),
+            overflowed: std::collections::BTreeSet::new(),
         }
     }
 

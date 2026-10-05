@@ -38,6 +38,21 @@ use crate::transport::{HttpTransport, TransportError, TransportRequest, Transpor
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const OPENAI_INSUFFICIENT_QUOTA: &str = "insufficient_quota";
 
+/// #298: OpenAI's documented error `code` for a request whose messages exceed the model's context
+/// window (returned with status `400`, `type: "invalid_request_error"`).
+const OPENAI_CONTEXT_LENGTH_EXCEEDED: &str = "context_length_exceeded";
+
+/// #298: Anthropic reports a prompt over the model's context window as a `400`
+/// `invalid_request_error` whose message begins with this documented text ("prompt is too long:
+/// N tokens > M maximum"). Anthropic publishes no dedicated error type for it, so the fixed rule
+/// is the documented type AND this exact message prefix, nothing looser.
+const ANTHROPIC_PROMPT_TOO_LONG_PREFIX: &str = "prompt is too long";
+
+/// #298: Anthropic's documented error type for a request over the API's maximum request size
+/// (status `413`). A request is that large only because of what it carries, so it is the same
+/// class as a context overflow: resending it unchanged can never succeed.
+const ANTHROPIC_REQUEST_TOO_LARGE: &str = "request_too_large";
+
 /// One BYOK adapter bound to a specific `direct_api` [`ModelRoute`] and [`HttpTransport`].
 /// Construction does not itself touch the network; each [`Self::call`] places exactly one HTTP
 /// request.
@@ -161,7 +176,7 @@ impl<'a> ByokAdapter<'a> {
         if (200..300).contains(&response.status) {
             parse_anthropic_success(&response.body).ok_or(GatewayError::MalformedOutput)
         } else {
-            Err(map_anthropic_error(response.status))
+            Err(map_anthropic_error(response.status, &response.body))
         }
     }
 
@@ -444,14 +459,56 @@ fn parse_anthropic_success(body: &[u8]) -> Option<ModelReply> {
 /// Fixed status-code rules (plan Task 4): Anthropic's status codes are unambiguous on their own —
 /// unlike OpenAI's `429`, no Anthropic status this milestone maps needs the body to decide between
 /// two different outcomes, so this does not parse one.
-fn map_anthropic_error(status: u16) -> GatewayError {
+///
+/// #298: the one exception is context overflow, which Anthropic reports as a `400`
+/// `invalid_request_error` (or a `413` `request_too_large`); see
+/// [`anthropic_error_is_context_too_large`]. It becomes [`GatewayError::ContextTooLarge`], which is
+/// terminal: retrying the identical oversized request can never succeed.
+fn map_anthropic_error(status: u16, body: &[u8]) -> GatewayError {
     match status {
+        400 | 413 if anthropic_error_is_context_too_large(status, body) => {
+            GatewayError::ContextTooLarge
+        }
         401 => GatewayError::AuthRequired,
         403 => GatewayError::PolicyDenied,
         429 => GatewayError::RateLimited,
         529 => GatewayError::ProviderUnavailable,
         status if status >= 500 => GatewayError::ProviderUnavailable,
         _ => GatewayError::MalformedOutput,
+    }
+}
+
+#[derive(Deserialize)]
+struct AnthropicErrorBody {
+    error: AnthropicErrorDetail,
+}
+
+#[derive(Deserialize)]
+struct AnthropicErrorDetail {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+/// Exactly the documented shapes, nothing fuzzier: a `413` whose error type is
+/// `request_too_large`, or a `400` `invalid_request_error` whose message starts with
+/// "prompt is too long". Any other body (or an unparseable one) is not a context overflow.
+fn anthropic_error_is_context_too_large(status: u16, body: &[u8]) -> bool {
+    let Ok(parsed) = serde_json::from_slice::<AnthropicErrorBody>(body) else {
+        return false;
+    };
+    match status {
+        413 => parsed.error.kind == ANTHROPIC_REQUEST_TOO_LARGE,
+        400 => {
+            parsed.error.kind == "invalid_request_error"
+                && parsed
+                    .error
+                    .message
+                    .as_deref()
+                    .is_some_and(|message| message.starts_with(ANTHROPIC_PROMPT_TOO_LONG_PREFIX))
+        }
+        _ => false,
     }
 }
 
@@ -590,6 +647,7 @@ struct OpenAiErrorDetail {
 fn map_openai_error(status: u16, body: &[u8]) -> GatewayError {
     match status {
         401 => GatewayError::AuthRequired,
+        400 if openai_error_is_context_length_exceeded(body) => GatewayError::ContextTooLarge,
         403 => GatewayError::PolicyDenied,
         429 => {
             if openai_error_is_insufficient_quota(body) {
@@ -615,4 +673,11 @@ fn openai_error_is_insufficient_quota(body: &[u8]) -> bool {
     };
     parsed.error.kind.as_deref() == Some(OPENAI_INSUFFICIENT_QUOTA)
         || parsed.error.code.as_deref() == Some(OPENAI_INSUFFICIENT_QUOTA)
+}
+
+/// #298: OpenAI's documented context-overflow error: a `400` whose `code` is
+/// `context_length_exceeded`. Only that code counts; an unparseable body is not an overflow.
+fn openai_error_is_context_length_exceeded(body: &[u8]) -> bool {
+    serde_json::from_slice::<OpenAiErrorBody>(body)
+        .is_ok_and(|parsed| parsed.error.code.as_deref() == Some(OPENAI_CONTEXT_LENGTH_EXCEEDED))
 }

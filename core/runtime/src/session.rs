@@ -60,6 +60,10 @@ pub struct SubagentSessions {
     supported: bool,
     allocated: Option<u64>,
     held: Mutex<BTreeMap<String, Vec<SessionTurn>>>,
+    /// #298: subagent ids whose replayed history the provider refused as too large for its
+    /// context window. Their session is dropped and never resumed again in this drive: the next
+    /// dispatch records a fresh subagent with basis `bound_exceeded`.
+    overflowed: Mutex<BTreeSet<String>>,
 }
 
 impl SubagentSessions {
@@ -77,6 +81,7 @@ impl SubagentSessions {
             supported: true,
             allocated,
             held: Mutex::new(BTreeMap::new()),
+            overflowed: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -128,6 +133,26 @@ impl SubagentSessions {
                 .or_default()
                 .push(turn);
         }
+    }
+
+    /// #298: the provider refused `subagent_id`'s replayed history as larger than its context
+    /// window. Drops that session and remembers the refusal for the rest of the drive, so the
+    /// reuse decision records the next dispatch as a fresh subagent (`bound_exceeded`).
+    pub fn overflow(&self, subagent_id: &str) {
+        self.lock().remove(subagent_id);
+        self.overflowed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(subagent_id.to_owned());
+    }
+
+    /// The subagent ids whose replayed history the provider refused as too large.
+    #[must_use]
+    pub fn overflowed_ids(&self) -> BTreeSet<String> {
+        self.overflowed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Drops every held session (drive end, park, cancel). Dropped, never logged.
@@ -359,6 +384,7 @@ pub async fn measured_bound(
         allocated: sessions.allocated(),
         used: BTreeMap::new(),
         held: sessions.held_ids(),
+        overflowed: sessions.overflowed_ids(),
     };
     // node -> subagent, from the journal's own `subagent_reused` records.
     let taken: BTreeMap<String, String> = projection

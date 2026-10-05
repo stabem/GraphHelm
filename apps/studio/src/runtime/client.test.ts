@@ -6,6 +6,7 @@ import {
   RuntimeClient,
   RuntimeError,
   RUNTIME_REQUEST_TIMEOUT_MS,
+  RUNTIME_READ_TIMEOUT_MS,
   WEBMCP_ACTOR,
 } from "./client";
 
@@ -92,7 +93,8 @@ describe("RuntimeClient reads", () => {
         code: "GHSTUDIO_REQUEST_TIMEOUT",
         httpStatus: 0,
       });
-      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      // The run list replays runs: it gets the longer read budget.
+      await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS);
       await rejection;
       expect(fetchImpl).toHaveBeenCalledOnce();
     } finally {
@@ -114,7 +116,8 @@ describe("RuntimeClient reads", () => {
         code: "GHSTUDIO_REQUEST_TIMEOUT",
         httpStatus: 0,
       });
-      await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      // The run list replays runs: it gets the longer read budget.
+      await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS);
       await rejection;
       expect(fetchImpl).toHaveBeenCalledOnce();
     } finally {
@@ -144,7 +147,7 @@ describe("RuntimeClient reads", () => {
     }
   });
 
-  it("uses the capped reply suggestions deadline and keeps ordinary reads at ten seconds", async () => {
+  it("uses the capped reply suggestions deadline and keeps replay reads at sixty seconds", async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
@@ -154,9 +157,14 @@ describe("RuntimeClient reads", () => {
       const result = suggestions.then((value) => { settled = true; return value; }, (error: unknown) => { settled = true; return error; });
       const ordinary = client.getStatus("demo").then((value) => value, (error: unknown) => error);
       await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS);
+      let statusSettled = false;
+      void ordinary.then(() => { statusSettled = true; });
+      await Promise.resolve();
+      expect(statusSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(RUNTIME_READ_TIMEOUT_MS - RUNTIME_REQUEST_TIMEOUT_MS);
       expect(await ordinary).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
       expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(120_000 - RUNTIME_REQUEST_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(120_000 - RUNTIME_READ_TIMEOUT_MS);
       expect(await result).toMatchObject({ code: "GHSTUDIO_REQUEST_TIMEOUT", httpStatus: 0 });
     } finally {
       vi.useRealTimers();

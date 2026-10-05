@@ -39,6 +39,15 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
+**Without a Runtime** (a cloud or CI session with no `.graphhelm/` and no Runtime to post to), the
+delivery still runs on the CLI alone: write the card in the PR body (`Promise:`, `Scope:`,
+`Proof:` lines), save the body to a file, and run
+`graphhelm keel check --diff origin/main..HEAD --card <body.md> [--prove-new-tests]`; paste its
+verdict into the PR body. Rules that say to post records through the Runtime HTTP API do not apply
+there; say so in the PR body with `OBSERVER_MISSING: Runtime records (no Runtime in this session)`
+rather than skipping silently. Studio, the Stop and edit locks and the Runtime signals are not
+observed in such a session, and the PR body must not claim they were.
+
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind

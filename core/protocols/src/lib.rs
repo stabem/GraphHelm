@@ -8,6 +8,7 @@ pub mod adoption;
 // so this line must stay above every module that uses it.
 #[macro_use]
 mod development;
+mod delegation;
 mod diagnostic;
 mod draft;
 mod dreams;
@@ -19,6 +20,7 @@ mod projection;
 mod simulation;
 
 pub use actor::*;
+pub use delegation::*;
 pub use development::*;
 pub use diagnostic::*;
 pub use draft::*;

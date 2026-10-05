@@ -1,5 +1,33 @@
 # Schema Changelog
 
+## node 1.1.0 and event-envelope 1.1.0 - `delegation` and `delegation_chosen` (ADR-040, #290)
+
+**`node`: optional `delegation` object.** `additionalProperties: false`, one required member `kind`
+from the closed set `explorer | implementer | reviewer | verifier`. A node without it dispatches
+exactly as before and produces no delegation event. The field changes what runs, so the Graph
+Governor accepts it and persists it as one `node_delegation` control (identifier `kind`), which
+makes it part of the canonical graph content and its hash. `schema check` reports
+`GHC102_OPTIONAL_PROPERTY_ADDED` at `/properties/delegation`, compatible, minor.
+
+ADR-040 calls this a 1.1.0 -> 1.2.0 step. It stays at 1.1.0: `node` 1.1.0 is itself unreleased
+against the frozen 1.0.0 baseline, and the release gate (`graphhelm schema check --baseline
+schemas/releases/1.0.0/catalog.json --candidate schemas/catalog.json`) refuses 1.2.0 with
+`GHC004_SEMVER_MISMATCH`, because one compatible change set from 1.0.0 is exactly one Minor
+step. The addition accumulates in the existing 1.1.0 candidate, as `agents` did.
+
+**`event-envelope`: `delegation_chosen` added and wired writable.** `$defs/delegationChosen`
+carries `nodeId`, `kind`, `tier` (`small | standard | large`), `effort` (`low | medium | high`),
+`escalated` and `redChecks` (a `u32`), all required, `additionalProperties: false`. A new disjoint
+`oneOf` branch in `$defs/eventKind` (`composition widened`) and a top-level pairing with
+`scopeWithExecution`, so the kind is writable rather than matching zero branches. Same 1.1.0
+candidate as `agent_presence_declared`; the schema-evolution conformance table pins the new kind.
+
+The Runtime appends one `delegation_chosen` per dispatch of a node that declares `delegation`,
+with the result of `graphhelm_policy::delegation::choose` over the built-in `routed()` policy.
+`redChecks` is the count of failing `gate_verdict` events already recorded for that node in the
+execution. Recording is not enforcement: no tier is mapped to a model route. The frozen 1.0.0
+release is unchanged.
+
 ## event-envelope 1.0.0 - optional run topology snapshot
 
 `execution_form_declared` may carry the graph hash, entrypoints, and directed edges recorded at

@@ -13,6 +13,7 @@ pub mod classify;
 pub mod context;
 pub mod context_accounting;
 pub mod context_compiler;
+pub mod delegation;
 pub mod driver;
 pub mod evidence;
 pub mod executor;

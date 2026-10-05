@@ -193,6 +193,20 @@ impl GraphNode {
         };
         serde_json::from_value(customs.clone()).map(Some)
     }
+
+    /// ADR-040: reads this node's `delegation` declaration, if it has one. Typed on read for the
+    /// same reason as [`Self::customs`]: the key must stay in `properties` so the governor's
+    /// externalizer sees it and records it as canonical graph content.
+    ///
+    /// # Errors
+    /// Returns the deserialization error when a `delegation` block is present but malformed (an
+    /// unknown kind or an extra field) — never a silent "no delegation".
+    pub fn delegation(&self) -> Result<Option<crate::NodeDelegation>, serde_json::Error> {
+        let Some(delegation) = self.properties.get("delegation") else {
+            return Ok(None);
+        };
+        serde_json::from_value(delegation.clone()).map(Some)
+    }
 }
 
 /// Node kinds accepted by the checked-in v1 wire schema.

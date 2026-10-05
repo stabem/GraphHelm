@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphhelm_protocols::{
-    AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, DreamShadowRecorded, EventEnvelope,
-    EventHash, EventKind, EvidenceId, EvidenceReference, ExecutionFormDeclared, ExecutionId,
-    ExecutionMode, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome, NodeState,
-    OpaqueId, PersistedActor, PersistedGraphVersion, PersistedMemoryPublicationState,
+    AgentPresenceDeclared, ClaimEvidence, ClearanceVerifier, DelegationChosen, DreamShadowRecorded,
+    EventEnvelope, EventHash, EventKind, EvidenceId, EvidenceReference, ExecutionFormDeclared,
+    ExecutionId, ExecutionMode, MemoryAdmissionLocal, MemoryAdmissionRefusalCode, NodeOutcome,
+    NodeState, OpaqueId, PersistedActor, PersistedGraphVersion, PersistedMemoryPublicationState,
     PersistedMemorySemanticState, PersistedTimestamp, PolicyWaiver, ProjectId, RepositoryScope,
     SafeCode, SimulationStatus, WireHash, WorkspaceId,
 };
@@ -599,6 +599,25 @@ pub struct ExecutionProjection {
     /// digests and break the frozen demonstrations.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_presence: BTreeMap<String, AgentPresence>,
+    /// ADR-040 (#290): failed mechanical checks per node in this execution -- the count of
+    /// `gate_verdict` events with `passed: false` naming that node. This is the `red_checks` the
+    /// Runtime hands `delegation::choose` at dispatch. Skipped when empty so histories written
+    /// before it existed keep their projection digests.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub red_checks: BTreeMap<String, u32>,
+    /// ADR-040 (#290): the newest `delegation_chosen` per node, with the sequence that carried
+    /// it. Last-wins: a re-dispatch after a red check records a new choice, and the newest is the
+    /// one the node is running under. Rebuildable from events like every field here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub delegation_choices: BTreeMap<String, DelegationRecord>,
+}
+
+/// One node's newest delegation choice, and the envelope sequence that recorded it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationRecord {
+    pub at_sequence: u64,
+    pub chosen: DelegationChosen,
 }
 
 /// One actor's newest presence declaration, and the envelope that carried it.
@@ -2066,7 +2085,36 @@ fn apply_projection_event(
         // M06: the verdict is ledger, not state — the WHY beside the outcome the driver
         // records separately; an explicit no-op arm, never a wildcard (the ReuseDecision
         // precedent).
-        EventKind::GateVerdict(_) => {}
+        EventKind::GateVerdict(payload) => {
+            // ADR-040: a failing verdict is one red mechanical check against the node it names.
+            if !payload.passed {
+                let node = payload.node_id.to_string();
+                if !projection.red_checks.contains_key(&node)
+                    && projection.red_checks.len() >= MAX_PROJECTION_NODES
+                {
+                    return Err(ReplayError::LimitExceeded);
+                }
+                let count = projection.red_checks.entry(node).or_insert(0);
+                *count = count.checked_add(1).ok_or(ReplayError::LimitExceeded)?;
+            }
+        }
+        // ADR-040: recording, not state. A delegation choice moves no node state; the fold keeps
+        // the newest per node. Bounded on a new key only, like `agent_presence`.
+        EventKind::DelegationChosen(payload) => {
+            let node = payload.node_id.to_string();
+            if !projection.delegation_choices.contains_key(&node)
+                && projection.delegation_choices.len() >= MAX_PROJECTION_NODES
+            {
+                return Err(ReplayError::LimitExceeded);
+            }
+            projection.delegation_choices.insert(
+                node,
+                DelegationRecord {
+                    at_sequence: event.sequence,
+                    chosen: payload.clone(),
+                },
+            );
+        }
         EventKind::GateCertified(payload) => {
             projection.gate_certifications.insert(
                 payload.gate_id.as_str().to_owned(),

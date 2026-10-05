@@ -225,6 +225,23 @@ pub(super) fn drive_to_quiescence(
             // condition acting on the executor's genuine outcome, exactly as the composed
             // lifecycle test does it.
             let _advisory = classify_progress(&projection, node, NodeOutcome::RetryableFailure);
+            // ADR-040: computed from THIS dispatch-point projection, before any hop is written, so
+            // a malformed declaration refuses the dispatch with nothing appended. Shared with the
+            // async driver: one function decides for both.
+            let delegation = spec
+                .nodes
+                .get(node)
+                .map(|graph_node| {
+                    graphhelm_runtime::delegation::delegation_event(node, graph_node, &projection)
+                })
+                .transpose()
+                .map_err(|_| {
+                    execution_state(
+                        "the node's delegation declaration is malformed",
+                        "/execution/dispatch",
+                    )
+                })?
+                .flatten();
             dispatch_hops(
                 store,
                 scope,
@@ -234,6 +251,23 @@ pub(super) fn drive_to_quiescence(
                 node,
                 current,
             )?;
+            // ADR-040: one `delegation_chosen` per dispatch of a node that declares delegation,
+            // after the `Started` hops and before the executor runs. Nothing for any other node.
+            if let Some(chosen) = delegation {
+                append_event(
+                    store,
+                    scope,
+                    &stream_id,
+                    NewEvent::new(
+                        idempotency_key("delegation-chosen"),
+                        actor.clone(),
+                        Sensitivity::Internal,
+                        EventKind::DelegationChosen(chosen),
+                        vec![],
+                        vec![],
+                    ),
+                )?;
+            }
             let outcome = executor.execute(node, 0).map_err(|_| {
                 execution_state(
                     "the executor rejected a legal dispatch",
@@ -694,5 +728,73 @@ mod tests {
             1,
             "the sync drive dispatched the rest of a plan computed before the pause"
         );
+    }
+
+    struct AlwaysSucceeds;
+    impl NodeExecutor for AlwaysSucceeds {
+        fn execute(
+            &self,
+            _node_id: &str,
+            _attempt: u32,
+        ) -> Result<NodeOutcome, graphhelm_execution::ExecutionError> {
+            Ok(NodeOutcome::Succeeded)
+        }
+    }
+
+    /// #290 (ADR-040), on THIS driver too: `first` declares `implementer` and records exactly one
+    /// `delegation_chosen` carrying `choose`'s values; `second` declares nothing and records none.
+    #[test]
+    fn the_sync_drive_records_one_delegation_choice_for_the_delegated_node_only() {
+        use graphhelm_policy::delegation::{DelegationPolicy, SubagentKind, choose};
+
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let store = started_store(&events);
+        let mut graph = spec(1);
+        graph.nodes.get_mut("first").unwrap().properties.insert(
+            "delegation".to_owned(),
+            serde_json::json!({"kind": "implementer"}),
+        );
+        let nothing_to_release = BTreeSet::new();
+        let outcome = drive_to_quiescence(
+            &store,
+            &scope(),
+            EXECUTION,
+            &graph,
+            &AlwaysSucceeds,
+            &super::super::system_actor(),
+            &Release {
+                nodes: &nothing_to_release,
+                actor: &super::super::system_actor(),
+            },
+        );
+        assert!(outcome.is_ok(), "the delegated sync drive failed");
+        let chosen: Vec<_> = store
+            .read_replay_stream(&scope(), EXECUTION)
+            .unwrap()
+            .into_iter()
+            .filter_map(|envelope| match envelope.kind {
+                EventKind::DelegationChosen(chosen) => Some(chosen),
+                _ => None,
+            })
+            .collect();
+        let expected = choose(&DelegationPolicy::routed(), SubagentKind::Implementer, 0);
+        assert_eq!(chosen.len(), 1);
+        assert_eq!(chosen[0].node_id.as_str(), "first");
+        assert_eq!(
+            (
+                chosen[0].kind,
+                chosen[0].tier,
+                chosen[0].effort,
+                chosen[0].escalated
+            ),
+            (
+                expected.kind,
+                expected.tier,
+                expected.effort,
+                expected.escalated
+            )
+        );
+        assert_eq!(chosen[0].red_checks, 0);
     }
 }

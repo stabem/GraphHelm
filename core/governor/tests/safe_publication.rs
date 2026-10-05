@@ -6128,3 +6128,81 @@ fn a_malformed_or_foreign_crew_fails_before_sealing() {
         "a crew on a tool node was accepted"
     );
 }
+
+// #290 (ADR-040): a node's delegation kind changes what runs, so it crosses the Graph DSL ->
+// GraphVersion journey as canonical content -- one `node_delegation` control -- and moves the
+// version's semantic hash.
+fn delegation_record(delegation: Option<serde_json::Value>) -> GraphVersionRecord {
+    let mut record = version("software-feature.yaml").to_record();
+    let node = record.graph.spec.nodes.get_mut("map_repository").unwrap();
+    match delegation {
+        Some(value) => {
+            node.properties.insert("delegation".into(), value);
+        }
+        None => {
+            node.properties.remove("delegation");
+        }
+    }
+    refresh_record(&mut record);
+    record
+}
+
+#[test]
+fn a_delegation_kind_is_recorded_as_canonical_content() {
+    let prepare = |record: &GraphVersionRecord| {
+        block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), record))
+            .unwrap()
+    };
+    let implementer = prepare(&delegation_record(Some(
+        serde_json::json!({"kind": "implementer"}),
+    )));
+    let declared = control(&implementer, "map_repository", "node_delegation");
+    assert_eq!(identifier(declared, "kind"), "implementer");
+
+    let reviewer = prepare(&delegation_record(Some(
+        serde_json::json!({"kind": "reviewer"}),
+    )));
+    let undeclared = prepare(&delegation_record(None));
+    assert_ne!(
+        implementer.version().semantic_hash(),
+        reviewer.version().semantic_hash(),
+        "the delegation kind is not part of the graph hash"
+    );
+    assert_ne!(
+        implementer.version().semantic_hash(),
+        undeclared.version().semantic_hash()
+    );
+    assert!(
+        undeclared
+            .version()
+            .topology()
+            .nodes()
+            .iter()
+            .all(|(_, node)| node
+                .controls()
+                .iter()
+                .all(|control| control.control_type().as_str() != "node_delegation")),
+        "a graph that declares no delegation must carry no delegation control"
+    );
+}
+
+#[test]
+fn a_malformed_delegation_fails_before_sealing() {
+    for (case, value) in [
+        ("unknown kind", serde_json::json!({"kind": "planner"})),
+        (
+            "extra field",
+            serde_json::json!({"kind": "implementer", "tier": "large"}),
+        ),
+        ("no kind", serde_json::json!({})),
+        ("scalar", serde_json::json!("implementer")),
+    ] {
+        let record = delegation_record(Some(value));
+        assert_eq!(
+            block_on(externalizer().prepare(scope(&record.graph.metadata.execution_id), &record))
+                .unwrap_err(),
+            graphhelm_governor::GovernorError::InvalidAuthoring,
+            "{case} was accepted"
+        );
+    }
+}

@@ -12,47 +12,28 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What the node asks a subagent to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SubagentKind {
-    Explorer,
-    Implementer,
-    Reviewer,
-    Verifier,
-}
+/// What the node asks a subagent to do. Owned by `graphhelm-protocols` (ADR-040) so the node
+/// schema, the `delegation_chosen` event and this policy name one closed set.
+pub use graphhelm_protocols::SubagentKind;
 
-/// Model size class. Ordered: `Small < Standard < Large`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Tier {
-    Small,
-    Standard,
-    Large,
-}
+/// Model size class. Ordered: `Small < Standard < Large`. Owned by `graphhelm-protocols`.
+pub use graphhelm_protocols::DelegationTier as Tier;
 
-impl Tier {
-    fn raised(self, steps: u32) -> Self {
-        let index: u32 = match self {
-            Self::Small => 0,
-            Self::Standard => 1,
-            Self::Large => 2,
-        };
-        match index.saturating_add(steps).min(2) {
-            0 => Self::Small,
-            1 => Self::Standard,
-            _ => Self::Large,
-        }
+/// Reasoning budget. Ordered: `Low < Medium < High`. Owned by `graphhelm-protocols`.
+pub use graphhelm_protocols::DelegationEffort as Effort;
+
+/// Raises `tier` by `steps`, capped at `Large`.
+fn raised(tier: Tier, steps: u32) -> Tier {
+    let index: u32 = match tier {
+        Tier::Small => 0,
+        Tier::Standard => 1,
+        Tier::Large => 2,
+    };
+    match index.saturating_add(steps).min(2) {
+        0 => Tier::Small,
+        1 => Tier::Standard,
+        _ => Tier::Large,
     }
-}
-
-/// Reasoning budget. Ordered: `Low < Medium < High`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
 }
 
 /// The starting point for one subagent kind.
@@ -134,7 +115,7 @@ pub fn choose(policy: &DelegationPolicy, kind: SubagentKind, red_checks: u32) ->
             escalated: false,
         };
     }
-    let tier = rule.tier.raised(red_checks);
+    let tier = raised(rule.tier, red_checks);
     let effort = Effort::High;
     DelegationChoice {
         kind,

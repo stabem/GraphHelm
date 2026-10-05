@@ -100,6 +100,14 @@
       "type": "object",
       "additionalProperties": true
     },
+    "delegation": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]}
+      },
+      "additionalProperties": false
+    },
     "input": {
       "type": "object",
       "additionalProperties": true

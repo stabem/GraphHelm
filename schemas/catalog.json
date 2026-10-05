@@ -42,7 +42,7 @@
       "id": "https://p50.dev/schemas/event-envelope.schema.json",
       "documentVersion": "1.1.0",
       "path": "schemas/event-envelope.schema.json",
-      "sha256": "sha256:7a7b292452cce829832fad873f7c210db3a23834fc4b64a5f6e5d0978d7151d7"
+      "sha256": "sha256:e31185874b65c1920595621fe879aea81f27e67eebc895b5e88667b78dd437c9"
     },
     "evidence-record": {
       "id": "https://p50.dev/schemas/evidence-record.schema.json",
@@ -78,7 +78,7 @@
       "id": "https://p50.dev/schemas/node.schema.json",
       "documentVersion": "1.1.0",
       "path": "schemas/node.schema.json",
-      "sha256": "sha256:eb319fb55e651429e7e1e7ccf83baadbb1c0320b612d7e9d6214e221a56d42fb"
+      "sha256": "sha256:76b27a772df9e174ce7ce1b49f6affa0580e6a16815d3033be6d8645a731fbac"
     },
     "persisted-graph-version": {
       "id": "https://p50.dev/schemas/persisted-graph-version.schema.json",

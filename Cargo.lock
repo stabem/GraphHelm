@@ -1230,6 +1230,7 @@ dependencies = [
  "graphhelm-events",
  "graphhelm-execution",
  "graphhelm-gateway",
+ "graphhelm-policy",
  "graphhelm-protocols",
  "graphhelm-quality",
  "graphhelm-schema",

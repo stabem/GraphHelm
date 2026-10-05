@@ -1020,6 +1020,19 @@
       },
       "additionalProperties": false
     },
+    "delegationChosen": {
+      "type": "object",
+      "required": ["nodeId", "kind", "tier", "effort", "escalated", "redChecks"],
+      "properties": {
+        "nodeId": {"$ref": "#/$defs/opaqueId"},
+        "kind": {"enum": ["explorer", "implementer", "reviewer", "verifier"]},
+        "tier": {"enum": ["small", "standard", "large"]},
+        "effort": {"enum": ["low", "medium", "high"]},
+        "escalated": {"type": "boolean"},
+        "redChecks": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+      },
+      "additionalProperties": false
+    },
     "eventKind": {
       "oneOf": [
         {
@@ -1480,6 +1493,15 @@
             "data": {"$ref": "#/$defs/agentPresenceDeclared"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "delegation_chosen"},
+            "data": {"$ref": "#/$defs/delegationChosen"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1535,7 +1557,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "dlq_returned"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "sweep_performed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "delegation_chosen"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

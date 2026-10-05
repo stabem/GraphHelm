@@ -1185,6 +1185,19 @@ pub async fn drive_to_quiescence_async(
             if at_dispatch.simulation_status == Some(SimulationStatus::Paused) {
                 break;
             }
+            // ADR-040: the delegation choice is computed from the projection AT DISPATCH, so its
+            // red-check count includes every failing gate verdict already in the journal. A
+            // malformed declaration refuses the node exactly like an unassemblable one: never a
+            // dispatch without the record the declaration asked for.
+            let delegation = match spec.nodes.get(node).map(|graph_node| {
+                crate::delegation::delegation_event(node, graph_node, &at_dispatch)
+            }) {
+                Some(Ok(chosen)) => chosen,
+                Some(Err(_)) | None => {
+                    refused.insert(node.clone());
+                    continue;
+                }
+            };
             let current = at_dispatch
                 .node_states
                 .get(node)
@@ -1216,6 +1229,22 @@ pub async fn drive_to_quiescence_async(
                 bare(NodeOutcome::Started),
             )
             .await?;
+            // ADR-040: one `delegation_chosen` per dispatch of a node that declares delegation,
+            // appended after the `Started` hop and before the executor future starts. A node
+            // without the field appends nothing here.
+            if let Some(chosen) = delegation {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "delegation-chosen",
+                    None,
+                    WireEventKind::DelegationChosen(chosen),
+                )
+                .await?;
+            }
             // #1065: the ledger line is written HERE, past every gate that could still hold the
             // node back — the summary is what this node runs with, now that it is running.
             if let (Some(ports), Some(summary)) = (&context, work.context.as_ref()) {

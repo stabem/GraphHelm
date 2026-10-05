@@ -2086,6 +2086,20 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             false,
         ),
+        // #290 (ADR-040). Execution-scoped (`false`): paired with `scopeWithExecution`, recorded
+        // on the execution stream at the dispatch it describes.
+        (
+            "delegation_chosen",
+            json!({
+                "nodeId": "node-1",
+                "kind": "implementer",
+                "tier": "large",
+                "effort": "high",
+                "escalated": true,
+                "redChecks": 1
+            }),
+            false,
+        ),
     ]
 }
 

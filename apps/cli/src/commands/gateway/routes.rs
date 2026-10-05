@@ -47,6 +47,7 @@ fn render_route(route: &ModelRoute) -> serde_json::Value {
         // answering a question the manifest did not.
         "model": route.model(),
         "profiles": route.profiles(),
+        "tiers": route.tiers(),
         "enabled": route.enabled(),
     })
 }

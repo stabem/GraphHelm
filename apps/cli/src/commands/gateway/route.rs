@@ -256,6 +256,7 @@ fn listing(manifest: &RouteManifest) -> Value {
                     "credentialRef": route.credential_ref(),
                     "model": route.model(),
                     "profiles": route.profiles(),
+                    "tiers": route.tiers(),
                     "enabled": route.enabled(),
                 })
             })

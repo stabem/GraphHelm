@@ -3562,7 +3562,11 @@ struct DriveSetup {
 /// half is present exactly when its wiring is (#1066): `model` with `{manifest, broker, route}`,
 /// `tools` with `{staging, allow-program}`; `drive` composes the executor from what is here.
 struct PreparedPorts {
-    model: Option<(ServeModelPort, String)>,
+    model: Option<(
+        ServeModelPort,
+        String,
+        Vec<graphhelm_protocols::DelegationTier>,
+    )>,
     tools: Option<(ServeToolPort, ToolLease)>,
     /// #1065: the bounded search and reader over the project root this drive resolved, and the
     /// ledger the drive reply publishes from. Present only when the MODEL half is wired: the
@@ -3687,7 +3691,7 @@ async fn prepare_drive(
                     // The route the drive RESOLVED, never the startup default again: the
                     // executor stamps this id onto the work it dispatches, so a stale default
                     // here would label every call with a model that did not answer it.
-                    Some((port, route.id().to_owned()))
+                    Some((port, route.id().to_owned(), route.tiers().to_vec()))
                 }
                 None => None,
             };
@@ -3822,13 +3826,14 @@ async fn drive(
     let executor: Arc<dyn AsyncNodeExecutor> = match ports {
         // Both halves real: the all-real composition, unchanged.
         Some(PreparedPorts {
-            model: Some((model, route_id)),
+            model: Some((model, route_id, route_tiers)),
             tools: Some((tools, lease)),
             context: _,
         }) => Arc::new(PortExecutor {
             model: Arc::new(model),
             tools: Arc::new(tools),
             route_id,
+            route_tiers,
             lease,
             actor: "runtime".to_owned(),
             // #668: the SAME registry object the drive call below reads digests from, so a
@@ -3845,9 +3850,10 @@ async fn drive(
             context: _,
         }) => {
             let cognitive: Arc<dyn AsyncNodeExecutor> = match model {
-                Some((model, route_id)) => Arc::new(ModelExecutor {
+                Some((model, route_id, route_tiers)) => Arc::new(ModelExecutor {
                     model: Arc::new(model),
                     route_id,
+                    route_tiers,
                 }),
                 None => fixtures(),
             };

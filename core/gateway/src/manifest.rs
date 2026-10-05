@@ -165,6 +165,11 @@ pub struct ModelRoute {
     output_token_parameter: Option<OpenAiOutputTokenParameter>,
     #[serde(default)]
     prompt_cache: Option<PromptCache>,
+    /// ADR-041 point 5: the delegation tiers this route serves, from the closed
+    /// `small | standard | large` set. Absent or empty means the route serves no tier-bound
+    /// delegated node; a node without delegation is unaffected. Duplicates are refused.
+    #[serde(default)]
+    tiers: Vec<graphhelm_protocols::DelegationTier>,
 }
 
 const fn default_timeout_seconds() -> u64 {
@@ -225,6 +230,13 @@ impl ModelRoute {
     #[must_use]
     pub fn profiles(&self) -> &[WorkProfile] {
         &self.profiles
+    }
+
+    /// The delegation tiers this route declares it serves (ADR-041). Empty for a route that
+    /// declares none.
+    #[must_use]
+    pub fn tiers(&self) -> &[graphhelm_protocols::DelegationTier] {
+        &self.tiers
     }
 
     #[must_use]
@@ -469,6 +481,14 @@ fn parse_error_category(error: &serde_json::Error) -> &'static str {
 
 fn validate_route(route: &ModelRoute) -> Result<(), ManifestError> {
     validate_route_id(&route.id)?;
+
+    let mut tiers = BTreeSet::new();
+    if !route.tiers.iter().all(|tier| tiers.insert(*tier)) {
+        return Err(ManifestError::StructuralViolation {
+            route_id: route.id.clone(),
+            rule: "tiers must not repeat a tier",
+        });
+    }
 
     if route.output_token_parameter.is_some()
         && (route.transport != Transport::DirectApi || route.provider != "openai")

@@ -99,6 +99,7 @@ mod tests {
             gate_check: None,
             judge: None,
             context: None,
+            delegation_tier: None,
         }
     }
 

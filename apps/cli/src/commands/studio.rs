@@ -22,6 +22,9 @@ use serde_json::json;
 
 use crate::args::{StudioStartArgs, UpdateArgs};
 use crate::commands::gateway::keyring::SEALING_KEY_ENVIRONMENT;
+
+/// The broker passphrase `serve` reads for model routes (`serve/ports.rs::gateway_passphrase`).
+const GATEWAY_KEY_ENVIRONMENT: &str = "GRAPHHELM_GATEWAY_KEY";
 use crate::output::Outcome;
 
 const COMMAND: &str = "studio";
@@ -330,6 +333,12 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
             "[studio] model routes from {} (text route {route})",
             manifest.display()
         );
+        // The broker is sealed with `serve.key` (`gateway setup` stores credentials with it), and
+        // `serve` reads that passphrase from `GRAPHHELM_GATEWAY_KEY`: without it every route call,
+        // Jev's suggested replies included, fails on the missing key.
+        if let Ok(key) = std::fs::read_to_string(state.join(super::init::KEY_FILE)) {
+            launch.env(GATEWAY_KEY_ENVIRONMENT, key.trim());
+        }
         launch
             .arg("-Manifest")
             .arg(&manifest)

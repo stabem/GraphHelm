@@ -431,6 +431,7 @@ fn port_executor(gates: Arc<dyn graphhelm_runtime::ports::GateRegistryPort>) -> 
         tools: Arc::new(NoPort),
         route_id: "route-test".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: empty_lease(),
         actor: "agent-gate".to_owned(),
         gates,

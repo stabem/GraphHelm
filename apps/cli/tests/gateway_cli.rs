@@ -815,6 +815,62 @@ fn route_set_writes_tiers_and_a_replace_without_them_keeps_them() {
     assert_eq!(std::fs::read(&manifest).unwrap(), before);
 }
 
+/// The `contextWindowTokens` of route `id` as the FILE holds it, or `None` when absent.
+fn file_window(manifest: &Path, id: &str) -> Option<serde_json::Value> {
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();
+    document["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|route| route["id"] == id)
+        .unwrap()
+        .get("contextWindowTokens")
+        .cloned()
+}
+
+// #298 (ADR-042): `--context-window-tokens` declares the window that bounds session reuse, with
+// the tiers rule: a replace that says nothing keeps it (dropping it would silently turn reuse off
+// on the route), `0` clears it, and the listing reports it.
+#[test]
+fn route_set_writes_a_context_window_and_a_replace_without_one_keeps_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("manifest.json");
+    let mut arguments = deepseek_arguments("deepseek_official");
+    arguments.extend(["--context-window-tokens", "128000"].map(str::to_owned));
+    let output = route_set(&manifest, &as_str_arguments(&arguments));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        json(&output.stdout)["data"]["route"]["contextWindowTokens"],
+        128_000
+    );
+
+    let mut replace = deepseek_arguments("deepseek_official");
+    replace[7] = "deepseek-v5".to_owned();
+    replace.push("--replace".to_owned());
+    let output = route_set(&manifest, &as_str_arguments(&replace));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(
+        file_window(&manifest, "deepseek_official"),
+        Some(serde_json::json!(128_000)),
+        "a replace that names no window must keep the route's window"
+    );
+    let listed = command()
+        .args(["gateway", "routes", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert_eq!(
+        json(&listed.stdout)["data"]["routes"][0]["contextWindowTokens"],
+        128_000
+    );
+
+    replace.extend(["--context-window-tokens", "0"].map(str::to_owned));
+    let output = route_set(&manifest, &as_str_arguments(&replace));
+    assert!(output.status.success(), "{}", combined_output(&output));
+    assert_eq!(file_window(&manifest, "deepseek_official"), None);
+}
+
 #[test]
 fn route_set_refuses_an_oversize_manifest_before_parsing_it() {
     let directory = tempfile::tempdir().unwrap();

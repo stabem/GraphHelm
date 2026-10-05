@@ -118,6 +118,11 @@ pub enum SubagentBasis {
     BoundUnavailable,
     /// Fresh: a candidate matched the key, but its measured tokens reached the receiving budget.
     BoundExceeded,
+    /// Fresh: a candidate matched the key and was under a measured bound, but the model executor
+    /// does not hold its session (ADR-042): the drive that held it ended, parked or was
+    /// cancelled, the process restarted, or the executor or route cannot hold sessions at all.
+    /// A session is never rebuilt from sealed evidence.
+    SessionUnavailable,
 }
 
 /// ADR-041: which subagent instance took one delegated node, appended right after the node's

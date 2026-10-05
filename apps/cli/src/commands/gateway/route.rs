@@ -73,6 +73,10 @@ pub(in crate::commands) struct RouteWrite {
     /// rewriting a route's URL or model never silently unbinds tier-bound work from it. `Some`
     /// (including an empty list, which clears them) is written exactly.
     pub tiers: Option<Vec<String>>,
+    /// ADR-042 point 6: the route's declared input context window. Same keep-on-silence rule as
+    /// `tiers`: `None` is "not said" (a replace keeps the replaced entry's window), `Some(0)`
+    /// clears it, any other value is written exactly.
+    pub context_window_tokens: Option<u64>,
     pub enabled: bool,
     pub replace: bool,
 }
@@ -133,6 +137,11 @@ fn execute(path: &Path, write: &RouteWrite) -> Result<Value, Failure> {
                 .find(|route| route.id() == write.id)
                 .map(|route| route.tiers().to_vec())
                 .unwrap_or_default(),
+            "contextWindowTokens": manifest
+                .routes()
+                .iter()
+                .find(|route| route.id() == write.id)
+                .and_then(|route| route.context_window_tokens()),
         },
         "routes": listing(&manifest),
     }))
@@ -203,6 +212,9 @@ fn merged(
     if let Some(tiers) = &write.tiers {
         entry["tiers"] = json!(tiers);
     }
+    if let Some(window) = write.context_window_tokens.filter(|window| *window > 0) {
+        entry["contextWindowTokens"] = json!(window);
+    }
     let position = routes
         .iter()
         .position(|existing| existing.get("id").and_then(Value::as_str) == Some(write.id.as_str()));
@@ -227,6 +239,12 @@ fn merged(
                 && let Some(tiers) = previous.get("tiers")
             {
                 entry["tiers"] = tiers.clone();
+            }
+            // ADR-042: the declared context window follows the same rule as tiers.
+            if write.context_window_tokens.is_none()
+                && let Some(window) = previous.get("contextWindowTokens")
+            {
+                entry["contextWindowTokens"] = window.clone();
             }
             routes[index] = entry;
             ManifestState::Replaced
@@ -290,6 +308,7 @@ fn listing(manifest: &RouteManifest) -> Value {
                     "model": route.model(),
                     "profiles": route.profiles(),
                     "tiers": route.tiers(),
+                    "contextWindowTokens": route.context_window_tokens(),
                     "enabled": route.enabled(),
                 })
             })

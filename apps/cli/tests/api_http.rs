@@ -9458,7 +9458,8 @@ fn route_replace_preserves_the_supplied_reference_and_profiles() {
 }
 
 // #298 (ADR-041): the HTTP door takes `tiers` like the CLI does, and a replace whose body omits
-// them keeps the route's tiers rather than dropping them; a non-array `tiers` is refused.
+// them keeps the route's tiers rather than dropping them; a non-array `tiers` is refused. ADR-042
+// gives `contextWindowTokens` the same keep-on-silence rule.
 #[test]
 fn route_replace_without_tiers_keeps_the_routes_tiers() {
     let directory = tempfile::tempdir().unwrap();
@@ -9476,6 +9477,7 @@ fn route_replace_without_tiers_keeps_the_routes_tiers() {
     };
     let mut first = body("deepseek-v4-pro", false);
     first["tiers"] = serde_json::json!(["small"]);
+    first["contextWindowTokens"] = serde_json::json!(64_000);
     let (status, written) = put_json(&format!("{base}/v1/gateway/routes"), &token, &first);
     assert_eq!(status, 200, "{written}");
     assert_eq!(
@@ -9496,6 +9498,7 @@ fn route_replace_without_tiers_keeps_the_routes_tiers() {
         .unwrap();
     assert_eq!(listed["model"], "deepseek-v5");
     assert_eq!(listed["tiers"], serde_json::json!(["small"]));
+    assert_eq!(listed["contextWindowTokens"], 64_000);
     let file: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
     let stored = file["routes"]
         .as_array()
@@ -9507,6 +9510,11 @@ fn route_replace_without_tiers_keeps_the_routes_tiers() {
 
     let mut malformed = body("deepseek-v5", true);
     malformed["tiers"] = serde_json::json!("small");
+    let (status, refused) = put_json(&format!("{base}/v1/gateway/routes"), &token, &malformed);
+    assert_eq!(status, 400, "{refused}");
+
+    let mut malformed = body("deepseek-v5", true);
+    malformed["contextWindowTokens"] = serde_json::json!("large");
     let (status, refused) = put_json(&format!("{base}/v1/gateway/routes"), &token, &malformed);
     assert_eq!(status, 400, "{refused}");
 }

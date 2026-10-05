@@ -33,6 +33,23 @@ pub struct ModelCall {
     /// The complete flattened prompt remains authoritative for legacy and native callers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stable_prefix: Option<String>,
+    /// ADR-042: the prior turns of a held subagent session, oldest first, sent BEFORE `prompt`
+    /// as an ordered message list (user prompt, assistant reply, ...). Empty for every call that
+    /// is not a reused session, which keeps the wire byte-identical to the single-prompt form.
+    /// An adapter that cannot replay a list refuses a non-empty history as
+    /// `UnsupportedCapability`; it never flattens or drops it. Credentials never enter it: a
+    /// turn is only text a prior node was sent and returned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<ModelTurn>,
+}
+
+/// One prior exchange of a held subagent session (ADR-042): the prompt the model was sent and
+/// the reply text it returned.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTurn {
+    pub prompt: String,
+    pub reply: String,
 }
 
 /// A transport-successful reply: text, usage and any reported completion state.

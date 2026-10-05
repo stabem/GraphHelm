@@ -120,13 +120,32 @@ impl<'a> ByokAdapter<'a> {
             ]),
             None => AnthropicMessageContent::Text(&call.prompt),
         };
+        // ADR-042: a held session's prior turns are replayed first, in order, as alternating
+        // user/assistant messages; the new briefing is the final user message.
+        let mut messages: Vec<AnthropicMessage<'_>> = call
+            .history
+            .iter()
+            .flat_map(|turn| {
+                [
+                    AnthropicMessage {
+                        role: "user",
+                        content: AnthropicMessageContent::Text(&turn.prompt),
+                    },
+                    AnthropicMessage {
+                        role: "assistant",
+                        content: AnthropicMessageContent::Text(&turn.reply),
+                    },
+                ]
+            })
+            .collect();
+        messages.push(AnthropicMessage {
+            role: "user",
+            content,
+        });
         let payload = AnthropicRequestBody {
             model,
             max_tokens: self.explicit_output_cap(call).unwrap_or(call.max_tokens),
-            messages: vec![AnthropicMessage {
-                role: "user",
-                content,
-            }],
+            messages,
         };
         let body = serde_json::to_vec(&payload)
             .expect("AnthropicRequestBody is plain data and always serializes");
@@ -160,7 +179,7 @@ impl<'a> ByokAdapter<'a> {
         if cap.is_some() && self.route.output_token_parameter().is_none() {
             return Err(GatewayError::UnsupportedCapability);
         }
-        let messages = match self.cache_parts(call)? {
+        let current = match self.cache_parts(call)? {
             Some((prefix, variable)) => vec![
                 OpenAiRequestMessage {
                     role: "user",
@@ -176,6 +195,24 @@ impl<'a> ByokAdapter<'a> {
                 content: &call.prompt,
             }],
         };
+        // ADR-042: replayed session turns precede the new briefing, in order.
+        let messages: Vec<OpenAiRequestMessage<'_>> = call
+            .history
+            .iter()
+            .flat_map(|turn| {
+                [
+                    OpenAiRequestMessage {
+                        role: "user",
+                        content: &turn.prompt,
+                    },
+                    OpenAiRequestMessage {
+                        role: "assistant",
+                        content: &turn.reply,
+                    },
+                ]
+            })
+            .chain(current)
+            .collect();
         let payload = OpenAiRequestBody {
             model,
             max_tokens: cap.filter(|_| {

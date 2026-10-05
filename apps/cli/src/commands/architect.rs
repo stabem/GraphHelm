@@ -378,6 +378,7 @@ impl GatewayDraftModel {
 impl DraftModel for GatewayDraftModel {
     fn draft(&self, prompt: &str) -> Result<DraftReply, ArchitectRefusal> {
         let call = ModelCall {
+            history: Vec::new(),
             stable_prefix: None,
             prompt: prompt.to_owned(),
             max_tokens: MAX_TOKENS,

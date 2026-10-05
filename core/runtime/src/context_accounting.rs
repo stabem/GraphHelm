@@ -596,6 +596,18 @@ impl ExecutionAccountingReceipt {
         self.fields.iter().find(|(n, _)| n == name).map(|(_, f)| f)
     }
 
+    /// ADR-042 point 7: provider-reported input plus output tokens, only when BOTH were measured
+    /// by the model boundary. Either one unavailable is `None`, never a partial sum.
+    #[must_use]
+    pub fn provider_reported_total(&self) -> Option<u64> {
+        let measured = |name| {
+            self.field(name)
+                .filter(|field| field.is_measured())
+                .and_then(CostField::observed)
+        };
+        measured(PROVIDER_REPORTED_INPUT_TOKENS_FIELD)?.checked_add(measured(OUTPUT_TOKENS_FIELD)?)
+    }
+
     fn validate_wire_contract(&self) -> Result<(), AccountingReceiptError> {
         if self.execution_binding.scope.execution_id().is_none()
             || self.fields.len() != ACCOUNTING_FIELD_NAMES.len()

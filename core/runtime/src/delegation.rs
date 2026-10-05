@@ -86,25 +86,30 @@ pub const REUSE_ALLOWLIST: [(SubagentKind, SubagentKind); 3] = [
     (SubagentKind::Implementer, SubagentKind::Implementer),
 ];
 
-/// ADR-041 point 2: the two measurements the reuse bound compares. Each is `None` when it was not
-/// measured; either `None` refuses reuse, because an estimate is never substituted (D-043).
+/// ADR-041 point 2 as amended by ADR-042: what the reuse decision compares, and whether the
+/// candidate's session is still held. Each measurement is `None` when it was not measured; either
+/// `None` refuses reuse, because an estimate is never substituted (D-043).
 ///
-/// **No dispatch path can fill it today.** No capsule compiled at dispatch carries a
-/// `tokenBudget.allocated` (the runtime's context budget is in bytes, and bytes/4 is an
-/// estimate), and the provider-reported counts live in sealed accounting receipts the dispatch
-/// path does not read back. Both drivers therefore pass [`ReuseBound::unmeasured`], and every
-/// candidate that passes the key is recorded fresh with `bound_unavailable`.
+/// The async driver fills it at dispatch ([`crate::driver`]): `allocated` from the serving
+/// route's declared `contextWindowTokens` less its `maxOutputTokens`, `used` from the sealed
+/// accounting receipts read back per subagent, `held` from the model executor's session store.
+/// The synchronous CLI driver holds no session and reports no counts, so it passes
+/// [`ReuseBound::unmeasured`] and a candidate that passes the key is recorded `bound_unavailable`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReuseBound {
-    /// The receiving capsule's `tokenBudget.allocated`.
+    /// ADR-042 point 6: the tokens the session may occupy on the serving route.
     pub allocated: Option<u64>,
-    /// Per subagent id: the sum of `provider_reported_input_tokens` and `output_tokens` over the
-    /// accounting receipts it produced in this execution, or `None` when any was `unavailable`.
+    /// ADR-042 point 7, per subagent id: the LAST accounted attempt's provider-reported input plus
+    /// output tokens (a reused call's input already contains the replayed history, so a sum would
+    /// count it twice), or `None` when any receipt of that subagent has either counter
+    /// `unavailable`.
     pub used: BTreeMap<String, Option<u64>>,
+    /// ADR-042 point 2: the subagent ids whose session the model executor holds right now.
+    pub held: std::collections::BTreeSet<String>,
 }
 
 impl ReuseBound {
-    /// Nothing measured: reuse is refused for every candidate.
+    /// Nothing measured and no session held: reuse is refused for every candidate.
     #[must_use]
     pub fn unmeasured() -> Self {
         Self::default()
@@ -203,7 +208,15 @@ pub fn subagent_event(
         .get(candidate.record.subagent_id.as_str())
         .copied()
         .flatten();
+    let held = bound.held.contains(candidate.record.subagent_id.as_str());
     match (used, bound.allocated) {
+        // ADR-042 point 2: under the bound but the executor no longer holds the session. Reuse
+        // never reconstructs one from sealed evidence.
+        (Some(used), Some(allocated)) if used < allocated && !held => Ok(fresh(
+            SubagentBasis::SessionUnavailable,
+            Some(used),
+            Some(allocated),
+        )),
         (Some(used), Some(allocated)) if used < allocated => Ok(SubagentReused {
             node_id: chosen.node_id.clone(),
             subagent_id: candidate.record.subagent_id.clone(),
@@ -285,6 +298,7 @@ mod tests {
         ReuseBound {
             allocated: Some(allocated),
             used: BTreeMap::from([("sa-1".to_owned(), used)]),
+            held: std::collections::BTreeSet::from(["sa-1".to_owned()]),
         }
     }
 
@@ -333,6 +347,19 @@ mod tests {
             assert_eq!(record.basis, SubagentBasis::BoundUnavailable);
             assert_eq!(record.subagent_id.as_str(), FRESH);
         }
+    }
+
+    // ADR-042 point 2: a measured bound with room left does not reuse a session the executor no
+    // longer holds (a drive that parked, a restart, an executor that holds none).
+    #[test]
+    fn a_session_the_executor_does_not_hold_is_never_reused() {
+        let projection = after("prior", SubagentKind::Explorer, NodeState::Succeeded, 3);
+        let mut bound = measured(Some(10), 1000);
+        bound.held.clear();
+        let record = decide(SubagentKind::Implementer, &projection, &bound);
+        assert_eq!(record.basis, SubagentBasis::SessionUnavailable);
+        assert_eq!(record.subagent_id.as_str(), FRESH);
+        assert_eq!(record.from_node_id, None);
     }
 
     // Every other key member: graph version, the kind-pair allowlist, and a finished prior node.

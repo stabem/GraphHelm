@@ -594,6 +594,7 @@ fn build_work(
         judge,
         context: context_summary,
         delegation_tier: None,
+        subagent: None,
     })
 }
 
@@ -915,6 +916,95 @@ pub async fn drive_to_quiescence_async(
     spec: GraphSpec,
     executor: Arc<dyn AsyncNodeExecutor>,
     actor: PersistedActor,
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
+    cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    context: Option<crate::context::ContextPorts>,
+) -> Result<ExecutionProjection, DriverError> {
+    drive_to_quiescence_async_with_receipts(
+        store_open,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        spec,
+        executor,
+        actor,
+        release,
+        release_actor,
+        cancel,
+        gates,
+        context,
+        None,
+    )
+    .await
+}
+
+/// [`drive_to_quiescence_async`] with an Evidence opener for the ADR-042 bound: at dispatch of a
+/// delegated node the sealed accounting receipts of each earlier subagent are opened and their
+/// provider counts read back. With `receipts: None` nothing can be read back, so every candidate
+/// that passes the reuse key is recorded `bound_unavailable`.
+///
+/// Every held subagent session is dropped when this returns, whatever it returns (ADR-042
+/// point 2: a session lives for one drive).
+///
+/// # Errors
+/// As [`drive_to_quiescence_async`].
+#[allow(clippy::too_many_arguments)] // the 04f driver surface plus the async seams
+pub async fn drive_to_quiescence_async_with_receipts(
+    store_open: StoreOpen,
+    sealer: Arc<dyn EvidenceSealer>,
+    ids: Arc<dyn IdGenerator>,
+    scope: RepositoryScope,
+    stream: OpaqueId,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    executor: Arc<dyn AsyncNodeExecutor>,
+    actor: PersistedActor,
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
+    cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    context: Option<crate::context::ContextPorts>,
+    receipts: Option<Arc<dyn graphhelm_events::EvidenceOpener>>,
+) -> Result<ExecutionProjection, DriverError> {
+    let result = drive_inner(
+        store_open,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        spec,
+        executor.clone(),
+        actor,
+        release,
+        release_actor,
+        cancel,
+        gates,
+        context,
+        receipts,
+    )
+    .await;
+    if let Some(sessions) = executor.sessions() {
+        sessions.drop_all();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)] // the 04f driver surface plus the async seams
+async fn drive_inner(
+    store_open: StoreOpen,
+    sealer: Arc<dyn EvidenceSealer>,
+    ids: Arc<dyn IdGenerator>,
+    scope: RepositoryScope,
+    stream: OpaqueId,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    executor: Arc<dyn AsyncNodeExecutor>,
+    actor: PersistedActor,
     // #123: the nodes a `resume` held, released here at the first pass where their edges allow.
     // `release_actor` is the OWNER's, deliberately separate from `actor` — releasing work the
     // owner paused is the owner's act, while every ordinary hop below stays machinery.
@@ -930,6 +1020,7 @@ pub async fn drive_to_quiescence_async(
     // reads back. `None` is the pre-#1065 drive: no capsule, every context receipt field
     // `unavailable`, the prompt's context field empty.
     context: Option<crate::context::ContextPorts>,
+    receipts: Option<Arc<dyn graphhelm_events::EvidenceOpener>>,
 ) -> Result<ExecutionProjection, DriverError> {
     // Preflight, before any node effect: a retry policy that contradicts itself, and (#1065) a
     // declared `context.budgetBytes` that cannot be read. Both are graph typos, both refuse the
@@ -1222,23 +1313,62 @@ pub async fn drive_to_quiescence_async(
                     continue;
                 }
             };
-            // ADR-041: which subagent takes the node, decided from the same dispatch-point
-            // projection. The bound is unmeasured on this path (see `ReuseBound`), so a candidate
-            // that passes the key is recorded fresh with `bound_unavailable`, never reused on a
-            // guess. A stream with no recorded graph version never dispatches a delegated node.
+            // ADR-041/042: which subagent takes the node, decided from the same dispatch-point
+            // projection. The bound is read back NOW (ADR-042 points 6-7): the serving route's
+            // declared window from the executor's session store, the candidate's last
+            // provider-reported counts from its sealed accounting receipts, and whether the
+            // executor still holds its session. Anything unmeasured refuses reuse; nothing is
+            // estimated. A stream with no recorded graph version never dispatches a delegated node.
             let subagent = match &delegation {
-                Some(chosen) => match crate::delegation::subagent_event(
-                    chosen,
-                    &at_dispatch,
-                    &crate::delegation::ReuseBound::unmeasured(),
-                    mint_key(ids.as_ref(), "subagent")?,
-                ) {
-                    Ok(record) => Some(record),
-                    Err(_) => {
-                        refused.insert(node.clone());
-                        continue;
+                Some(chosen) => {
+                    let mut bound = crate::session::measured_bound(
+                        &store_open,
+                        receipts.as_ref(),
+                        &scope,
+                        &stream,
+                        &at_dispatch,
+                        executor.sessions(),
+                    )
+                    .await?;
+                    let fresh = mint_key(ids.as_ref(), "subagent")?;
+                    let mut decided = crate::delegation::subagent_event(
+                        chosen,
+                        &at_dispatch,
+                        &bound,
+                        fresh.clone(),
+                    );
+                    // The history is snapshotted here, before anything is appended. A session
+                    // dropped between the bound read and this snapshot is decided again as not
+                    // held, so the journal never says `reused` for a call sent without history.
+                    let mut history = Vec::new();
+                    if let Ok(record) = &decided
+                        && record.basis == graphhelm_protocols::SubagentBasis::Reused
+                    {
+                        let id = record.subagent_id.as_str().to_owned();
+                        match executor
+                            .sessions()
+                            .and_then(|sessions| sessions.history(&id))
+                        {
+                            Some(turns) => history = turns,
+                            None => {
+                                bound.held.remove(&id);
+                                decided = crate::delegation::subagent_event(
+                                    chosen,
+                                    &at_dispatch,
+                                    &bound,
+                                    fresh,
+                                );
+                            }
+                        }
                     }
-                },
+                    match decided {
+                        Ok(record) => Some((record, history)),
+                        Err(_) => {
+                            refused.insert(node.clone());
+                            continue;
+                        }
+                    }
+                }
                 None => None,
             };
             let current = at_dispatch
@@ -1290,7 +1420,14 @@ pub async fn drive_to_quiescence_async(
                 .await?;
             }
             // ADR-041: right after `delegation_chosen`, every delegated node names its subagent.
-            if let Some(record) = subagent {
+            let subagent_work =
+                subagent
+                    .as_ref()
+                    .map(|(record, history)| crate::executor::SubagentWork {
+                        subagent_id: record.subagent_id.as_str().to_owned(),
+                        history: history.clone(),
+                    });
+            if let Some((record, _)) = subagent {
                 append_plain(
                     &store_open,
                     &ids,
@@ -1313,6 +1450,7 @@ pub async fn drive_to_quiescence_async(
             // only on a route that declares it. `None` for a node without delegation.
             let mut work = work;
             work.delegation_tier = delegation_tier;
+            work.subagent = subagent_work;
             let executor = executor.clone();
             let node_name = node.clone();
             in_flight_nodes.insert(node.clone());
@@ -1355,6 +1493,14 @@ pub async fn drive_to_quiescence_async(
                             } else {
                                 work
                             };
+                            // ADR-042 point 2: a node that parks drops every held session.
+                            if matches!(
+                                work.outcome,
+                                NodeOutcome::NeedsInput | NodeOutcome::NeedsCapacity
+                            ) && let Some(sessions) = executor.sessions()
+                            {
+                                sessions.drop_all();
+                            }
                             write_outcome(
                                 &store_open, &sealer, &ids, &scope, &stream,
                                 &execution_id, &actor, node, work,

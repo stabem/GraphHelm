@@ -113,6 +113,7 @@ fn executor(model: Result<ModelReply, GatewayError>, disposition: ToolDispositio
         tools: Arc::new(FakeToolPort { disposition }),
         route_id: "claude_subscription".to_owned(),
         route_tiers: Vec::new(),
+        sessions: Default::default(),
         lease: lease(),
         actor: "agent-runtime".to_owned(),
         gates: Arc::new(NoGates),
@@ -154,6 +155,7 @@ fn cognitive_work() -> NodeWork {
         judge: None,
         context: None,
         delegation_tier: None,
+        subagent: None,
     }
 }
 
@@ -174,6 +176,7 @@ fn tool_work() -> NodeWork {
         judge: None,
         context: None,
         delegation_tier: None,
+        subagent: None,
     }
 }
 

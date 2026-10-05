@@ -494,6 +494,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     replace,
                     tiers,
                     no_tiers,
+                    context_window_tokens,
                 } => gateway::route::set(
                     &manifest,
                     &gateway::route::RouteWrite {
@@ -512,6 +513,8 @@ pub fn run(command: TopLevel) -> Outcome {
                         } else {
                             Some(tiers)
                         },
+                        // ADR-042: unsaid keeps a replaced route's window; `0` clears it.
+                        context_window_tokens,
                         // The flag is `--disabled` and the field is `enabled`, so the DEFAULT is
                         // the safe one to type: a route written without saying anything about its
                         // state is on, which is what an operator adding a provider means.

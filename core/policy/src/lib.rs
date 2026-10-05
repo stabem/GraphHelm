@@ -2,6 +2,7 @@
 
 pub mod adoption;
 mod code_contract;
+pub mod delegation;
 mod evaluator;
 pub mod keel;
 pub mod keel_prove;

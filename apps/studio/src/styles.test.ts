@@ -183,4 +183,12 @@ describe("the stylesheet and the components agree", () => {
       "every rule for these sits under a state, so in the ordinary case nothing styles them",
     ).toEqual([]);
   });
+
+  it("keeps the top-bar title on one line with an ellipsis", () => {
+    const rule = (CSS.match(/\.topbar-mission \.run-name\s*\{([^}]*)\}/g) ?? []).join(" ");
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule).toMatch(/overflow:\s*hidden/);
+    expect(CSS.match(/\.topbar-mission\s*\{[^}]*\}/)?.[0]).toMatch(/flex-wrap:\s*nowrap/);
+  });
 });

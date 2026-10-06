@@ -44,7 +44,7 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
     if (step === null) continue;
     items.push({ kind: step, key: `${kind}:${node}`, nodeId: node, name: input.nodeNames[node] ?? node, reason: kind });
   }
-  const state: BeaconState = input.status === null || input.stale
+  const state: BeaconState = input.status === null || input.stale || input.nativeRequests === null
     ? { kind: "unknown", reason: RUNTIME_SILENT }
     : items.length > 0 ? { kind: "lit", count: items.length } : { kind: "dark" };
   return { state, items };

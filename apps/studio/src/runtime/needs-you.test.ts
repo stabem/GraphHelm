@@ -60,6 +60,10 @@ describe("needsYou", () => {
     expect(needsYou(base({ status: null })).state.kind).toBe("unknown");
   });
 
+  it("is unknown, never dark, when the native bridge is not answering", () => {
+    expect(needsYou(base({ nativeRequests: null })).state.kind).toBe("unknown");
+  });
+
   it("lists native requests the ledger cannot confirm and leaves confirmed ones out", () => {
     const request = (state: NativeChatRequest["state"]): NativeChatRequest => ({ requestId: `r-${state}`, nodeId: "start", threadId: "t-1", title: "loja kit 2", sourceDirectory: "C:/p", state });
     const items = needsYou(base({ nativeRequests: [request("unobserved"), request("blocked"), request("completed"), request("requested")] })).items;

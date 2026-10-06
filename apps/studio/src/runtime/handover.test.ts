@@ -53,6 +53,17 @@ describe("buildHandover", () => {
   it("lists the questions opened while away", () => {
     expect(handover.needsYou).toEqual([{ text: "kit 3 asked: Merge now?", sequences: [13] }]);
   });
+  it("also lists every other open item the beacon counts", () => {
+    const h = buildHandover({
+      events, bots: [], model, claudeTasks: null, fromSeq: 10, toSeq: 40,
+      openItems: [
+        { kind: "native_request", key: "native:r", requestId: "r", threadId: "t", nodeId: "n", title: "loja kit 2", state: "unobserved", detail: null },
+        { kind: "waiting_step", key: "w", nodeId: "pay", name: "Payment", reason: "waiting_input_node" },
+        { kind: "draft", key: "draft:d", draftId: "d" },
+      ],
+    });
+    expect(h.needsYou.length).toBe(3);
+  });
   it("lists bots with no record for 30 minutes or more inside the gap", () => {
     expect(handover.quiet.map((line) => line.text)).toEqual(["kit 2: no new record for 119 min", "kit 3: no new record for 114 min"]);
   });

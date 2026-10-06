@@ -55,11 +55,20 @@ export function buildHandover(input: HandoverInput): Handover {
     }
   }
 
-  // Questions only: steps and drafts carry no opening sequence, so they cannot be placed in the gap.
-  const needsYou: HandoverLine[] = input.openItems.flatMap((item) =>
-    item.kind === "question" && item.sequence > input.fromSeq && item.sequence <= input.toSeq
-      ? [{ text: `${botName(item.asker)} asked: ${firstLine(item.text)}`, sequences: [item.sequence] }]
-      : []);
+  // Everything the beacon counts. Questions are placed in the gap by sequence; native requests,
+  // steps and drafts carry none, so they are listed as open now (no citation) - the card and the
+  // beacon must never disagree.
+  const needsYou: HandoverLine[] = input.openItems.flatMap((item): HandoverLine[] => {
+    switch (item.kind) {
+      case "question":
+        return item.sequence > input.fromSeq && item.sequence <= input.toSeq
+          ? [{ text: `${botName(item.asker)} asked: ${firstLine(item.text)}`, sequences: [item.sequence] }] : [];
+      case "native_request": return [{ text: `${item.title}: request ${item.state === "blocked" ? "blocked" : "not confirmed"}`, sequences: [] }];
+      case "waiting_step": return [{ text: `${item.name} is waiting for you`, sequences: [] }];
+      case "blocked_step": return [{ text: `${item.name} is blocked`, sequences: [] }];
+      case "draft": return [{ text: "A draft is waiting to be sent", sequences: [] }];
+    }
+  });
 
   const quiet: HandoverLine[] = [];
   if (toTime !== null) {

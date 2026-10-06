@@ -27,7 +27,7 @@ import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { isClaudeTaskSignal } from "../runtime/team-tasks";
 import { workConversation, type WorkMessage } from "../runtime/work-conversation";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
-import { address_of, readable_content } from "../graph/ledger";
+import { address_of, readable_content, recommendations_of, type EnvelopeRecord } from "../graph/ledger";
 import { keelChain } from "../runtime/keel-chain";
 import {
   LIFECYCLE_STATES,
@@ -870,7 +870,7 @@ export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,
   openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
-): Record<number, { to: string | null; replyTo: string | null; text: string }> {
+): EnvelopeRecord {
   // TAGGED BY EXECUTION, not just keyed by sequence: sequences restart in every run, so run B's
   // signal at sequence 5 would wear run A's plaintext envelope from sequence 5 for as long as
   // B's evidence reads take - someone else's words, recipient and replyTo rendered under the
@@ -878,7 +878,7 @@ export function useEnvelopes(
   // "nothing opened yet", which is true.
   const [envelopes, setEnvelopes] = useState<{
     forId: string | undefined;
-    map: Record<number, { to: string | null; replyTo: string | null; text: string }>;
+    map: EnvelopeRecord;
   }>({ forId: undefined, map: {} });
   // The shared OPENED_EVIDENCE cache is what lets the live tail exist: without it, every pass
   // re-fetched ~20 envelopes, and a pass slower than the poll interval was cancelled before it
@@ -894,15 +894,18 @@ export function useEnvelopes(
         try {
           const content = await openSealed(executionId, carrier.evidenceRefs[0], openEvidence);
           if (!live) return;
+          const recommendations = recommendations_of(content.content, content.mediaType);
           const opened = {
             ...address_of(content.content, content.mediaType),
             // The words too: the attention block quotes the pending question out of the same
             // fetch the addressing already made.
             text: readable_content(content.content, content.mediaType),
+            ...(recommendations.length > 0 ? { recommendations } : {}),
           };
           setEnvelopes((previous) => {
             const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
-            if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text) return previous;
+            if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
+              && (before.recommendations ?? []).join(" ") === (opened.recommendations ?? []).join(" ")) return previous;
             return {
               forId: executionId,
               map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened },
@@ -921,7 +924,7 @@ export function useEnvelopes(
   return envelopes.forId === executionId ? envelopes.map : NO_ENVELOPES;
 }
 
-const NO_ENVELOPES: Record<number, { to: string | null; replyTo: string | null; text: string }> = {};
+const NO_ENVELOPES: EnvelopeRecord = {};
 
 /** Actors the thread has actually heard from, for the roster's plain half. System actors stay
  * out - the room lists who CONVERSES, and `system-runtime` narrating lifecycle is not that. */

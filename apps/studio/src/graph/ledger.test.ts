@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeEvent } from "../runtime/types";
-import { address_of, openQuestions, readable_content } from "./ledger";
+import { address_of, openQuestions, readable_content, recommendations_of } from "./ledger";
 
 function signal(
   sequence: number,
@@ -113,5 +113,22 @@ describe("reading a sealed envelope", () => {
     // Claims JSON, is not: the bytes still reach the reader, and no address is guessed.
     expect(readable_content("{broken", "application/json")).toBe("{broken");
     expect(address_of("{broken", "application/json")).toEqual({ to: null, replyTo: null });
+  });
+});
+
+describe("recommendations_of", () => {
+  it("reads the graph-signal recommendations as choice labels", () => {
+    const sealed = JSON.stringify({ to: "studio-operator", description: "Merge now?", recommendations: ["Wait", "Merge", " Merge ", ""] });
+    expect(recommendations_of(sealed, "application/json")).toEqual(["Wait", "Merge"]);
+  });
+  it("caps the list at four and drops labels longer than 120 characters", () => {
+    const sealed = JSON.stringify({ recommendations: ["a", "b", "x".repeat(121), "c", "d", "e"] });
+    expect(recommendations_of(sealed, "application/json")).toEqual(["a", "b", "c", "d"]);
+  });
+  it("yields nothing for plain text, broken JSON or a wrong type", () => {
+    expect(recommendations_of("Merge?", "text/plain")).toEqual([]);
+    expect(recommendations_of("{broken", "application/json")).toEqual([]);
+    expect(recommendations_of(JSON.stringify({ recommendations: "Merge" }), "application/json")).toEqual([]);
+    expect(recommendations_of(JSON.stringify({ recommendations: [1, null] }), "application/json")).toEqual([]);
   });
 });

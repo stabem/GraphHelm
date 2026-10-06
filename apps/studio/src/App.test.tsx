@@ -2646,9 +2646,10 @@ describe("round-2: the ledger settles debts honestly", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
   });
 
-  /** A slow suggestion read can finish after the run advances. Showing its old advice beside
-   * a fresh needs-you verdict would make the owner answer a question the run no longer asks. */
-  it("does not show recommendations prepared for an older head", async () => {
+  /** #327: on a busy run the head moves every few seconds while Jev takes ~30s. Advice written for
+   * an older head still answers the SAME pending question, so it is shown (labelled in the chat
+   * column), and the head moving must not restart the request. */
+  it("shows recommendations prepared for an older head while the question is unchanged, without re-asking", async () => {
     const client = stubClient({
       listRoutes: vi.fn(async () => ({ configured: true, routes: [{
         id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
@@ -2663,8 +2664,34 @@ describe("round-2: the ledger settles debts honestly", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    expect(await screen.findByText(/run changed while its replies were prepared/i)).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Recommended replies" })).not.toBeInTheDocument();
+    const choices = await screen.findByRole("group", { name: "Recommended replies" });
+    expect(within(choices).getByRole("button", { name: /Old answer one/ })).toBeInTheDocument();
+    expect(await screen.findByText("Based on the run as of a moment ago")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(client.getReplySuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  /** #327: an unavailable answer is a visible state with a Retry button, never "preparing"
+   * forever, and nothing asks again until the owner presses Retry. */
+  it("shows why Jev could not prepare a suggestion and retries only when asked", async () => {
+    const client = stubClient({
+      listRoutes: vi.fn(async () => ({ configured: true, routes: [{
+        id: "judge", provider: "typesafe", transport: "direct_api", billingMode: "per_token",
+        model: "jev-latest", profiles: [], enabled: true,
+      }] })),
+      getReplySuggestions: vi.fn(async () => ({
+        executionId: "demo-deploy", headSequence: 13, state: "unavailable", reason: "model or Jev could not produce valid suggestions", suggestions: [],
+      })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    const jev = await screen.findByRole("region", { name: "Jev suggests" });
+    expect(await within(jev).findByText(/Jev could not prepare a suggestion: model or Jev/)).toBeInTheDocument();
+    expect(within(jev).queryByText(/preparing a suggestion/)).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(client.getReplySuggestions).toHaveBeenCalledTimes(1);
+    await userEvent.click(within(jev).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(client.getReplySuggestions).toHaveBeenCalledTimes(2));
   });
 });
 

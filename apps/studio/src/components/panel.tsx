@@ -1589,7 +1589,7 @@ export function RunPanel({
     verdict.key === "needs" &&
     replySuggestions?.state === "ready" &&
     replySuggestions.executionId === status.executionId &&
-    replySuggestions.headSequence === status.headSequence &&
+    replySuggestions.headSequence <= status.headSequence &&
     replySuggestions.suggestions.length === 2
       ? replySuggestions.suggestions
       : [];

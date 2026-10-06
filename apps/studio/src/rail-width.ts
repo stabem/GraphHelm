@@ -40,3 +40,38 @@ export function saveRailWidth(width: number): void {
     // Failing to remember a pane width is not worth interrupting anyone over.
   }
 }
+
+/**
+ * How wide the operator left the Chat column (#327). Same rules as the rail above, for the same
+ * reasons: kept in this browser only, clamped on paint, on drag and on read.
+ */
+export const CHAT_MIN = 300;
+export const CHAT_MAX = 760;
+export const CHAT_DEFAULT = 400;
+
+const CHAT_KEY = "graphhelm.studio.chat-width";
+
+export function clampChatWidth(width: number): number {
+  return Math.max(CHAT_MIN, Math.min(CHAT_MAX, Math.round(width)));
+}
+
+export function loadChatWidth(): number {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(CHAT_KEY);
+  } catch {
+    return CHAT_DEFAULT;
+  }
+  if (raw === null) return CHAT_DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return CHAT_DEFAULT;
+  return clampChatWidth(parsed);
+}
+
+export function saveChatWidth(width: number): void {
+  try {
+    window.localStorage.setItem(CHAT_KEY, String(clampChatWidth(width)));
+  } catch {
+    // Failing to remember a pane width is not worth interrupting anyone over.
+  }
+}

@@ -2671,25 +2671,37 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
    (composers) stays at the bottom. Nothing inside either row scrolls on its own; before, cards,
    tabs, messages and MainChat each had a scroll or a full height and the flex column squeezed
    the composer to zero. */
-.chat-column { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; border-right: 1px solid var(--edge); }
+.chat-column { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; border-right: 1px solid var(--edge); }
 .chat-scroll { position: relative; display: flex; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .chat-scroll > * { flex: none; min-width: 0; }
 .chat-dock { min-width: 0; border-top: 1px solid var(--edge); background: var(--void); }
 .chat-principal-history { padding: 0 10px 10px; }
 .chat-principal-history[hidden] { display: none; }
-.chat-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+.chat-tabs { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--void); }
 .chat-tabs [role="tab"] { white-space: nowrap; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
 .chat-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
 .chat-unread { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--signal); color: var(--signal-ink); font-size: 11px; }
 .chat-recorded-note { margin: 6px 10px; font-size: 12px; color: var(--dim); }
-.chat-messages { list-style: none; margin: 0; padding: 8px 10px; display: grid; align-content: start; gap: 10px; }
+/* Pushed to the end of the scroll region: a short thread sits just above the composer, where a
+   chat is read, instead of at the top of an empty column (#327). */
+.chat-messages { list-style: none; margin: auto 0 0; padding: 10px 14px; display: grid; align-content: end; gap: 14px; }
 .chat-opening { font-size: 12px; color: var(--dim); }
-.chat-message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+.chat-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; }
 .chat-message-highlight { outline: 2px solid var(--signal); border-radius: 8px; }
-.chat-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: hsl(var(--bot-hue) 60% 45%); color: #fff; font-size: 12px; }
-.chat-meta { margin: 0; font-size: 12px; color: var(--dim); }
-.chat-text { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.jev-card { margin: 6px 10px; padding: 8px 10px; border: 1px dashed var(--edge); border-radius: 12px; font-size: 13px; }
+.chat-avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: hsl(var(--bot-hue) 60% 45%); color: #fff; font-size: 12px; }
+.chat-meta { margin: 0; font-size: 13px; color: var(--dim); }
+/* Reading size (#327): the 13px/300 body was too small and thin to read a busy thread. */
+.chat-text { margin: 3px 0 0; font-family: var(--reading); font-size: 15px; font-weight: 450; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jev-card { margin: 6px 10px; padding: 10px 12px; border: 1px dashed var(--edge); border-radius: var(--r); font-size: 14px; line-height: 1.55; }
+.jev-draft { font-weight: 500; }
+.jev-older { font-size: 12px; color: var(--faint); }
+.jev-issue { color: var(--dim); }
+.chat-new-pill { position: sticky; bottom: 8px; z-index: 2; align-self: center; margin: 4px auto; padding: 4px 12px; border-radius: var(--r-pill); border: 1px solid var(--edge); background: var(--raised); color: var(--text); font-size: 12px; box-shadow: var(--lift); }
+.chat-scroll { scroll-behavior: auto; }
+.chat-resize { position: absolute; top: 0; right: 0; bottom: 0; z-index: 3; width: 6px; cursor: col-resize; touch-action: none; background: transparent; transition: background-color var(--t-quick) var(--ease); }
+.chat-resize:hover, .chat-resize:focus-visible, .chat-resize.dragging { background: var(--signal); outline: none; }
+.chat-column[data-resizing] { user-select: none; }
+@media (prefers-reduced-motion: reduce) { .chat-resize { transition: none; } }
 .jev-card p { margin: 0 0 6px; }
 .jev-reason { color: var(--dim); font-size: 12px; }
 .chat-composer { display: grid; gap: 6px; padding: 8px 10px; }
@@ -2714,7 +2726,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .canvas-tabs { display: flex; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--edge); }
 .canvas-tabs [role="tab"], .mobile-tabs [role="tab"] { padding: 4px 12px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
 .canvas-tabs [aria-selected="true"], .mobile-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
-.chat-column { flex: 0 0 340px; width: 340px; }
+.chat-column { flex: 0 0 clamp(300px, var(--chat-w, 400px), 760px); width: clamp(300px, var(--chat-w, 400px), 760px); max-width: 60%; }
 .right-panel { flex: 0 0 280px; width: 280px; }
 .journey-empty { display: grid; place-items: center; height: 100%; color: var(--dim); }
 .journey-canvas { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 12px; overflow-x: hidden; overflow-y: auto; }
@@ -2760,7 +2772,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .connection-note.refused { color: var(--danger); }
 @media (max-width: 1100px) {
   .studio-columns { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-  .studio-columns > .chat-column { grid-column: 1; grid-row: 1 / 3; width: auto; }
+  .studio-columns > .chat-column { grid-column: 1; grid-row: 1 / 3; width: auto; max-width: none; }
+  .chat-resize { display: none; }
   .studio-columns > .canvas-column { grid-column: 2; grid-row: 1; }
   .studio-columns > .right-panel { grid-column: 2; grid-row: 2; width: auto; border-left: 0; border-top: 1px solid var(--edge); max-height: 30vh; }
   .studio-columns > .talk, .studio-columns > .node-col { position: absolute; inset: 0 0 0 auto; z-index: 10; width: min(400px, 100%); box-shadow: var(--float); }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 
 import { fastUserEvent } from "../test/user-event";
@@ -126,5 +126,86 @@ describe("ChatColumn", () => {
     expect(aside()).toBe(first);
     expect(first.closest("[hidden]")).toBeNull();
     expect(mounts).toBe(1);
+  });
+});
+
+/** jsdom lays nothing out: give every element a scroll geometry the tests control. */
+function fakeScrollGeometry() {
+  let height = 1000;
+  const tops = new WeakMap<Element, number>();
+  const restore = [
+    ["scrollHeight", { configurable: true, get: () => height }],
+    ["clientHeight", { configurable: true, get: () => 200 }],
+    ["scrollTop", { configurable: true, get(this: Element) { return tops.get(this) ?? 0; }, set(this: Element, value: number) { tops.set(this, value); } }],
+  ].map(([name, descriptor]) => {
+    const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name as string) ?? Object.getOwnPropertyDescriptor(Element.prototype, name as string);
+    Object.defineProperty(HTMLElement.prototype, name as string, descriptor as PropertyDescriptor);
+    return () => { if (previous) Object.defineProperty(HTMLElement.prototype, name as string, previous); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name as string]; };
+  });
+  return { grow: (by: number) => { height += by; }, restore: () => restore.forEach((undo) => undo()) };
+}
+
+describe("ChatColumn reading (#327)", () => {
+  afterEach(() => { try { window.localStorage.clear(); } catch { /* storage refused */ } });
+
+  it("resizes from its edge with the keyboard and the pointer, clamped and remembered", async () => {
+    const view = render(<ChatColumn {...props()} />);
+    const handle = screen.getByRole("separator", { name: "Resize the chat column" });
+    expect(handle).toHaveAttribute("aria-valuenow", "400");
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(handle).toHaveAttribute("aria-valuenow", "416");
+    expect(window.localStorage.getItem("graphhelm.studio.chat-width")).toBe("416");
+    fireEvent.pointerDown(handle);
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 5000 }));
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    await waitFor(() => expect(window.localStorage.getItem("graphhelm.studio.chat-width")).toBe("760"));
+    view.unmount();
+    render(<ChatColumn {...props()} />);
+    expect(screen.getByRole("separator", { name: "Resize the chat column" })).toHaveAttribute("aria-valuenow", "760");
+    expect(screen.getByRole("complementary", { name: "Chat" }).style.getPropertyValue("--chat-w")).toBe("760px");
+  });
+
+  it("opens at the newest message and follows new ones while the viewer is at the bottom", () => {
+    const geometry = fakeScrollGeometry();
+    try {
+      const view = render(<ChatColumn {...props()} />);
+      const scroller = document.querySelector(".chat-scroll") as HTMLElement;
+      expect(scroller.scrollTop).toBe(1000);
+      geometry.grow(300);
+      const more = chatThreads([msg(1, "coordinator", null, "Plan ready"), msg(2, "kit-1", "kit-2", "Take the cart"), msg(3, "coordinator", null, "Next")], BOTS, "studio-operator");
+      view.rerender(<ChatColumn {...props({ threads: more })} />);
+      expect(scroller.scrollTop).toBe(1300);
+      expect(screen.queryByRole("button", { name: /New messages/ })).toBeNull();
+    } finally { geometry.restore(); }
+  });
+
+  it("does not move a viewer who scrolled up; offers a New messages pill instead", async () => {
+    const geometry = fakeScrollGeometry();
+    try {
+      const view = render(<ChatColumn {...props()} />);
+      const scroller = document.querySelector(".chat-scroll") as HTMLElement;
+      scroller.scrollTop = 100;
+      fireEvent.scroll(scroller);
+      geometry.grow(300);
+      const more = chatThreads([msg(1, "coordinator", null, "Plan ready"), msg(2, "kit-1", "kit-2", "Take the cart"), msg(3, "coordinator", null, "Next")], BOTS, "studio-operator");
+      view.rerender(<ChatColumn {...props({ threads: more })} />);
+      expect(scroller.scrollTop).toBe(100);
+      await userEvent.click(screen.getByRole("button", { name: "New messages ↓" }));
+      expect(scroller.scrollTop).toBe(1300);
+      expect(screen.queryByRole("button", { name: /New messages/ })).toBeNull();
+    } finally { geometry.restore(); }
+  });
+
+  it("labels advice from an older head and shows a failure with Retry instead of preparing forever", async () => {
+    const onRetry = vi.fn();
+    const suggestion = { to: null, draft: "Ask kit 2 for the diff", reason: "quiet", sourceSequences: [1] };
+    const view = render(<ChatColumn {...props({ jev: { suggestions: [suggestion], loading: false, issue: null, older: true, onRetry } })} />);
+    expect(screen.getByText("Based on the run as of a moment ago")).toBeInTheDocument();
+    view.rerender(<ChatColumn {...props({ jev: { suggestions: [], loading: false, issue: "Jev could not prepare a suggestion.", older: false, onRetry } })} />);
+    expect(screen.queryByText(/preparing a suggestion/)).toBeNull();
+    expect(screen.getByText("Jev could not prepare a suggestion.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

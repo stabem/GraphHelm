@@ -190,3 +190,24 @@ fn unusable_input_exits_3() {
     let (output, reply) = validate(bare.path(), &["--all".as_ref()]);
     assert_eq!(output.status.code(), Some(3), "{reply}");
 }
+
+/// #329 review: `Path::join` discards the project for an absolute or drive path, so such an entry
+/// must be a finding, never probed and never silently skipped.
+#[test]
+fn a_scope_path_that_leaves_the_project_is_a_finding() {
+    for bad in ["C:/Windows", "c:x", "/etc", "src/../..", "src\\cart.tsx"] {
+        let dir = project();
+        let mut value = contract("cart");
+        value["steps"][0]["screen"]["scopePaths"] = json!([bad]);
+        let file = write(dir.path(), &value, "cart.json");
+        let (output, reply) = validate(dir.path(), &[file.as_os_str()]);
+        assert_eq!(output.status.code(), Some(2), "{bad}: {reply}");
+        let found = codes(&reply);
+        assert!(
+            found
+                .iter()
+                .any(|code| code == "scope_path_outside_project"),
+            "{bad}: {found:?}"
+        );
+    }
+}

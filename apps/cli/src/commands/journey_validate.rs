@@ -11,7 +11,7 @@
 //! Exit 0 when every file is clean, 2 when any file has a finding, 3 when the input itself is
 //! unusable (no files, a file that cannot be read, `--all` with no journeys directory).
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use graphhelm_execution::valid_journey_id;
 use graphhelm_protocols::Diagnostic;
@@ -252,14 +252,28 @@ fn check(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             .enumerate()
         {
             let Some(path) = entry.as_str() else { continue };
-            // The schema already refuses absolute, backslash and `..` paths; never probe them.
-            if path.starts_with('/') || path.contains('\\') || path.contains("..") {
+            let pointer = format!("/steps/{index}/screen/scopePaths/{path_index}");
+            // Probe only a path that stays inside the project: every component a plain name or
+            // `.`. `Path::join` discards the project for an absolute or drive path (`C:/x`), so
+            // anything else is a finding and is never probed (#329 review).
+            if path.contains('\\')
+                || !Path::new(path)
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+            {
+                findings.push(Finding::new(
+                    "scope_path_outside_project",
+                    pointer,
+                    format!(
+                        "{path} is not a repository-relative path (no root, drive, `..` or backslash)"
+                    ),
+                ));
                 continue;
             }
             if !project.join(path).exists() {
                 findings.push(Finding::new(
                     "scope_path_missing",
-                    format!("/steps/{index}/screen/scopePaths/{path_index}"),
+                    pointer,
                     format!("{path} does not exist under the project"),
                 ));
             }

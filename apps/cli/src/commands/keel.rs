@@ -498,24 +498,30 @@ mod tests {
 
     #[test]
     fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
+        // Use this native test binary as the wrapper: cold PowerShell startup can consume the
+        // entire execution bound under load before it has even created the descendant.
+        if let Some(pid_path) = std::env::var_os("GRAPHHELM_TEST_PID_FILE") {
+            let mut descendant = if cfg!(windows) {
+                let mut command = Command::new("ping");
+                command.args(["-n", "30", "127.0.0.1"]);
+                command
+            } else {
+                let mut command = Command::new("sleep");
+                command.arg("30");
+                command
+            };
+            let descendant = descendant.spawn().unwrap();
+            std::fs::write(pid_path, descendant.id().to_string()).unwrap();
+            return;
+        }
         let scratch = tempfile::tempdir().unwrap();
         let pid_path = scratch.path().join("descendant.pid");
-        let mut command = if cfg!(windows) {
-            let mut command = Command::new("powershell");
-            command.args([
-                "-NoProfile",
-                "-Command",
-                "$i=New-Object Diagnostics.ProcessStartInfo; $i.FileName='ping'; $i.Arguments='-n 30 127.0.0.1'; $i.UseShellExecute=$false; $p=[Diagnostics.Process]::Start($i); Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
-            ]);
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args([
-                "-c",
-                "sleep 30 & echo $! > \"$GRAPHHELM_TEST_PID_FILE\"; exit 0",
-            ]);
-            command
-        };
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args([
+            "--exact",
+            "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe",
+            "--nocapture",
+        ]);
         command
             .env("GRAPHHELM_TEST_PID_FILE", &pid_path)
             .stdin(Stdio::null())

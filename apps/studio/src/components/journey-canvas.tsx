@@ -15,6 +15,8 @@ export interface JourneyCanvasProps {
   view: JourneysView | null;
   /** Shown when the view could not be read and there is nothing older to keep showing. */
   failed?: boolean;
+  /** The Runtime's own message for the failed read, shown under the empty state. */
+  failure?: string | null;
   contractId: string | null;
   onSelectContract: (contractId: string) => void;
   loadImage: (evidenceId: string) => Promise<Blob>;
@@ -79,7 +81,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
   const setDetail = (stepId: string | null) => { setOwnDetail(stepId); props.onDetailStepChange?.(stepId); };
 
   if (view === null) {
-    return <section className="journey-empty" aria-label="Journey"><p>{props.failed ? "Journeys could not be read." : "Loading journeys…"}</p></section>;
+    return <section className="journey-empty" aria-label="Journey"><p>{props.failed ? "Journeys could not be read." : "Loading journeys…"}</p>{props.failed && props.failure ? <p className="journey-failure" role="alert">{props.failure}</p> : null}</section>;
   }
   if (view.journeys.length === 0) {
     return <section className="journey-empty" aria-label="Journey"><p>No journeys mapped yet. A journey appears here once its screens are captured.</p></section>;

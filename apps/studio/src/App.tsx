@@ -1994,7 +1994,7 @@ export default function App({
     }
     return last;
   }, [eventList]);
-  const [journeysRead, setJourneysRead] = useState<{ executionId: string; view: JourneysView | null; failed: boolean } | null>(null);
+  const [journeysRead, setJourneysRead] = useState<{ executionId: string; view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
     if (client === null || selected === "") return undefined;
@@ -2002,12 +2002,14 @@ export default function App({
     const run = selected;
     Promise.resolve().then(() => client.journeys(run)).then((view) => {
       if (!cancelled) setJourneysRead({ executionId: run, view, failed: false });
-    }, () => {
-      if (!cancelled) setJourneysRead((prior) => prior !== null && prior.executionId === run ? { ...prior, failed: prior.view === null } : { executionId: run, view: null, failed: true });
+    }, (reason: unknown) => {
+      const failure = messageOf(reason, "");
+      if (!cancelled) setJourneysRead((prior) => prior !== null && prior.executionId === run ? { ...prior, failed: prior.view === null, failure } : { executionId: run, view: null, failed: true, failure });
     });
     return () => { cancelled = true; };
   }, [selected, lastJpdSequence]);
   const journeysView = journeysRead !== null && journeysRead.executionId === selected ? journeysRead.view : null;
+  const journeysFailure = journeysRead !== null && journeysRead.executionId === selected ? journeysRead.failure ?? null : null;
   const journeysFailed = journeysRead !== null && journeysRead.executionId === selected && journeysRead.failed;
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
@@ -2824,7 +2826,7 @@ export default function App({
                   demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
                   <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
             ) : (
-              <JourneyCanvas view={journeysView} failed={journeysFailed} contractId={journeyContract} onSelectContract={setJourneyContract}
+              <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(selected, id))}
                 events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
                 detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail} />

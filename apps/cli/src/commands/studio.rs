@@ -259,6 +259,16 @@ pub(super) fn install_root(exe: Option<&Path>) -> Option<PathBuf> {
     (bin.file_name()? == "bin").then(|| bin.parent().map(Path::to_path_buf))?
 }
 
+/// The project reaches the launcher twice: its folder name as the rail label, and its absolute
+/// path as `-ProjectPath`, which the launcher forwards to `serve --project` (without it the
+/// journeys route refuses, #331).
+pub(super) fn add_project(launch: &mut Command, project: &Path) {
+    if let Some(name) = project.file_name() {
+        launch.arg("-Project").arg(name);
+    }
+    launch.arg("-ProjectPath").arg(plain(project.to_path_buf()));
+}
+
 pub fn start(args: &StudioStartArgs) -> Outcome {
     let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
         Ok(project) => project,
@@ -304,9 +314,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
         .arg("-Events")
         .arg(&events)
         .args(["-Bind", &args.bind]);
-    if let Some(name) = project.file_name() {
-        launch.arg("-Project").arg(name);
-    }
+    add_project(&mut launch, &project);
     if let Ok(exe) = std::env::current_exe() {
         launch.arg("-GraphHelm").arg(exe);
     }
@@ -458,5 +466,21 @@ mod tests {
     #[test]
     fn this_binary_knows_the_clone_it_was_built_from() {
         assert!(Path::new(BUILT_FROM).join(LAUNCHER).is_file());
+    }
+
+    #[test]
+    fn the_launcher_gets_the_projects_absolute_path_for_serve() {
+        let mut launch = Command::new("powershell");
+        add_project(&mut launch, Path::new("/work/my project"));
+        let given: Vec<_> = launch
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let at = given
+            .iter()
+            .position(|a| a == "-ProjectPath")
+            .expect("-ProjectPath is passed");
+        assert!(given[at + 1].ends_with("my project"));
+        assert!(given.contains(&"-Project".to_string()));
     }
 }

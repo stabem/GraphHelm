@@ -506,12 +506,14 @@ fn already_ignored(gitignore: &str) -> bool {
         ) {
             ignored = !negated;
         } else if negated {
-            ignored = false;
-            if !pattern
+            if pattern
                 .strip_prefix('/')
                 .unwrap_or(pattern)
                 .starts_with(".graphhelm/")
             {
+                ignored = false;
+            } else if pattern.contains(['*', '?', '[']) {
+                ignored = false;
                 mcp_ignored = false;
             }
         }

@@ -53,31 +53,23 @@ describe("MainChat", () => {
     expect(screen.getByText("Request history (2)")).toBeInTheDocument();
   });
 
-  // DOM-only: protects advisory/current-head advice and draft-only use while dispatch is locked.
-  it("offers current JEV drafts without sending or overwriting a draft and rejects stale advice", async () => {
-    const client = runtime({ listNativeChatRequests: vi.fn().mockResolvedValue({ requests: [{ requestId: "unknown", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "unobserved" }] }) });
-    const suggestions = { executionId: "run-1", headSequence: 7, state: "ready" as const, suggestions: [
-      { to: "builder", draft: "Inspect the open issues and propose a work split.", reason: "No work split was recorded.", sourceSequences: [7] },
-      { to: null, draft: "Check the pending request before dispatching more work.", reason: "The outcome is unknown.", sourceSequences: [7] },
-    ] };
-    const view = render(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={7} replySuggestions={suggestions} />);
-    const advice = await screen.findByRole("region", { name: "JEV next step" });
-    expect(advice).toHaveTextContent("No work split was recorded.");
-    const history = screen.getByText("Request history (1)").closest("details")!;
-    expect(history.open).toBe(false);
-    expect(screen.getByText("Another suggestion").closest("details")?.open).toBe(false);
-    expect(screen.getByLabelText("Instruction").compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Use suggestion 1" }));
-    expect(screen.getByLabelText("Instruction")).toHaveValue(suggestions.suggestions[0].draft);
-    fireEvent.click(screen.getByText("Another suggestion"));
-    expect(screen.getByRole("button", { name: "Use suggestion 2" })).toBeDisabled();
-    expect(screen.getByLabelText("Instruction")).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
+  it("switches its recipient to the thread the Chat column selected and fills an empty draft from a seed", async () => {
+    const client = runtime();
+    const view = render(<MainChat client={client} executionId="run-1" personas={personas} />);
+    view.rerender(<MainChat client={client} executionId="run-1" personas={personas} recipientId="one" seed={{ text: "Rebase now", nonce: 1 }} />);
+    expect(screen.getByLabelText("Main recipient")).toHaveValue("one");
+    expect(screen.getByLabelText("Instruction")).toHaveValue("Rebase now");
+    view.rerender(<MainChat client={client} executionId="run-1" personas={personas} recipientId="one" seed={{ text: "Other", nonce: 2 }} />);
+    expect(screen.getByLabelText("Instruction")).toHaveValue("Rebase now");
     expect(client.sendNativeChat).not.toHaveBeenCalled();
-    view.rerender(<MainChat client={client} executionId="run-1" personas={personas} refreshSequence={8} replySuggestions={suggestions} replyIssue="Waiting for fresh JEV advice." />);
-    expect(screen.queryByText(suggestions.suggestions[0].reason)).not.toBeInTheDocument();
-    expect(screen.getByText("Waiting for fresh JEV advice.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Instruction")).toHaveValue(suggestions.suggestions[0].draft);
+  });
+
+  it("reports every ledger merge so the page can list unconfirmed requests", async () => {
+    const row = { requestId: "unknown", nodeId: "node-main", threadId: "main", title: "Coordinator", sourceDirectory: "C:/main", state: "unobserved" };
+    const client = runtime({ listNativeChatRequests: vi.fn().mockResolvedValue({ requests: [row] }) });
+    const onRequestsChange = vi.fn();
+    render(<MainChat client={client} executionId="run-1" personas={personas} onRequestsChange={onRequestsChange} />);
+    await waitFor(() => expect(onRequestsChange).toHaveBeenLastCalledWith([expect.objectContaining({ requestId: "unknown" })]));
   });
 
   it("sends the selected principal or the three real other personas with distinct chartered requests", async () => {
@@ -168,7 +160,7 @@ describe("MainChat", () => {
     expect(screen.getByRole("button", { name: "Send to main chat" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Refresh request status" }));
     expect(await screen.findByRole("region", { name: "Latest chat reply" })).toHaveTextContent("The next step is ready.");
-    expect(within(screen.getByLabelText("Request status")).getByRole("status")).toHaveTextContent("latest request completed");
+    expect(within(document.getElementById("main-chat-request-status")!).getByRole("status")).toHaveTextContent("latest request completed");
     expect(screen.queryByText("Check the original chat before sending another instruction.")).not.toBeInTheDocument();
     const history = screen.getByText("Request history (2)").closest("details")!;
     expect(history.open).toBe(false);

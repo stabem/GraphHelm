@@ -3074,3 +3074,26 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .right-activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .right-activity button { width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font-size: 13px; }
 .right-when { color: var(--dim); }
+
+/* Chat column (spec §4.4). */
+.chat-column { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-right: 1px solid var(--edge); }
+.chat-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+.chat-tabs [role="tab"] { white-space: nowrap; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
+.chat-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
+.chat-unread { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--signal); color: var(--signal-ink); font-size: 11px; }
+.chat-recorded-note { margin: 6px 10px; font-size: 12px; color: var(--dim); }
+.chat-messages { flex: 1; list-style: none; margin: 0; padding: 8px 10px; overflow: auto; display: grid; align-content: start; gap: 10px; }
+.chat-opening { font-size: 12px; color: var(--dim); }
+.chat-message { display: grid; grid-template-columns: 28px 1fr; gap: 8px; }
+.chat-message-highlight { outline: 2px solid var(--signal); border-radius: 8px; }
+.chat-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: hsl(var(--bot-hue) 60% 45%); color: #fff; font-size: 12px; }
+.chat-meta { margin: 0; font-size: 12px; color: var(--dim); }
+.chat-text { margin: 2px 0 0; white-space: pre-wrap; }
+.jev-card { margin: 6px 10px; padding: 8px 10px; border: 1px dashed var(--edge); border-radius: 12px; font-size: 13px; }
+.jev-card p { margin: 0 0 6px; }
+.jev-reason { color: var(--dim); font-size: 12px; }
+.chat-composer { display: grid; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--edge); }
+.chat-answering { margin: 0; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.chat-principal { min-height: 0; overflow: auto; }
+.chat-principal[hidden] { display: none; }
+.main-chat-status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

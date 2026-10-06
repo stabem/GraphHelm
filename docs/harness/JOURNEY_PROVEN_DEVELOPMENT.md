@@ -183,7 +183,7 @@ A step may also name the **screen** it happens on (`screen: {screenId, title, sc
 ADR-044). `scopePaths` has Keel's meaning: a file or directory, exact or prefix match, no globs.
 Screenshots of a step are recorded as `jpd.screen_captured` signals and walked transitions as
 `jpd.transition_walked` (`graphhelm journey capture|walked`); `graphhelm journeys`, the MCP
-`journeys` tool and `GET /v1/executions/{id}/journeys` fold them per contract into steps marked
+`journeys` tool and `GET /v1/journeys` fold them, across every run of the project, per contract into steps marked
 `fresh`, `stale` (naming the changed files) or `unknown` (naming the cause). Contracts live in the
 project at `.graphhelm/journeys/<contractId>.json`. See [`docs/keel/RECORDS.md`](../keel/RECORDS.md).
 

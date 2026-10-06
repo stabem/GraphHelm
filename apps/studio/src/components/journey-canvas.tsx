@@ -19,7 +19,10 @@ export interface JourneyCanvasProps {
   failure?: string | null;
   contractId: string | null;
   onSelectContract: (contractId: string) => void;
-  loadImage: (evidenceId: string) => Promise<Blob>;
+  /** Reads an image; `executionId` names the run that holds it (#332), else the selected run. */
+  loadImage: (evidenceId: string, executionId?: string) => Promise<Blob>;
+  /** The run selected in the Studio; `events` are its records. Captures may come from any run. */
+  executionId?: string;
   events: RuntimeEvent[];
   botName: (actorOrObserver: string) => string;
   beforeAfter: BeforeAfterPair[];
@@ -40,8 +43,8 @@ function titleOf(step: StepView): string {
   return step.screen?.title ?? step.stepId;
 }
 
-function Shot({ evidenceId, loadImage, alt, className }: { evidenceId: string; loadImage: (id: string) => Promise<Blob>; alt: string; className: string }) {
-  const { url, error } = useImageUrl(() => loadImage(evidenceId), evidenceId);
+function Shot({ evidenceId, executionId, loadImage, alt, className }: { evidenceId: string; executionId?: string; loadImage: (id: string, executionId?: string) => Promise<Blob>; alt: string; className: string }) {
+  const { url, error } = useImageUrl(() => (executionId === undefined ? loadImage(evidenceId) : loadImage(evidenceId, executionId)), `${executionId ?? ""}/${evidenceId}`);
   if (url !== null) return <img className={className} src={url} alt={alt} />;
   return <span className="journey-shot-missing">{error ? "Image could not be read" : "Loading image…"}</span>;
 }
@@ -91,6 +94,11 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
   const pair = detail === undefined ? undefined
     : beforeAfter.find((candidate) => candidate.contractId === journey.contractId && candidate.stepId === detail.stepId);
   const detailCapture = detail?.capture ?? null;
+  /** A capture recorded in another run than the selected one (#332): its records live there. */
+  const fromOtherRun = (capture: CaptureView) => capture.executionId !== undefined && capture.executionId !== props.executionId;
+  /** When the capture was taken: its own timestamp, else its record in the selected run. */
+  const takenAt = (capture: CaptureView) => capture.recordedAt !== undefined ? Date.parse(capture.recordedAt)
+    : captureAge(capture.sequence, events);
 
   return (
     <section className="journey-canvas" aria-label="Journey">
@@ -106,7 +114,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
         {journey.steps.map((step, index) => {
           const capture = step.capture ?? null;
           const state = capture === null ? "missing" : capture.freshness;
-          const at = capture === null ? null : captureAge(capture.sequence, events);
+          const at = capture === null ? null : takenAt(capture);
           const next = journey.steps[index + 1];
           const arrow = next === undefined ? undefined
             : journey.arrows.find((candidate) => candidate.fromStepId === step.stepId && candidate.toStepId === next.stepId);
@@ -114,7 +122,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
             <li key={step.stepId} className="journey-step">
               <button type="button" className="journey-card" data-state={state} aria-label={`${titleOf(step)}, open detail`} onClick={() => setDetail(step.stepId)}>
                 {capture === null ? <span className="journey-shot-missing">Not captured yet</span> : (
-                  <Shot evidenceId={capture.imageEvidenceId} loadImage={loadImage} alt={`${titleOf(step)} screenshot`} className="journey-thumb" />
+                  <Shot evidenceId={capture.imageEvidenceId} executionId={capture.executionId} loadImage={loadImage} alt={`${titleOf(step)} screenshot`} className="journey-thumb" />
                 )}
                 <strong className="journey-card-title">{titleOf(step)}</strong>
                 {capture !== null && (
@@ -136,8 +144,11 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
             <button type="button" onClick={() => setDetail(null)}>Close</button>
           </div>
           {detailCapture !== null ? (
-            <Shot evidenceId={detailCapture.imageEvidenceId} loadImage={loadImage} alt={`${titleOf(detail)} full screenshot`} className="journey-full" />
+            <Shot evidenceId={detailCapture.imageEvidenceId} executionId={detailCapture.executionId} loadImage={loadImage} alt={`${titleOf(detail)} full screenshot`} className="journey-full" />
           ) : <p className="journey-shot-missing">Not captured yet</p>}
+          {detailCapture?.executionId !== undefined && (
+            <p className="journey-source">Captured in run <code>{detailCapture.executionId}</code>{fromOtherRun(detailCapture) ? " (not the selected run)" : ""}</p>
+          )}
           {detailCapture !== null && <Freshness capture={detailCapture} />}
           {detailCapture?.freshness === "stale" && detailCapture.changedFiles.length > 0 && (
             <ul className="journey-files" aria-label="Changed files">
@@ -152,9 +163,9 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
                 <Shot evidenceId={pair.after.imageEvidenceId} loadImage={loadImage} alt="After screenshot" className="journey-full" /></figure>
             </div>
           )}
-          {(detailCapture !== null || pair !== undefined) && (
+          {((detailCapture !== null && !fromOtherRun(detailCapture)) || pair !== undefined) && (
             <button type="button" onClick={() => onOpenRecords([
-              ...(detailCapture !== null ? [detailCapture.sequence] : []),
+              ...(detailCapture !== null && !fromOtherRun(detailCapture) ? [detailCapture.sequence] : []),
               ...(pair !== undefined ? [pair.before.sequence, pair.after.sequence] : []),
             ])}>Records</button>
           )}

@@ -564,7 +564,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
             journeys::run(
                 &args.events,
-                &args.execution,
+                args.execution.as_deref(),
                 &project,
                 &args.keyring,
                 &args.key_id,

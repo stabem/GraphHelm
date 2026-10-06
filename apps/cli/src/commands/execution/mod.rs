@@ -130,7 +130,7 @@ pub(super) fn execution_state(message: &str, pointer: &str) -> Failure {
 /// the evidence route): they would otherwise fold nothing into a verdict of `can_sleep` for a run
 /// that was never started. The events tail keeps answering an empty page, which is a different
 /// fact that `gate_http.rs` pins, and the mutations keep their own precondition refusals.
-pub(super) fn not_found() -> Failure {
+pub(crate) fn not_found() -> Failure {
     Failure {
         code: crate::error_codes::GHCLI028_EXECUTION_NOT_FOUND,
         message: "no execution with this id exists in this store".to_owned(),

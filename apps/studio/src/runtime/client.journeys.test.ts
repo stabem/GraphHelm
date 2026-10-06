@@ -24,6 +24,13 @@ describe("RuntimeClient.journeys", () => {
     expect(seen[0].url).toBe("/v1/executions/run-1/journeys");
     expect(seen[0].headers.Authorization).toBe("Bearer secret-token");
   });
+  it("reads the project-level map from GET /v1/journeys when no run is named (#332)", async () => {
+    const view = { head: "abc", journeys: [] };
+    const { seen, runtime } = client(() => json(view));
+    await expect(runtime.journeys()).resolves.toEqual(view);
+    expect(seen[0].url).toBe("/v1/journeys");
+    expect(seen[0].headers.Authorization).toBe("Bearer secret-token");
+  });
   it("refuses an empty id", async () => {
     await expect(client(() => json({})).runtime.journeys("")).rejects.toBeInstanceOf(RuntimeError);
   });

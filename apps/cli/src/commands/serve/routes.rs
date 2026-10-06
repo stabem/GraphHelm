@@ -1752,14 +1752,26 @@ pub(super) async fn briefing(
     }
 }
 
-/// `GET /v1/executions/{id}/journeys` (#315): `graphhelm journeys`'s own `data`, read by the same
-/// `journeys::read`. The project is the one this Runtime was started with and the keyring is the
-/// Runtime's own; nothing from the request names a path. Owner credentials only: a scoped agent
-/// credential is refused by `agent_route_allowed`.
+/// `GET /v1/executions/{id}/journeys` (#315): `graphhelm journeys --execution`'s own `data`. Since
+/// #332 the map is project-wide (captures from every run); the execution must still exist and is
+/// echoed as `requestedExecution`. Owner credentials only: a scoped agent credential is refused
+/// by `agent_route_allowed`.
 pub(super) async fn journeys(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
+    journeys_over(state, Some(execution_id)).await
+}
+
+/// `GET /v1/journeys` (#332): the project's proven-journey map, `graphhelm journeys`'s own `data`.
+/// The project is the one this Runtime was started with and the keyring is the Runtime's own;
+/// nothing from the request names a path. Owner credentials only (`agent_route_allowed` admits
+/// no `/v1/journeys`).
+pub(super) async fn project_journeys(State(state): State<ServeState>) -> Response {
+    journeys_over(state, None).await
+}
+
+async fn journeys_over(state: ServeState, execution_id: Option<String>) -> Response {
     let command = crate::commands::journeys::COMMAND;
     let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
         return respond_failure(
@@ -1778,7 +1790,7 @@ pub(super) async fn journeys(
     };
     let events = state.events.clone();
     let Some(result) = off_reactor(move || {
-        crate::commands::journeys::read(&events, &execution_id, &project, &keyring)
+        crate::commands::journeys::read(&events, execution_id.as_deref(), &project, &keyring)
     })
     .await
     else {
@@ -1792,7 +1804,6 @@ pub(super) async fn journeys(
         Err(failure) => respond_failure(command, failure),
     }
 }
-
 /// `GET /v1/executions/{id}/events?after=N&limit=M`: a page of the raw event envelope tail, read
 /// through the same `execution::resolve_stream` the CLI's replay path uses, sliced by `after`
 /// (exclusive) and `limit` (default 100, max 1000). Envelopes serialize verbatim — their payloads

@@ -88,8 +88,14 @@ pub struct Viewport {
 pub struct CaptureRecord {
     /// The signal id.
     pub signal_id: String,
-    /// The event sequence the signal was recorded at; higher is newer.
+    /// The execution (event stream) the signal was recorded in.
+    pub execution_id: String,
+    /// The event sequence within that execution; higher is newer inside one execution.
     pub sequence: u64,
+    /// When the signal was recorded, in Unix milliseconds; orders records across executions.
+    pub recorded_at_ms: i64,
+    /// The same instant as an RFC 3339 UTC string, as served.
+    pub recorded_at: String,
     /// The image evidence id carried by the signal.
     pub image_evidence_id: String,
     /// The contract the capture belongs to.
@@ -115,8 +121,12 @@ pub struct CaptureRecord {
 pub struct TransitionRecord {
     /// The signal id.
     pub signal_id: String,
-    /// The event sequence the signal was recorded at; higher is newer.
+    /// The execution (event stream) the signal was recorded in.
+    pub execution_id: String,
+    /// The event sequence within that execution; higher is newer inside one execution.
     pub sequence: u64,
+    /// When the signal was recorded, in Unix milliseconds; orders records across executions.
+    pub recorded_at_ms: i64,
     /// The contract the transition belongs to.
     pub contract_id: String,
     /// The step walked from.
@@ -325,8 +335,12 @@ pub struct ScreenView {
 pub struct CaptureView {
     /// The capture's signal id.
     pub signal_id: String,
-    /// The event sequence the capture was recorded at; higher is newer.
+    /// The execution the capture was recorded in (journeys are a project property, #332).
+    pub execution_id: String,
+    /// The event sequence the capture was recorded at within that execution.
     pub sequence: u64,
+    /// When the capture was recorded (RFC 3339 UTC).
+    pub recorded_at: String,
     /// The image evidence id.
     pub image_evidence_id: String,
     /// The revision captured at.
@@ -463,8 +477,18 @@ fn shown_capture<'a>(
     };
     of_step()
         .filter(|capture| !capture.dirty)
-        .max_by_key(|capture| capture.sequence)
-        .or_else(|| of_step().max_by_key(|capture| capture.sequence))
+        .max_by(|a, b| capture_newness(a).cmp(&capture_newness(b)))
+        .or_else(|| of_step().max_by(|a, b| capture_newness(a).cmp(&capture_newness(b))))
+}
+
+/// Newest-first ordering across executions (#332): recording time, then the in-execution
+/// sequence, then the execution id so equal instants still order deterministically.
+fn capture_newness(capture: &CaptureRecord) -> (i64, u64, &str) {
+    (
+        capture.recorded_at_ms,
+        capture.sequence,
+        capture.execution_id.as_str(),
+    )
 }
 
 /// Folds captures and transitions into each contract's steps and arrows, with freshness read
@@ -506,7 +530,9 @@ fn fold_one(
                         oracle.assess(capture, step.screen.as_ref());
                     CaptureView {
                         signal_id: capture.signal_id.clone(),
+                        execution_id: capture.execution_id.clone(),
                         sequence: capture.sequence,
+                        recorded_at: capture.recorded_at.clone(),
                         image_evidence_id: capture.image_evidence_id.clone(),
                         revision: capture.revision.clone(),
                         dirty: capture.dirty,
@@ -560,7 +586,13 @@ fn arrow(
                 && transition.from_step_id == from.step_id
                 && transition.to_step_id == to.step_id
         })
-        .max_by_key(|transition| transition.sequence);
+        .max_by_key(|transition| {
+            (
+                transition.recorded_at_ms,
+                transition.sequence,
+                transition.execution_id.as_str(),
+            )
+        });
     let Some(transition) = newest else {
         return ArrowView {
             from_step_id: from.step_id.clone(),
@@ -569,15 +601,20 @@ fn arrow(
             transition_signal_id: None,
         };
     };
+    // A transition cites captures by signal id, and signal ids are unique only inside one
+    // execution, so a citation resolves in the transition's own execution first (#332).
     let mut cited_fresh = |capture_id: &str, step: &StepInput| {
+        let matches = |capture: &&CaptureRecord| {
+            capture.signal_id == capture_id
+                && capture_is_usable(capture)
+                && capture.contract_id == contract.contract_id
+                && capture.step_id == step.step_id
+        };
         captures
             .iter()
-            .find(|capture| {
-                capture.signal_id == capture_id
-                    && capture_is_usable(capture)
-                    && capture.contract_id == contract.contract_id
-                    && capture.step_id == step.step_id
-            })
+            .filter(matches)
+            .find(|capture| capture.execution_id == transition.execution_id)
+            .or_else(|| captures.iter().find(matches))
             .is_some_and(|capture| {
                 oracle.assess(capture, step.screen.as_ref()).0 == Freshness::Fresh
             })

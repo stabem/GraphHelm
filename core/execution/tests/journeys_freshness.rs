@@ -91,7 +91,10 @@ fn step(id: &str, screen: Option<ScreenInput>) -> StepInput {
 fn capture(id: &str, sequence: u64, step: &str, revision: &str, dirty: bool) -> CaptureRecord {
     CaptureRecord {
         signal_id: id.into(),
+        execution_id: "run-a".into(),
         sequence,
+        recorded_at_ms: 0,
+        recorded_at: "2026-10-06T12:00:00Z".into(),
         image_evidence_id: format!("{id}-img"),
         contract_id: "cart".into(),
         step_id: step.into(),
@@ -110,7 +113,9 @@ fn capture(id: &str, sequence: u64, step: &str, revision: &str, dirty: bool) -> 
 fn transition(id: &str, from: (&str, &str), to: (&str, &str), revision: &str) -> TransitionRecord {
     TransitionRecord {
         signal_id: id.into(),
+        execution_id: "run-a".into(),
         sequence: 100,
+        recorded_at_ms: 0,
         contract_id: "cart".into(),
         from_step_id: from.0.into(),
         to_step_id: to.0.into(),
@@ -371,4 +376,88 @@ fn promises_and_capture_sequence_reach_the_serialized_view() {
         serde_json::json!(["Total is shown", "Pay button works"])
     );
     assert_eq!(step["capture"]["sequence"], 7);
+}
+
+/// #332: journeys are a project property. Captures from two executions fold into one map; the
+/// newer one wins by recording time even when its in-execution sequence is lower, the view names
+/// the execution it came from, and a newer capture that is stale is still reported stale.
+#[test]
+fn captures_from_two_executions_fold_newest_first_and_stale_is_still_detected() {
+    if !git_available() {
+        return;
+    }
+    let dir = repo();
+    let first = git(dir.path(), &["rev-parse", "HEAD"]);
+    let contracts = [contract(vec![step("view", screen(&["web/cart/"]))])];
+    let baseline = CaptureRecord {
+        execution_id: "baseline".into(),
+        sequence: 90,
+        recorded_at_ms: 1_000,
+        recorded_at: "2026-10-06T12:00:01Z".into(),
+        ..capture("c1", 90, "view", &first, false)
+    };
+    let later = CaptureRecord {
+        execution_id: "later-run".into(),
+        sequence: 3,
+        recorded_at_ms: 2_000,
+        recorded_at: "2026-10-06T12:00:02Z".into(),
+        ..capture("c1", 3, "view", &first, false)
+    };
+    let history = GitHistory::new(dir.path());
+    let view = fold_journeys(
+        &contracts,
+        &[later.clone(), baseline.clone()],
+        &[],
+        &history,
+    );
+    let shown = only_capture(&view);
+    assert_eq!(shown.execution_id, "later-run");
+    assert_eq!(shown.recorded_at, "2026-10-06T12:00:02Z");
+    assert_eq!(shown.freshness, Freshness::Fresh);
+
+    // Only the baseline captured: it still shows for the project.
+    let view = fold_journeys(&contracts, &[baseline], &[], &history);
+    assert_eq!(only_capture(&view).execution_id, "baseline");
+
+    commit_file(dir.path(), "web/cart/Line.tsx", "v2");
+    let view = fold_journeys(&contracts, &[later], &[], &history);
+    let shown = only_capture(&view);
+    assert_eq!(shown.freshness, Freshness::Stale);
+    assert_eq!(shown.changed_files, ["web/cart/Line.tsx"]);
+}
+
+/// #332: a transition's capture citations resolve inside its own execution first, so an equal
+/// signal id in another execution cannot stand in for the cited capture.
+#[test]
+fn a_transition_cites_captures_in_its_own_execution_first() {
+    if !git_available() {
+        return;
+    }
+    let dir = repo();
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
+    let contracts = [contract(vec![
+        step("view", screen(&["web/cart/"])),
+        step("pay", screen(&["web/pay/"])),
+    ])];
+    let in_run = |id: &str, step: &str, run: &str, revision: &str| CaptureRecord {
+        execution_id: run.into(),
+        ..capture(id, 1, step, revision, false)
+    };
+    let walked = TransitionRecord {
+        execution_id: "run-b".into(),
+        ..transition("t1", ("view", "c1"), ("pay", "c2"), &head)
+    };
+    // run-b's own c1 is at an unknown revision; run-a's c1 would be fresh.
+    let captures = [
+        in_run("c1", "view", "run-a", &head),
+        in_run("c1", "view", "run-b", &"b".repeat(40)),
+        in_run("c2", "pay", "run-b", &head),
+    ];
+    let view = fold_journeys(
+        &contracts,
+        &captures,
+        &[walked],
+        &GitHistory::new(dir.path()),
+    );
+    assert_eq!(view.journeys[0].arrows[0].state, ArrowState::Stale);
 }

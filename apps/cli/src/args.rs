@@ -64,9 +64,10 @@ pub enum TopLevel {
     Restore(AdoptionRestoreArgs),
     /// Build, verify, or query the Keel contract index, or check a diff against its card.
     Keel(KeelArgs),
-    /// The proven-journey map of one run (#315): each contract step with its newest screen
-    /// capture marked fresh, stale or unknown against the project's git history, and the walked
-    /// arrows between steps. Read-only; identical to `GET /v1/executions/{id}/journeys`.
+    /// The proven-journey map of the project (#315, #332): each contract step with its newest
+    /// screen capture from any run, marked fresh, stale or unknown against the project's git
+    /// history, and the walked arrows between steps. Read-only; identical to `GET /v1/journeys`
+    /// (and to `GET /v1/executions/{id}/journeys` when `--execution` is given).
     Journeys(JourneysArgs),
     /// Record journey proof into a run (#315): `capture` one screen of a contract step at the
     /// project's current git revision, or `walked` one transition between two captured,
@@ -84,8 +85,9 @@ pub enum TopLevel {
 pub struct JourneysArgs {
     #[arg(long)]
     pub events: PathBuf,
+    /// Optional: a run that must exist. The map is project-wide either way (#332).
     #[arg(long)]
-    pub execution: String,
+    pub execution: Option<String>,
     /// The project whose `.graphhelm/journeys/` holds the contracts. Defaults to the current
     /// directory.
     #[arg(long)]

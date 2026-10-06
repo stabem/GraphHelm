@@ -339,15 +339,19 @@ export interface NativeChatRequestPage {
   requests: NativeChatRequest[];
 }
 
-/** `GET /v1/executions/{id}/journeys` (`JourneysView` in core/execution/src/journeys.rs, plus the
- * two counters the CLI `read` adds). */
+/** `GET /v1/journeys` (`JourneysView` in core/execution/src/journeys.rs, plus the two counters the
+ * CLI `read` adds). Journeys are a project property (#332): captures come from every run. */
 export type CaptureFreshness = "fresh" | "stale" | "unknown";
 export type CaptureUnknownCause = "dirty" | "no_scope_paths" | "no_git" | "revision_missing";
 export type ArrowState = "walked" | "never_walked" | "stale";
 
 export interface CaptureView {
   signalId: string;
+  /** The run the capture was recorded in (#332); `sequence` is within that run. */
+  executionId?: string;
   sequence: number;
+  /** When the capture was recorded (RFC 3339 UTC). */
+  recordedAt?: string;
   imageEvidenceId: string;
   revision: string;
   dirty: boolean;

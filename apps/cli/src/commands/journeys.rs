@@ -22,10 +22,10 @@ use super::execution::{self, Failure, signal::SignalKeyring};
 use crate::output::Outcome;
 
 pub(crate) const COMMAND: &str = "journeys.read";
-const CAPTURE_KIND: &str = "jpd.screen_captured";
-const TRANSITION_KIND: &str = "jpd.transition_walked";
-const CAPTURE_PROTOCOL: &str = "graphhelm-screen-capture-v1";
-const TRANSITION_PROTOCOL: &str = "graphhelm-transition-walked-v1";
+pub(crate) const CAPTURE_KIND: &str = "jpd.screen_captured";
+pub(crate) const TRANSITION_KIND: &str = "jpd.transition_walked";
+pub(crate) const CAPTURE_PROTOCOL: &str = "graphhelm-screen-capture-v1";
+pub(crate) const TRANSITION_PROTOCOL: &str = "graphhelm-transition-walked-v1";
 const MAX_CONTRACT_BYTES: u64 = 1024 * 1024;
 const CONTRACT_SCHEMA_ID: &str =
     "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json";
@@ -130,15 +130,19 @@ fn transition(signal_id: &str, sequence: u64, text: &str) -> Option<TransitionRe
     })
 }
 
-struct Records {
-    captures: Vec<CaptureRecord>,
-    transitions: Vec<TransitionRecord>,
-    ignored: u64,
+pub(crate) struct Records {
+    pub(crate) captures: Vec<CaptureRecord>,
+    pub(crate) transitions: Vec<TransitionRecord>,
+    pub(crate) ignored: u64,
 }
 
 /// Replays the run and decodes every capture/transition signal. A record that cannot be opened
 /// or decoded is counted, never folded.
-fn records(events: &Path, execution: &str, keyring: &SignalKeyring) -> Result<Records, Failure> {
+pub(crate) fn records(
+    events: &Path,
+    execution: &str,
+    keyring: &SignalKeyring,
+) -> Result<Records, Failure> {
     let store = event_store(events).map_err(|e| execution::repository_failure(&e))?;
     let (scope, _, history) = execution::resolve_stream(&store, Some(execution))?;
     let opener = execution::signal::open_sealer(keyring)?;
@@ -242,7 +246,7 @@ struct ScreenFile {
 }
 
 /// One contract file, or the reason it is refused (Ruling 8).
-fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'static str> {
+pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'static str> {
     if !valid_journey_id(stem) {
         return Err("invalid_file_name");
     }

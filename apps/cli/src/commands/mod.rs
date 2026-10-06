@@ -9,6 +9,7 @@ mod gate;
 mod gateway;
 mod hash;
 mod init;
+mod journey;
 mod journeys;
 mod keel;
 mod lint;
@@ -568,6 +569,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 &args.key_id,
             )
         }
+        TopLevel::Journey(args) => journey::run(&args),
         TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),

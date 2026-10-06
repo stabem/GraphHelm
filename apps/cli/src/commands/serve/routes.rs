@@ -997,6 +997,7 @@ pub(super) async fn reply_suggestions(
     let execution_id_for_model = execution_id.clone();
     let judge = Arc::new(judge);
     let question_sequence = question.sequence;
+    let original_signal_id = question.signal_id.clone();
     let recipient = question.asker.clone();
     let Some((result, judged)) = off_reactor(move || {
         let mut selected = Vec::new();
@@ -1054,24 +1055,39 @@ pub(super) async fn reply_suggestions(
             "model or Jev could not produce valid suggestions",
         );
     }
+    // #327: the suggestions were generated from the snapshot at `head`. A busy run appends events
+    // continuously, so comparing heads discarded every result on exactly the runs that needed one.
+    // The result is stale only when the QUESTION it answers changed: an owner reply settled it, or a
+    // newer question to the operator superseded it. Unrelated appends keep it valid; the response
+    // stays labelled with the snapshot head so the Studio can say how fresh it is.
+    let original_signal = original_signal_id;
     let latest_execution = execution_id.clone();
     let latest_events = state.events.clone();
-    let latest_head = off_reactor(move || {
-        execution::status::read_known_within(
+    let latest_opener = build_opener(state.sealing.as_deref()).ok();
+    let latest_question = off_reactor(move || {
+        let read = execution::status::read_known_within(
             &latest_events,
             Some(&latest_execution),
             crate::commands::status_read_budget(),
         )
-        .ok()
-        .map(|read| read.at_sequence.unwrap_or(0))
+        .ok()?;
+        let opener = latest_opener?;
+        find_pending_operator_question(&latest_events, &read.history, opener).ok()
     })
     .await
     .flatten();
-    if latest_head != Some(head) {
+    let Some(latest_question) = latest_question else {
         return reply_suggestions_unavailable(
             &execution_id,
-            latest_head.unwrap_or(head),
-            "execution changed while suggestions were being generated",
+            head,
+            "the pending question could not be re-read after generation",
+        );
+    };
+    if !question_still_pending(original_signal.as_deref(), latest_question.as_ref()) {
+        return reply_suggestions_unavailable(
+            &execution_id,
+            head,
+            "the pending question changed while suggestions were being generated",
         );
     }
     match result {
@@ -1080,6 +1096,16 @@ pub(super) async fn reply_suggestions(
             Outcome::success(COMMAND, serde_json::json!({"executionId": execution_id, "headSequence": head, "state": "ready", "suggestions": suggestions})).output,
         ),
         _ => reply_suggestions_unavailable(&execution_id, head, "fewer than two acceptable suggestions were returned"),
+    }
+}
+
+/// Whether suggestions written for `original` (the pending question's signal id, or `None` when no
+/// agent asked and the room fallback was used) still answer the question pending now. Only the
+/// question matters: unrelated appends between generation and reply never invalidate.
+fn question_still_pending(original: Option<&str>, latest: Option<&ReplyRequest>) -> bool {
+    match original {
+        Some(signal) => latest.and_then(|question| question.signal_id.as_deref()) == Some(signal),
+        None => latest.is_none(),
     }
 }
 
@@ -1470,6 +1496,62 @@ mod reply_suggestion_tests {
             )
             .is_none()
         );
+    }
+
+    // #327: generation takes ~30s while agents keep appending. An unrelated append must keep the
+    // result; an owner reply to the question, or a newer operator question, must discard it.
+    #[test]
+    fn suggestions_survive_unrelated_appends_but_not_a_settled_or_superseded_question() {
+        let asked = (
+            4,
+            "agent-a".to_owned(),
+            serde_json::json!({"to": "studio-operator", "description": "Which region?"}),
+            "sig-a".to_owned(),
+        );
+        let empty = std::collections::BTreeSet::new();
+        let before = select_pending_operator_question(vec![asked.clone()], &empty, &empty).unwrap();
+        let original = before.signal_id.as_deref();
+
+        // Unrelated appends during generation: a room report and an agent-to-agent message.
+        let busy = vec![
+            asked.clone(),
+            (
+                9,
+                "agent-b".to_owned(),
+                serde_json::json!({"description": "Room report"}),
+                "sig-b".to_owned(),
+            ),
+            (
+                10,
+                "agent-c".to_owned(),
+                serde_json::json!({"to": "agent-b", "description": "ping"}),
+                "sig-c".to_owned(),
+            ),
+        ];
+        let after = select_pending_operator_question(busy, &empty, &empty);
+        assert!(question_still_pending(original, after.as_ref()));
+
+        // The owner replied to the question during generation.
+        let answered = std::collections::BTreeSet::from(["sig-a".to_owned()]);
+        let after = select_pending_operator_question(vec![asked.clone()], &empty, &answered);
+        assert!(!question_still_pending(original, after.as_ref()));
+
+        // A newer question to the operator superseded it.
+        let newer = vec![
+            asked,
+            (
+                11,
+                "agent-d".to_owned(),
+                serde_json::json!({"to": "studio-operator", "description": "Ship now?"}),
+                "sig-d".to_owned(),
+            ),
+        ];
+        let after = select_pending_operator_question(newer, &empty, &empty);
+        assert!(!question_still_pending(original, after.as_ref()));
+
+        // Room fallback (no explicit question): valid until an explicit question appears.
+        assert!(question_still_pending(None, None));
+        assert!(!question_still_pending(None, after.as_ref()));
     }
 
     fn candidate(draft: &str) -> ReplyCandidate {

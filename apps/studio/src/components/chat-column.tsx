@@ -7,8 +7,15 @@
  * Layout (#325): the column is two rows. `.chat-scroll` is the ONE vertical scroll region (cards,
  * tabs, messages, Jev, and MainChat's history, portalled in through MainChatHistorySlot);
  * `.chat-dock` holds the composers and never scrolls away. No child scrolls on its own.
+ *
+ * Reading (#327): the scroll region opens at the NEWEST message, chat convention. Status and request
+ * history sit above the messages; question cards and Jev sit right above the docked composer. A
+ * viewer at the bottom stays there as messages arrive; a viewer who scrolled up is never moved and
+ * gets a "New messages" pill instead. The column is resizable from its right edge.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+
+import { CHAT_DEFAULT, CHAT_MAX, CHAT_MIN, clampChatWidth, loadChatWidth, saveChatWidth } from "../rail-width";
 
 import { MainChatHistorySlot } from "./main-chat";
 
@@ -27,7 +34,7 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
-  jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null };
+  jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
   /** Resolves true only once the Runtime confirmed the message; the draft is kept otherwise. */
@@ -45,6 +52,17 @@ export function composerMode(thread: ChatThread | undefined, nativeKeys: Readonl
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
   if (thread.kind === "pair") return "none";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
+}
+
+/** Within this many pixels of the end counts as "at the bottom" (sub-pixel rounding, a last line). */
+const BOTTOM_SLACK = 48;
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  } catch {
+    return false;
+  }
 }
 
 export function ChatColumn(props: ChatColumnProps) {
@@ -77,10 +95,74 @@ export function ChatColumn(props: ChatColumnProps) {
   const showPrincipal = mode === "native" || mode === "record+principal";
   const [historySlot, setHistorySlot] = useState<HTMLElement | null>(null);
 
+  // Width: dragged from the right edge or set with the arrow keys; remembered in this browser only.
+  const column = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(loadChatWidth);
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (event: PointerEvent) => {
+      const left = column.current?.getBoundingClientRect().left ?? 0;
+      setWidth(clampChatWidth(event.clientX - left));
+    };
+    const release = () => {
+      setDragging(false);
+      setWidth((current) => { saveChatWidth(current); return current; });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [dragging]);
+  const resizeBy = (next: number) => { const clamped = clampChatWidth(next); setWidth(clamped); saveChatWidth(clamped); };
+
+  // Scrolling: open at the newest message, follow it only while the viewer is at the bottom.
+  const scroller = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true);
+  const [unseen, setUnseen] = useState(false);
+  const messages = thread?.messages ?? [];
+  const lastId = messages.at(-1)?.id ?? "";
+  const toBottom = useCallback((smooth: boolean) => {
+    const el = scroller.current;
+    if (el === null) return;
+    const top = el.scrollHeight;
+    if (smooth && !prefersReducedMotion() && typeof el.scrollTo === "function") el.scrollTo({ top, behavior: "smooth" });
+    else el.scrollTop = top;
+    atBottom.current = true;
+    setUnseen(false);
+  }, []);
+  // A thread switch is a fresh reading: start at its newest message.
+  useLayoutEffect(() => { toBottom(false); }, [thread?.key, toBottom]);
+  // A new message follows the viewer to the bottom only if they were there already.
+  useLayoutEffect(() => {
+    if (lastId === "") return;
+    if (atBottom.current) toBottom(false);
+    else setUnseen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the newest id is the trigger
+  }, [lastId]);
+  // Content above or below can grow after paint (sealed records opening, the request history
+  // arriving); a viewer pinned to the bottom stays pinned through that too.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    for (const child of Array.from(el.children)) observer.observe(child);
+    return () => observer.disconnect();
+  });
+  const onScroll = () => {
+    const el = scroller.current;
+    if (el === null) return;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK;
+    if (atBottom.current) setUnseen(false);
+  };
+
   return (
-    <aside className="chat-column" aria-label="Chat">
-      <div className="chat-scroll">
-      {props.cards}
+    <aside className="chat-column" aria-label="Chat" ref={column} style={{ "--chat-w": `${width}px` } as CSSProperties} data-resizing={dragging || undefined}>
+      <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
       <div className="chat-tabs" role="tablist" aria-label="Threads">
         {props.threads.map((candidate) => {
           const unread = props.unread[candidate.key] ?? 0;
@@ -92,10 +174,11 @@ export function ChatColumn(props: ChatColumnProps) {
           );
         })}
       </div>
+      <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
       {thread?.kind === "pair" && <p className="chat-recorded-note">Recorded messages: what these agents recorded to each other through the Runtime, not their native chats.</p>}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
-        {(thread?.messages ?? []).map((message) => {
+        {messages.map((message) => {
           const name = props.names[message.sender] ?? (message.sender === "studio-operator" ? "You" : message.sender);
           return (
             <li key={message.id} id={`chat-msg-${message.sequence}`} className={`chat-message ${props.highlight === message.sequence ? "chat-message-highlight" : ""}`}
@@ -109,16 +192,21 @@ export function ChatColumn(props: ChatColumnProps) {
           );
         })}
       </ol>
-      {(props.jev.loading || suggestion !== undefined) && mode !== "none" && (
+      {props.cards}
+      {(props.jev.loading || suggestion !== undefined || props.jev.issue !== null) && mode !== "none" && (
         <section className="jev-card" aria-label="Jev suggests">
-          {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion && <>
-            <p>{suggestion.draft}</p>
+          {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion ? <>
+            <p className="jev-draft">{suggestion.draft}</p>
             <p className="jev-reason">{suggestion.reason}</p>
+            {props.jev.older === true && <p className="jev-older">Based on the run as of a moment ago</p>}
             <button type="button" onClick={() => { setDraftFor(draftKey, suggestion.draft); props.onUseSuggestion(suggestion.draft); box.current?.focus(); }}>Use</button>
+          </> : <>
+            <p role="status" className="jev-issue">{props.jev.issue}</p>
+            {props.jev.onRetry && <button type="button" onClick={props.jev.onRetry}>Retry</button>}
           </>}
         </section>
       )}
-      <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
+      {unseen && <button type="button" className="chat-new-pill" onClick={() => toBottom(true)}>New messages ↓</button>}
       </div>
       <div className="chat-dock">
       {(mode === "record" || mode === "record+principal") && (
@@ -137,6 +225,18 @@ export function ChatColumn(props: ChatColumnProps) {
         <MainChatHistorySlot.Provider value={historySlot}>{props.principal}</MainChatHistorySlot.Provider>
       </div>
       </div>
+      <div role="separator" aria-label="Resize the chat column" aria-orientation="vertical" tabIndex={0}
+        aria-valuenow={width} aria-valuemin={CHAT_MIN} aria-valuemax={CHAT_MAX}
+        className={`chat-resize ${dragging ? "dragging" : ""}`}
+        onPointerDown={(event) => { event.preventDefault(); setDragging(true); }}
+        onDoubleClick={() => resizeBy(CHAT_DEFAULT)}
+        onKeyDown={(event) => {
+          const next = event.key === "ArrowLeft" ? width - 16 : event.key === "ArrowRight" ? width + 16
+            : event.key === "Home" ? CHAT_MIN : event.key === "End" ? CHAT_MAX : null;
+          if (next === null) return;
+          event.preventDefault();
+          resizeBy(next);
+        }} />
     </aside>
   );
 }

@@ -241,9 +241,13 @@ export default function App({
     setStatus((previous) => previous !== null && previous.executionId === next.executionId &&
       previous.headSequence > next.headSequence ? previous : next);
   }, []);
-  const [replySuggestions, setReplySuggestions] = useState<ReplySuggestions | null>(null);
+  // #327: Jev's answer is keyed by the QUESTION it answers (execution + pending signal), not by the
+  // head. A busy run moves its head every few seconds; keying by head restarted a ~30s request on
+  // every tick, so "preparing" never finished.
+  const [replySuggestions, setReplySuggestions] = useState<{ key: string; reply: ReplySuggestions } | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
-  const [replyIssue, setReplyIssue] = useState<{ executionId: string; headSequence: number; text: string } | null>(null);
+  const [replyIssue, setReplyIssue] = useState<{ key: string; text: string } | null>(null);
+  const [replyRetry, setReplyRetry] = useState(0);
   const [judgeRoute, setJudgeRoute] = useState("");
   const [events, setEvents] = useState<EventPage | null>(null);
   const [evidence, setEvidence] = useState<MutationEvidence | null>(null);
@@ -333,49 +337,6 @@ export default function App({
   const activeJudgeRoute = judgeRoutes.some((route) => route.id === judgeRoute)
     ? judgeRoute
     : judgeRoutes.length === 1 ? judgeRoutes[0].id : null;
-  useEffect(() => {
-    let superseded = false;
-    setReplySuggestions(null);
-    setReplyLoading(false);
-    setReplyIssue(null);
-    const id = status?.executionId;
-    const head = status?.headSequence;
-    if (!connected || !id || head === undefined || status?.attention !== "needs_you" || selected !== id) return;
-    const setCurrentIssue = (text: string) => setReplyIssue({ executionId: id, headSequence: head, text });
-    if (routes === null) {
-      setCurrentIssue("Checking the available model routes…");
-      return;
-    }
-    if (activeJudgeRoute === null) {
-      setCurrentIssue(judgeRoutes.length === 0
-        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
-        : "Choose a Jev model to prepare suggested replies.");
-      return;
-    }
-    const client = clientRef.current;
-    if (client === null) return;
-    setReplyLoading(true);
-    void client.getReplySuggestions(id, activeJudgeRoute).then((reply) => {
-      if (superseded || clientRef.current !== client) return;
-      if (reply === null) {
-        setCurrentIssue("This Runtime does not offer recommended replies yet.");
-      } else if (reply.executionId !== id || reply.headSequence !== head) {
-        setCurrentIssue("The run changed while its replies were prepared. Waiting for a fresh reading.");
-      } else {
-        setReplySuggestions(reply);
-      }
-    }).catch((reason: unknown) => {
-      if (!superseded && clientRef.current === client) {
-        const detail = messageOf(reason, "Recommended replies could not be prepared.");
-        setCurrentIssue(detail.includes("GRAPHHELM_GATEWAY_KEY")
-          ? "Recommended replies are unavailable: the Runtime needs its model gateway key. You can still write your own message."
-          : `Recommended replies are unavailable: ${detail}`);
-      }
-    }).finally(() => {
-      if (!superseded && clientRef.current === client) setReplyLoading(false);
-    });
-    return () => { superseded = true; };
-  }, [connected, selected, status?.executionId, status?.headSequence, status?.attention, routes, activeJudgeRoute]);
   // #1171: the models screen. `probes` starts empty on purpose - a route nobody has checked is
   // rendered "not checked", never green, because a dot that started green would be a claim
   // nobody measured.
@@ -1872,6 +1833,59 @@ export default function App({
     };
   }, [eventList, envelopes]);
 
+  // #327: one request per pending question. The head is deliberately NOT a dependency: unrelated
+  // appends must neither restart the request nor discard its answer. Failure is shown with a
+  // Retry button; nothing retries on its own.
+  const replyKey = status?.executionId ? `${status.executionId}\0${pendingQuestion?.signalId ?? "room"}` : "";
+  const replyHead = useRef<number | undefined>(undefined);
+  replyHead.current = status?.headSequence;
+  useEffect(() => {
+    let superseded = false;
+    setReplySuggestions(null);
+    setReplyLoading(false);
+    setReplyIssue(null);
+    const id = status?.executionId;
+    if (!connected || !id || replyHead.current === undefined || status?.attention !== "needs_you" || selected !== id) return;
+    const key = replyKey;
+    const setCurrentIssue = (text: string) => setReplyIssue({ key, text });
+    if (routes === null) {
+      setCurrentIssue("Checking the available model routes…");
+      return;
+    }
+    if (activeJudgeRoute === null) {
+      setCurrentIssue(judgeRoutes.length === 0
+        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
+        : "Choose a Jev model to prepare suggested replies.");
+      return;
+    }
+    const client = clientRef.current;
+    if (client === null) return;
+    setReplyLoading(true);
+    void client.getReplySuggestions(id, activeJudgeRoute).then((reply) => {
+      if (superseded || clientRef.current !== client) return;
+      if (reply === null) {
+        setCurrentIssue("This Runtime does not offer recommended replies yet.");
+      } else if (reply.executionId !== id) {
+        setCurrentIssue("Jev answered for a different run.");
+      } else if (reply.state === "unavailable") {
+        setCurrentIssue(`Jev could not prepare a suggestion${reply.reason ? `: ${reply.reason}` : "."}`);
+      } else {
+        setReplySuggestions({ key, reply });
+      }
+    }).catch((reason: unknown) => {
+      if (!superseded && clientRef.current === client) {
+        const detail = messageOf(reason, "Recommended replies could not be prepared.");
+        setCurrentIssue(detail.includes("GRAPHHELM_GATEWAY_KEY")
+          ? "Recommended replies are unavailable: the Runtime needs its model gateway key. You can still write your own message."
+          : `Recommended replies are unavailable: ${detail}`);
+      }
+    }).finally(() => {
+      if (!superseded && clientRef.current === client) setReplyLoading(false);
+    });
+    return () => { superseded = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the head is read through a ref on purpose (#327)
+  }, [connected, selected, replyKey, status?.attention, routes, activeJudgeRoute, replyRetry]);
+
   // The armed cancel confirmation follows the RECOMPUTED legality: a poll tick or a WebMCP write
   // can finish the run while the question stands, and a "yes" that would only bounce off the
   // Runtime's refusal is withdrawn - the outer button then wears the reason (PR #662 review).
@@ -2090,8 +2104,9 @@ export default function App({
     setSayFocusNonce((nonce) => nonce + 1);
   };
   const pendingOwnerReview = durableProposals.length > 0;
-  const currentReplyIssue = status !== null && replyIssue !== null && replyIssue.executionId === status.executionId && replyIssue.headSequence === status.headSequence ? replyIssue.text : null;
-  const currentReplySuggestions = status !== null && replySuggestions !== null && replySuggestions.executionId === status.executionId && replySuggestions.headSequence === status.headSequence ? replySuggestions : null;
+  const currentReplyIssue = replyIssue !== null && replyIssue.key === replyKey ? replyIssue.text : null;
+  const currentReplySuggestions = replySuggestions !== null && replySuggestions.key === replyKey ? replySuggestions.reply : null;
+  const replyIsOlder = currentReplySuggestions !== null && status !== null && currentReplySuggestions.headSequence < status.headSequence;
   const blockedAttentionNode = status?.attentionReasons.find((reason) =>
     (reason.kind === "blocked_node" || reason.kind === "untriaged_interruption") && typeof reason.node === "string")?.node ?? null;
   const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
@@ -2683,7 +2698,7 @@ export default function App({
                 onRefuse={(item) => void refuse(item)}
                 onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
                 stepActions={stepActions} />}
-              jev={{ suggestions: currentReplySuggestions?.state === "ready" ? currentReplySuggestions.suggestions : [], loading: replyLoading, issue: currentReplyIssue }}
+              jev={{ suggestions: currentReplySuggestions?.state === "ready" ? currentReplySuggestions.suggestions : [], loading: replyLoading, issue: currentReplyIssue, older: replyIsOlder, onRetry: () => setReplyRetry((nonce) => nonce + 1) }}
               nativeKeys={nativeKeys}
               principal={<aside className="main-chat-rail" aria-label="Principal conversation">
                 <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected} personas={mainChatPersonas}
@@ -2743,7 +2758,7 @@ export default function App({
                 sayRecipient={sayTo}
                 owed={owedCards}
                 objective={briefing?.objective ?? null}
-                replySuggestions={replySuggestions}
+                replySuggestions={currentReplySuggestions}
                 replyLoading={replyLoading}
                 replyIssue={currentReplyIssue}
                 needsDirection={needsDirection}

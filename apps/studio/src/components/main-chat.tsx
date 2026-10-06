@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { newIdempotencyKey, RuntimeError, type RuntimeClient } from "../runtime/client";
-import type { NativeChatRequest, NativeChatSummary, ReplySuggestions } from "../runtime/types";
+import type { NativeChatRequest, NativeChatSummary } from "../runtime/types";
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RECOVERY_BYTES = 64 * 1024;
@@ -23,10 +23,15 @@ export interface MainChatProps {
   executionId: string;
   personas: MainChatPersona[];
   refreshSequence?: number;
-  replySuggestions?: ReplySuggestions | null;
-  replyLoading?: boolean;
-  replyIssue?: string | null;
   onConnect?: () => void;
+  /** Thread id the Chat column selected; MainChat switches its recipient to it when linked. */
+  recipientId?: string | null;
+  /** Fills the instruction when it is empty (Jev "Use"); never sends. */
+  seed?: { text: string; nonce: number } | null;
+  /** Bumped by a question card's "Check it" to re-read the request ledger. */
+  refreshNonce?: number;
+  /** Every ledger merge, so the page's needs-you list sees unconfirmed requests. */
+  onRequestsChange?: (requests: NativeChatRequest[]) => void;
 }
 
 type Row = NativeChatRequest & { ownerMessage?: string; local?: boolean };
@@ -166,7 +171,7 @@ function mergeRows(current: Row[], requests: NativeChatRequest[], recoveryEntrie
   return ordered;
 }
 
-export function MainChat({ client, executionId, personas, refreshSequence = 0, replySuggestions = null, replyLoading = false, replyIssue = null, onConnect }: MainChatProps) {
+export function MainChat({ client, executionId, personas, refreshSequence = 0, onConnect, recipientId = null, seed = null, refreshNonce: externalRefresh = 0, onRequestsChange }: MainChatProps) {
   const principal = personas[0] ?? null;
   const [selectedId, setSelectedId] = useState(principal?.chat.id ?? "");
   const [message, setMessage] = useState("");
@@ -185,9 +190,18 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
 
   const byChat = useMemo(() => new Map(personas.map((persona) => [persona.chat.id, persona])), [personas]);
   const selected = byChat.get(selectedId) ?? principal;
+  useEffect(() => {
+    if (recipientId !== null && byChat.has(recipientId)) setSelectedId(recipientId);
+  }, [recipientId, byChat]);
   const prefixLength = (charter: string) => charter.trim() === "" ? 0 : `Persona instructions for this activity:\n${charter.trim()}\n\n`.length;
   const messageLimitFor = (persona: MainChatPersona | null) => Math.max(0, MAX_MESSAGE_LENGTH - (persona ? prefixLength(persona.charter) : 0));
   const messageLimit = messageLimitFor(selected);
+  useEffect(() => {
+    if (seed !== null && seed.text.length <= messageLimit) setMessage((current) => current === "" ? seed.text : current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the nonce is the trigger
+  }, [seed?.nonce]);
+  useEffect(() => { if (externalRefresh > 0) setRefreshNonce((value) => value + 1); }, [externalRefresh]);
+  useEffect(() => { onRequestsChange?.(rows); }, [rows, onRequestsChange]);
   const teamTargets = personas.filter((persona) => persona.chat.id !== selected?.chat.id);
   const activeRows = rows;
   const blockedByPending = activeRows.some((row) => isPending(row.state) &&
@@ -202,15 +216,11 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   const latestActualIndex = latestActual === undefined ? -1 : activeRows.lastIndexOf(latestActual);
   const latestBlockedIndex = latestBlocked === undefined ? -1 : activeRows.lastIndexOf(latestBlocked);
   const latestReply = activeRows.filter((row) => row.state === "completed" && row.text).at(-1) ?? null;
-  const statusRequest = activeRows.filter((row) => isPending(row.state)).at(-1) ??
-    (latestBlockedIndex > latestActualIndex ? latestBlocked : latestActual);
   const hasReceiptPending = activeRows.some((row) => isPending(row.state));
   const canPrepareSend = client !== null && selected !== null && hydrated && !readFailed && message.trim() !== "" && message.length <= messageLimit && !sending;
   const canSend = canPrepareSend && !blockedByPending;
   const canSendTeam = canPrepareSend && !teamBlockedByPending && teamTargets.length > 0;
   const nativeApiAvailable = client !== null && typeof client.sendNativeChat === "function" && typeof client.listNativeChatRequests === "function";
-  const currentAdvice = replySuggestions?.executionId === executionId && replySuggestions.headSequence === refreshSequence ? replySuggestions : null;
-  const suggestedDrafts = currentAdvice?.state === "ready" && currentAdvice.suggestions.length === 2 ? currentAdvice.suggestions : [];
 
   useEffect(() => {
     const scopeChanged = scopeRef.current !== scopeKey;
@@ -396,35 +406,16 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
   return <section className="main-chat" aria-label="Main chat">
     <header><h2>Main chat</h2><p aria-label="Next step">{blockedByPending || readFailed
       ? "Next step: refresh the previous request's status. You can prepare your next instruction below; sending waits for confirmation."
-      : "Next step: review JEV's advice or write your own instruction, then choose who receives it."}</p></header>
+      : "Next step: use a Jev suggestion or write your own instruction, then choose who receives it."}</p></header>
     <label htmlFor="main-chat-recipient">Main recipient</label>
     <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending} onChange={(event) => setSelectedId(event.target.value)}>
       {personas.map((persona) => <option key={persona.chat.id} value={persona.chat.id}>{persona.chat.title} · {persona.chat.id}</option>)}
     </select>
-    <section className="main-chat-guidance" aria-label="JEV next step">
-      <h3>JEV · Suggested next step</h3>
-      {replyLoading ? <p role="status">Preparing JEV suggestions…</p> : suggestedDrafts.length === 2 ? <>
-        <p>Advice for the current run. Using a suggestion only fills your draft; check the selected recipient before sending.</p>
-        <article>
-          <p>{suggestedDrafts[0].draft}</p><p className="main-chat-team-targets">{suggestedDrafts[0].reason}</p>
-          <button type="button" disabled={message !== "" || suggestedDrafts[0].draft.length > messageLimit} onClick={() => { setMessage(suggestedDrafts[0].draft); textareaRef.current?.focus(); }}>Use suggestion 1</button>
-        </article>
-        <details>
-          <summary>Another suggestion</summary>
-          <article>
-            <p>{suggestedDrafts[1].draft}</p><p className="main-chat-team-targets">{suggestedDrafts[1].reason}</p>
-            <button type="button" disabled={message !== "" || suggestedDrafts[1].draft.length > messageLimit} onClick={() => { setMessage(suggestedDrafts[1].draft); textareaRef.current?.focus(); }}>Use suggestion 2</button>
-          </article>
-        </details>
-        {message !== "" && <p>Clear your instruction to use a suggestion. Your draft will not be overwritten.</p>}
-      </> : <p role="status">{replyIssue ?? currentAdvice?.reason ?? (currentAdvice?.state === "not_needed" ? "JEV has no suggested reply for this run right now." : "JEV suggestions are unavailable for the current run. You can write your own instruction.")}</p>}
-    </section>
     <label htmlFor="main-chat-message">Instruction</label>
     <textarea ref={textareaRef} id="main-chat-message" aria-describedby="main-chat-request-status" value={message} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
     <p>{message.length}/{messageLimit} characters</p>
     <p className="main-chat-team-targets">Team targets: {teamTargets.length === 0 ? "none" : teamTargets.map((persona) => persona.chat.title).join(", ")}</p>
-    <section id="main-chat-request-status" className="main-chat-request-status" aria-label="Request status">
-      <strong>Request status</strong>
+    <div id="main-chat-request-status" className="main-chat-status">
       <p role="status">{readFailed ? "Request status could not be checked. Refresh before sending. Your instruction remains editable."
         : blockedByPending ? "Sending is paused until the previous request is confirmed. You can keep writing your next instruction."
         : hasReceiptPending ? "Another chat has an unresolved request. You can send to this recipient; team sending waits for its recipients to be confirmed."
@@ -432,12 +423,7 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, r
         : latestReply ? "The latest request completed. Review the reply below before sending the next instruction."
         : "No pending native requests."}</p>
       {(activeRows.length > 0 || readFailed) && <button type="button" className="main-chat-refresh" onClick={() => setRefreshNonce((value) => value + 1)}>Refresh request status</button>}
-      {statusRequest && <details className="main-chat-technical-details">
-        <summary>Technical details</summary>
-        <p>{statusRequest.title} · <code>{statusRequest.requestId}</code></p>
-        <p>{statusRequest.detail ?? stateLabel(statusRequest.state)}</p>
-      </details>}
-    </section>
+    </div>
     {latestReply && <section className="main-chat-latest-reply" aria-label="Latest chat reply">
       <strong>Latest reply · {latestReply.title}</strong>
       <p>{latestReply.text}</p>

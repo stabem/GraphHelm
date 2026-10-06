@@ -21,8 +21,6 @@ import { Board } from "./board";
 import { defaultPosition, emptyBoard, type BoardState } from "../graph/board";
 import type { GraphModel } from "../graph/model";
 import studioStyles from "../styles.css?raw";
-import { newestPresenceByActor, type AgentPresence } from "../runtime/session";
-import type { RuntimeEvent } from "../runtime/types";
 
 const MODEL: GraphModel = {
   rosterDeclared: true,
@@ -98,10 +96,6 @@ describe("the run capsule", () => {
     render(
       <Board
         model={PROGRESS_MODEL}
-        projectName="GraphHelm"
-        projectPath="F:/github/GraphHelm"
-        latestRecordedUpdate={{ sequence: 8, occurredAt: null }}
-        initialLayout="overview"
         board={emptyBoard()}
         selectedNode={null}
         onSelectNode={() => {}}
@@ -111,7 +105,6 @@ describe("the run capsule", () => {
       />,
     );
     expect(screen.getByLabelText("This run's progress")).toHaveTextContent(/last activity ·/);
-    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("F:/github/GraphHelm");
   });
 
   it("stays off the canvas when no run is named", () => {
@@ -130,24 +123,6 @@ describe("the run capsule", () => {
 });
 
 describe("node evidence", () => {
-  it("highlights verified assignment only, never a history speaker", () => {
-    const model: GraphModel = {
-      ...MODEL,
-      edgesKnown: true,
-      edges: [{ id: "implementation->deploy", from: "implementation", to: "deploy", type: "control" }],
-      nodes: [
-        { ...MODEL.nodes[0], assignedActor: { type: "agent", id: "builder" }, history: [{ sequence: 1, kind: "report", nextState: "blocked", outcome: "blocked", occurredAt: null, actorId: "reviewer", actorType: "agent", evidence: 0 }] },
-        MODEL.nodes[1],
-      ],
-    };
-    render(<Board model={model} board={emptyBoard()} selectedNode={null} selectedAgent="builder" onSelectAgent={vi.fn()} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
-    const assigned = screen.getAllByText("implementation").find((element) => element.closest("article.node"))!.closest("article.node")! as HTMLElement;
-    const neighbor = screen.getAllByText("deploy").find((element) => element.closest("article.node"))!.closest("article.node")! as HTMLElement;
-    expect(assigned.style.boxShadow).toContain("hsl");
-    expect(neighbor).not.toHaveClass("node-filtered-out");
-    expect(neighbor.style.boxShadow).toBe("");
-  });
-
   it("names the runtime as recorder and keeps the event address", () => {
     render(<Board model={{ ...MODEL, nodes: [...MODEL.nodes, { id: "draft", state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
     expect(screen.getByText("Runtime")).toBeInTheDocument();
@@ -311,52 +286,6 @@ describe("moving a card", () => {
   });
 });
 
-describe("drawing on the sheet", () => {
-  it("records a stroke in the chosen tone", async () => {
-    const board = mountBoard();
-    await userEvent.click(screen.getByRole("button", { name: /^draw$/i }));
-
-    press(board.sheet(), 20, 20);
-    drag(60, 40);
-    drag(100, 80);
-    release();
-
-    expect(board.latest().strokes).toHaveLength(1);
-    expect(board.latest().strokes[0].tone).toBe("ink");
-    expect(board.latest().strokes[0].points.length).toBeGreaterThan(1);
-  });
-
-  /** A tap is not a stroke. Without this, every click on the sheet with the pen selected would
-   * leave a one-point mark that renders as nothing and still fills the board's budget. */
-  it("does not record a stroke from a press with no movement", async () => {
-    const board = mountBoard();
-    await userEvent.click(screen.getByRole("button", { name: /^draw$/i }));
-    press(board.sheet(), 20, 20);
-    release();
-    expect(board.latest().strokes).toEqual([]);
-  });
-
-  it("does not draw while the move tool is selected", () => {
-    const board = mountBoard();
-    press(board.sheet(), 20, 20);
-    drag(60, 40);
-    release();
-    expect(board.latest().strokes).toEqual([]);
-  });
-});
-
-describe("notes", () => {
-  it("drops a note where the sheet was clicked and returns to moving", async () => {
-    const board = mountBoard();
-    await userEvent.click(screen.getByRole("button", { name: /^note$/i }));
-    press(board.sheet(), 140, 160);
-
-    expect(board.latest().notes).toHaveLength(1);
-    expect(board.latest().notes[0].at).toEqual({ x: 140, y: 160 });
-    expect(screen.getByRole("button", { name: /^move$/i })).toHaveAttribute("aria-pressed", "true");
-  });
-});
-
 /** The disagreement signal, worn on the card: a node the log settled and then named again. */
 describe("reopened after done", () => {
   const REOPENED_MODEL: GraphModel = {
@@ -488,186 +417,6 @@ describe("the lint strip", () => {
   });
 });
 
-/**
- * The declared model and effort, worn beside an agent's name.
- *
- * `withPresence`, `withoutPresence` and `withPresenceHistory` build a CREW ROSTER (the shape
- * `Board`'s own `crew` prop takes), each one's `presence` field carried through
- * `newestPresenceByActor` - the same reduction the runtime module exposes - so these tests
- * exercise the real newest-per-actor logic, not a fixture that already knows the answer.
- */
-describe("the declared model and effort", () => {
-  const presenceEvent = (sequence: number, actorId: string, model: string, effort?: AgentPresence["effort"]): RuntimeEvent => ({
-    sequence,
-    kind: "agent_presence_declared",
-    payload: { actorId, actorType: "agent", model, effort },
-    occurredAt: null,
-    actorId,
-    actorType: "agent",
-    idempotencyKey: null,
-    eventId: null,
-    evidenceRefs: [],
-  });
-
-  const crewWith = (actorId: string, events: RuntimeEvent[]) => [
-    { id: actorId, charter: null, lastAt: null, presence: newestPresenceByActor(events)[actorId] ?? null },
-  ];
-
-  function withPresence(actorId: string, model: string, effort?: AgentPresence["effort"]) {
-    return crewWith(actorId, [presenceEvent(1, actorId, model, effort)]);
-  }
-
-  function withoutPresence(actorId: string) {
-    return crewWith(actorId, []);
-  }
-
-  function withPresenceHistory(actorId: string, declarations: Array<[string, AgentPresence["effort"]]>) {
-    return crewWith(
-      actorId,
-      declarations.map(([model, effort], index) => presenceEvent(index + 1, actorId, model, effort)),
-    );
-  }
-
-  it("shows the model and effort beside the name once declared", () => {
-    render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        crew={withPresence("codex", "gpt-6-astra", "low")}
-        {...REST}
-      />,
-    );
-    expect(screen.getByText("gpt-6-astra · low")).toBeInTheDocument();
-  });
-
-  it("shows NOTHING beside a name that never declared", () => {
-    render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        crew={withoutPresence("codex")}
-        {...REST}
-      />,
-    );
-    expect(screen.queryByText(/unknown|default|n\/a/i)).not.toBeInTheDocument();
-  });
-
-  it("shows the model alone when effort was not declared", () => {
-    render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        crew={withPresence("codex", "gpt-6-astra", undefined)}
-        {...REST}
-      />,
-    );
-    expect(screen.getByText("gpt-6-astra")).toBeInTheDocument();
-    expect(screen.queryByText("·")).not.toBeInTheDocument();
-  });
-
-  it("shows the NEWEST declaration when a session changed model mid-run", () => {
-    render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        crew={withPresenceHistory("codex", [
-          ["a", "low"],
-          ["b", "high"],
-        ])}
-        {...REST}
-      />,
-    );
-    expect(screen.getByText("b · high")).toBeInTheDocument();
-    expect(screen.queryByText("a · low")).not.toBeInTheDocument();
-  });
-
-  /**
-   * #1057: a LATER SESSION that declares nothing does not wear the previous session's model.
-   *
-   * An actor id is stable across sessions, so the board used to show a model belonging to a
-   * session that had ended as the live session's own - and kept refreshing `lastAt` from the new
-   * session's mutations while it did. The Runtime now records a model-less
-   * `agent_presence_declared` on an undeclared session's first write, and this is what that has to
-   * mean on screen: no badge, not a stale one.
-   */
-  it("drops the badge when a later session declared nothing", () => {
-    const boundary = (sequence: number, actorId: string, session: string): RuntimeEvent => ({
-      ...presenceEvent(sequence, actorId, "unused"),
-      payload: { actorId, actorType: "agent", session },
-    });
-    const { container } = render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        crew={crewWith("codex", [
-          presenceEvent(1, "codex", "gpt-6-astra", "low"),
-          boundary(2, "codex", "session-two"),
-        ])}
-        {...REST}
-      />,
-    );
-    expect(container.querySelector(".agent-badge")).toBeNull();
-    expect(screen.queryByText("gpt-6-astra · low")).not.toBeInTheDocument();
-    expect(screen.queryByText(/gpt-6-astra/)).not.toBeInTheDocument();
-  });
-
-  /**
-   * #1057 Codex P2: `constructor` is a VALID actor id, and on a plain object literal
-   * `presence["constructor"]` answers the inherited function rather than `undefined` - the board
-   * then rendered a badge for an actor that had declared nothing at all. The CONTROL is the
-   * declaring half: the same id really does wear a badge once it declares, so the absence below is
-   * about the prototype and not about the id being rejected somewhere.
-   */
-  it.each(["constructor", "toString", "valueOf"])(
-    "shows nothing for the undeclared actor %s, whose id names a prototype member",
-    (actorId) => {
-      const { container, unmount } = render(
-        <Board
-          model={MODEL}
-          board={emptyBoard()}
-          selectedNode={null}
-          onSelectNode={() => {}}
-          onChange={() => {}}
-          crew={withoutPresence(actorId)}
-          {...REST}
-        />,
-      );
-      // The ELEMENT, not its text: a prototype member read as presence renders an EMPTY badge, so
-      // a text assertion would pass over exactly the defect this cell is about.
-      expect(container.querySelector(".agent-badge")).toBeNull();
-      unmount();
-
-      render(
-        <Board
-          model={MODEL}
-          board={emptyBoard()}
-          selectedNode={null}
-          onSelectNode={() => {}}
-          onChange={() => {}}
-          crew={withPresence(actorId, "gpt-6-astra", "low")}
-          {...REST}
-        />,
-      );
-      expect(screen.getByText("gpt-6-astra · low")).toBeInTheDocument();
-    },
-  );
-});
-
 describe("what the board refuses to imply", () => {
   it("keeps the directly opened node framed after a navigator choice and resize", async () => {
     let resize = () => {};
@@ -748,11 +497,6 @@ describe("canvas graph evidence boundaries", () => {
     expect(document.querySelectorAll("path.edge")).toHaveLength(0);
     expect(screen.getByText("implementation")).toBeInTheDocument();
   });
-  it("offers graph verification as an accessible work-region action", () => {
-    render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
-    fireEvent.click(screen.getByRole("button", { name: "Verify connections" }));
-    expect(screen.getByRole("textbox", { name: "Graph file path on the Runtime host" })).toBeInTheDocument();
-  });
 });
 
 
@@ -764,22 +508,6 @@ it("does not intercept Space on a disclosure", () => {
   expect(screen.getByRole("button", { name: "pan" })).toHaveAttribute("aria-pressed", "false");
 });
 
-
-it("pans from a section title without native text selection or moving cards", () => {
-  const board = mountBoard();
-  fireEvent.click(screen.getByRole("button", { name: "pan" }));
-  const title = document.querySelector(".canvas-region strong") as HTMLElement;
-  const range = document.createRange();
-  range.selectNodeContents(title);
-  window.getSelection()?.addRange(range);
-  const initial = document.querySelector(".world")?.getAttribute("style");
-  expect(fireEvent.pointerDown(title, { button: 0, clientX: 100, clientY: 100, bubbles: true })).toBe(false);
-  drag(180, 150);
-  release();
-  expect(window.getSelection()?.toString()).toBe("");
-  expect(document.querySelector(".world")?.getAttribute("style")).not.toBe(initial);
-  expect(board.changes).toHaveLength(0);
-});
 
 /**
  * #1077: the blind judge opened the free canvas and saw 2 of 7 cards - an 80% floor on the
@@ -798,11 +526,6 @@ describe("framing a run with lanes", () => {
     ...MODEL,
     nodes: ["docs", "implement", "map_repository", "plan", "review", "tests"].map((id) => ({ id, state: "succeeded" as const, touches: 0, lastEventAt: null, history: [], reopened: null })),
   };
-  const CREW = [{ id: "codex", charter: null }, { id: "reviewer", charter: null }];
-  const TALKS = [
-    { key: "room", label: "Everyone", participants: [], count: 3, lastAt: null },
-    { key: "codex+reviewer", label: "codex + reviewer", participants: ["codex", "reviewer"], count: 2, lastAt: null },
-  ];
   const zoomOf = (container: HTMLElement) => {
     const match = /scale\(([\d.]+)\)/.exec((container.querySelector(".world") as HTMLElement).style.transform);
     return Number(match?.[1]);
@@ -822,8 +545,7 @@ describe("framing a run with lanes", () => {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
     try {
-      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={CREW} talks={TALKS} />);
-      expect(container.querySelectorAll(".canvas-region")).toHaveLength(3);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
       const first = zoomOf(container);
       expect(first).toBeGreaterThanOrEqual(0.75);
       const cards = onScreen(container, viewport);
@@ -848,7 +570,7 @@ describe("framing a run with lanes", () => {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
     try {
-      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={CREW} talks={TALKS} />);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
       expect(zoomOf(container)).toBeGreaterThanOrEqual(0.75);
       expect(onScreen(container, viewport).every((card) => card.inside)).toBe(true);
     } finally {
@@ -901,7 +623,7 @@ describe("framing around the canvas chrome", () => {
   it("frames the cards inside the band the lint strip and the toolbar leave, on first framing and on fit", () => {
     const rect = mockLayout();
     try {
-      const { container } = render(<Board initialLayout="canvas" model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} crew={[{ id: "codex", charter: null }]} talks={[{ key: "room", label: "Everyone", participants: [], count: 1, lastAt: null }]} />);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
       for (const pass of ["first framing", "fit"]) {
         if (pass === "fit") fireEvent.click(screen.getByRole("button", { name: "fit" }));
         const { zoom, cards } = framed(container);
@@ -964,7 +686,7 @@ describe("first framing", () => {
   it("opens with every card on screen, laid out across the width", () => {
     const rect = mockViewport();
     try {
-      const { container } = render(<Board initialLayout="canvas" model={SEVEN} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const { container } = render(<Board model={SEVEN} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
       const { rects, zoom } = cardsOnScreen(container);
       expect(rects).toHaveLength(7);
       expect(rects.every(inside)).toBe(true);
@@ -982,9 +704,9 @@ describe("first framing", () => {
     const rect = mockViewport();
     try {
       let board: BoardState = { ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } };
-      const view = render(<Board initialLayout="canvas" model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      const view = render(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
       fireEvent.click(screen.getByRole("button", { name: "Organize" }));
-      view.rerender(<Board initialLayout="canvas" model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      view.rerender(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
       expect(board.positions).toEqual({});
       const { rects } = cardsOnScreen(view.container);
       expect(rects.every(inside)).toBe(true);
@@ -998,7 +720,7 @@ describe("first framing", () => {
   it("still honours a position the operator saved", () => {
     const rect = mockViewport();
     try {
-      const { container } = render(<Board initialLayout="canvas" model={SEVEN} board={{ ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } }} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const { container } = render(<Board model={SEVEN} board={{ ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } }} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
       const moved = [...container.querySelectorAll<HTMLElement>("article.node")].find((card) => card.style.left === "4000px");
       expect(moved).toBeDefined();
     } finally {

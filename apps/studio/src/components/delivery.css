@@ -146,15 +146,10 @@
 .main-chat-request-blocked, .main-chat-request-unobserved { border-color: #957541; }
 .main-chat-request-requested, .main-chat-request-received { border-color: #665285; }
 .main-chat-empty { color: #b8b6c6; padding: 16px 0; }
-.main-chat-guidance { padding: 12px; border: 1px solid #60566f; border-radius: 12px; background: #24212c; }
-.main-chat-guidance h3 { margin: 0 0 8px; font-size: 14px; }
-.main-chat-guidance article { margin-top: 10px; padding-top: 10px; border-top: 1px solid #494451; }
-.main-chat-guidance article p + p, .main-chat-guidance article button { margin-top: 8px; }
-.main-chat-guidance summary, .main-chat-history summary, .main-chat-technical-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
-.main-chat-guidance summary:focus-visible, .main-chat-history summary:focus-visible, .main-chat-technical-details summary:focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
+.main-chat-history summary, .main-chat-technical-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.main-chat-history summary:focus-visible, .main-chat-technical-details summary:focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
 .main-chat-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .main-chat-team-targets { font-size: 12px; color: #b8b6c6; }
-.main-chat-request-status { display: grid; gap: 8px; padding: 12px; border: 1px solid #494451; border-radius: 10px; background: #242329; }
 .main-chat-refresh { background: #242329; color: #eeeaf8; }
 .main-chat-actions button:first-child { background: #7352a0; color: white; }
 .main-chat-history { margin-top: 4px; }

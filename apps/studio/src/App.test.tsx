@@ -80,7 +80,7 @@ function stubClient(overrides: Record<string, unknown> = {}) {
       hasMore: false,
       nextCursor: null,
     })),
-    getStatus: vi.fn(async () => ({ ...STATUS })),
+    getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId })),
     getEvents: vi.fn(async () => ({
       head: 13,
       events: [
@@ -179,6 +179,11 @@ function firstCall<T extends unknown[]>(mock: { mock: { calls: T[] } }): T {
   return call;
 }
 
+/** The run panel's own Send button: the chat column carries a second one with the same name. */
+function runSend(): HTMLElement {
+  return within(document.getElementById("conversation-panel") as HTMLElement).getByRole("button", { name: /^send$/i });
+}
+
 function fakeModelContext() {
   const registered: WebMcpToolDescriptor[] = [];
   const modelContext: ModelContextLike = {
@@ -198,14 +203,15 @@ describe("Studio organization and responsive navigation", () => {
   afterEach(() => localStorage.clear());
 
   // DOM-only, no native calls: protects the entry point missing from the owner journey.
-  it("opens the principal conversation beside the overview and keeps it on the free canvas", async () => {
-    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"fixtures/project"})} />);
-    const overview = await screen.findByRole("main", { name: "Work overview" });
+  it("opens the principal conversation inside the chat column beside the team canvas", async () => {
+    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm", projectPath: "fixtures/project" })} />);
+    const team = await screen.findByRole("region", { name: "Team" });
     const principal = screen.getByRole("complementary", { name: "Principal conversation" });
     expect(principal).toBeVisible();
-    expect(principal.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
-    expect(screen.getByRole("complementary", { name: "Principal conversation" })).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "Chat" })).toContainElement(principal);
+    expect(principal.compareDocumentPosition(team) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Free canvas" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
   });
 
   it("keeps the selected project and run address visible outside the mobile rail without guessing membership", async () => {
@@ -219,34 +225,6 @@ describe("Studio organization and responsive navigation", () => {
     expect(identity).not.toHaveTextContent("Run: demo-deploy");
   });
 
-  it("warns in People when verified team records are unavailable but a message sender is known", async () => {
-    const carriers = Array.from({ length: 2049 }, (_, index) => ({
-      sequence: index + 1, kind: "signal_recorded", payload: { kind: "run_team_joined" },
-      occurredAt: null, actorId: "codex", actorType: "agent",
-      idempotencyKey: `key-${index}`, eventId: `event-${index}`, evidenceRefs: [],
-    }));
-    const events = [...carriers, { sequence: 2050, kind: "signal_recorded",
-      payload: { kind: "operator_note", signalId: "note-1" }, occurredAt: null,
-      actorId: "codex", actorType: "agent", idempotencyKey: "key-note",
-      eventId: "event-note", evidenceRefs: ["evidence-note"] }];
-    const client = stubClient({
-      getStatus: vi.fn(async () => ({ ...STATUS, headSequence: 2050,
-        attention: "can_sleep", attentionReasons: [] })),
-      getEvents: vi.fn(async (_run: string, options: { after: number; limit: number }) => ({
-        head: 2050, events: events.filter((event) => event.sequence > options.after).slice(0, options.limit),
-      })),
-      readEvidence: vi.fn(async () => ({ evidenceId: "evidence-note", mediaType: "application/json",
-        sensitivity: "confidential", contentSha256: "sha256:fixture",
-        content: JSON.stringify({ description: "Checking the latest work result." }) })),
-    });
-    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
-      session={async () => ({ token: "local-token", project: "fixture-project" })} />);
-    const people = await screen.findByRole("region", { name: "People and reported work" });
-    await waitFor(() => expect(people).toHaveTextContent("Team records unavailable; joined membership is unknown."));
-    expect(people).not.toHaveTextContent("Observed actor IDs from recorded messages.");
-    expect(people).not.toHaveTextContent("Checking the latest work result.");
-    expect(people).not.toHaveTextContent("Explicitly joined sessions.");
-  });
 
   it.each([
     [false, "demo-deploy"],
@@ -275,7 +253,8 @@ describe("Studio organization and responsive navigation", () => {
   ])("names lifecycle and %s verdict in the run header", async (attention, label) => {
     const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, attention })) });
     await open(client);
-    const strip = document.querySelector(".topstrip") as HTMLElement;
+    const strip = document.querySelector(".topbar") as HTMLElement;
+    await userEvent.click(within(strip).getByText("Run details"));
     expect(await within(strip).findByText(`running · ${label}`)).toBeVisible();
   });
 
@@ -457,6 +436,84 @@ describe("Studio organization and responsive navigation", () => {
   });
 });
 
+describe("live team layout", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  function longGapClient() {
+    const many = Array.from({ length: 24 }, (_, i) => ({ sequence: 20 + i, kind: "signal_recorded", payload: { kind: "operator_note", signalId: `s${i}` },
+      occurredAt: new Date(Date.parse("2026-08-27T12:30:00Z") + i * 60_000).toISOString(), actorId: "kit-1", actorType: "agent",
+      idempotencyKey: null, eventId: `e${20 + i}`, evidenceRefs: [] }));
+    // Run A (demo-deploy) has the long gap; run B (demo-calm) has a short log, so it never earns a card.
+    return stubClient({ getEvents: vi.fn(async (executionId: string) => executionId === "demo-calm" ? { head: 4, events: [] } : { head: 43, events: [
+      { sequence: 1, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "e1", evidenceRefs: [] },
+      ...many,
+    ] }), getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, headSequence: executionId === "demo-calm" ? 4 : 43 })) });
+  }
+
+  it("lights the beacon for a blocked step and opens its card with the legal action", async () => {
+    await open(stubClient());
+    const beacon = await screen.findByRole("button", { name: "1 decision needs you" });
+    await userEvent.click(beacon);
+    const cards = screen.getByRole("region", { name: "Needs you" });
+    expect(within(cards).getByText("implementation is blocked.")).toBeInTheDocument();
+    expect(within(cards).getByRole("button", { name: /(approv|allow.*retry).*implementation/i })).toBeInTheDocument();
+    await waitFor(() => expect(cards).toHaveFocus());
+  });
+
+  it("goes dark when the Runtime answers and nothing is open", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    await open(stubClient({ getStatus: vi.fn(async () => calm) }));
+    expect(await screen.findByRole("button", { name: "Nothing needs you" })).toHaveClass("beacon-dark");
+  });
+
+  it("shows the handover after a long gap and advances only on Got it", async () => {
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const card = await screen.findByRole("dialog", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")).toBe("43");
+    expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
+  });
+
+  it("does not show run A's handover after switching to run B", async () => {
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");
+    await open(longGapClient());
+    expect(await screen.findByRole("dialog", { name: "While you were away" })).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
+    // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
+    // events and status are still the ones in memory. select() clears status and events, which hides
+    // A's card; the status.executionId guard is defence-in-depth behind it.
+    expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull());
+    expect(screen.queryByText(/24 records/)).toBeNull();
+  });
+
+  it("resume without a graph file selects the Team tab and focuses the graph field by state", async () => {
+    const paused = { ...STATUS, status: "paused", attentionReasons: [] };
+    await open(stubClient({ getStatus: vi.fn(async () => paused) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
+    await userEvent.click(screen.getByRole("button", { name: "resume" }));
+    expect(screen.getByRole("tab", { name: "Team (live)" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
+  });
+
+  it("below 768 px the Chat / Team / Journeys tabs choose the one visible column", async () => {
+    await open(stubClient());
+    const layout = document.querySelector(".studio-columns") as HTMLElement;
+    const tabs = within(screen.getByRole("tablist", { name: "Studio columns" }));
+    await userEvent.click(tabs.getByRole("tab", { name: "Chat" }));
+    expect(layout).toHaveAttribute("data-mobile-tab", "chat");
+    await userEvent.click(tabs.getByRole("tab", { name: "Journeys" }));
+    expect(layout).toHaveAttribute("data-mobile-tab", "journeys");
+    expect(screen.getByRole("tab", { name: "Journey" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(tabs.getByRole("tab", { name: "Team" }));
+    expect(layout).toHaveAttribute("data-mobile-tab", "team");
+  });
+});
+
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */
 async function open(client: ReturnType<typeof stubClient>, modelContext: ModelContextLike | null = null, conversation = true) {
   render(
@@ -467,8 +524,6 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
     />,
   );
   await screen.findByLabelText("Projects");
-  // These existing journeys exercise the free canvas; overview has dedicated default-view coverage.
-  await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
   await userEvent.click(screen.getByText("Run actions"));
   // These conversation journeys explicitly open the optional pane.
   if (conversation && screen.getByRole("button", { name: "Toggle conversation" }).getAttribute("aria-expanded") !== "true") {
@@ -506,12 +561,10 @@ describe("opening", () => {
     expect(await screen.findByRole("heading", { name: "This run needs you" })).toBeVisible();
     expect(screen.getByText(/waiting for owner review/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(await screen.findByRole("region", { name: "Owner decision" })).toHaveTextContent("Review pending proposal");
-    expect(screen.getByRole("region", { name: "Owner decision" })).toHaveTextContent("owner review");
-    expect(screen.getByRole("region", { name: "Owner decision" })).toHaveTextContent("Needs a decision");
-    expect(screen.getByRole("region", { name: "Owner decision" })).not.toHaveTextContent("recommended replies");
-    await userEvent.click(screen.getByRole("button", { name: "Free canvas" }));
+    const proposalCards = await screen.findByRole("region", { name: "Needs you" });
+    expect(proposalCards).toHaveTextContent("A proposal is waiting for your review.");
+    expect(within(proposalCards).getByRole("button", { name: "Review proposal" })).toBeInTheDocument();
+    expect(proposalCards).not.toHaveTextContent("recommended replies");
     expect(screen.getByText(/summarize · Summarize · Make a short summary/)).toBeVisible();
     const approve = await screen.findByRole("button", { name: "approve proposal for summarize" });
     await waitFor(() => expect(approve).toBeEnabled());
@@ -541,15 +594,10 @@ describe("opening", () => {
 
   it("opens the recorded blocked-step controls without calling the action an answer", async () => {
     await open(stubClient());
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    const action = await screen.findByRole("region", { name: "Owner decision" });
-    expect(action).toHaveTextContent("Review step needing attention");
-    expect(action).toHaveTextContent("implementation needs review");
-    expect(action).not.toHaveTextContent("answer");
-    await userEvent.click(within(action).getByRole("button", { name: "Review step needing attention" }));
-    expect(await screen.findByLabelText("Why this run needs you")).toHaveTextContent("implementation is blocked");
+    const cards = await screen.findByRole("region", { name: "Needs you" });
+    expect(cards).toHaveTextContent("implementation is blocked.");
+    expect(cards).not.toHaveTextContent(/answer/i);
+    expect(within(cards).getByRole("button", { name: /(approv|allow.*retry).*implementation/i })).toBeInTheDocument();
   });
 
   it("does not invent an owner request when a graph step waits without a question", async () => {
@@ -559,8 +607,7 @@ describe("opening", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
     expect(screen.getByText("graph waiting; no request recorded")).toBeInTheDocument();
     expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
@@ -581,10 +628,7 @@ describe("opening", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(screen.getByRole("region", { name: "People and reported work" })).not.toHaveTextContent("Reviewed the implementation path.");
-    expect(document.querySelector(".topstrip .tag")).toHaveTextContent("agent work recorded · graph step waiting");
-    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
+    expect(document.querySelector(".topbar .tag")).toHaveTextContent("agent work recorded · graph step waiting");
     const selected = screen.getByRole("navigation", { name: "Projects" }).querySelector('button[aria-current="true"]')!;
     expect(selected).toHaveAttribute("title", "agent work recorded · graph step waiting");
     expect(selected).toHaveClass("calm");
@@ -597,7 +641,6 @@ describe("opening", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
     expect(screen.queryByRole("region", { name: "Next action" })).not.toBeInTheDocument();
     expect(screen.queryByText("Owner action")).not.toBeInTheDocument();
   });
@@ -633,7 +676,6 @@ describe("opening", () => {
       />,
     );
     await screen.findByLabelText("Projects");
-    await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
     await userEvent.click(screen.getByText("Run actions"));
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Draft to review" }), "draft-paused-gate");
 
@@ -653,13 +695,6 @@ describe("opening", () => {
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
   });
 
-  it("opens the organized overview without applying saved canvas coordinates", async () => {
-    render(<App createClient={() => stubClient() as unknown as RuntimeClient} modelContext={null} session={async () => ({token:"local-token",project:"GraphHelm",projectPath:"fixtures/project"})} />);
-    expect(await screen.findByRole("main",{name:"Work overview"})).toBeVisible();
-    expect(screen.getByRole("button",{name:/^Overview$/})).toHaveAttribute("aria-pressed","true");
-    expect(screen.queryByRole("combobox",{name:"Find on board"})).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Active workspace" })).toHaveTextContent("fixtures/project");
-  });
   /** THE POINT OF THE SESSION WORK. Nobody types anything: the page asks the dev server, gets the
    * token the Runtime already wrote, and is connected before the operator does a thing. */
   it("opens connected, with no token asked for", async () => {
@@ -779,24 +814,24 @@ describe("the projects rail", () => {
 describe("the board", () => {
   it("puts every declared node on it, including one nothing has happened to", async () => {
     await open(stubClient());
-    const board = await screen.findByLabelText("Execution board");
-    expect(within(board).getByText("implementation")).toBeInTheDocument();
-    expect(within(board).getByText("deploy")).toBeInTheDocument();
+    const board = await screen.findByLabelText("Steps without a bot");
+    expect(within(board).getByRole("button", { name: /^implementation/ })).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: /^deploy/ })).toBeInTheDocument();
   });
 
   /** Nothing proves the shape until a graph file's hash matches the run's, so nothing is drawn
    * and the note says so. */
   it("draws no connection until one is proven", async () => {
     await open(stubClient());
-    const board = await screen.findByLabelText("Execution board");
-    expect(board.querySelectorAll("path.edge")).toHaveLength(0);
+    await userEvent.click(await screen.findByRole("button", { name: "Graph file" }));
+    expect(document.querySelectorAll("path.edge, .team-link")).toHaveLength(0);
     expect(screen.getByText(/work connections unverified/i)).toBeInTheDocument();
   });
 
   it("renders the log as text, never as markup", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(panel.textContent).toContain("retryable failure");
     expect(panel.innerHTML).not.toContain("<script");
   });
@@ -810,8 +845,8 @@ describe("the window", () => {
    * layers over the canvas it describes, never over the chat. */
   it("opens with the conversation beside the board, and nothing over either", async () => {
     await open(stubClient());
-    expect(await screen.findByLabelText("Execution board")).toBeInTheDocument();
-    expect(await screen.findByLabelText(/^Run /)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Steps without a bot")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/^Run (?!side panel)/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^Node /)).not.toBeInTheDocument();
   });
 
@@ -820,7 +855,7 @@ describe("the window", () => {
   it("shows only the states that are something, and asserts the zeros in one line", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     // A chip per non-zero state, nothing for the empty ones...
     const chips = panel.querySelectorAll(".state-chip");
     expect(chips.length).toBeGreaterThan(0);
@@ -835,7 +870,7 @@ describe("the window", () => {
 
   it("swaps to a node when its block is opened, and back when it is closed", async () => {
     await open(stubClient());
-    const board = await screen.findByLabelText("Execution board");
+    const board = await screen.findByLabelText("Steps without a bot");
     await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
 
     const nodePanel = await screen.findByLabelText("Node implementation");
@@ -845,7 +880,7 @@ describe("the window", () => {
 
     await userEvent.click(within(nodePanel).getByRole("button", { name: /close this node/i }));
     await waitFor(() => expect(screen.queryByLabelText(/^Node /)).not.toBeInTheDocument());
-    expect(screen.getByLabelText("Execution board")).toBeInTheDocument();
+    expect(screen.getByLabelText("Steps without a bot")).toBeInTheDocument();
   });
 
   it.each([
@@ -870,7 +905,7 @@ describe("the window", () => {
       readEvidence: vi.fn(async () => ({ evidenceId: "delivery", mediaType: "application/json", sensitivity: "internal", contentSha256: "hash", content: record })),
     });
     await open(client);
-    const board = await screen.findByLabelText("Execution board");
+    const board = await screen.findByLabelText("Steps without a bot");
     await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
     await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
     const content = await screen.findByLabelText("File content");
@@ -910,7 +945,7 @@ describe("the window", () => {
       saveDocument: vi.fn(() => new Promise((resolve) => { resolveSave = resolve; })),
     });
     await open(client);
-    const board = await screen.findByLabelText("Execution board");
+    const board = await screen.findByLabelText("Steps without a bot");
     await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
     await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
     await userEvent.type(await screen.findByLabelText("File content"), " changed");
@@ -953,7 +988,7 @@ describe("the window", () => {
       saveDocument: vi.fn(async () => { throw new Error("network"); }),
     });
     await open(client);
-    const board = await screen.findByLabelText("Execution board");
+    const board = await screen.findByLabelText("Steps without a bot");
     await userEvent.click(within(board).getByRole("button", { name: /implementation/i }));
     await userEvent.click(await screen.findByRole("button", { name: /Project rule/ }));
     await userEvent.type(await screen.findByLabelText("File content"), " changed");
@@ -1679,26 +1714,6 @@ describe("the shell's own layout", () => {
     expect(shell.style.getPropertyValue("--rail")).toBe("268px");
   });
 
-  /** Blocks keep where they were dragged, per run, across reloads - so there has to be a way back
-   * to the grid when a stored position buries one block under another. */
-  it("tidies moved blocks back onto the grid", async () => {
-    await open(stubClient());
-    const sheet = document.querySelector(".sheet") as HTMLElement;
-    const card = within(sheet).getByText("implementation").closest(".node") as HTMLElement;
-    const home = card.style.left;
-
-    fireEvent.pointerDown(card, { clientX: 10, clientY: 10, bubbles: true });
-    fireEvent.pointerMove(window, { clientX: 300, clientY: 260, bubbles: true });
-    fireEvent.pointerUp(window, { bubbles: true });
-    const moved = card.style.left;
-
-    await userEvent.click(screen.getByRole("button", { name: /tidy the board/i }));
-    const tidied = (
-      within(sheet).getByText("implementation").closest(".node") as HTMLElement
-    ).style.left;
-    expect(tidied).not.toBe(moved);
-    expect(tidied).toBe(home);
-  });
 
   /** The button exists because a project is a folder and the operator has more than one. What it
    * can do today is tell them exactly what to run; it must not pretend to do more. */
@@ -1767,7 +1782,7 @@ describe("the conversation moves on its own", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(panel).findByText(/waiting for a reply/i)).toBeInTheDocument();
   });
 
@@ -1780,7 +1795,7 @@ describe("the conversation moves on its own", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(panel).findByText(/delivered — this run is completed, so nobody is working on it to reply/)).toBeInTheDocument();
     expect(within(panel).queryByText(/waiting for a reply/i)).not.toBeInTheDocument();
   });
@@ -1791,7 +1806,7 @@ describe("the conversation moves on its own", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     await within(panel).findAllByText(/Said:/);
     expect(within(panel).queryByText(/waiting for a reply/i)).not.toBeInTheDocument();
   });
@@ -1827,7 +1842,7 @@ describe("the conversation moves on its own", () => {
     );
     await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     // No clicks after this point: the reply must surface by itself.
     expect(await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText("oi de volta")).toBeInTheDocument();
   });
@@ -1884,15 +1899,14 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    expect(why).toHaveTextContent(/start failed after retries: runtime crashed/i);
-    expect(within(screen.getByLabelText(/^Run /)).getByText(/waiting for your decision to retry a failed step/i)).toBeInTheDocument();
-    expect(screen.getByText(/Failed after retries · runtime crashed/i)).toBeInTheDocument();
+    const why = await screen.findByLabelText("Needs you");
+    expect(why).toHaveTextContent(/Failed after retries: runtime crashed/i);
+    expect(within(screen.getByLabelText(/^Run (?!side panel)/)).getByText(/waiting for your decision to retry a failed step/i)).toBeInTheDocument();
     expect(screen.getByText("blocked · retry decision")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "approve start" })).toBeNull();
     await userEvent.click(within(why).getByRole("button", { name: "pause before allowing retry start" }));
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
-    await userEvent.click(within(await screen.findByLabelText("Why this run needs you")).getByRole("button", { name: "allow retry start" }));
+    await userEvent.click(within(await screen.findByLabelText("Needs you")).getByRole("button", { name: "allow retry start" }));
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
   });
 
@@ -1901,7 +1915,7 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     expect(within(why).getByText(/implementation is blocked/)).toBeInTheDocument();
   });
 
@@ -1912,7 +1926,7 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(within(panel).getByText("waiting for your go-ahead")).toBeInTheDocument();
   });
 
@@ -1928,12 +1942,12 @@ describe("the attention verdict explains itself", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     await userEvent.click(within(why).getByRole("button", { name: /pause before approving implementation/i }));
 
     await waitFor(() => expect(client.pause).toHaveBeenCalled());
     expect(client.approve).not.toHaveBeenCalled();
-    await userEvent.click(within(await screen.findByLabelText("Why this run needs you")).getByRole("button", { name: /approve implementation/i }));
+    await userEvent.click(within(await screen.findByLabelText("Needs you")).getByRole("button", { name: /approve implementation/i }));
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
     expect((vi.mocked(client.approve).mock.calls[0] as unknown as [string, string])[1]).toBe("implementation");
   });
@@ -1969,7 +1983,7 @@ describe("the attention verdict explains itself", () => {
     expect(resume.parentElement?.getAttribute("title")).toMatch(/triage/i);
     expect(resume.parentElement?.getAttribute("title")).toContain("implementation");
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     expect(within(why).getByText(/implementation was interrupted/)).toBeInTheDocument();
     await userEvent.click(within(why).getByRole("button", { name: /approve implementation/i }));
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
@@ -1991,7 +2005,7 @@ describe("the attention verdict explains itself", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     expect(screen.getByText("graph waiting; no request recorded")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
     expect(client.getReplySuggestions).not.toHaveBeenCalled();
   });
 
@@ -2006,7 +2020,7 @@ describe("the attention verdict explains itself", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     const box = await screen.findByLabelText(/say something into this run/i);
-    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
     await userEvent.click(box);
     await waitFor(() => expect(box).toHaveFocus());
   });
@@ -2098,11 +2112,11 @@ describe("the answer path", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
     await screen.findByLabelText(/^Run demo-deploy/);
-    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "resposta pra sala");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(runSend());
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).not.toHaveProperty("to");
   });
@@ -2110,19 +2124,40 @@ describe("the answer path", () => {
   it("quotes the unanswered question and addresses its asker", async () => {
     const client = askedClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
-    // The debt itself, on screen — not just "waiting for input".
+    const why = await screen.findByLabelText("Needs you");
+    // The debt itself, on screen - not just "waiting for input".
     expect(await within(why).findByText(/Qual porta devo usar para o deploy\?/)).toBeInTheDocument();
 
     // Answering from here delivers to the creditor.
-    await userEvent.click(within(why).getByRole("button", { name: /answer codex/i }));
-    const box = await screen.findByLabelText(/say something into this run/i);
-    await userEvent.type(box, "usa a 8080");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
+    const chat = screen.getByRole("complementary", { name: "Chat" });
+    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
+    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).toMatchObject({ to: "codex" });
+  });
+
+  it("keeps the answer text and the Answering chip when the Runtime refuses the answer", async () => {
+    const client = askedClient({
+      signal: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        action: "signal" as const,
+        result: "refused" as const,
+        diagnostics: [{ code: "GHCLI001_ARGUMENT_INVALID", message: "not now", path: "/to", severity: "error", source: "serve-cli" }],
+      })),
+    });
+    await open(client);
+    const why = await screen.findByLabelText("Needs you");
+    await within(why).findByText(/Qual porta devo usar para o deploy\?/);
+    await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
+    const chat = screen.getByRole("complementary", { name: "Chat" });
+    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
+    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.signal).toHaveBeenCalled());
+    expect(await within(chat).findByRole("alert")).toHaveTextContent("not now");
+    expect(within(chat).getByLabelText("Message")).toHaveValue("usa a 8080");
+    expect(within(chat).getByText(/^Answering/)).toBeInTheDocument();
   });
 
   it("an answered question is no longer owed", async () => {
@@ -2160,7 +2195,7 @@ describe("the answer path", () => {
 
     const conversation = await screen.findByRole("region", { name: "Shared conversation" });
     expect(await within(conversation).findByText(/Qual porta devo usar/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -2311,16 +2346,6 @@ describe("controls that act instead of excusing", () => {
     await waitFor(() => expect(box).toHaveFocus());
   });
 
-  it("opens the Free canvas and focuses the graph field from the default overview", async () => {
-    const client = stubClient({ getStatus: vi.fn(async () => ({ ...STATUS, status: "paused" })) });
-    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
-    await screen.findByRole("main", { name: "Work overview" });
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await userEvent.click(await screen.findByRole("button", { name: /^resume$/i }));
-    expect(client.resume).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByLabelText(/graph file path on the runtime host/i)).toHaveFocus());
-    expect(screen.getByRole("button", { name: "Free canvas" })).toHaveAttribute("aria-pressed", "true");
-  });
 
   it("resumes a Studio-created run with its durable one-node graph when no file is named", async () => {
     const executionId = "run-0f250aef-8a0a-4777-84ca-01f08ea55796";
@@ -2373,7 +2398,12 @@ describe("controls that act instead of excusing", () => {
     // PASTED, not typed key by key: every keystroke re-renders the whole App, and ~70 typed
     // characters made this cell take 4.2s on an idle machine - one busy neighbour from its 5s
     // timeout (#1083 round 3). A paste still goes through each input's change handler.
+    // The graph-file row is closed until asked for (or until resume walks to it).
+    const openGraphFile = async () => {
+      if (screen.queryByLabelText(/graph file path on the runtime host/i) === null) await userEvent.click(screen.getByRole("button", { name: "Graph file" }));
+    };
     const fill = async (label: RegExp, text: string) => {
+      await openGraphFile();
       await userEvent.click(screen.getByLabelText(label));
       await userEvent.paste(text);
     };
@@ -2394,6 +2424,7 @@ describe("controls that act instead of excusing", () => {
     await open(real);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
+    await openGraphFile();
     expect(screen.queryByLabelText(/fixture file path on the runtime host/i)).not.toBeInTheDocument();
     await fill(/graph file path on the runtime host/i, "/srv/graphs/deploy.yaml");
     await userEvent.click(screen.getByRole("button", { name: /^resume$/i }));
@@ -2427,24 +2458,20 @@ describe("controls that act instead of excusing", () => {
  * wave and found what it missed or introduced. Every test here is one of those findings.
  */
 describe("round-2: the recipient cannot go stale", () => {
-  /** Four of five reviewers, blind to each other: the run-name button bumps the focus nonce
-   * without owning the recipient, so a long-dead "answer X" choice re-applied itself. */
   it("reopening the panel from the run's name speaks to the room, not to a stale asker", async () => {
     const client = askedClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    // Address the pending asker through the banner, then un-choose it.
-    const why = await screen.findByLabelText("Why this run needs you");
-    await userEvent.click(within(why).getByRole("button", { name: /answer codex/i }));
-    await userEvent.click(screen.getByRole("button", { name: /speak to the room instead/i }));
+    // Address the pending asker through the question card, which aims the chat composer at codex.
+    const why = await screen.findByLabelText("Needs you");
+    await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
 
-    // Reopen the panel from the top strip: the old choice must NOT come back.
-    const strip = document.querySelector(".topstrip")!;
+    // Reopen the panel from the top bar: the old choice must NOT come back into the run panel.
+    const strip = document.querySelector(".topbar")!;
     await userEvent.click(within(strip as HTMLElement).getByRole("button", { name: "demo-deploy" }));
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "pra sala");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(runSend());
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).not.toHaveProperty("to");
   });
@@ -2500,7 +2527,7 @@ describe("round-2: the ledger settles debts honestly", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     expect(await within(why).findByText(/Qual porta devo usar/)).toBeInTheDocument();
   });
 
@@ -2555,7 +2582,7 @@ describe("round-2: the ledger settles debts honestly", () => {
 
     const conversation = await screen.findByRole("region", { name: "Shared conversation" });
     expect(await within(conversation).findByText(/aqui esta o relatorio/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Why this run needs you")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
   });
 
   /** The composer's reply hints claimed "Who is waiting for an answer" while listing mere
@@ -2617,8 +2644,6 @@ describe("round-2: the ledger settles debts honestly", () => {
     expect(client.signal).not.toHaveBeenCalled();
     expect(client.getReplySuggestions).toHaveBeenCalledWith("demo-deploy", "judge");
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
   });
 
   /** A slow suggestion read can finish after the run advances. Showing its old advice beside
@@ -2659,7 +2684,7 @@ describe("round-2: the live tail neither starves nor freezes", () => {
     );
     await screen.findByLabelText("Projects");
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar/);
 
     const opened = vi.mocked(client.readEvidence).mock.calls.length;
@@ -2714,7 +2739,7 @@ describe("round-2: controls stop betraying their own guards", () => {
   it("moves keyboard focus into node details and returns it to the node", async () => {
     await open(stubClient());
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const opener = within(await screen.findByLabelText("Execution board")).getByRole("button", { name: /implementation/i });
+    const opener = within(await screen.findByLabelText("Steps without a bot")).getByRole("button", { name: /implementation/i });
     opener.focus();
     await userEvent.keyboard("{Enter}");
     const details = await screen.findByLabelText("Node implementation");
@@ -2755,10 +2780,10 @@ describe("round-2: controls stop betraying their own guards", () => {
     await userEvent.click(within(panel).getByRole("button", { name: /close this panel/i }));
     // The panel is gone - and ONLY the panel: the board still stands, nothing claims emptiness.
     expect(screen.queryByLabelText(/^Run demo-deploy/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Execution board")).toBeInTheDocument();
+    expect(screen.getByLabelText("Steps without a bot")).toBeInTheDocument();
     expect(screen.queryByText(/This board is empty/)).not.toBeInTheDocument();
 
-    const strip = document.querySelector(".topstrip")!;
+    const strip = document.querySelector(".topbar")!;
     await userEvent.click(within(strip as HTMLElement).getByRole("button", { name: "demo-deploy" }));
     expect(await screen.findByLabelText(/^Run demo-deploy/)).toBeInTheDocument();
   });
@@ -2769,7 +2794,7 @@ describe("round-2: controls stop betraying their own guards", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await screen.findByLabelText(/^Run demo-deploy/);
 
-    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Graph file" }));
     await userEvent.type(screen.getByLabelText(/graph file path on the runtime host/i), "f");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(client.getTopology).not.toHaveBeenCalled();
@@ -2804,7 +2829,7 @@ describe("round-3: what you typed survives, and what waits is true", () => {
       "resposta pela metade",
     );
     await userEvent.click(within(panel).getByRole("button", { name: /close this panel/i }));
-    const strip = document.querySelector(".topstrip")!;
+    const strip = document.querySelector(".topbar")!;
     await userEvent.click(within(strip as HTMLElement).getByRole("button", { name: "demo-deploy" }));
 
     const box = await screen.findByLabelText(/say something into this run/i);
@@ -2839,9 +2864,7 @@ describe("round-3: what you typed survives, and what waits is true", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     expect(screen.queryByLabelText(/talk to someone/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(screen.getByRole("region", { name: "People and reported work" })).toHaveTextContent("No agent work message is readable yet");
-    expect(screen.queryByRole("region", { name: "Owner decision" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: /asks$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -2954,20 +2977,16 @@ describe("round-3: guards without side doors", () => {
  * found the finer defects below — the worst being a reflex arc the UI itself had severed.
  */
 describe("round-4: the debt can actually be settled", () => {
-  /** The ledger retires a question ONLY via an owner reply whose replyTo names it — and the
-   * banner's own "answer X" button sent {to} with no replyTo, so answering through the UI left
-   * the debt immortal (two blind reviewers). */
   it("answering through the banner sends the replyTo the ledger settles by", async () => {
     const client = askedClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar/);
-    await userEvent.click(within(why).getByRole("button", { name: /answer codex/i }));
-    const box = await screen.findByLabelText(/say something into this run/i);
-    await userEvent.type(box, "usa a 8080");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
+    const chat = screen.getByRole("complementary", { name: "Chat" });
+    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
+    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).toMatchObject({ to: "codex", replyTo: "q-1" });
@@ -2989,7 +3008,7 @@ describe("round-4: the debt can actually be settled", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar/);
     expect(within(why).getAllByText(/Qual porta devo usar/)).toHaveLength(1);
   });
@@ -3007,7 +3026,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "nao me perde");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(runSend());
 
     await screen.findByRole("alert");
     expect(screen.getByLabelText(/say something into this run/i)).toHaveValue("nao me perde");
@@ -3020,7 +3039,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "entregue");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(runSend());
     await waitFor(() =>
       expect(screen.getByLabelText(/say something into this run/i)).toHaveValue(""),
     );
@@ -3042,7 +3061,7 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
 
     const box = await screen.findByLabelText(/say something into this run/i);
     await userEvent.type(box, "oi");
-    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await userEvent.click(runSend());
     await screen.findByRole("alert");
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await screen.findByText(/paused — done/i);
@@ -3216,14 +3235,14 @@ describe("round-4: nothing leaks across surfaces, runs or sessions", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const board = await screen.findByLabelText("Execution board");
-    await userEvent.click(within(board).getByRole("button", { name: /codex/i }));
+    await screen.findByRole("region", { name: "Team" });
+    await userEvent.click(within(await screen.findByTestId("team-bot-codex")).getByRole("button", { name: "Details" }));
     const agentBox = await within(
       await screen.findByLabelText("Agent codex"),
     ).findByLabelText(/say something into this run/i);
     await userEvent.type(agentBox, "so para codex");
 
-    await userEvent.click(within(board).getByRole("button", { name: /claude-revisor/i }));
+    await userEvent.click(within(screen.getByTestId("team-bot-claude-revisor")).getByRole("button", { name: "Details" }));
     const otherBox = await within(
       await screen.findByLabelText("Agent claude-revisor"),
     ).findByLabelText(/say something into this run/i);
@@ -3273,7 +3292,7 @@ describe("round-4: the instruments admit their own state", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const why = await screen.findByLabelText("Why this run needs you");
+    const why = await screen.findByLabelText("Needs you");
     await within(why).findByText(/Qual porta devo usar/);
     await screen.findAllByText(/Qual porta devo usar/);
     const opens = vi
@@ -3436,10 +3455,10 @@ describe("round-4: the instruments admit their own state", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const board = await screen.findByLabelText("Execution board");
+    const team = await screen.findByRole("region", { name: "Team" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(
-      within(board).queryByRole("button", { name: /studio-operator/i }),
+      within(team).queryByRole("button", { name: /studio-operator/i }),
     ).not.toBeInTheDocument();
   });
 });
@@ -3544,7 +3563,7 @@ describe("the board remembers its graph file", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Graph file" }));
     const field = screen.getByLabelText(/graph file path on the runtime host/i);
     await userEvent.type(field, "/graphs/A.yaml");
     await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
@@ -3573,7 +3592,7 @@ describe("the board remembers its graph file", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    await userEvent.click(screen.getByRole("button", { name: /Verify graph/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Graph file" }));
     const field = screen.getByLabelText(/graph file path on the runtime host/i);
     await userEvent.type(field, "/graphs/A.yaml");
     await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
@@ -3615,9 +3634,8 @@ describe("the board remembers its graph file", () => {
       }),
     ] })) });
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Graph file" }));
     expect(await screen.findByText(/1 connection drawn/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Graph file path on the Runtime host")).not.toBeInTheDocument();
     expect(client.getTopology).not.toHaveBeenCalled();
   });
 
@@ -3653,10 +3671,10 @@ describe("the board remembers its graph file", () => {
         })),
       });
       await open(client);
-      await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
       await waitFor(() => expect(client.getTopology).toHaveBeenCalledWith("flows/demo.json"));
+      await userEvent.click(await screen.findByRole("button", { name: "Graph file" }));
       expect(await screen.findByText(/work connections unverified/i)).toBeInTheDocument();
-      expect((await screen.findByLabelText("Execution board")).querySelectorAll("path.edge")).toHaveLength(0);
+      expect(document.querySelectorAll("path.edge, .team-link")).toHaveLength(0);
     },
   );
 });
@@ -3734,7 +3752,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     const said = await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText(
       /the migration needs a decision before I go further/,
     );
@@ -3755,7 +3773,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(panel).findByText(/cannot open it/i)).toBeInTheDocument();
     expect(within(panel).getByText(/no key for this evidence/)).toBeInTheDocument();
   });
@@ -3767,7 +3785,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     const box = within(panel).getByLabelText(/say something into this run/i);
     await userEvent.type(box, "use the second option, and say why in the log");
     await userEvent.click(within(panel).getByRole("button", { name: /^send$/i }));
@@ -3804,7 +3822,7 @@ describe("the exchange", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(panel).findByText(/armed a wake doorbell/i)).toBeInTheDocument();
     expect(within(panel).queryByText(/"cursor"/)).not.toBeInTheDocument();
   });
@@ -3872,34 +3890,28 @@ describe("the exchange", () => {
     });
   }
 
-  it("shows recorded agent messages in the overview while the graph has no moving nodes", async () => {
+  it("shows recorded agent messages in the run side panel while the graph has no moving nodes", async () => {
     await open(roomClient());
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
-    const activity = await screen.findByRole("region", { name: "Recent recorded activity" });
-    expect(await within(activity).findByText("uma mensagem")).toBeInTheDocument();
-    expect(activity).toHaveTextContent("event #17");
-    expect(screen.getByText("0 active graph nodes")).toBeInTheDocument();
+    const side = await screen.findByRole("complementary", { name: "Run side panel" });
+    expect(await within(side).findByText(/uma mensagem/)).toBeInTheDocument();
   });
 
-  /** Technical actors do not become crew members from ordinary activity records. */
-  it("shows only an explicitly chartered persona on the crew canvas", async () => {
+  it("shows only an explicitly chartered persona on the team canvas", async () => {
     await open(roomClient());
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const crew = await screen.findByLabelText("Agents in this room");
-    const persona = await within(crew).findByRole("button", { name: /seguranca/ });
-    expect(within(persona).getByText("persona")).toBeInTheDocument();
-    expect(within(crew).queryByRole("button", { name: /^codex$/i })).not.toBeInTheDocument();
+    const team = await screen.findByRole("region", { name: "Team" });
+    expect(await within(team).findByRole("button", { name: /^seguranca,/ })).toBeInTheDocument();
+    expect(within(team).queryByRole("button", { name: /^codex/i })).not.toBeInTheDocument();
   });
 
   /** Clicking a crew member opens the INDIVIDUAL conversation: the thread filtered to that
    * agent's exchanges, and a say box locked to them - a window named after someone that posted
    * to the room would put words where nobody sent them. */
-  it("opens an individual conversation from the crew, addressed and filtered", async () => {
+  it("opens an individual conversation from the team canvas, addressed and filtered", async () => {
     const client = roomClient();
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const crew = await screen.findByLabelText("Agents in this room");
-    await userEvent.click(await within(crew).findByRole("button", { name: /seguranca/ }));
+    const team = await screen.findByRole("region", { name: "Team" });
+    await within(team).findByRole("button", { name: /^seguranca,/ });
+    await userEvent.click(within(screen.getByTestId("team-bot-seguranca")).getByRole("button", { name: "Details" }));
 
     const window = await screen.findByLabelText("Agent seguranca");
     // The filter is real: codex's unrelated message stays out of seguranca's window.
@@ -3916,89 +3928,21 @@ describe("the exchange", () => {
     expect(options.to).toBe("seguranca");
   });
 
-  /**
-   * THE WIRING ITSELF - not the reducer in isolation. `App`'s `crew` memo reads
-   * `agent_presence_declared` from the SAME event log it already scans and carries the newest
-   * declaration per actor onto that actor's own blob; a test that only calls
-   * `newestPresenceByActor` directly cannot tell whether this path is connected to anything.
-   *
-   * One client exercises all three properties the wiring must not lose: codex redeclares mid-run
-   * (newest wins, by the later `#17`, not `#16`), the newest of the two carries no effort (model
-   * alone, no dangling separator), and claude-code spoke but never declared (absence renders
-   * nothing on ITS OWN blob, not a placeholder borrowed from codex's).
-   */
-  it("carries an actor's newest declared model onto its own crew blob, live off the event log", async () => {
+  it("does not turn technical actors into bots, and counts them as other recorders", async () => {
+    const note = (sequence: number, actorId: string) => ({
+      sequence, kind: "signal_recorded",
+      payload: { executionId: "demo-deploy", signalId: `sig-${sequence}`, sourceKind: "user", sourceId: actorId, kind: "operator_note", severity: "low" },
+      occurredAt: "2026-08-27T12:02:00Z", actorId, actorType: "agent",
+      idempotencyKey: `k-${sequence}`, eventId: `event-${sequence}`, evidenceRefs: [],
+    });
     const client = talkingClient({
-      getEvents: vi.fn(async () => ({
-        head: 17,
-        events: [
-          {
-            sequence: 14,
-            kind: "signal_recorded",
-            payload: {
-              executionId: "demo-deploy",
-              signalId: "sig-1",
-              sourceKind: "user",
-              sourceId: "claude-code",
-              kind: "operator_note",
-              severity: "low",
-            },
-            occurredAt: "2026-08-27T12:02:00Z",
-            actorId: "claude-code",
-            actorType: "agent",
-            idempotencyKey: "k-14",
-            eventId: "event-14",
-            evidenceRefs: [],
-          },
-          {
-            sequence: 15,
-            kind: "signal_recorded",
-            payload: {
-              executionId: "demo-deploy",
-              signalId: "sig-2",
-              sourceKind: "user",
-              sourceId: "codex",
-              kind: "operator_note",
-              severity: "low",
-            },
-            occurredAt: "2026-08-27T12:03:00Z",
-            actorId: "codex",
-            actorType: "agent",
-            idempotencyKey: "k-15",
-            eventId: "event-15",
-            evidenceRefs: [],
-          },
-          {
-            sequence: 16,
-            kind: "agent_presence_declared",
-            payload: { actorId: "codex", actorType: "agent", model: "gpt-6-early", effort: "low" },
-            occurredAt: "2026-08-27T12:04:00Z",
-            actorId: "codex",
-            actorType: "agent",
-            idempotencyKey: "k-16",
-            eventId: "event-16",
-            evidenceRefs: [],
-          },
-          {
-            sequence: 17,
-            kind: "agent_presence_declared",
-            payload: { actorId: "codex", actorType: "agent", model: "gpt-6-astra" },
-            occurredAt: "2026-08-27T12:05:00Z",
-            actorId: "codex",
-            actorType: "agent",
-            idempotencyKey: "k-17",
-            eventId: "event-17",
-            evidenceRefs: [],
-          },
-        ],
-      })),
+      getEvents: vi.fn(async () => ({ head: 17, events: [note(14, "claude-code"), note(15, "codex")] })),
     });
     await open(client);
-    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const crew = await screen.findByLabelText("Agents in this room");
-
-    expect(within(crew).queryByRole("button", { name: /^codex$/i })).not.toBeInTheDocument();
-    expect(within(crew).queryByRole("button", { name: /^claude-code$/i })).not.toBeInTheDocument();
+    const team = await screen.findByRole("region", { name: "Team" });
+    expect(within(team).queryByRole("button", { name: /^codex/i })).not.toBeInTheDocument();
+    expect(within(team).queryByRole("button", { name: /^claude-code/i })).not.toBeInTheDocument();
+    expect(within(team).getByText(/2 other recorders/)).toBeInTheDocument();
   });
 
   /** A persona's birth is a thread event, said as one. `persona_created` is an unrecognized
@@ -4042,7 +3986,7 @@ describe("the exchange", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(panel).findByText(/a new persona joined/i)).toBeInTheDocument();
   });
 
@@ -4064,7 +4008,7 @@ describe("the exchange", () => {
     });
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     expect(await within(within(panel).getByRole("region", { name: "Shared conversation" })).findByText("concordo com o plano")).toBeInTheDocument();
     expect(within(panel).getByText(/→ codex/)).toBeInTheDocument();
   });
@@ -4083,7 +4027,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
 
-    const panel = await screen.findByLabelText(/^Run /);
+    const panel = await screen.findByLabelText(/^Run (?!side panel)/);
     await userEvent.type(
       within(panel).getByLabelText(/say something into this run/i),
       "did that land?",
@@ -4188,10 +4132,10 @@ describe("the run it just started", () => {
     finish({ ...PAUSED_EVIDENCE, action: "start", executionId: committed! });
   });
 
-  it("selects the new run and opens its overview instead of an empty board", async () => {
+  it("selects the new run and opens its team canvas instead of an empty board", async () => {
     const client = withStarted();
     const id = await startOne(client);
-    expect(await screen.findByRole("heading", { name: "Work overview" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
     expect(screen.queryByText("This board is empty.")).not.toBeInTheDocument();
     expect(screen.queryByText("pick a run, or start one")).not.toBeInTheDocument();
     const rail = screen.getByLabelText("Projects");
@@ -4204,7 +4148,7 @@ describe("the run it just started", () => {
   it("keeps the start act-note on screen after selecting the run it started", async () => {
     const client = withStarted();
     await startOne(client);
-    expect(await screen.findByRole("heading", { name: "Work overview" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
     expect(await screen.findByText(/started — done/i)).toBeInTheDocument();
   });
 
@@ -4234,21 +4178,18 @@ describe("the run it just started", () => {
     expect(row).toHaveAttribute("aria-current", "true");
     expect(within(rail).getByTitle(id)).toBeInTheDocument();
     // The header names it too; the id stays reachable on hover.
-    const strip = document.querySelector(".topstrip") as HTMLElement;
+    const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: OBJECTIVE })).toHaveAttribute("title", id);
     // The run panel quotes it verbatim.
-    const panel = screen.getByRole("region", { name: /^Run / });
+    const panel = screen.getByRole("region", { name: /^Run (?!side panel)/ });
     expect(within(panel).getByText(OBJECTIVE)).toBeInTheDocument();
-    // The entry node's card carries it - a one-node roster IS its entry node.
-    const overview = screen.getByRole("main", { name: "Work overview" });
-    expect(within(overview).getByText(OBJECTIVE)).toBeInTheDocument();
     expect(screen.queryByText("New task")).not.toBeInTheDocument();
   });
 
   it("keeps the id and raises no error when the Runtime has no briefing route", async () => {
     const client = withStarted({ getBriefing: vi.fn(async () => null) });
     const id = await startOne(client);
-    const strip = document.querySelector(".topstrip") as HTMLElement;
+    const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: id })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -4281,7 +4222,7 @@ describe("a selection that lands while the rail is prefetching", () => {
     // The rail's prefetch is in flight for the generated row; the operator clicks it now.
     await waitFor(() => expect(client.getBriefing).toHaveBeenCalledWith(GENERATED));
     await userEvent.click(within(screen.getByLabelText("Projects")).getByTitle(GENERATED).closest("button")!);
-    const strip = document.querySelector(".topstrip") as HTMLElement;
+    const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: GENERATED })).toBeInTheDocument();
     settle(undefined);
     expect(await within(strip).findByRole("button", { name: "Investigate slow login on mobile" })).toHaveAttribute("title", GENERATED);
@@ -4568,10 +4509,8 @@ describe("execution reads preserve newer observed state", () => {
   }
 
   function expectCurrent() {
-    const summary = screen.getByLabelText("Now, last, and next");
-    expect(within(summary).getByText("running")).toBeInTheDocument();
-    expect(within(summary).getByText("Event #3 · execution resumed")).toBeInTheDocument();
-    expect(within(summary).queryByText("paused")).not.toBeInTheDocument();
+    expect(screen.getByText("Execution / running")).toBeInTheDocument();
+    expect(screen.queryByText("Execution / paused")).not.toBeInTheDocument();
   }
 
   it.each(["success", "body timeout"])("publishes required state before an optional briefing and preserves it after %s", async (outcome) => {
@@ -4583,7 +4522,7 @@ describe("execution reads preserve newer observed state", () => {
       fixture.hold((path) => path.endsWith("/briefing") ? pending : null);
       fixture.render();
       await settleReads();
-      expect(screen.getByRole("main", { name: "Work overview" })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Team" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
       fixture.setHead(3);
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
@@ -4591,7 +4530,7 @@ describe("execution reads preserve newer observed state", () => {
       if (outcome === "success") {
         await act(async () => { release(); });
         await settleReads();
-        expect(within(screen.getByRole("main", { name: "Work overview" })).getByText("The current run objective")).toBeInTheDocument();
+        expect(within(document.querySelector(".topbar") as HTMLElement).getByRole("button", { name: "The current run objective" })).toBeInTheDocument();
       } else {
         await act(async () => { await vi.advanceTimersByTimeAsync(RUNTIME_REQUEST_TIMEOUT_MS - 4000); });
       }

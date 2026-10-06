@@ -38,14 +38,12 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 const SET_ELSEWHERE: Record<string, string> = {
   "--rail": "App.tsx writes it inline from the operator's dragged width; the CSS reads it with a fallback",
   "--dock-reserve": "App.tsx writes it inline on .scene from the docks' measured height (#1083 F9); the CSS reads it with a fallback",
+  "--bot-hue": "team-canvas.tsx writes it inline on each .team-bot from the bot persona hue; the CSS reads it for the avatar, outline and pulse",
 };
 
 /** Classes the components render that intentionally have no rule of their own. Each entry names
  * why the wrapper remains readable through its styled descendants or an ancestor rule. */
-const NO_RULE_NEEDED: Record<string, string> = {
-  "work-session-tasks":
-    "semantic wrapper for the Claude task list; .work-session and .work-session li provide its layout and typography",
-};
+const NO_RULE_NEEDED: Record<string, string> = {};
 
 /**
  * Every component's source, as text.
@@ -110,23 +108,6 @@ describe("every token is real", () => {
   it("reads every custom property it defines", () => {
     const unused = [...defined].filter((token) => !used.has(token));
     expect(unused, "these are defined and never read; use them or drop them with their claim").toEqual([]);
-  });
-});
-
-/**
- * #1083 F9: the overview's cards sat behind the fixed action dock at 1280x720, and a wheel scroll
- * could not bring them out, because the scroll box STOPPED a fixed 70px above the scene's bottom
- * while the dock was taller. Every `.work-overview-scroll` rule now runs the box to the bottom
- * (no `bottom:` offset) and pads its content by the measured `--dock-reserve`.
- */
-describe("the overview scrolls out from under the dock", () => {
-  const rules = [...CODE.matchAll(/\.work-overview-scroll\s*\{([^}]*)\}/g)].map((match) => match[1] as string);
-  it("reserves the dock's measured height in every overview scroll rule", () => {
-    expect(rules.length).toBeGreaterThanOrEqual(3);
-    for (const body of rules) {
-      expect(body, "a fixed bottom offset leaves the dock covering unscrollable content").not.toMatch(/(^|;|\s)bottom\s*:/);
-      expect(body).toMatch(/padding:[^;]*var\(--dock-reserve/);
-    }
   });
 });
 
@@ -201,31 +182,5 @@ describe("the stylesheet and the components agree", () => {
       unstyled,
       "every rule for these sits under a state, so in the ordinary case nothing styles them",
     ).toEqual([]);
-  });
-});
-
-/**
- * #1057 Codex P2: the declared-model badge is CONTAINED by the card it sits in.
- *
- * `.agent-blob` is 104px wide and the wire contract accepts a model name of up to 128 characters,
- * so a badge with no width bound and no overflow treatment spilled across neighbouring agents and
- * the canvas behind them. jsdom lays nothing out, so what is held here is the RULE: the same four
- * declarations `.agent-name` already carries. `.agent-name` is checked by the same cell as its own
- * control - if the name's containment ever goes, this says so rather than quietly comparing
- * nothing to nothing.
- */
-describe("the agent card contains its own text", () => {
-  const ruleBody = (selector: string): string => {
-    const opened = CODE.indexOf(selector + " {");
-    expect(opened, selector + " has a block rule of its own").toBeGreaterThanOrEqual(0);
-    return CODE.slice(opened, CODE.indexOf("}", opened));
-  };
-
-  it.each([".agent-name", ".agent-badge"])("%s is width-bounded and clipped", (selector) => {
-    const rule = ruleBody(selector);
-    expect(rule).toContain("max-width:");
-    expect(rule).toContain("overflow: hidden");
-    expect(rule).toContain("text-overflow: ellipsis");
-    expect(rule).toContain("white-space: nowrap");
   });
 });

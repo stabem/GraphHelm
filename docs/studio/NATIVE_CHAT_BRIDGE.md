@@ -28,6 +28,14 @@ requests sends nothing. A partial or unknown outcome is reconciled under its ori
 The panel never repeats a batch automatically. A received reply is displayed as a reply, rather
 than evidence that the requested code, review or deployment finished.
 
+Since the 2026-10-05 redesign the principal conversation lives in the Chat column. Its gating is
+unchanged: a pending request blocks team sends and the composer stays locked until the request
+ledger is read. The "Request status" box is gone: a request the ledger cannot confirm becomes a
+question card ("Your message to <chat> was not confirmed. It may not have arrived.") with
+**Check it**, which re-reads the ledger; the request, thread and node ids move to the card's
+details. The accessible names "Principal conversation", "Next step" and "Refresh request status"
+are kept for `docs/acceptance/studio-main-chat-journey-2026-10-03.json`.
+
 The composer stays locked until the request ledger has been read successfully. A failed ledger
 read leaves it locked. Before dispatch, the browser saves only recovery identities in session
 storage: execution, node, thread and request IDs. It does not save message text, charters, replies,
@@ -89,6 +97,10 @@ The native catalog is bounded. A stored chat is not proof that the Desktop is id
 A native reply is not accepted code delivery, a passing test, operational node assignment, graph completion, or JPD certification. The existing Governor and delivery contracts retain those responsibilities. Skill use and test results are not inferred from native text.
 
 The selected source project remains visible. The association is a work request referencing a node; it does not create a `NodeAssigned` event. Source native settings are not overridden. Approval requests are never automatically accepted by this bridge.
+
+- Bot-to-bot tabs in the Chat column are **recorded messages**: what two agents recorded to each
+  other through the Runtime, not native chats talking directly. The shared `codex` actor appears
+  as "Codex (shared)" and is never mapped to a thread.
 
 ## Runtime host configuration
 

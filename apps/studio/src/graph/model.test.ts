@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildGraphModel, conversationFor, moodOf, nodeResult, pendingAcceptanceCount, voiceOf } from "./model";
+import type { GraphModel, GraphNode } from "./model";
+import { buildGraphModel, conversationFor, isFirstEntryNode, moodOf, nodeResult, pendingAcceptanceCount, voiceOf } from "./model";
 
 it("distinguishes a returned model reply from a verified result and from the runtime recorder", () => {
   const event = {
@@ -401,5 +402,19 @@ describe("reading a voice and a mood", () => {
     // Failed needs a person: it must never wear the finished colour.
     expect(moodOf("failed")).toBe("dead");
     expect(moodOf("unknown")).toBe("idle");
+  });
+});
+
+describe("isFirstEntryNode", () => {
+  const base: GraphModel = { nodes: [], edges: [], entrypoints: [], rosterDeclared: true, edgesKnown: false, lint: [] };
+  const only = { id: "only" } as GraphNode;
+  it("is true for the first entrypoint only", () => {
+    const two: GraphModel = { ...base, entrypoints: ["work", "triage"] };
+    expect(isFirstEntryNode(two, "triage")).toBe(false);
+    expect(isFirstEntryNode(two, "work")).toBe(true);
+  });
+  it("falls back to a declared one-node roster, and to nothing when the entrypoints are unknown", () => {
+    expect(isFirstEntryNode({ ...base, nodes: [only] }, "only")).toBe(true);
+    expect(isFirstEntryNode(base, "triage")).toBe(false);
   });
 });

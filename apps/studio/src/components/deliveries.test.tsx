@@ -15,7 +15,7 @@ describe("node delivery records", () => {
   // Existing coverage opens only Markdown. Cost: one local component render; no I/O.
   it("shows source files as references while keeping supported documents openable", async () => {
     const record = { version: 1, projectId: "a".repeat(64), summary: "Workspace update", reason: "Updated code and guide", documents: [
-      { path: "apps/studio/src/components/work-overview.tsx", title: "Workspace source", kind: "file", action: "updated" },
+      { path: "apps/studio/src/components/team-canvas.tsx", title: "Workspace source", kind: "file", action: "updated" },
       { path: "docs/guide.MD", title: "Workspace guide", kind: "file", action: "updated" },
     ] };
     const onOpenDocument = vi.fn();

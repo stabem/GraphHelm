@@ -215,6 +215,23 @@ export interface GraphModel {
   lint: LintFinding[];
 }
 
+/** Whether a node is one of the run's entrypoints. Proven by the verified topology when there
+ * is one; otherwise only the one case that is a fact without it: a declared roster of exactly
+ * one node, which the graph schema requires to be an entrypoint. Never guessed from order. */
+export function isEntryNode(model: GraphModel, nodeId: string): boolean {
+  if (model.entrypoints.length > 0) return model.entrypoints.includes(nodeId);
+  return model.rosterDeclared && model.nodes.length === 1 && model.nodes[0].id === nodeId;
+}
+
+/** Whether a node is the entrypoint the briefing's objective BELONGS to: #1071 records the
+ * objective of the first node in `spec.entrypoints` order (schemas/CHANGELOG.md), and the
+ * verified topology relays that order. A second entrypoint is an entry node and is NOT owed
+ * the first one's request (PR #1079 review, P2). */
+export function isFirstEntryNode(model: GraphModel, nodeId: string): boolean {
+  if (model.entrypoints.length > 0) return model.entrypoints[0] === nodeId;
+  return isEntryNode(model, nodeId);
+}
+
 /** Reads the node id out of an event payload, whatever the event kind. */
 function nodeIdOf(event: RuntimeEvent): string | null {
   const payload = event.payload;

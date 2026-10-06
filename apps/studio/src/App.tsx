@@ -1,10 +1,11 @@
 /**
  * GraphHelm Local Studio.
  *
- * TWO COLUMNS AND ONE FLOATING WINDOW. The rail on the left is PROJECTS — folders, with their
- * runs inside. The stage on the right is the run's graph: blocks you arrange, connect, draw on and
- * open. Opening one floats a window over the stage with that node's facts and its thread; the run
- * name in the top strip opens the same window for the whole run.
+ * FOUR COLUMNS. The rail on the left is PROJECTS - folders, with their runs inside. A selected run
+ * opens three more: CHAT (question cards, threads, composer), the CANVAS (the live Team tab and a
+ * Journey tab) and a RIGHT PANEL with the run's recent activity. The top bar carries the run name,
+ * the needs-you beacon and the run's details; below 768 px one tab at a time shows a column. A
+ * node's window and a bot's details open beside them, never over the canvas.
  *
  * ONE SCROLL REGION. The thread scrolls, because a log is unbounded. The stage pans. Nothing else
  * scrolls inside anything else — the previous shape nested three scroll containers and every
@@ -20,8 +21,8 @@
  * token rule. Disconnecting erases them.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AlertTriangle, LayoutGrid, LoaderCircle, LogOut, Menu, MessageSquare, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { AlertTriangle, LoaderCircle, LogOut, Menu, MessageSquare, RefreshCw } from "lucide-react";
 
 import {
   DisconnectedError,
@@ -32,9 +33,9 @@ import {
   OPERATOR_ACTOR,
   newIdempotencyKey,
 } from "./runtime/client";
-import { devSession, newestPresenceByActor, recordedActorSessions, type AgentPresence, type DevSession } from "./runtime/session";
-import { agentLanes, workConversation } from "./runtime/work-conversation";
-import { isSubagentLifecycleSignal, readSubagentRelationships, type SubagentReadModel } from "./runtime/subagents";
+import { devSession, type DevSession } from "./runtime/session";
+import { workConversation } from "./runtime/work-conversation";
+import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
 import type {
@@ -47,6 +48,7 @@ import type {
   ReplySuggestions,
   MutationEvidence,
   NativeChatSummary,
+  NativeChatRequest,
 } from "./runtime/types";
 import { claimVerdict, clearVerdict, digestOf, openWaitSequence } from "./runtime/customs";
 import type { AnswerOutcome } from "./components/answer";
@@ -65,16 +67,25 @@ import {
   emptyBoard,
   loadBoard,
   saveBoard,
-  tidyBoard,
   type BoardState,
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, TalkPanel, resetPanelCaches, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, resetPanelCaches, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
 import { MainChat } from "./components/main-chat";
+import { TeamCanvas } from "./components/team-canvas";
+import { GraphFileRow } from "./components/graph-file-row";
+import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
+import { HandoverCard } from "./components/handover-card";
+import { RightPanel } from "./components/right-panel";
+import { ChatColumn } from "./components/chat-column";
+import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
+import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
+import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
+import { EVERYONE, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
@@ -85,6 +96,9 @@ import { isGeneratedRunId, readable, runLabel, verdictOf } from "./components/fo
 import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
+
+/** Phase 2 fills this from actor_alias records; until then no alias exists. */
+const NO_ALIASES: Record<string, string> = {};
 
 function rawSha256(digest: string): string {
   return digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
@@ -391,7 +405,6 @@ export default function App({
    * measured before anything else ran. The hooks now also bail on equal commits; this memo
    * removes the other half and stops rebuilding every derivation per render. */
   const eventList = useMemo(() => events?.events ?? [], [events]);
-  const recordedSessions = useMemo(() => recordedActorSessions(eventList), [eventList]);
   const journalTopology = useMemo(() => topologyFromJournal(eventList), [eventList]);
   // A recorded snapshot is the run's own claim. If it fails verification, a
   // remembered file must not make the same run look connected anyway.
@@ -1648,14 +1661,12 @@ export default function App({
     },
     [],
   );
-  const [subagentRead, setSubagentRead] = useState<SubagentReadModel | null>(null);
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
   const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
   useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
     if (!selected || events === null) {
-      setSubagentRead(null);
       setRunTeamRead(null);
       setClaudeTaskRead(null);
       return;
@@ -1671,9 +1682,6 @@ export default function App({
       }
       return pending;
     };
-    void readSubagentRelationships({ executionId: run, events: eventList, readEvidence })
-      .then((result) => { if (!cancelled) setSubagentRead(result); })
-      .catch(() => { if (!cancelled) setSubagentRead({ executionId: run, relationships: [], latestByChild: {}, rejected: 1 }); });
     void readRunTeam(run, eventList, readEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
@@ -1717,9 +1725,9 @@ export default function App({
       to: string | null = null,
       via: string = "run",
       replyTo: string | null = null,
-    ) => {
+    ): Promise<boolean> => {
       const client = clientRef.current;
-      if (!client || selected === "") return;
+      if (!client || selected === "") return false;
       // The run this send belongs to. Its completion may only touch the say state while that
       // run is still on screen: the rail stays selectable during a send, and an unconditional
       // finally cleared `saying` under the NEXT run - whose box then read the busy-to-idle
@@ -1741,7 +1749,7 @@ export default function App({
         });
         if (evidence.result === "refused") {
           fail(evidence.diagnostics[0]?.message ?? "The Runtime refused the message.");
-          return;
+          return false;
         }
         if (evidence.result === "unknown") {
           // Deliberately not reported as sent. The append may well have landed, and saying "sent"
@@ -1749,10 +1757,14 @@ export default function App({
           fail(
             "The Runtime accepted this but it could not be confirmed in the log. Reload before sending it again.",
           );
+          await loadExecution(selected);
+          return false;
         }
         await loadExecution(selected);
+        return true;
       } catch (reason) {
         fail(messageOf(reason, "The message could not be sent."));
+        return false;
       } finally {
         if (clientRef.current === client && selectedRef.current === forRun) setSaying(null);
       }
@@ -1784,42 +1796,6 @@ export default function App({
   const personas = usePersonas(eventList, selected === "" ? undefined : selected, openEvidence);
   const nativePersonaLinks = useNativePersonaLinks(eventList, selected === "" ? undefined : selected, openEvidence);
   const mainChatPersonas = useMemo(() => Object.values(nativePersonaLinks), [nativePersonaLinks]);
-  // When each actor was last heard from - the blobs dim with silence, honestly. MEMOIZED, like
-  // every O(events) derivation below: these run inside the component body and App re-renders at
-  // pointer-move frequency during a rail drag - rebuilding five full-array scans per frame was
-  // main-thread work for data that only changes when the events identity does (round-4).
-  const crew = useMemo<
-    Array<{ id: string; charter: string | null; name?: string; nativeChat?: NativeChatSummary; nodeId?: string; lastAt: string | null; presence: AgentPresence | null }>
-  >(() => {
-    const lastHeard = new Map<string, string>();
-    for (const event of eventList) {
-      if (event.actorId !== null && event.occurredAt !== null) lastHeard.set(event.actorId, event.occurredAt);
-    }
-    // Each actor's own newest `agent_presence_declared`, from the SAME log this memo already
-    // scans - an actor that never declared is simply absent from this map, and stays absent on
-    // the row below rather than being given a placeholder.
-    const presence = newestPresenceByActor(eventList);
-    return [
-      ...Object.entries(personas).map(([id, charter]) => ({
-        id,
-        charter: charter || null,
-        lastAt: lastHeard.get(id) ?? null,
-        presence: presence[id] ?? null,
-      })),
-      ...Object.entries(nativePersonaLinks)
-        .filter(([id]) => !personas[id])
-        .map(([id, link]) => ({
-          id,
-          charter: link.charter,
-          name: link.chat.title,
-          nativeChat: link.chat,
-          nodeId: link.nodeId,
-          lastAt: lastHeard.get(id) ?? null,
-          presence: presence[id] ?? null,
-        })),
-    ];
-  }, [eventList, nativePersonaLinks, personas]);
-
   // THE CONVERSATIONS, SORTED BY WHO IS TALKING TO WHOM. Three kinds, kept apart because reading
   // them mixed is what made the room illegible: the ROOM (said to nobody in particular - you are
   // in it), each PAIR of agents (their addressed exchange - you can read it, you are not in it),
@@ -1828,7 +1804,6 @@ export default function App({
   const envelopes = useEnvelopes(eventList, selected === "" ? undefined : selected, openEvidence);
   const workMessages = useMemo(() => workConversation(selected, eventList, envelopes,
     runTeamRead?.executionId === selected ? runTeamRead : null), [selected, eventList, envelopes, runTeamRead]);
-  const agentWork = useMemo(() => agentLanes(eventList, envelopes), [eventList, envelopes]);
   const hasRecordedAgentWork = useMemo(() => {
     const agentSequences = new Set(eventList.filter((event) =>
       event.kind === "signal_recorded" && event.actorType === "agent").map((event) => event.sequence));
@@ -1844,102 +1819,6 @@ export default function App({
       occurredAt: event.occurredAt,
       text: envelopes[event.sequence]?.text?.trim().slice(0, 220) || null,
     })), [eventList, envelopes]);
-  const latestRecordedUpdate = useMemo(() => eventList.reduce<{ sequence: number; occurredAt: string | null } | null>(
-    (latest, event) => latest === null || event.sequence > latest.sequence
-      ? { sequence: event.sequence, occurredAt: event.occurredAt }
-      : latest,
-    null,
-  ), [eventList]);
-  const latestEvent = useMemo(() => eventList.reduce<{
-    sequence: number; kind: string; actorId: string | null; actorType: string | null; occurredAt: string | null;
-  } | null>(
-    (latest, event) => latest === null || event.sequence > latest.sequence
-      ? {
-        sequence: event.sequence,
-        kind: event.kind === "signal_recorded" && typeof (event.payload as Record<string, unknown> | null)?.kind === "string"
-          ? (event.payload as Record<string, unknown>).kind as string
-          : event.kind,
-        actorId: event.actorId,
-        actorType: event.actorType,
-        occurredAt: event.occurredAt,
-      }
-      : latest,
-    null,
-  ), [eventList]);
-  const agentReports = useMemo(() => {
-    const latest = new Map<string, { sequence: number; occurredAt: string | null; text: string | null }>();
-    for (const event of eventList) {
-      if (event.kind !== "signal_recorded" || isSubagentLifecycleSignal(event) || isClaudeTaskSignal(event) || isRunTeamSignal(event) || event.actorType !== "agent" || event.actorId === null) continue;
-      latest.set(event.actorId, {
-        sequence: event.sequence,
-        occurredAt: event.occurredAt,
-        text: envelopes[event.sequence]?.text?.trim() || null,
-      });
-    }
-    return Object.fromEntries(latest);
-  }, [eventList, envelopes]);
-  const { roomEvents, pairTalks, talks } = useMemo(() => {
-    const spoken = eventList.filter(
-      (event) =>
-        event.kind === "signal_recorded" &&
-        !isSubagentLifecycleSignal(event) &&
-        !isClaudeTaskSignal(event) &&
-        !isRunTeamSignal(event) &&
-        (event.actorType === "agent" || event.actorType === "owner"),
-    );
-    const room = spoken.filter((event) => (envelopes[event.sequence]?.to ?? null) === null);
-    const pairs = new Map<string, { participants: string[]; events: typeof spoken }>();
-    for (const event of spoken) {
-      const to = envelopes[event.sequence]?.to ?? null;
-      const from = event.actorId;
-      if (to === null || from === null) continue;
-      // An exchange with the operator is the direct line, which lives behind the agent's blob.
-      if (from === OPERATOR_ACTOR.id || to === OPERATOR_ACTOR.id) continue;
-      const key = [from, to].sort().join(" + ");
-      const entry = pairs.get(key) ?? { participants: [from, to].sort(), events: [] };
-      entry.events.push(event);
-      pairs.set(key, entry);
-    }
-    return {
-      roomEvents: room,
-      pairTalks: pairs,
-      talks: [
-        ...(room.length > 0
-          ? [
-              {
-                key: "room",
-                label: "everyone",
-                participants: [
-                  ...new Set(
-                    room
-                      .map((event) => event.actorId)
-                      .filter((id): id is string => id !== null && id !== OPERATOR_ACTOR.id),
-                  ),
-                ],
-                count: room.length,
-                lastAt: room.at(-1)?.occurredAt ?? null,
-                preview: envelopes[room.at(-1)!.sequence]?.text?.slice(0, 220) ?? null,
-              },
-            ]
-          : []),
-        ...[...pairs.entries()].map(([key, entry]) => ({
-          key,
-          label: key,
-          participants: entry.participants,
-          count: entry.events.length,
-          lastAt: entry.events.at(-1)?.occurredAt ?? null,
-          preview: envelopes[entry.events.at(-1)!.sequence]?.text?.slice(0, 220) ?? null,
-        })),
-      ],
-    };
-  }, [eventList, envelopes]);
-  const talkThread =
-    focus.kind === "talk"
-      ? focus.id === "room"
-        ? roomEvents
-        : (pairTalks.get(focus.id)?.events ?? [])
-      : [];
-
   // THE LEDGER OF UNANSWERED QUESTIONS. The attention block used to name the debtor ("start is
   // waiting for input") and never the debt — the question itself was nowhere on screen, and the
   // owner's verbatim reaction was "needs me FOR WHAT?". A question is a recorded fact: an agent's
@@ -1982,21 +1861,23 @@ export default function App({
     if (cancelIllegal) setConfirmCancel(false);
   }, [cancelIllegal]);
 
-  const closedDraftIds = new Set(eventList.flatMap((event) => {
-    if (event.kind !== "draft_rejected" && event.kind !== "draft_applied" && event.kind !== "mutation_accepted") return [];
-    const payload = event.payload;
-    if (payload === null || typeof payload !== "object") return [];
-    const draftId = (payload as Record<string, unknown>).draftId;
-    return typeof draftId === "string" ? [draftId] : [];
-  }));
-  const durableProposals = eventList.flatMap((event) => {
-    if (event.kind !== "draft_proposed" || event.payload === null || typeof event.payload !== "object") return [];
-    const value = event.payload as Record<string, unknown>;
-    const draftId = typeof value.draftId === "string" ? value.draftId : null;
-    const digest = typeof value.proposalSha256 === "string" ? value.proposalSha256 : null;
-    if (draftId === null || digest === null || closedDraftIds.has(draftId)) return [];
-    return [{ draftId, digest, evidenceId: event.evidenceRefs[0] ?? null }];
-  });
+  const durableProposals = useMemo(() => {
+    const closedDraftIds = new Set(eventList.flatMap((event) => {
+      if (event.kind !== "draft_rejected" && event.kind !== "draft_applied" && event.kind !== "mutation_accepted") return [];
+      const payload = event.payload;
+      if (payload === null || typeof payload !== "object") return [];
+      const draftId = (payload as Record<string, unknown>).draftId;
+      return typeof draftId === "string" ? [draftId] : [];
+    }));
+    return eventList.flatMap((event) => {
+      if (event.kind !== "draft_proposed" || event.payload === null || typeof event.payload !== "object") return [];
+      const value = event.payload as Record<string, unknown>;
+      const draftId = typeof value.draftId === "string" ? value.draftId : null;
+      const digest = typeof value.proposalSha256 === "string" ? value.proposalSha256 : null;
+      if (draftId === null || digest === null || closedDraftIds.has(draftId)) return [];
+      return [{ draftId, digest, evidenceId: event.evidenceRefs[0] ?? null }];
+    });
+  }, [eventList]);
   const [governedDraftId, setGovernedDraftId] = useState("");
   const selectedDraftProposal = durableProposals.find((proposal) => proposal.draftId === governedDraftId) ?? null;
   const [proposalReview, setProposalReview] = useState<{ draftId: string; state: "loading" | "ready" | "unavailable"; steps: string[]; edges: string[]; nodeIds: string[]; reason: string | null }>({ draftId: "", state: "unavailable", steps: [], edges: [], nodeIds: [], reason: null });
@@ -2050,6 +1931,94 @@ export default function App({
     return () => { cancelled = true; };
   }, [selectedDraftProposal?.draftId, selectedDraftProposal?.evidenceId, selected, openEvidence]);
 
+  // THE LIVE TEAM (spec section 4): what needs the owner, who is on the team, the chat threads and
+  // the "while you were away" card. All derived from the log; nothing here is a second source of truth.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => { setClock(Date.now()); }, [eventList]);
+  const [nativeRequests, setNativeRequests] = useState<NativeChatRequest[] | null>(null);
+  useEffect(() => { setNativeRequests(null); }, [selected]);
+  const nodeNames = useMemo(() => Object.fromEntries(model.nodes.flatMap((node) => node.declaredName ? [[node.id, node.declaredName] as const] : [])), [model]);
+  const needs = useMemo(() => needsYou({ status, stale, events: eventList, envelopes, nativeRequests,
+    pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id }),
+    [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames]);
+  const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
+  const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: NO_ALIASES, model,
+    claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock }),
+    [eventList, envelopes, personas, nativePersonaLinks, model, claudeTaskRead, selected, waitingAskers, clock]);
+  const links = useMemo(() => teamLinks(eventList, envelopes, team.bots, clock), [eventList, envelopes, team, clock]);
+  const botNames = useMemo(() => namesOf(team.bots), [team]);
+  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id), [workMessages, team]);
+  const [thread, setThread] = useState(EVERYONE);
+  const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
+  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); }, [selected]);
+  useEffect(() => {
+    const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
+    setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
+  }, [thread, threads]);
+  const unread = useMemo(() => unreadCounts(threads, threadOpened), [threads, threadOpened]);
+  const openingCount = useMemo(() => sealedNotesPending(eventList, envelopes), [eventList, envelopes]);
+  const activityLines = useMemo(() => recentActivity.map((item) => describeActivity(item, botNames, envelopes, OPERATOR_ACTOR.id)), [recentActivity, botNames, envelopes]);
+  const assignedNodeIds = useMemo(() => new Set(team.bots.flatMap((bot) => bot.tasks.flatMap((task) => task.nodeId === null ? [] : [task.nodeId]))), [team]);
+  const unassignedSteps = useMemo(() => model.nodes.filter((node) => !assignedNodeIds.has(node.id)), [model, assignedNodeIds]);
+  const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);
+
+  const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
+  const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
+  const [graphFileOpen, setGraphFileOpen] = useState(false);
+  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null } | null>(null);
+  const [composerFocus, setComposerFocus] = useState(0);
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
+  const [nativeRefresh, setNativeRefresh] = useState(0);
+  useEffect(() => { setAnswering(null); setHighlight(null); setMainChatSeed(null); setCanvasTab("team"); }, [selected]);
+  const graphFileInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (fileFocusNonce > 0) {
+      setCanvasTab("team");
+      setMobileTab("team");
+      setGraphFileOpen(true);
+      window.setTimeout(() => graphFileInput.current?.focus(), 0);
+    }
+  }, [fileFocusNonce]);
+
+  const projectKey = project ?? "this runtime";
+  const [seenSeq, setSeenSeq] = useState<number | null>(null);
+  useEffect(() => { setSeenSeq(selected === "" ? null : readLastSeen(projectKey, selected)); }, [projectKey, selected]);
+  const head = status?.headSequence ?? 0;
+  const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
+    ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
+        openItems: needs.items, fromSeq: seenSeq!, toSeq: head })
+    : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs]);
+  const markSeen = useCallback(() => {
+    if (selected === "" || head === 0) return;
+    writeLastSeen(projectKey, selected, head);
+    setSeenSeq(head);
+  }, [projectKey, selected, head]);
+  useEffect(() => {
+    // Ten visible seconds of the live view count as seen; an open handover waits for Got it.
+    if (handover !== null || selected === "" || head === 0) return;
+    const timer = window.setTimeout(() => { if (document.visibilityState === "visible") markSeen(); }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [handover, selected, head, markSeen]);
+
+  const openRecords = (sequences: number[]) => {
+    const first = sequences[0];
+    if (first === undefined) return;
+    const owner = threads.find((candidate) => candidate.messages.some((message) => message.sequence === first));
+    if (owner !== undefined) { setThread(owner.key); setHighlight(first); setMobileTab("chat"); return; }
+    setTalkOpen(true);
+    setFocus({ kind: "run" });
+  };
+  const answerQuestion = (asker: string, signalId: string | null) => {
+    const key = botKeyOf(team.bots, asker) ?? asker;
+    setThread(`direct:${key}`);
+    setAnswering({ asker, signalId });
+    setComposerFocus((nonce) => nonce + 1);
+    setMobileTab("chat");
+  };
+  const onRequestsChange = useCallback((requests: NativeChatRequest[]) => setNativeRequests(requests), []);
+
   if (!connected) {
     return <Connect onConnect={(token) => void connect(token)} busy={connecting} error={error} />;
   }
@@ -2068,17 +2037,8 @@ export default function App({
   const pendingOwnerReview = durableProposals.length > 0;
   const currentReplyIssue = status !== null && replyIssue !== null && replyIssue.executionId === status.executionId && replyIssue.headSequence === status.headSequence ? replyIssue.text : null;
   const currentReplySuggestions = status !== null && replySuggestions !== null && replySuggestions.executionId === status.executionId && replySuggestions.headSequence === status.headSequence ? replySuggestions : null;
-  const replyGuidance = !pendingOwnerReview && waitingForInput && verdict?.key === "needs"
-    ? currentReplySuggestions?.state === "ready" && currentReplySuggestions.suggestions.length === 2
-      ? "Two recommended replies are ready in the conversation."
-      : currentReplyIssue ?? currentReplySuggestions?.reason ?? null
-    : null;
   const blockedAttentionNode = status?.attentionReasons.find((reason) =>
     (reason.kind === "blocked_node" || reason.kind === "untriaged_interruption") && typeof reason.node === "string")?.node ?? null;
-  const focusRecordedAttention = () => {
-    setTalkOpen(true);
-    setFocus({ kind: "run" });
-  };
   const effectiveAttention = pendingOwnerReview && status !== null ? "needs_you" : status?.attention;
   const effectiveVerdict = effectiveAttention === undefined ? null : verdictOf(effectiveAttention);
   const effectiveStatus = pendingOwnerReview && status !== null ? { ...status, attention: "needs_you" as const } : status;
@@ -2247,6 +2207,19 @@ export default function App({
       : topologyError !== "" || visibleTopology?.match === "mismatched"
         ? "refused"
         : "none";
+  /** What the page says about the graph file check: how many nodes, whether any connection is
+   * proven, and the check's own note. Shown under the Graph file field on the Team tab. */
+  const connectionNote = [
+    model.rosterDeclared
+      ? `${model.nodes.length} node${model.nodes.length === 1 ? "" : "s"}`
+      : `${model.nodes.length} node${model.nodes.length === 1 ? "" : "s"} seen so far, roster not read`,
+    model.edgesKnown
+      ? `${model.edges.length} connection${model.edges.length === 1 ? "" : "s"} drawn`
+      : "work connections unverified",
+    model.edgesKnown || connectionTone === "refused"
+      ? (journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology))
+      : "Verify the graph to connect work nodes.",
+  ].join(" · ");
   const runtimePreferenceKey = projectIdentity === null ? null : `${location.origin}:${projectIdentity}`;
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
   const renameProject = (name: string): boolean => {
@@ -2321,7 +2294,66 @@ export default function App({
     }
   };
 
+  const threadsWithAnswer = answering !== null && !threads.some((candidate) => candidate.key === thread)
+    ? [...threads, { key: thread, kind: "direct" as const, label: botNames[answering.asker] ?? answering.asker,
+      participants: [botKeyOf(team.bots, answering.asker) ?? answering.asker], messages: [] }]
+    : threads;
+
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
+
+  const onGraphFileChange = (value: string) => {
+    graphFileRef.current = value;
+    verificationGeneration.current += 1;
+    setGraphFile(value);
+    setTopology(null);
+    setTopologyError("");
+    setBusy(false);
+    // The path is the operator's own note about this run, remembered with the
+    // board marks so re-opening the run re-verifies without re-typing.
+    updateBoard({ ...board, graphFile: value });
+  };
+  const chooseCanvas = (tab: "team" | "journey") => {
+    setCanvasTab(tab);
+    setMobileTab(tab === "team" ? "team" : "journeys");
+  };
+  /** The one legal action for a blocked or waiting step, or for a pending proposal. */
+  const stepActions = (item: StepItem | DraftItem): ReactNode => {
+    if (item.kind === "draft") return <button type="button" onClick={focusPendingProposal}>Review proposal</button>;
+    if (item.kind === "waiting_step") {
+      return <button type="button" onClick={pendingQuestion !== null ? () => answerQuestion(pendingQuestion.asker, pendingQuestion.signalId) : focusRunReply}>Answer in chat</button>;
+    }
+    const node = item.nodeId;
+    const failure = item.reason === "blocked_node" ? retryFailures.get(node) : undefined;
+    return <>
+      {failure && <span className="question-failure">{`Failed after retries: ${readable(failure.reason)}. Check ${failure.executor === "model" ? "the model route" : "the failed step"} before allowing another attempt.`}</span>}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() =>
+          void runMutation((client) =>
+            status?.status === "running"
+              ? client.pause(selected, {
+                  actor: OPERATOR_ACTOR,
+                  idempotencyKey: newIdempotencyKey(),
+                  ...ifMatchRendered,
+                })
+              : client.approve(selected, node, {
+                  actor: OPERATOR_ACTOR,
+                  idempotencyKey: newIdempotencyKey(),
+                  ...ifMatchRendered,
+                }),
+          )
+        }
+      >
+        {status?.status === "running"
+          ? `pause before ${failure ? "allowing retry" : "approving"} ${node}`
+          : `${failure ? "allow retry" : "approve"} ${node}`}
+      </button>
+      {status?.status === "running" && (
+        <small>Pause the running task first. Then approve this node.</small>
+      )}
+    </>;
+  };
 
   return (
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
@@ -2391,39 +2423,52 @@ export default function App({
       />
 
       <div className="stage">
-        <div className="topstrip">
+        <header className="topbar">
           <button type="button" className="ghost mobile-toggle projects-toggle" aria-expanded={projectsOpen} aria-controls="projects-rail" onClick={() => setProjectsOpen((open) => !open)} aria-label="Toggle projects"><Menu aria-hidden="true" /></button>
           <button type="button" className="ghost mobile-toggle conversation-toggle" ref={conversationToggleRef} disabled={addingProject || (!draft && selected === "")} aria-expanded={conversationVisible} aria-controls="conversation-panel" onClick={() => { setTalkOpen(!conversationVisible); if (draft === null && ["node", "agent", "talk"].includes(focus.kind)) setFocus({ kind: "none" }); }} aria-label="Toggle conversation"><MessageSquare aria-hidden="true" /></button>
-          <div className="strip-card">
-            {selected ? (
+          <div className="topbar-mission">
+            {selected ? (<>
+              {project && <span className="run-project">{project} {"\u00b7"} </span>}
               <button
                 type="button"
                 className="run-name"
                 onClick={() => {
                   // Every nonce bump carries its own target: this button reopens the panel and
                   // speaks to the ROOM. Bumping without setting sayTo replayed a long-dead
-                  // "answer X" choice — the round-1 bug back through a side door, and all five
-                  // round-2 reviewers caught it.
+                  // "answer X" choice - the round-1 bug back through a side door.
                   setSayTo(null);
                   setSayAnswer(null);
                   setTalkOpen(true);
                   setFocus({ kind: "run" });
                   setSayFocusNonce((nonce) => nonce + 1);
                 }}
-                // The objective as the name, the id on hover (#1077): a generated run is what
-                // it was asked to do, and the address is one hover away for anyone who needs it.
+                // The objective as the name, the id on hover (#1077).
                 title={selected}
               >
                 {runLabel(selected, briefing)}
               </button>
-            ) : (
+            </>) : (
               <span className="meta">pick a run, or start one</span>
             )}
-            {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {selected && <p className="run-selection-identity" aria-label="Selected run identity">Project: {project ?? "this runtime"} / Run: {selected}</p>}
           </div>
-
-          <div className="strip-card right">
+          {selected && status !== null && (
+            <Beacon
+              state={needs.state}
+              onOpen={() => {
+                setMobileTab("chat");
+                window.setTimeout(() => {
+                  const target = document.getElementById(NEEDS_YOU_ID);
+                  target?.scrollIntoView?.({ block: "start" });
+                  target?.focus();
+                }, 0);
+              }}
+            />
+          )}
+          <details className="topbar-menu">
+            <summary>Run details</summary>
+            <div className="topbar-menu-body">
+            {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">
                 {tools.map((name) => {
@@ -2445,19 +2490,8 @@ export default function App({
                 })}
               </span>
             ) : null}
-            {/* Blocks keep the position they were dragged to, per run, across reloads. Stored
-                positions outlive the layout that made them, and a graph that gains a node lands
-                it on one already placed - so there has to be a way back to the grid. */}
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => updateBoard(tidyBoard(board))}
-              disabled={!selected}
-              aria-label="Tidy the board"
-              title="Put every block back on the grid"
-            >
-              <LayoutGrid aria-hidden="true" />
-            </button>
+            </div>
+          </details>
             <button
               type="button"
               className="ghost"
@@ -2500,8 +2534,7 @@ export default function App({
             >
               <LogOut aria-hidden="true" />
             </button>
-          </div>
-        </div>
+        </header>
 
         {error && (
           <div className="banner" role="alert">
@@ -2544,7 +2577,6 @@ export default function App({
             </aside>
             <div className="scene">
               <Board
-                initialLayout="overview"
                 model={draftModel}
                 board={board}
                 selectedNode={focus.kind === "node" ? focus.id : null}
@@ -2578,122 +2610,46 @@ export default function App({
             )}
           </section>
         ) : (
-          <div className="split">
-            <aside className="main-chat-rail" aria-label="Principal conversation">
-              <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected}
-                personas={mainChatPersonas} refreshSequence={status.headSequence ?? 0}
-                replySuggestions={currentReplySuggestions} replyLoading={replyLoading} replyIssue={currentReplyIssue}
-                onConnect={() => {
-                  const first = model.nodes[0];
-                  if (first) setFocus({ kind: "node", id: first.id });
-                }} />
-            </aside>
+          <div className="studio-columns" data-mobile-tab={mobileTab}>
+            <div className="mobile-tabs" role="tablist" aria-label="Studio columns">
+              {(["chat", "team", "journeys"] as const).map((tab) => (
+                <button key={tab} type="button" role="tab" aria-selected={mobileTab === tab}
+                  onClick={() => { setMobileTab(tab); if (tab !== "chat") setCanvasTab(tab === "team" ? "team" : "journey"); }}>
+                  {tab === "chat" ? "Chat" : tab === "team" ? "Team" : "Journeys"}
+                </button>
+              ))}
+            </div>
+            <ChatColumn
+              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setAnswering(null); setHighlight(null); }} unread={unread}
+              bots={team.bots} names={botNames} openingCount={openingCount}
+              cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
+                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
+                onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
+                stepActions={stepActions} />}
+              jev={{ suggestions: currentReplySuggestions?.state === "ready" ? currentReplySuggestions.suggestions : [], loading: replyLoading, issue: currentReplyIssue }}
+              nativeKeys={nativeKeys}
+              principal={<aside className="main-chat-rail" aria-label="Principal conversation">
+                <MainChat key={`main-${selected}`} client={clientRef.current} executionId={selected} personas={mainChatPersonas}
+                  refreshSequence={status.headSequence ?? 0} recipientId={thread.startsWith("direct:") ? thread.slice("direct:".length) : null}
+                  seed={mainChatSeed} refreshNonce={nativeRefresh} onRequestsChange={onRequestsChange}
+                  onConnect={() => {
+                    const first = model.nodes[0];
+                    if (first) setFocus({ kind: "node", id: first.id });
+                  }} />
+              </aside>}
+              onSend={async (text, to, replyTo) => {
+                // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
+                const ok = await say(text, to, "chat", replyTo);
+                if (ok) setAnswering(null);
+                return ok;
+              }}
+              sending={saying === "chat"} sendError={sayError?.via === "chat" ? sayError.text : ""}
+              answering={answering} onClearAnswer={() => setAnswering(null)} composerFocus={composerFocus} highlight={highlight}
+              onUseSuggestion={(text) => setMainChatSeed((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }))}
+            />
             {talkOpen && (
             <aside id="conversation-panel" className="talk" hidden={!conversationVisible}>
-              {/* WHY IT NEEDS YOU, where you answer it. This block lived in the top strip -
-                * a header narrating a panel it did not belong to. Each reason still carries
-                * the one action that is legal for it. */}
-              {verdict?.key === "needs" && status && status.attentionReasons.some((reason) => reason.kind !== "waiting_input_node" || pendingQuestion !== null) && (
-                <div className="attention" aria-label="Why this run needs you">
-                  {status.attentionReasons.map((reason, reasonIndex) => {
-                    const node = typeof reason.node === "string" ? reason.node : null;
-                    const kind = typeof reason.kind === "string" ? reason.kind : "unknown";
-                    const key = `${kind}:${node ?? ""}:${reasonIndex}`;
-                    // The question is quoted ONCE. The ledger cannot say WHICH waiting node a
-                    // question belongs to (the wire carries no link), and repeating the newest
-                    // quote under every waiting reason attributed it to nodes it never came
-                    // from - one of the two banners was necessarily wrong (round-4, 3am).
-                    const firstWaiting = status.attentionReasons.findIndex(
-                      (candidate) => candidate.kind === "waiting_input_node",
-                    );
-                    if ((kind === "blocked_node" || kind === "untriaged_interruption") && node !== null) {
-                      const failure = kind === "blocked_node" ? retryFailures.get(node) : undefined;
-                      return (
-                        <span key={key}>
-                          {failure
-                            ? `${node} failed after retries: ${readable(failure.reason)}. Check ${failure.executor === "model" ? "the model route" : "the failed step"} before allowing another attempt.`
-                            : kind === "untriaged_interruption"
-                            ? `${node} was interrupted and awaits triage - approving it is the triage`
-                            : `${node} is blocked`}
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void runMutation((client) =>
-                                status.status === "running"
-                                  ? client.pause(selected, {
-                                      actor: OPERATOR_ACTOR,
-                                      idempotencyKey: newIdempotencyKey(),
-                                      ...ifMatchRendered,
-                                    })
-                                  : client.approve(selected, node, {
-                                      actor: OPERATOR_ACTOR,
-                                      idempotencyKey: newIdempotencyKey(),
-                                      ...ifMatchRendered,
-                                    }),
-                              )
-                            }
-                          >
-                            {status.status === "running"
-                              ? `pause before ${failure ? "allowing retry" : "approving"} ${node}`
-                              : `${failure ? "allow retry" : "approve"} ${node}`}
-                          </button>
-                          {status.status === "running" && (
-                            <small>Pause the running task first. Then approve this node.</small>
-                          )}
-                        </span>
-                      );
-                    }
-                    if (kind === "waiting_input_node" && node !== null) {
-                      // A second waiting node says only what the record backs about IT.
-                      if (reasonIndex !== firstWaiting) {
-                        return <span key={key}>{node} is also waiting</span>;
-                      }
-                      // The debt, not just the debtor: quote the actual unanswered question
-                      // when one is on the record, and confess when none is - demanding "an
-                      // answer" to nothing sent a real person hunting the thread for a
-                      // question that did not exist.
-                      const asker = pendingQuestion?.asker ?? null;
-                      return (
-                        <span key={key}>
-                          {pendingQuestion !== null && asker !== null ? (
-                            <>
-                              {asker} asked you:{" "}
-                              <q className="why-quote">
-                                {pendingQuestion.text.length > 240
-                                  ? `${pendingQuestion.text.slice(0, 240)}…`
-                                  : pendingQuestion.text}
-                              </q>
-                              <button type="button" onClick={focusRunReply}>
-                                answer {asker}
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              {node} is waiting for direction. No specific question is visible here yet.
-                              <button type="button" onClick={focusRunReply}>send direction in the thread</button>
-                            </>
-                          )}
-                        </span>
-                      );
-                    }
-                    return (
-                      <span key={key}>
-                        {readable(kind)}
-                        {node !== null ? ` · ${node}` : ""}
-                      </span>
-                    );
-                  })}
-                  {routes !== null &&
-                    (!routes.configured || routes.routes.every((route) => !route.enabled)) && (
-                      <span className="why-context">
-                        {pendingQuestion === null
-                          ? "Chat-only room: no model is wired here, so steps wait for people instead of thinking. Talking still works."
-                          : "No model is wired to this Runtime, so agent nodes wait instead of thinking. The thread still works."}
-                      </span>
-                    )}
-                </div>
-              )}
               {status.attention === "needs_you" && judgeRoutes.length > 1 && (
                 <label className="judge-route-choice">
                   Jev route
@@ -2744,30 +2700,9 @@ export default function App({
             {/* IN FLOW, NOT FLOATED: a conversation opens as its own column and the canvas
               * yields width. A window layered over the board buried blobs and bubbles - the
               * one thing this screen promised not to do. */}
-            {(focus.kind === "talk" || focus.kind === "agent") && (
+            {focus.kind === "agent" && (
               <aside className="talk chat-col">
-              {focus.kind === "talk" && (
-                <TalkPanel
-                  key={`talk-${focus.id}`}
-                  talkId={focus.id}
-                  label={talks.find((talk) => talk.key === focus.id)?.label ?? focus.id}
-                  participants={talks.find((talk) => talk.key === focus.id)?.participants ?? []}
-                  events={talkThread}
-                  executionId={selected === "" ? undefined : selected}
-                  openEvidence={openEvidence}
-                  onClose={() => setFocus({ kind: "none" })}
-                  onSay={
-                    focus.id === "room"
-                      ? (message, to) => void say(message, to, "talk")
-                      : undefined
-                  }
-                  saying={saying === "talk"}
-                  sayError={sayError?.via === "talk" ? sayError.text : ""}
-                />
-              )}
-
-              {focus.kind === "agent" && (
-                <AgentPanel
+              <AgentPanel
                   // KEYED BY WHO IT BELONGS TO: a prop change re-addressed a LIVE composer
                   // without remounting - agent A's half-typed draft stood one Enter from
                   // shipping to agent B (round-4).
@@ -2792,81 +2727,36 @@ export default function App({
                   onSay={nativePersonaLinks[focus.id] === undefined ? (message, to) => void say(message, to, "agent") : undefined}
                   saying={saying === "agent"}
                   sayError={sayError?.via === "agent" ? sayError.text : ""}
-                />
-              )}
+              />
               </aside>
             )}
 
+            <section className="canvas-column" aria-label="Canvas">
+            <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
+              <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
+              <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Journey</button>
+            </div>
             <div
               className="scene"
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
-            <Board
-              initialLayout="overview"
-              model={model}
-              projectName={project}
-              projectPath={projectPath}
-              latestRecordedUpdate={latestRecordedUpdate}
-              board={board}
-              selectedNode={focusedNode}
-              onSelectNode={(id) => {
-                if (id !== null) nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                setFocus(id === null ? { kind: "none" } : { kind: "node", id });
-              }}
-              onChange={updateBoard}
-              connectionNote={journalTopology ? topologyNote(journalTopology) : topologyError || topologyNote(visibleTopology)}
-              connectionTone={connectionTone}
-              graphFile={graphFile}
-              onGraphFileChange={(value) => {
-                graphFileRef.current = value;
-                verificationGeneration.current += 1;
-                setGraphFile(value);
-                setTopology(null);
-                setTopologyError("");
-                setBusy(false);
-                // The path is the operator's own note about this run, remembered with the
-                // board marks so re-opening the run re-verifies without re-typing.
-                updateBoard({ ...board, graphFile: value });
-              }}
-              onDrawConnections={() => void drawConnections()}
-              focusGraphFile={fileFocusNonce}
-              ended={ended}
-              busy={busy}
-              runId={selected === "" ? undefined : selected}
-              crew={crew}
-              recordedSessions={recordedSessions}
-              workMessages={workMessages}
-              agentWork={agentWork}
-              activity={recentActivity}
-              latestEvent={latestEvent}
-              subagents={subagentRead?.executionId === selected ? subagentRead : null}
-              runTeam={runTeamRead?.executionId === selected ? runTeamRead : null}
-              claudeTasks={claudeTaskRead?.executionId === selected ? claudeTaskRead : null}
-              attention={pendingOwnerReview ? "needs_you" : status.attention}
-              nextAction={pendingOwnerReview ? {
-                label: "Review pending proposal",
-                detail: "A sealed proposal is waiting for an owner review, assignment, and approval.",
-              } : waitingForInput && verdict?.key === "needs" && pendingQuestion !== null ? {
-                label: `Answer ${pendingQuestion.asker}`,
-                detail: pendingQuestion.text,
-              } : blockedAttentionNode && verdict?.key === "needs" ? {
-                label: "Review step needing attention",
-                detail: `${blockedAttentionNode} needs review before it can proceed. Open its recorded reason and controls.`,
-              } : null}
-              replyGuidance={replyGuidance}
-              onNextAction={pendingOwnerReview ? focusPendingProposal : waitingForInput ? focusRunReply : focusRecordedAttention}
-              agentReports={agentReports}
-              runStatus={status.status}
-              selectedAgent={focus.kind === "agent" ? focus.id : null}
-              onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
-              talks={talks}
-              selectedTalk={focus.kind === "talk" ? focus.id : null}
-              onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
-              objective={briefing?.objective ?? null}
-              demonstration={status.executor === "fixture"}
-              fixtureFile={fixtureFile}
-              onFixtureFileChange={setFixtureFile}
-            />
+            {canvasTab === "team" ? (
+              <TeamCanvas storageKey={`graphhelm.team-positions:${projectKey}:${selected}`} bots={team.bots} otherRecorders={team.otherRecorders}
+                links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}
+                onSelectBot={(key) => { setThread(`direct:${key}`); setAnswering(null); }}
+                onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })}
+                onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
+                onOpenTask={(bot, task) => task.nodeId !== null ? setFocus({ kind: "node", id: task.nodeId }) : openRecords([task.sequence])}
+                graphFileOpen={graphFileOpen} onGraphFileOpenChange={setGraphFileOpen}
+                graphFileRow={<><GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={() => void drawConnections()} busy={busy}
+                  demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
+                  <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
+            ) : (
+              <section className="journey-empty" aria-label="Journey">
+                <p>No journeys mapped yet. A journey appears here once its screens are captured.</p>
+              </section>
+            )}
+            {handover !== null && <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} />}
 
             {/* THE CREW STANDS ON THE BOARD ITSELF - draggable blobs the Board renders, so
               * agents and nodes share one scene. Selection still lives here. */}
@@ -3017,9 +2907,9 @@ export default function App({
                     // no path, resume walks the person to the box instead of sitting disabled
                     // with its excuse in a tooltip a disabled button never shows.
                     if (graphFile.trim().length === 0 && resumeGraph === null && !snapshotResumeAvailable) {
-                      const freeCanvas = [...document.querySelectorAll<HTMLButtonElement>("button")]
-                        .find((button) => button.textContent?.trim() === "Free canvas");
-                      freeCanvas?.click();
+                      setCanvasTab("team");
+                      setMobileTab("team");
+                      setGraphFileOpen(true);
                       setFileFocusNonce((nonce) => nonce + 1);
                       return;
                     }
@@ -3202,6 +3092,7 @@ export default function App({
               </p>
             )}
             </div>
+            </section>
 
             {node !== null && (
               <aside className="talk node-col">
@@ -3278,6 +3169,7 @@ export default function App({
               )}
               </aside>
             )}
+            <RightPanel activity={activityLines} onOpenActivity={(sequence) => openRecords([sequence])} />
             {openDocument && <DocumentEditor document={openDocument.reference}
               readDocument={readProjectDocument} saveDocument={saveProjectDocument}
               onAttentionChange={documentAttentionChanged}

@@ -134,13 +134,11 @@ as a claim the evidence repeats.
 - No embedded chat, no collaboration, no multi-user, no marketplace, no billing.
 - No cloud, no hosted deployment, no remote login, no VPS story.
 - No telemetry, no external service, no automatic paid fallback.
-- No mobile layout. The surface targets a desktop control room.
+- Below 768 px the Studio shows one column at a time behind a Chat / Team / Journeys tab bar (phase 1 of the 2026-10-05 redesign).
 
 ## 7. Known limits
 
-- **The Studio's own test suite is not part of `ci/gate.ps1`.** The gate covers the Rust
-  workspace, schemas, and PostgreSQL; `npm --prefix apps/studio test` and `run build` must be run
-  explicitly. Tracked separately as tech debt rather than bolted onto the gate here.
+- **The Studio's tests run in `ci/gate.ps1`.** The gate's `apps/studio (npm)` stage runs them when a change touches `apps/studio`. Gates are advisory since 2026-09-24; run `npx vitest run` and `npx tsc -b` from `apps/studio` and list the results in the PR body.
 - **`resume` needs a graph file path on the Runtime host.** The Studio relays it and never reads
   it, which is the correct security posture and also means the operator must know the Runtime's
   working directory. There is no server-side "resume from the graph you started with" verb to

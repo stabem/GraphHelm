@@ -628,7 +628,7 @@ describe("tool behaviour", () => {
     const tools = toolsOf(client, hooks());
     const reply = JSON.parse(await tools.get("graphhelm_get_attention")!.execute({ executionId: "demo" }));
     expect(reply.openQuestions).toEqual([
-      { asker: "codex", at: "2026-08-31T09:00:05Z", text: "which region?", signalId: "sig-5" },
+      { asker: "codex", at: "2026-08-31T09:00:05Z", text: "which region?", signalId: "sig-5", sequence: 5 },
     ]);
   });
 

@@ -1453,3 +1453,28 @@ git grep -n 'is_loopback' origin/main -- apps/cli/src/commands/serve   one site,
 **Consequences:** a scoped agent credential can now cause up to 32 MiB of sealed storage per signal; the signal budget still bounds the count of signals. Studio rendering lands in phase 5 from `blob:` URLs in `<img>` only.
 
 **Relationship:** implements §5.1 and §7 of the Studio live-team spec; ADR-044 (journey screens and captures) builds on it.
+
+## 49. ADR-044 — Journey screens, capture records and freshness folding
+
+**Status:** proposed with issue #315; accepted on the merge of this ADR's PR.
+
+**Context:** The Studio journey map (spec `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §5.4, §6, §7) shows each step of a journey contract with its newest screenshot and whether that screenshot still proves the current code. ADR-043 gave signals sealed image attachments; nothing yet tied an image to a contract step or said when it went stale.
+
+**Decision:**
+
+1. **Contract field.** `journey-contract.schema.json` gains an optional `screen: {screenId, title, scopePaths}` per step. Additive: existing contracts stay valid. `scopePaths` uses Keel's meaning (`core/policy/src/keel.rs` `check_scope`); entries may not be absolute or contain `\` or `..`. Contracts are read from `<project>/.graphhelm/journeys/<contractId>.json`.
+2. **Records.** `jpd.screen_captured` (`graphhelm-screen-capture-v1`, exactly one image attachment) and `jpd.transition_walked` (`graphhelm-transition-walked-v1`) are ordinary signals whose `description` is a JSON document with its own schema under `extensions/builtin/graphhelm-jpd/schemas/`. No new event kind; the generic signal path adds no check. Producers: `graphhelm journey capture` and `graphhelm journey walked`.
+3. **Identifiers.** Every phase-4 consumer refuses contract, step and screen ids outside `^[a-z0-9][a-z0-9._-]{0,127}$` or containing `..`, and revisions that are not 40 or 64 lowercase hex, before any file, git or record use. The schema's broader `$defs/id` stays for compatibility. Records failing this, or failing their document, are ignored and counted (`ignoredRecords`).
+4. **Folding** (`core/execution/src/journeys.rs`). Per step, the newest non-dirty capture (else the newest dirty one). `fresh` when no file in the step's `scopePaths` changed between the capture's revision and HEAD; `stale` with the changed files; `unknown` with cause `dirty`, `no_scope_paths`, `no_git` or `revision_missing`. An arrow is `walked` when its newest transition's two captures are both fresh, `never_walked` without a transition, otherwise `stale`.
+5. **Git.** `git -C <project>` with fixed argument lists (`rev-parse --verify HEAD^{commit}`, `cat-file -e <rev>^{commit}`, `diff --name-only -z <rev> <head> --`), `GIT_OPTIONAL_LOCKS=0`, stdin null. No pathspec reaches git; scope filtering is done in Rust. The project is the directory the Runtime was started with (`--project`).
+6. **Read surfaces (D-039).** `GET /v1/executions/{id}/journeys` (owner credentials only; needs `--project` and a keyring because envelopes are sealed), the MCP `journeys` tool and `graphhelm journeys` call one function and return the same `data`.
+7. **No cross-request cache.** Results are memoized per revision within one fold only. The spec's per-`(revision, HEAD)` cache is not built: the cost is one `git diff` per distinct revision, and a cache that outlived a HEAD move would report `fresh` wrongly.
+
+**Proof:** schema test `journey_screens_and_capture_records_validate` (`apps/cli/tests/jpd_plugin.rs`); fold tests against temporary git repositories (`core/execution/tests/journeys_freshness.rs`: fresh, stale naming the file, prefix not matching a longer name, unknown for each cause, arrows walked / never walked / stale); `apps/cli/tests/journeys_surfaces.rs` (CLI, HTTP and MCP parity, owner-only, refused contracts, ignored path-like record); `apps/cli/tests/journey_producers_cli.rs` (capture and walked, path-like ids refused with the store unchanged, end-to-end stale).
+
+**Alternatives considered:** (a) a new event kind for captures — rejected: signals already carry evidence and threading; (b) git pathspecs for scope — rejected: pathspec magic is a second language a record could smuggle in, and Keel's prefix rule is not git's; (c) computing freshness in the Studio — rejected: the browser has no git.
+
+**Consequences:** freshness is only as good as the Runtime's checkout; a capture taken on a commit the project does not have reports `unknown`. Studio rendering is phase 5; the Playwright observer `--journey`, DELIVERY guidance and the Keel card `journeys` field are phase 6.
+
+**Relationship:** builds on ADR-043; implements §5.4, §6.1–§6.4 and §7 of the Studio live-team spec.
+

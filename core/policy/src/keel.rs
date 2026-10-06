@@ -466,6 +466,9 @@ pub struct Card {
     pub exported_symbols: Vec<String>,
     #[serde(default)]
     pub allowance: Option<SurfaceBudget>,
+    /// Journey contract ids whose screens prove the promise (spec §6.3). Advisory only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub journeys: Vec<String>,
 }
 
 /// One path a diff touches, as read from its headers.

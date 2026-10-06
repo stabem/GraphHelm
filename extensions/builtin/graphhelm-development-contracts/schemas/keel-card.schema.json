@@ -38,6 +38,16 @@
       },
       "description": "Public symbols the change adds. The check reports added public symbols the card does not name."
     },
+    "journeys": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+        "not": { "pattern": "\\.\\." }
+      },
+      "description": "Journey contracts (`.graphhelm/journeys/<contractId>.json`) that prove the promise. keel check reports, without blocking, a screen the card's scope touches whose journey has no fresh capture at the head (keel.journey.no_fresh_capture)."
+    },
     "allowance": {
       "$ref": "#/$defs/surfaceBudget",
       "description": "Surface declared at planning time, added to keel.yaml `surface` and capped by `maxAllowance`."

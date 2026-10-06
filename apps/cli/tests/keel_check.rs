@@ -507,3 +507,41 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
     assert_ne!(code, 0, "{reply}");
     assert!(reply.to_string().contains("scopePaths"), "{reply}");
 }
+
+#[test]
+fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path() {
+    let repo = repository(&[]);
+    let path = repo.path().join("card.json");
+    let mut card = serde_json::json!({
+        "promise": "added() exists", "scopePaths": ["src"], "proof": "cargo test",
+        "exportedSymbols": ["added"], "journeys": ["checkout"],
+    });
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 0, "{reply}");
+    card["journeys"] = serde_json::json!(["../etc"]);
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/journeys/0", "{reply}");
+}
+
+#[test]
+#[ignore = "green after Task 2"]
+fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
+    let repo = repository(&[]);
+    let body = repo.path().join("body.md");
+    fs::write(
+        &body,
+        "Promise: added() exists\nScope: `src`\nProof: `cargo test`\nExported: `added`\nJourneys: `checkout`\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        codes(&reply).iter().any(
+            |c| c == "keel.journey.no_fresh_capture" || c == "keel.journey.contract_unreadable"
+        ),
+        "{reply}"
+    );
+}

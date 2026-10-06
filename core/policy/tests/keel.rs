@@ -592,6 +592,7 @@ fn card(scope: &[&str]) -> graphhelm_policy::keel::Card {
         proof: "cargo test".into(),
         exported_symbols: vec!["added".into()],
         allowance: None,
+        journeys: Vec::new(),
     }
 }
 
@@ -709,4 +710,16 @@ fn the_shipped_card_fixture_is_a_card_and_an_unknown_field_is_not() {
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     value["scope"] = serde_json::json!(["src"]);
     assert!(serde_json::from_value::<graphhelm_policy::keel::Card>(value).is_err());
+}
+
+#[test]
+fn a_card_may_name_its_journeys_and_an_old_card_still_reads() {
+    let old =
+        std::fs::read(package_root().join("fixtures/keel-card/valid/card-full.json")).unwrap();
+    let old: graphhelm_policy::keel::Card = serde_json::from_slice(&old).unwrap();
+    assert!(old.journeys.is_empty());
+    let new =
+        std::fs::read(package_root().join("fixtures/keel-card/valid/card-journeys.json")).unwrap();
+    let new: graphhelm_policy::keel::Card = serde_json::from_slice(&new).unwrap();
+    assert_eq!(new.journeys, ["checkout"]);
 }

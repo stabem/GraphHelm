@@ -323,6 +323,7 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
                 ),
             ),
             "exported" | "exported symbols" => ("exportedSymbols", list()),
+            "journeys" => ("journeys", list()),
             _ => continue,
         };
         card.entry(key).or_insert(value);

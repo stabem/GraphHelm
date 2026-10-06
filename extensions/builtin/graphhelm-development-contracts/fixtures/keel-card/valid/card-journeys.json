@@ -1,0 +1,6 @@
+{
+  "promise": "the cart shows the line total",
+  "scopePaths": ["web/src/routes/cart/"],
+  "proof": "npx playwright test cart",
+  "journeys": ["checkout"]
+}

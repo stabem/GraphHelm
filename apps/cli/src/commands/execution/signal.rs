@@ -300,6 +300,18 @@ fn execute_authenticated_inner(
         ));
     }
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
+    if matches!(
+        envelope.get("type").and_then(serde_json::Value::as_str),
+        Some("actor_alias" | "owner_refusal")
+    ) {
+        let (_, _, history) = super::resolve_stream(&store, execution)?;
+        super::owner_records::validate_owner_record(
+            &envelope,
+            &actor,
+            sealing.is_some(),
+            &history,
+        )?;
+    }
 
     // This reserved signal is a typed, sealed ledger record, not arbitrary prose. Validate before
     // any evidence file write or append so the generic signal command cannot bypass its contract.

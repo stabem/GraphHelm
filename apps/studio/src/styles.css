@@ -372,7 +372,14 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* ------------------------------------------------------------------ shell */
 
+/* The shell IS the viewport (#325). It is the containing block for every absolutely positioned
+   descendant and clips them: a visually hidden `.sr-only` label inside a scrolled list has
+   `position: absolute`, and with no positioned ancestor its containing block was the initial
+   one, so each label far down the run list extended the DOCUMENT (scrollHeight 2697 at 1064) and
+   the whole page scrolled away from the app. */
 .app {
+  position: relative;
+  overflow: hidden;
   height: 100%;
   display: grid;
   grid-template-columns: clamp(200px, var(--rail, 268px), 460px) 5px minmax(0, 1fr);
@@ -418,6 +425,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 
 .projects {
+  /* A scroll container is the containing block for its own absolutely positioned labels, so
+     they scroll with their rows instead of escaping it (#325). */
+  position: relative;
   display: grid;
   gap: 10px;
   align-content: start;
@@ -610,12 +620,18 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
    so the board behind the gap between them stays draggable. */
 
 
+/* One line with an ellipsis (#325). `.topbar-mission` never wraps, so the old `flex-basis: 100%`
+   plus `overflow-wrap: anywhere` shrank this line to one glyph wide on a phone and stacked the
+   identity one letter per row, ~550px tall, pushing the Chat column off the screen. */
 .run-selection-identity {
-  flex-basis: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
   margin: 0 8px 2px;
   color: var(--dim);
   font-size: 11px;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The verdict's own explanation, wrapping to its own line inside the left strip card. Each
@@ -2651,25 +2667,34 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .right-when { color: var(--dim); }
 
 /* Chat column (spec §4.4). */
-.chat-column { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-right: 1px solid var(--edge); }
-.chat-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+/* Two rows (#325): `.chat-scroll` is the column's ONE vertical scroll region and `.chat-dock`
+   (composers) stays at the bottom. Nothing inside either row scrolls on its own; before, cards,
+   tabs, messages and MainChat each had a scroll or a full height and the flex column squeezed
+   the composer to zero. */
+.chat-column { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; border-right: 1px solid var(--edge); }
+.chat-scroll { position: relative; display: flex; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.chat-scroll > * { flex: none; min-width: 0; }
+.chat-dock { min-width: 0; border-top: 1px solid var(--edge); background: var(--void); }
+.chat-principal-history { padding: 0 10px 10px; }
+.chat-principal-history[hidden] { display: none; }
+.chat-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
 .chat-tabs [role="tab"] { white-space: nowrap; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
 .chat-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
 .chat-unread { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--signal); color: var(--signal-ink); font-size: 11px; }
 .chat-recorded-note { margin: 6px 10px; font-size: 12px; color: var(--dim); }
-.chat-messages { flex: 1; list-style: none; margin: 0; padding: 8px 10px; overflow: auto; display: grid; align-content: start; gap: 10px; }
+.chat-messages { list-style: none; margin: 0; padding: 8px 10px; display: grid; align-content: start; gap: 10px; }
 .chat-opening { font-size: 12px; color: var(--dim); }
-.chat-message { display: grid; grid-template-columns: 28px 1fr; gap: 8px; }
+.chat-message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
 .chat-message-highlight { outline: 2px solid var(--signal); border-radius: 8px; }
 .chat-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: hsl(var(--bot-hue) 60% 45%); color: #fff; font-size: 12px; }
 .chat-meta { margin: 0; font-size: 12px; color: var(--dim); }
-.chat-text { margin: 2px 0 0; white-space: pre-wrap; }
+.chat-text { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .jev-card { margin: 6px 10px; padding: 8px 10px; border: 1px dashed var(--edge); border-radius: 12px; font-size: 13px; }
 .jev-card p { margin: 0 0 6px; }
 .jev-reason { color: var(--dim); font-size: 12px; }
-.chat-composer { display: grid; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--edge); }
+.chat-composer { display: grid; gap: 6px; padding: 8px 10px; }
 .chat-answering { margin: 0; font-size: 12px; display: flex; gap: 8px; align-items: center; }
-.chat-principal { min-height: 0; overflow: auto; }
+.chat-principal { min-width: 0; }
 .chat-principal[hidden] { display: none; }
 .main-chat-status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 

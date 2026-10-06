@@ -124,8 +124,10 @@
   .app[data-document-open="true"] > .rail,
   .app[data-document-open="true"] > .grip { display: none; }
 }
-.main-chat-rail { flex: 0 0 clamp(320px, 27vw, 400px); min-width: 0; height: 100%; border-right: 1px solid #35343b; background: #19191d; overflow-y: auto; }
-.main-chat { display: flex; flex-direction: column; height: auto; min-height: 100%; gap: 10px; padding: 20px; box-sizing: border-box; font-size: 14px; }
+/* MainChat lives in the Chat column's dock (#325): it takes its content height and never scrolls
+   on its own; its history is portalled into the column's scroll region. */
+.main-chat-rail { min-width: 0; background: #19191d; }
+.main-chat { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px; box-sizing: border-box; font-size: 14px; }
 .main-chat > * { flex-shrink: 0; }
 .main-chat :focus-visible { outline: 2px solid #c9b4ff; outline-offset: 3px; }
 .main-chat h2 { margin: 0; font-size: 19px; }
@@ -134,7 +136,7 @@
 .main-chat label { font-weight: 600; }
 .main-chat select, .main-chat textarea { width: 100%; min-width: 0; box-sizing: border-box; background: #242329; color: #eeeaf8; border: 1px solid #55515f; border-radius: 10px; padding: 10px; font: inherit; }
 .main-chat select { min-height: 44px; }
-.main-chat textarea { flex-shrink: 0; min-height: 100px; resize: vertical; }
+.main-chat textarea { flex-shrink: 0; min-height: 72px; resize: vertical; }
 .main-chat button { min-height: 44px; border: 1px solid #60566f; border-radius: 10px; padding: 9px 12px; cursor: pointer; }
 .main-chat button:disabled { cursor: default; opacity: .5; }
 .main-chat-conversation { display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }

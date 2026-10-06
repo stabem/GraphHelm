@@ -605,32 +605,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
     var(--surface);
 }
 
-/* IN FLOW, NOT FLOATED. The strip used to be absolutely positioned over the stage, and the panel
-   was absolutely positioned under a hard-coded `top: 84px` - so the day the attention line
-   wrapped to a second row, the two overlapped (screenshot, 2026-08-30). In flow, a taller strip
-   pushes everything below it, and that whole class of collision cannot exist. */
-.topstrip {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 16px 16px 12px;
-}
 
 /* The strip is a rail for cards, not a bar. `pointer-events` comes back on the cards themselves
    so the board behind the gap between them stays draggable. */
-.strip-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  border-radius: var(--r-lg);
-  background: color-mix(in oklab, var(--raised) 86%, transparent);
-  backdrop-filter: blur(12px);
-  pointer-events: auto;
-  min-width: 0;
-}
 
-.strip-card.right { margin-left: auto; padding: 7px 8px; gap: 4px; }
 
 .run-selection-identity {
   flex-basis: 100%;
@@ -643,30 +621,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* The verdict's own explanation, wrapping to its own line inside the left strip card. Each
    reason sentence carries the one action that is legal for it; the button sits in the sentence
    because the sentence is what justifies it. */
-.strip-card { flex-wrap: wrap; }
-.why {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--dim);
-  padding-top: 2px;
-}
-.why > span { display: inline-flex; align-items: center; gap: 7px; }
-.why button {
-  border-radius: var(--r-sm);
-  padding: 4px 10px;
-  background: var(--signal);
-  color: var(--signal-ink);
-  font-size: 11px;
-}
-.why button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
 /* Deployment context, not a reason: quieter than the sentences it qualifies. */
-.why-context { color: var(--faint); font-size: 11px; }
 
-.topstrip .run-name {
+.topbar .run-name {
   font-family: var(--mono);
   border-radius: var(--r-sm);
   background: none;
@@ -689,8 +646,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .tag.calm { background: var(--live-wash); color: var(--live); }
 .tag.unknown { background: var(--agent-wash); color: var(--agent); }
 
-.topstrip .meta { color: var(--faint); font-size: 11px; }
-.topstrip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.topbar .meta { color: var(--faint); font-size: 11px; }
 
 .toolchips { display: flex; gap: 2px; }
 .toolchips span {
@@ -1209,26 +1165,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* Why this run needs you, standing directly above the conversation it is about. It came off
    the top strip, where it was a second header narrating someone else's panel. */
-.attention {
-  animation: rise-in var(--t-soft) var(--ease) both;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  font-size: 12px;
-  color: var(--dim);
-  background: var(--signal-wash);
-}
-.attention > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.attention button {
-  border-radius: var(--r-sm);
-  padding: 4px 10px;
-  background: var(--signal);
-  color: var(--signal-ink);
-  font-size: 11px;
-}
-.attention button:disabled { background: var(--high); color: var(--faint); cursor: not-allowed; }
 
 /* The chat and node columns: the same column the run's panel lives in, so a conversation or
    a node's window NEVER covers the board - the board yields width instead. */
@@ -2066,16 +2002,12 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .app:not(.projects-open) > .rail,
 .app:not(.projects-open) > .grip { visibility: hidden; overflow: hidden; }
 .stage { margin: 12px; border-radius: 16px; }
-.topstrip { align-items: center; padding: 12px; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--edge); }
-.topstrip .strip-card { padding: 8px 10px; border-radius: 10px; }
-.topstrip .run-name { font-size: 14px; overflow-wrap: anywhere; }
+.topbar .run-name { font-size: 14px; overflow-wrap: anywhere; }
 /* WebMCP can expose many tools. Keep their status rail inside the header instead of letting its
    intrinsic width crush the run-name button to one character per line. */
-.topstrip .strip-card:not(.right) { flex: 1 1 0; min-width: 0; }
-.topstrip .run-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
-.topstrip .right { flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; max-width: min(42%, 400px); }
-.topstrip .toolchips { min-width: 0; max-width: 220px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
-.topstrip .toolchips span { flex-shrink: 0; }
+.topbar .run-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.topbar .toolchips { min-width: 0; max-width: 220px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
+.topbar .toolchips span { flex-shrink: 0; }
 .mobile-toggle { flex-shrink: 0; min-width: 40px; min-height: 40px; }
 .projects-toggle { color: var(--dim); }
 .conversation-toggle { color: var(--dim); }
@@ -2164,8 +2096,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 @media (max-width: 1250px) {
   .talk { width: 300px; }
   .chat-col, .node-col { position: absolute; inset: 0 0 0 auto; z-index: 10; width: min(400px, 100%); box-shadow: var(--float); }
-  .topstrip .strip-card { gap: 6px; }
-  .topstrip .run-name { max-width: 250px; }
+  .topbar .run-name { max-width: 250px; }
 }
 
 @media (max-width: 900px) {
@@ -2178,21 +2109,17 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .chat-col, .node-col { inset: 0 0 0 auto; z-index: 10; }
   .scene { width: 100%; }
   .split:has(> .node-col, > .chat-col) .scene .dock { display: none; }
-  .topstrip .run-name { max-width: none; }
-  .topstrip .strip-card:first-of-type { flex: 1; }
+  .topbar .run-name { max-width: none; }
   .tools button, .dock button, .icon-action, .mobile-toggle, .ghost { min-height: 40px; }
   .icon-action, .mobile-toggle, .ghost { min-width: 36px; }
 }
 
 @media (max-width: 600px) {
-  .topstrip { flex-wrap: wrap; padding: 8px; gap: 6px; }
-  .topstrip .strip-card { padding: 6px 8px; }
+  .topbar { flex-wrap: wrap; padding: 8px; gap: 6px; }
   /* One toolbar row (menus left, actions right), then the run title full width under it, so
    * no row holds a lone cluster of icons. */
-  .topstrip .strip-card:first-of-type { order: 3; flex-basis: 100%; }
-  .topstrip .right { margin-left: auto; max-width: 100%; padding: 0; background: none; border: 0; }
-  .topstrip .run-name { font-size: 12px; }
-  .topstrip .tag { font-size: 10px; }
+  .topbar .run-name { font-size: 12px; }
+  .topbar .tag { font-size: 10px; }
   .app > .rail { top: 56px; } /* drops from the toolbar row, over the run title */
   .stage { border-radius: 12px; }
   .talk, .chat-col, .node-col { width: 100%; }
@@ -2366,11 +2293,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .free-canvas-content .node-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 
 @media (max-width: 700px) {
- .stage:has(.free-canvas-content:not([hidden])) .topstrip { flex-wrap: nowrap; min-height: 64px; gap: 4px; padding: 8px; }
- .stage:has(.free-canvas-content:not([hidden])) .strip-card { min-width: 0; padding: 8px; }
- .stage:has(.free-canvas-content:not([hidden])) .strip-card.right { margin-left: auto; padding: 0; flex: 0 0 auto; }
- .stage:has(.free-canvas-content:not([hidden])) .strip-card:first-child { flex-wrap: wrap; }
- .stage:has(.free-canvas-content:not([hidden])) .topstrip .tag { white-space: normal; }
+ .stage:has(.free-canvas-content:not([hidden])) .topbar { flex-wrap: nowrap; min-height: 64px; gap: 4px; padding: 8px; }
+ .stage:has(.free-canvas-content:not([hidden])) .topbar .tag { white-space: normal; }
  .stage:has(.free-canvas-content:not([hidden])) .run-name { max-width: 110px; }
  .stage:has(.free-canvas-content:not([hidden])) button[aria-label="Tidy the board"] { display: none; }
 }
@@ -2430,7 +2354,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .run-objective { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--edge); }
 .run-objective q { quotes: none; font: 14px/1.45 var(--sans); color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
 @media (max-width: 600px), (max-height: 600px) {
-  .talk .attention { display: none; }
   .run-objective { max-height: 66px; overflow: auto; }
   .talk .reply-hints { flex-wrap: nowrap; overflow-x: auto; }
   .talk .reply-hint { flex: 0 0 auto; }
@@ -2744,3 +2667,45 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .chat-principal { min-height: 0; overflow: auto; }
 .chat-principal[hidden] { display: none; }
 .main-chat-status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* Studio layout (spec section 3): Projects, Chat, Canvas, Right panel. */
+.topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--edge); }
+.topbar-mission { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 4px; }
+.topbar-mission .run-project { font-size: 15px; color: var(--dim); }
+.topbar-mission .run-name { font-size: 15px; font-weight: 600; background: none; border: 0; color: inherit; padding: 0; text-align: left; }
+.topbar-menu { position: relative; font-size: 12px; }
+.topbar-menu > summary { cursor: pointer; color: var(--dim); }
+.topbar-menu[open] > :not(summary) { position: absolute; right: 0; top: 28px; z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; }
+.studio-columns { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.mobile-tabs { display: none; }
+.canvas-column { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.canvas-column > .scene { flex: 1; }
+.canvas-tabs { display: flex; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--edge); }
+.canvas-tabs [role="tab"], .mobile-tabs [role="tab"] { padding: 4px 12px; border-radius: 999px; border: 1px solid transparent; background: none; color: inherit; }
+.canvas-tabs [aria-selected="true"], .mobile-tabs [aria-selected="true"] { border-color: var(--edge); font-weight: 600; }
+.chat-column { flex: 0 0 340px; width: 340px; }
+.right-panel { flex: 0 0 280px; width: 280px; }
+.journey-empty { display: grid; place-items: center; height: 100%; color: var(--dim); }
+.question-failure { font-size: 12px; color: var(--dim); }
+.connection-note { margin: 0; padding: 6px 12px; font-size: 12px; color: var(--dim); }
+.connection-note.proven { color: var(--live); }
+.connection-note.refused { color: var(--danger); }
+@media (max-width: 1100px) {
+  .studio-columns { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .studio-columns > .chat-column { grid-column: 1; grid-row: 1 / 3; width: auto; }
+  .studio-columns > .canvas-column { grid-column: 2; grid-row: 1; }
+  .studio-columns > .right-panel { grid-column: 2; grid-row: 2; width: auto; border-left: 0; border-top: 1px solid var(--edge); max-height: 30vh; }
+  .studio-columns > .talk, .studio-columns > .node-col { position: absolute; inset: 0 0 0 auto; z-index: 10; width: min(400px, 100%); box-shadow: var(--float); }
+}
+@media (max-width: 768px) {
+  .studio-columns { display: flex; flex-direction: column; }
+  .mobile-tabs { display: flex; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--edge); }
+  .mobile-tabs [role="tab"] { flex: 1; }
+  .studio-columns > .chat-column, .studio-columns > .canvas-column { flex: 1; width: auto; min-height: 0; border: 0; }
+  .studio-columns > .right-panel { display: none; }
+  .studio-columns[data-mobile-tab="chat"] > .canvas-column { display: none; }
+  .studio-columns[data-mobile-tab="team"] > .chat-column, .studio-columns[data-mobile-tab="journeys"] > .chat-column { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .team-link-live, .team-bot-working .team-bot-avatar, .beacon-lit .beacon-dot { animation: none; }
+}

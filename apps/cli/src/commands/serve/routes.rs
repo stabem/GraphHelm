@@ -1670,6 +1670,47 @@ pub(super) async fn briefing(
     }
 }
 
+/// `GET /v1/executions/{id}/journeys` (#315): `graphhelm journeys`'s own `data`, read by the same
+/// `journeys::read`. The project is the one this Runtime was started with and the keyring is the
+/// Runtime's own; nothing from the request names a path. Owner credentials only: a scoped agent
+/// credential is refused by `agent_route_allowed`.
+pub(super) async fn journeys(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    let command = crate::commands::journeys::COMMAND;
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            command,
+            execution::execution_state(
+                "journeys require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            command,
+            execution::execution_state("journeys require a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        crate::commands::journeys::read(&events, &execution_id, &project, &keyring)
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(command, "the journeys task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(command, value).output),
+        Err(failure) => respond_failure(command, failure),
+    }
+}
+
 /// `GET /v1/executions/{id}/events?after=N&limit=M`: a page of the raw event envelope tail, read
 /// through the same `execution::resolve_stream` the CLI's replay path uses, sliced by `after`
 /// (exclusive) and `limit` (default 100, max 1000). Envelopes serialize verbatim — their payloads

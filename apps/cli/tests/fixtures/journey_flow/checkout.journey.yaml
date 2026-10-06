@@ -1,0 +1,40 @@
+schema: graphhelm.journey-flow/1
+id: checkout
+title: Shopper pays for the cart
+status: draft
+approved: null
+base: http://localhost:3000
+actors: [shopper]
+secrets: [shopper_password]
+risks: [money]
+screens:
+  - id: cart
+    url: /cart
+    state: stable
+    expect: [{role: heading, name: Cart}, {role: button, name: Checkout}]
+    scope: [app/cart/page.tsx]
+  - id: done
+    url: /orders/:id
+    state: success
+    expect: [{role: heading, name: Order placed}]
+    scope: unknown
+  - id: pay
+    url: /checkout
+    state: stable
+    expect: [{role: textbox, name: Password}]
+    scope: [app/checkout/page.tsx, app/api/pay/route.ts]
+edges:
+  - id: cart.checkout
+    from: cart
+    to: pay
+    acts:
+      - {kind: activate, role: button, name: Checkout}
+  - id: pay.submit
+    from: pay
+    to: done
+    acts:
+      - {kind: enter_text, role: textbox, name: Password, secret: shopper_password}
+      - {kind: submit, role: button, name: Pay now}
+paths:
+  main: [cart.checkout, pay.submit]
+drift: []

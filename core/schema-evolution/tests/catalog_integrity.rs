@@ -405,7 +405,7 @@ const RELEASE_1_0_0_SCHEMA_NAMES: [&str; 15] = [
     "sensitivity",
 ];
 
-const CURRENT_SCHEMA_NAMES: [&str; 22] = [
+const CURRENT_SCHEMA_NAMES: [&str; 23] = [
     "activation-receipt",
     "adoption-journal",
     "adoption-plan",
@@ -422,6 +422,7 @@ const CURRENT_SCHEMA_NAMES: [&str; 22] = [
     "extension",
     "graph",
     "graph-signal",
+    "journey-flow",
     "node",
     "persisted-graph-version",
     "policy-waiver",

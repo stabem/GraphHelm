@@ -24,14 +24,18 @@ use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "journey.validate";
 
-struct Finding {
+pub(crate) struct Finding {
     code: &'static str,
     pointer: String,
     message: String,
 }
 
 impl Finding {
-    fn new(code: &'static str, pointer: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        code: &'static str,
+        pointer: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             code,
             pointer: pointer.into(),
@@ -68,7 +72,10 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         let mut found: Vec<PathBuf> = entries
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .filter(|path| {
+                path.extension().is_some_and(|ext| ext == "json")
+                    || path.to_string_lossy().ends_with(".journey.yaml")
+            })
             .collect();
         found.sort();
         files.extend(found);
@@ -79,14 +86,18 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
     let mut reports = Vec::new();
     let mut diagnostics = Vec::new();
     for file in &files {
-        let findings = match read(file) {
-            Ok(value) => check(file, &value, &project),
-            Err(Some(message)) => vec![Finding::new("not_json", "", message)],
-            Err(None) => {
-                return input_error(
-                    format!("{} could not be read as a file", file.display()),
-                    "/files",
-                );
+        let findings = if file.to_string_lossy().ends_with(".journey.yaml") {
+            super::journey_flow::check(file, &project)
+        } else {
+            match read(file) {
+                Ok(value) => check(file, &value, &project),
+                Err(Some(message)) => vec![Finding::new("not_json", "", message)],
+                Err(None) => {
+                    return input_error(
+                        format!("{} could not be read as a file", file.display()),
+                        "/files",
+                    );
+                }
             }
         };
         let source = file.display().to_string();

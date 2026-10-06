@@ -1,5 +1,9 @@
 # Schema Changelog
 
+## journey-flow 1.0.0 (#339)
+
+New bounded, closed journey-flow YAML source contract. It compiles to the unchanged JPD contract schema. Catalog digest uses canonical JSON, as required by the existing schema-evolution contract.
+
 ## event-envelope 1.1.0 - `subagent_reused.basis` gains `session_unavailable` (ADR-042, #298)
 
 **`event-envelope`: one more `basis` value.** `$defs/subagentReused/properties/basis` widens its
@@ -98,11 +102,11 @@ The unreleased adoption journal optionally records its predecessor and a restore
 
 ## adoption-plan: a plan may install packages without changing a file (unreleased 1.0.0)
 
-`spec.operations` and `spec.decisions` required at least one item, so the least invasive adoption there is — install the two pinned release packages and change no instruction file — could not be written; fixtures paid for it with a no-op settings operation (#1208 F6). `apply` does install `spec.packages` (pinned, digest-checked, journaled and compensated), so both arrays now accept `minItems: 0`, a compatible loosening. The rule that at least one of `operations` or `packages` is non-empty is enforced by `apply`'s preflight (`invalid_configuration`), not by a cross-field schema keyword, the same split as the coverage entry below. The frozen 1.0.0 release is unchanged.
+`spec.operations` and `spec.decisions` required at least one item, so the least invasive adoption there is â€” install the two pinned release packages and change no instruction file â€” could not be written; fixtures paid for it with a no-op settings operation (#1208 F6). `apply` does install `spec.packages` (pinned, digest-checked, journaled and compensated), so both arrays now accept `minItems: 0`, a compatible loosening. The rule that at least one of `operations` or `packages` is non-empty is enforced by `apply`'s preflight (`invalid_configuration`), not by a cross-field schema keyword, the same split as the coverage entry below. The frozen 1.0.0 release is unchanged.
 
 ## adoption-plan: coverage is reported, not asserted (unreleased 1.0.0)
 
-`spec.coverage` accepted only `complete`. A real inventory is never complete — the host API and plugin browser are not observable, and the document says so in `coverageDetails` — so an honest applyable plan could not be written and the only plans that applied were hand-written fixtures claiming `complete`. The field stays required and now carries the inventory's own value (`complete` or `incomplete`); the schema no longer constrains it. Constraining it to the two words would read as a validation-set change, which the branch guard requires to be declared by a major bump, while the release guard requires an unreleased schema to stay at 1.0.0 — so the vocabulary is stated here and enforced by the producer, not by the schema. A complete-compatibility CLAIM still needs complete coverage; applying a reviewed replacement does not. The frozen 1.0.0 release is unchanged.
+`spec.coverage` accepted only `complete`. A real inventory is never complete â€” the host API and plugin browser are not observable, and the document says so in `coverageDetails` â€” so an honest applyable plan could not be written and the only plans that applied were hand-written fixtures claiming `complete`. The field stays required and now carries the inventory's own value (`complete` or `incomplete`); the schema no longer constrains it. Constraining it to the two words would read as a validation-set change, which the branch guard requires to be declared by a major bump, while the release guard requires an unreleased schema to stay at 1.0.0 â€” so the vocabulary is stated here and enforced by the producer, not by the schema. A complete-compatibility CLAIM still needs complete coverage; applying a reviewed replacement does not. The frozen 1.0.0 release is unchanged.
 
 ## adoption-plan 1.0.0, adoption-receipt 1.0.0, adoption-journal 1.0.0
 
@@ -299,25 +303,25 @@ fixture carries `"root":"project"`.
 The content-free record the runtime seals beside a model reply when a context capsule was
 compiled for the node: the tokenizer and estimator ids, the query terms, the repository-relative
 `sources` shipped, the counts (candidates returned, dropped, unreadable; items dropped by the
-budget; excerpted sources), the byte totals, the capsule digest, the fallback if any — and six
+budget; excerpted sources), the byte totals, the capsule digest, the fallback if any â€” and six
 `accounting` lines in the execution-accounting-receipt's own `CostField` vocabulary:
 `zero_result_queries`, `retrieval_pages`, `retrieval_fallbacks` `measured` by
 `context_retrieval`; `compiled_input_tokens`, `eligible_candidate_tokens`, `tokens_saved`
 `derived`, no producer, a note opening with the method id `bytes-div-4/v1: ` and the arithmetic.
-Never `measured`, because nobody counted tokens — the `invalid.measured-estimate` fixture pins
+Never `measured`, because nobody counted tokens â€” the `invalid.measured-estimate` fixture pins
 that refusal at `/accounting/3`. No `oneOf` anywhere: every line has one shape, because the record
 exists only when the chain ran. Added whole, the same class of divergence from the frozen 1.0.0
 baseline as the receipt itself; the by-name ledger in `core/schema-evolution/tests/baseline_origin.rs`
 names it.
 
 **Why the receipt's own lines did not move, stated so nobody repeats the attempt.** The first
-shape of #1065 changed `execution-accounting-receipt` in place — `zero_result_queries`,
+shape of #1065 changed `execution-accounting-receipt` in place â€” `zero_result_queries`,
 `retrieval_pages`, `retrieval_fallbacks` to a measured-or-unavailable line, `compiled_input_tokens`
 to a derived-or-unavailable line, and `eligible_candidate_tokens` / `tokens_saved` appended with
 `minItems: 13` so every existing document stayed valid. By meaning that is additive. The
 compatibility comparator does not reason about meaning: it classes a changed positional `$ref`
 and a newly constrained `prefixItems` position as `GHC003_BREAKING_CHANGE`, and the house then
-holds two rules at once — `no_silent_breaking_change_against_what_landed_on_main` demands the
+holds two rules at once â€” `no_silent_breaking_change_against_what_landed_on_main` demands the
 document move to exactly `major + 1`, while `graphhelm schema check` against the frozen 1.0.0
 baseline refuses any unreleased schema not at `1.0.0` (`GHC004_SEMVER_MISMATCH`, "new milestone
 02 schemas must start at document version 1.0.0"). An unreleased schema therefore admits only
@@ -393,7 +397,7 @@ owns the sweep's events; this lane kept only the reckoning (`overdue_at`).
 **Why this file is what makes an event real.** `validate_envelope` runs every appended event
 through this schema and refuses anything it does not describe, so a variant on the Rust enum with
 no entry here cannot be written to a journal at all. The typed enum, the fold and its guards were
-all in place while the store rejected all four — the declaration below is the part that made them
+all in place while the store rejected all four â€” the declaration below is the part that made them
 appendable.
 
 **`clearanceVerifier` is tagged, and its fields are camelCase for a reason.** The Rust enum
@@ -409,7 +413,7 @@ What a completion CLAIM must present, and how long each customs stage may park:
 `proofKinds` plus `budgets.{waitWithinSeconds, clearanceWithinSeconds, dlqWithinSeconds?}`.
 
 **Why nested inside `completion` rather than a sibling key.** `completion` already existed on
-nodes with a different meaning — a completion CONTRACT (`requires`/`forbids`), declared in this
+nodes with a different meaning â€” a completion CONTRACT (`requires`/`forbids`), declared in this
 schema, carried by three checked-in example graphs, and consumed by the governor's content
 externalizer. Customs is the same question one layer down: `requires` says what makes the node
 complete, customs says what a claim of completion must PROVE and how long each stage may wait.
@@ -420,13 +424,13 @@ completing.
 
 **Why strict inside and permissive outside.** `customs` sets `additionalProperties: false` and
 requires both stage budgets, because a misspelled budget name that silently defaults reads
-exactly like a stage with infinite patience — which is the parked-forever failure this milestone
+exactly like a stage with infinite patience â€” which is the parked-forever failure this milestone
 exists to end. The surrounding block keeps the permissiveness it has always had: tightening
 `requires`/`forbids` would change the validity of graphs that work today, and that is a separate
 decision for whoever owns that field.
 
 **Why `dlqWithinSeconds` is optional.** Absent means dead-letter occupancy raises no time
-exception. The dead-letter state IS the exception — something already fired to route work there —
+exception. The dead-letter state IS the exception â€” something already fired to route work there â€”
 so a second timer on it is escalation policy, not a default anyone chose.
 
 ## event-envelope 1.0.0 - `wakeLeaseConsumed.capturedArming` added
@@ -435,7 +439,7 @@ Which arming a consumption was FOR: the sequence of the `wake_lease` event the s
 it built its capture.
 
 **Why the captured side and not the live one.** The defect this exists for is a mismatch between
-what a sweep captured and what was live when it recorded — a sleeper wakes, re-arms on the same
+what a sweep captured and what was live when it recorded â€” a sleeper wakes, re-arms on the same
 rendezvous, and a delayed sweep burns the lease it just armed. Replay already knows the live
 side; it rebuilds it from the arming events. Only the captured side was ever unknown to the log.
 Recording the live one would compare a value against itself: always equal, a check that cannot
@@ -444,26 +448,26 @@ distinguishes them, which is why this note exists.
 
 **Why optional, and omitted rather than null.** Every event is re-hashed on replay. A
 `"capturedArming": null` on consumptions written before this field existed would change their
-canonical bytes and break the hash chain of every one of them — the same reasoning that governs
+canonical bytes and break the hash chain of every one of them â€” the same reasoning that governs
 `nodeOutcomeRecorded.reason`. It is absent from `required`, so committed events stay valid, and
 `skip_serializing_if` keeps absence off the wire.
 
 **What actually enforces that, so whoever loosens it knows what they are unguarding.** The live
 guard is THIS SCHEMA'S `"type": "integer"`: a null is not an integer, so validation rejects the
-append before anything downstream sees it. Measured rather than reasoned — removing
+append before anything downstream sees it. Measured rather than reasoned â€” removing
 `skip_serializing_if` fells four tests in `core/events/tests/execution_projection.rs`, every one
 of them at its own append. Relaxing that type is therefore not a cosmetic edit: it removes the
 only thing standing between an absent value and a broken hash chain across all committed
 consumptions. Loosening it is a deliberate act that passes through the digest and catalog ritual,
 which is where this sentence is meant to be met.
 
-**Where we stopped measuring, stated rather than implied.** The compound state — schema loosened
-AND `skip_serializing_if` removed — is EXPECTED-UNMEASURED. Its direct backstop is a wire-absence
+**Where we stopped measuring, stated rather than implied.** The compound state â€” schema loosened
+AND `skip_serializing_if` removed â€” is EXPECTED-UNMEASURED. Its direct backstop is a wire-absence
 assertion in `a_matching_consumption_and_a_pre_change_one_record_no_mis_burn`, which is dormant
 while the schema holds and becomes a single-sabotage blade the moment the type is relaxed; the
 test carries its own note saying it is currently redundant and why. Behind that, the fixture
 journal's integrity verification should refuse a struct that emits null, since it re-hashes every
-committed consumption — but that is a READING, not a measurement, and it is labelled as one.
+committed consumption â€” but that is a READING, not a measurement, and it is labelled as one.
 Reaching the compound state takes two deliberate changes, each individually guarded and each
 meeting a written warning, and we drew the line there on purpose. Saying so beats pretending the
 line does not exist.
@@ -472,12 +476,12 @@ line does not exist.
 captured side, so no future analysis can decide whether this defect ever fired in the past.
 Replay can say which lease was burned; nothing can say which one the sweep meant to burn, and
 the discrepancy between them IS the defect. "Precondition present, incident not observed" is the
-strongest claim the old data can ever support — not because nobody has looked hard enough, but
+strongest claim the old data can ever support â€” not because nobody has looked hard enough, but
 because the log recorded one side of a two-sided property.
 
 **What the fold does with a mismatch: records it, refuses nothing.** A consumption naming an
 arming other than the one it burns is a wrong action FAITHFULLY RECORDED, which is a different
-thing from the log the fold already refuses — a consumption with no live lease at all, which
+thing from the log the fold already refuses â€” a consumption with no live lease at all, which
 cannot be interpreted. Refusing here would make history unreadable because it recorded something
 bad, on a product whose thesis is that history reproduces, and it would brick the glance at the
 moment an operator most needs it. The mismatch lands in the projection's `wakeMisBurns` instead,
@@ -491,7 +495,7 @@ records the sleeper's intent to be woken.
 
 **Why a field on `wake_lease` rather than an expiry event of its own.** Whether the horizon has
 passed is DERIVABLE from the horizon and the current instant, and an event whose entire content
-is a derivable fact is a cached counter living inside the log — the same defect this milestone
+is a derivable fact is a cached counter living inside the log â€” the same defect this milestone
 is otherwise removing from outside it. The lease is also already excluded from the doorbell's
 content predicate BY CONSTRUCTION, so arming an alarm cannot inflate the `contentHead` an
 operator reads as progress. A new event kind would have had to be added to that exclusion by
@@ -502,14 +506,14 @@ forget.
 absolute instant, on the reasoning that a duration puts the horizon in the reader's hands. The
 guard for it could not be written honestly: the instant would have been computed from a clock
 reading microseconds away from the one that stamps the event, so the only assertion available
-was "roughly now plus N" — and roughly-now passes for an implementation that measured from the
+was "roughly now plus N" â€” and roughly-now passes for an implementation that measured from the
 wrong base, which is the thing in question. The fold derives the horizon as `occurred_at +
 maturesInSeconds`, arithmetic over the event's OWN recorded instant. No clock is read, replay
 stays byte-identical, the reader is still handed an instant, and there is exactly one clock in
 the story instead of two microseconds apart.
 
 **The stored instant is a timestamp, not its wire string.** The canonical rendering emits 0, 3,
-6 or 9 fractional digits depending on the value, so `...:01.500Z` sorts BEFORE `...:01Z` — `.`
+6 or 9 fractional digits depending on the value, so `...:01.500Z` sorts BEFORE `...:01Z` â€” `.`
 is 0x2E and `Z` is 0x5A. A projection holding the string would answer ordering questions
 backwards for the commonest pair there is, since the horizon inherits the fraction of whatever
 instant stamped the arming event.
@@ -517,11 +521,11 @@ instant stamped the arming event.
 **It is stored, never evaluated below the surface.** Maturity is asked at the surface with an
 injected instant. A projection that cached `matured` would be a function of the wall clock, and
 byte-identical replay would fail only on the machines whose clock crossed the horizon
-mid-replay — the quietest possible way to lose the property the event store exists for.
+mid-replay â€” the quietest possible way to lose the property the event store exists for.
 
 **Bounded at BOTH ends, and the loose end was the dangerous one.** A declared bound of zero is
 not a bound and is refused. So is one beyond ten years: a trillion seconds produced a horizon in
-the year 33715, and a surface that answers with a DATE reads as a promise while meaning never —
+the year 33715, and a surface that answers with a DATE reads as a promise while meaning never â€”
 absence laundered into calm through arithmetic. Past `i64`, the conversion overflowed and
 yielded no horizon at all, so an operator who declared a bound silently received none. The
 ceiling is `315576000`, the one `nodeTimeoutSeconds` and `observedSilenceSeconds` already use
@@ -583,8 +587,8 @@ an honest unknown, not a clean bill of health.
 - Corrected the bounded policy waiver contract while preserving the graph, agent, node, and edge authoring contracts.
 - Corrected the single pre-release `1.0.0` baseline in place under D-037/ADR-023 by registering the typed `context_path`, `permission_path`, and `isolation_path` content positions. This is not a published-version migration and has no legacy alias or intermediate release.
 - Canonicalized persistence timestamps to uppercase UTC `Z`, four-digit years, and at most nine fractional digits so schema validation and Rust round-trips remain exact.
-- Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the OPTIONAL `reason` property to `nodeOutcomeRecorded` in `event-envelope.schema.json`, carrying a closed `nodeOutcomeReason` vocabulary (the §17 route classes plus the in-process causes: empty reply, malformed judgment, judge and gate refusals, the four tool dispositions, and fixture-scripted outcomes), closing the gap where a failed node recorded no actionable cause. The property is deliberately NOT `required` and is omitted when absent: replay re-serializes each envelope and recomputes its hash against the stored one, so an always-emitted `null` would break the hash chain of every event written before this milestone.
-- Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the OPTIONAL `timeoutSeconds` property to the persisted `node` in `persisted-graph-version.schema.json`. The graph already accepted a per-node timeout and the linter already warned when an executable node omitted it (`GHG101_DEFAULT_TIMEOUT`); persistence dropped it, so nothing downstream could derive a silence budget from a bound the user had already declared. The property is deliberately NOT `required` and is omitted when absent: every graph version already published must keep validating and keep its hash, and absence must stay ABSENCE — never zero, never a default — because downstream it has to read as unknown rather than as calm.
+- Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the OPTIONAL `reason` property to `nodeOutcomeRecorded` in `event-envelope.schema.json`, carrying a closed `nodeOutcomeReason` vocabulary (the Â§17 route classes plus the in-process causes: empty reply, malformed judgment, judge and gate refusals, the four tool dispositions, and fixture-scripted outcomes), closing the gap where a failed node recorded no actionable cause. The property is deliberately NOT `required` and is omitted when absent: replay re-serializes each envelope and recomputes its hash against the stored one, so an always-emitted `null` would break the hash chain of every event written before this milestone.
+- Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the OPTIONAL `timeoutSeconds` property to the persisted `node` in `persisted-graph-version.schema.json`. The graph already accepted a per-node timeout and the linter already warned when an executable node omitted it (`GHG101_DEFAULT_TIMEOUT`); persistence dropped it, so nothing downstream could derive a silence budget from a bound the user had already declared. The property is deliberately NOT `required` and is omitted when absent: every graph version already published must keep validating and keep its hash, and absence must stay ABSENCE â€” never zero, never a default â€” because downstream it has to read as unknown rather than as calm.
 - No predecessor release or persistence-format migration exists for this initial baseline.
 - Preserved the provisional `p50.dev` schema IDs and wire-format identifiers.
 - Corrected the single pre-release `1.0.0` baseline in place under D-037 by adding the `ghost` node state to `event-envelope.schema.json`'s `nodeState` enum, closing a gap where `graphhelm_protocols::NodeState::Ghost` could not be represented in a `NodeStateChanged` event on the wire.

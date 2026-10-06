@@ -221,6 +221,10 @@ impl Harness {
         assert!(output.status.success(), "{reply}");
         assert_eq!(reply["command"], "journey.capture");
         assert_eq!(reply["data"]["kind"], "jpd.screen_captured");
+        // #319: the Governor's "rejected" is the normal verdict for evidence; the reply says
+        // "recorded" in words beside it.
+        assert_eq!(reply["data"]["outcome"], "recorded", "{reply}");
+        assert_eq!(reply["data"]["rejectionReason"], "signal_not_actionable");
         assert_eq!(reply["data"]["attachments"].as_array().unwrap().len(), 1);
         reply["data"]["signalId"].as_str().unwrap().to_owned()
     }
@@ -375,6 +379,7 @@ fn walked_cites_the_newest_captures_and_the_fold_reports_it_walked() {
     assert!(output.status.success(), "{reply}");
     assert_eq!(reply["command"], "journey.walked");
     assert_eq!(reply["data"]["kind"], "jpd.transition_walked");
+    assert_eq!(reply["data"]["outcome"], "recorded", "{reply}");
     let transition = reply["data"]["signalId"].as_str().unwrap().to_owned();
 
     let data = harness.journeys();

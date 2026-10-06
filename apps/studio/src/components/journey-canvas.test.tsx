@@ -5,6 +5,7 @@ import { fastUserEvent } from "../test/user-event";
 import type { BeforeAfterPair, CaptureDocument } from "../runtime/journeys";
 import type { CaptureView, JourneysView, RuntimeEvent } from "../runtime/types";
 import { JourneyCanvas, type JourneyCanvasProps } from "./journey-canvas";
+import studioStyles from "../styles.css?raw";
 
 const userEvent = fastUserEvent();
 let counter = 0;
@@ -85,5 +86,35 @@ describe("JourneyCanvas", () => {
     cleanup();
     render(<JourneyCanvas {...props({ view: { head: null, journeys: [] } })} />);
     expect(screen.getByLabelText("Journey")).toHaveTextContent("No journeys mapped yet");
+  });
+
+  it("repeats the stale state and every changed file in the detail of a stale capture", async () => {
+    render(<JourneyCanvas {...props()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pay, open detail" }));
+    const dialog = screen.getByRole("dialog", { name: "Pay detail" });
+    expect(dialog).toHaveTextContent("Code changed after this shot");
+    const files = within(dialog).getByRole("list", { name: "Changed files" });
+    expect(within(files).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["src/pay/form.tsx", "src/pay/a.ts", "src/pay/b.ts"]);
+  });
+});
+
+/** jsdom lays nothing out, so the fit at 1440px is held on the rules that decide it: the step row
+ * wraps instead of scrolling sideways, a card shrinks with the canvas, and its text breaks. */
+describe("journey tab stylesheet fits the canvas", () => {
+  const rule = (selector: string): string => {
+    const css = studioStyles.replace(/\/\*[\s\S]*?\*\//g, "");
+    const line = css.split(/\r?\n/).find((candidate) => candidate.startsWith(`${selector} {`));
+    if (line === undefined) throw new Error(`no rule for ${selector}`);
+    return line.slice(line.indexOf("{") + 1, line.lastIndexOf("}"));
+  };
+  it("wraps the steps and never scrolls the canvas sideways", () => {
+    expect(rule(".journey-steps")).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule(".journey-steps")).not.toMatch(/overflow-x:\s*auto/);
+    expect(rule(".journey-canvas")).toMatch(/overflow-x:\s*hidden/);
+  });
+  it("lets a card shrink and its labels break instead of clipping", () => {
+    expect(rule(".journey-card")).not.toMatch(/(?:^|;|\s)width:\s*\d+px/);
+    expect(rule(".journey-card")).toMatch(/min-width:\s*0/);
+    expect(rule(".journey-card")).toMatch(/overflow-wrap:\s*anywhere/);
   });
 });

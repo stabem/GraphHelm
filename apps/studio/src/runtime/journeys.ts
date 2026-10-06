@@ -8,6 +8,7 @@ import type { JourneyView, RuntimeEvent } from "./types";
 
 export const SCREEN_CAPTURE_KIND = "jpd.screen_captured";
 export const SCREEN_CAPTURE_PROTOCOL = "graphhelm-screen-capture-v1";
+export const TRANSITION_PROTOCOL = "graphhelm-transition-walked-v1";
 
 export interface JourneySummary { proven: number; stale: number; other: number; total: number }
 

@@ -136,6 +136,12 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
           {detailCapture !== null ? (
             <Shot evidenceId={detailCapture.imageEvidenceId} loadImage={loadImage} alt={`${titleOf(detail)} full screenshot`} className="journey-full" />
           ) : <p className="journey-shot-missing">Not captured yet</p>}
+          {detailCapture !== null && <Freshness capture={detailCapture} />}
+          {detailCapture?.freshness === "stale" && detailCapture.changedFiles.length > 0 && (
+            <ul className="journey-files" aria-label="Changed files">
+              {detailCapture.changedFiles.map((file) => <li key={file}>{file}</li>)}
+            </ul>
+          )}
           {pair !== undefined && (
             <div className="journey-pair">
               <figure><figcaption>Before · PR #{pair.pr}</figcaption>

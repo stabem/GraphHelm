@@ -134,9 +134,9 @@ if ($alive) {
     }
 }
 if (-not $alive) {
-    $serveArgs = @("serve", "--events", $Events, "--bind", $Bind)
+    $serveArgs = @("serve", "--events", ('"' + $Events + '"'), "--bind", $Bind)
     # Windows PowerShell 5.1 joins ArgumentList without quoting, so a path with spaces is quoted by hand.
-    if ($ProjectPath) { $serveArgs += @("--project", ('"' + $ProjectPath.TrimEnd('', '/') + '"')) }
+    if ($ProjectPath) { $serveArgs += @("--project", ('"' + $ProjectPath.TrimEnd([char]92, [char]47) + '"')) }
     if ($Keyring) { $serveArgs += @("--keyring", $Keyring) }
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
     if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }

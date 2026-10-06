@@ -1,6 +1,6 @@
 # Journey Explore Phase 1 (flow format, validator, compiler) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** follow the repository's delivery flow (`docs/process/DELIVERY.md`): issue, Keel card, one blind review, merge by the approving reviewer. The task list below is the work breakdown, not a separate workflow.
 
 **Goal:** Ship the `journey-flow` YAML format with a closed schema, a validator with stable diagnostic codes, a deterministic compiler to the frozen journey contract, and file-only approval — no browser, no model.
 
@@ -14,7 +14,9 @@
 
 - The contract schema `extensions/builtin/graphhelm-jpd/schemas/journey-contract.schema.json` is frozen: do not edit it or the jpd package.
 - First key of every flow: `schema: graphhelm.journey-flow/1`. Schema `$id`: `https://p50.dev/schemas/journey-flow.schema.json`, document version `1.0.0`, every object `additionalProperties: false`.
-- Id rule: `^[a-z0-9][a-z0-9._:/-]*$`, max 128 (reuse `graphhelm_execution::journeys::valid_journey_id`).
+- Id rule: exactly `graphhelm_execution::journeys::valid_journey_id` — `^[a-z0-9][a-z0-9._-]{0,127}$`, no `..`, no `/` `\` `:`. Apply it to every composed id too (`<id>.<path>`, `<screen>.visible`); failure is `flow.composed_id_invalid`. The compiler joins only a validated contractId under `.graphhelm/journeys/`.
+- Approval preimage: canonical rendering with `status`, `approved`, `drift` **omitted**; one function `approval_digest` serves approve, validation and (phase 2) the cache `flowDigest`.
+- Canonical check is a raw byte comparison, no line-ending normalisation: CRLF is `flow.not_canonical`.
 - File: `.graphhelm/journeys/<id>.journey.yaml`; max 32 KiB; ≤ 64 screens, ≤ 128 edges, ≤ 16 paths, ≤ 8 acts per edge, 1–8 `expect` pairs.
 - `base` host ∈ {`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, `*.test`}.
 - Compiled contract: `main` → `<id>.json`, path `p` → `<id>.<p>.json`; defaults: timeout 30, `visibleError` `screen <id> not reached`, `safeStop` `stop replay`, `recoveryAction` null, `prohibitedSideEffects` [], `requiredFact` `content_rendered`, `requiredEvidenceKinds` [`visual_capture`], `requiredObserverCapability` `browser`, `maxEvidenceAgeSeconds` 604800, `version` 1, `preconditions` [], `outOfScope` [].
@@ -25,7 +27,7 @@
 ## Review Focus
 
 - A flow whose YAML uses anchors/aliases or duplicate keys: expect `flow.not_yaml` or `flow.schema_invalid`, never a silent merge (test in Task 2).
-- CRLF line endings and a trailing newline missing: canonical check must compare after normalising to LF, and `--fmt` writes LF with one trailing newline (Task 3).
+- CRLF line endings, and separately a missing final newline: each is rejected as `flow.not_canonical` (raw byte comparison), and `--fmt` rewrites to LF with one trailing newline (Task 3).
 - A `.journey.yaml` beside contracts in `journeys/`: the existing contract reader must not try to parse it (it reads `*.json` only — pin with a test in Task 4).
 - A draft flow plus a hand-written contract with the same contractId: `compile` must refuse to overwrite a contract it did not generate unless `--check` shows it identical (`flow.contract_stale`, Task 4).
 - Approving a flow, then editing one `expect` name: `flow.approval_stale` (Task 5).
@@ -102,6 +104,10 @@ fn every_static_code_fires_on_its_sabotage() {
         ("scope_escape", "flow.scope_path_outside_project", "/screens/0/scope/0"),
         ("approved_with_drift", "flow.approved_with_drift", "/drift/0"),
         ("too_large", "flow.too_large", ""),
+        ("slash_in_screen_id", "flow.schema_invalid", "/screens/0/id"),
+        ("colon_in_path_name", "flow.schema_invalid", "/paths"),
+        ("dotdot_edge_id", "flow.schema_invalid", "/edges/0/id"),
+        ("composed_too_long", "flow.composed_id_invalid", "/paths/<120-byte-name>"),
     ] {
         let out = validate_fixture(fixture);
         assert_eq!(out.status.code(), Some(2), "{fixture}");
@@ -125,9 +131,9 @@ Plus: YAML with an anchor/alias → `flow.not_yaml` (refuse aliases by scanning 
 **Interfaces:**
 - Produces: `pub(crate) fn canonical(flow: &Flow) -> String` (LF, one trailing newline, key order per schema, screens/edges sorted by id, paths `main` first then by name, `act`/`expect`/`approved` in flow style on one line), and typed `Flow` structs (`#[serde(deny_unknown_fields)]`).
 
-- [ ] **Step 1: Failing tests** — golden fixture is canonical (validate clean); the same file with screens reordered, or with block-style `act`, or with CRLF line endings + no trailing newline, yields `flow.not_canonical` at `""`; `journey compile --fmt` rewrites it to bytes equal to the golden fixture; `canonical(parse(canonical(x))) == canonical(x)` on every fixture.
+- [ ] **Step 1: Failing tests** — golden fixture is canonical (validate clean); the same file with screens reordered, or with block-style `act`, or with CRLF line endings (otherwise identical), or with the final newline missing (otherwise identical) — three separate cases — each yields `flow.not_canonical` at `""`; `journey compile --fmt` rewrites it to bytes equal to the golden fixture; `canonical(parse(canonical(x))) == canonical(x)` on every fixture.
 - [ ] **Step 2: Run, expect FAIL.**
-- [ ] **Step 3: Implement** a hand-written emitter (do not rely on `serde_yaml_ng` output style, which is not a stable contract): quote a scalar with double quotes only when it is empty, starts with a YAML indicator, contains `: `/`#`/`,`/`[`/`]`/`{`/`}`, or would parse as bool/null/number. Comparison: normalise the input to LF before comparing; the finding is about content order and style, and CRLF alone is reported too (canonical bytes are LF).
+- [ ] **Step 3: Implement** a hand-written emitter (do not rely on `serde_yaml_ng` output style, which is not a stable contract): quote a scalar with double quotes only when it is empty, starts with a YAML indicator, contains `: `/`#`/`,`/`[`/`]`/`{`/`}`, or would parse as bool/null/number. Comparison: raw input bytes against `canonical(parse(input))` bytes, with no normalisation; any difference, CRLF included, is `flow.not_canonical`.
 - [ ] **Step 4: Run, expect PASS.**
 - [ ] **Step 5: Commit** `feat(jpd): canonical journey-flow form and --fmt`.
 
@@ -157,9 +163,9 @@ Plus: YAML with an anchor/alias → `flow.not_yaml` (refuse aliases by scanning 
 **Files:** Modify `journey_flow.rs`, `journey.rs`, `args.rs`; `docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md`; `docs/DECISION_REGISTER.md`; Test `journey_flow_cli.rs`
 
 **Interfaces:**
-- Produces: `pub(crate) fn approval_digest(flow: &Flow) -> String` (`sha256:` of `canonical` with `status`, `approved`, `drift` set to `draft`/`null`/`[]`); CLI `graphhelm journey approve <id> [--project P]`.
+- Produces: `pub(crate) fn approval_digest(flow: &Flow) -> String` (`sha256:` of `canonical` rendered with the keys `status`, `approved`, `drift` omitted — the spec §3 preimage); CLI `graphhelm journey approve <id> [--project P]`.
 
-- [ ] **Step 1: Failing tests** — approve a draft: file now has `status: approved`, `approved: {revision: <HEAD sha>, digest: ...}`, `drift: []`, is canonical, and `checkout.json` exists; editing one `expect` name afterwards → `flow.approval_stale` at `/approved/digest`; approve refuses a flow with findings (exit 2, nothing written); approve in a non-git directory → exit 3 `GHCLI001_ARGUMENT_INVALID` naming the missing revision.
+- [ ] **Step 1: Failing tests** — approve a draft: file now has `status: approved`, `approved: {revision: <HEAD sha>, digest: ...}`, `drift: []`, is canonical, and `checkout.json` exists; editing one `expect` name afterwards → `flow.approval_stale` at `/approved/digest`; approve refuses a flow with findings (exit 2, nothing written); a test that computes the digest independently in the test (sha256 of the golden fixture with those three lines removed, then re-rendered) and asserts it equals the written `approved.digest`; approve in a non-git directory → exit 3 `GHCLI001_ARGUMENT_INVALID` naming the missing revision.
 - [ ] **Step 2: Run, expect FAIL.**
 - [ ] **Step 3: Implement**; reuse `journey::head` for the revision. Write via temp file + rename.
 - [ ] **Step 4: Docs** — JPD doc: a "Journey flows" section (what the file is, the three commands, that contracts are generated from flows and must not be hand-edited once a flow owns them, codes table pointer to the spec). Decision register: row D-057 "Journey flows compile to frozen contracts" with the one-paragraph rationale of spec §4.

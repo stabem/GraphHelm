@@ -30,7 +30,7 @@ trust it without opening anything else, and diff it line by line?*
 | Rule | How the format meets it |
 |---|---|
 | Schema-first | `schemas/journey-flow.schema.json`, JSON Schema 2020-12, `$id` `https://p50.dev/schemas/journey-flow.schema.json`, registered in `schemas/catalog.json` (document version `1.0.0`). Every object `additionalProperties: false`. The file's first key is `schema: graphhelm.journey-flow/1`; a `/2` is a new schema, never an edit. |
-| Deterministic ordering, stable ids | Canonical form: keys in schema order, `screens` and `edges` sorted by `id`, `paths` sorted by name with `main` first, flow-style one-line objects for `act`/`expect`. `graphhelm journey validate` refuses a non-canonical file (`flow.not_canonical`) and `journey compile --fmt` rewrites it. Ids follow the existing journey id rule `^[a-z0-9][a-z0-9._:/-]*$`; an edge id is `<from>.<verb>` by convention, never positional. |
+| Deterministic ordering, stable ids | Canonical form: keys in schema order, `screens` and `edges` sorted by `id`, `paths` sorted by name with `main` first, flow-style one-line objects for `act`/`expect`. `graphhelm journey validate` refuses a non-canonical file (`flow.not_canonical`) and `journey compile --fmt` rewrites it. Ids follow the existing consumer rule `valid_journey_id` (`core/execution/src/journeys.rs`): `^[a-z0-9][a-z0-9._-]{0,127}$` and no `..` — no `/`, `\`, `:`. The rule applies to flow ids, screen ids, edge ids, path names **and every composed id** (`<id>.<path>` contractIds, `<screen>.visible` promiseIds, `<base-id>.<n>` screen ids); a composed id that breaks it (e.g. over 128 bytes) is `flow.composed_id_invalid`, and the compiler writes only `<journeys dir>/<contractId>.json` after that check, so no output path can leave the directory; an edge id is `<from>.<verb>` by convention, never positional. |
 | Compact | No prose field that duplicates structure: no `description`, no `title` per edge, no `from`/`to` restated in paths. One optional `title` per flow and per screen (the Studio label). Fingerprints, locator details and timings live in the replay cache, not in the flow. |
 | Every reference by id | Edges name screens by id; paths name edges by id; `act.secret` names an entry in `secrets`; `actor` names an entry in `actors`. The validator checks each (`flow.unknown_*`). |
 | Explicit absence | `scope: unknown` (string) vs a non-empty list; an empty list is a schema error. `approved: null` vs an approval object. `drift: []` is "replay found none", never omitted. No field is optional *and* meaningful when absent, except `title`. |
@@ -106,7 +106,7 @@ Field notes (normative):
 - `drift` entries: `{edge, act, code, seen, at, healed?}` where `act` is the index, `code` is a drift code (§6),
   `seen` is a short machine string (`button "Pay"`), and `at` is the revision. Drift entries are
   cleared only by `approve`.
-- `approved.digest` is sha256 of the canonical file with `status`, `approved` and `drift` removed.
+- `approved.digest` is `sha256:` over one preimage, the **approval projection**: the canonical rendering (§2, LF, one trailing newline) of the flow with the three keys `status`, `approved` and `drift` omitted entirely (not reset to defaults). The same function, `approval_digest`, is used by `approve`, by the validator, and as the replay cache's `flowDigest` (§5.2).
   Editing an approved flow without re-approving makes the validator report `flow.approval_stale`.
 
 ## 4. Relation to the frozen journey-contract
@@ -194,7 +194,7 @@ numeric suffix; once written, an id never changes (stable for diffs and captures
 `*.json` there). Closed schema `schemas/journey-replay-cache.schema.json`; never loaded into a model
 context. Per edge and act: `{role, name, exact: true, testId|null, context: <nearest landmark
 "role name">|null, nth|null}`; per screen: `{fingerprint, controls: [...]}`; plus `flowDigest`
-(the cache is void when the flow's canonical digest changes) and `viewport`. Matching order on
+(`approval_digest` of §3; the cache is void when it changes) and `viewport`. Matching order on
 replay: test id, then role + exact name inside `context`, then role + exact name globally; a
 locator that resolves to 0 or >1 elements is drift, never a guess ("Save" never matches "Save as
 draft").
@@ -225,7 +225,7 @@ deterministically after the healed edge.
 
 CLI error code `GHCLI034_JOURNEY_FLOW_INVALID` (exit 2 envelope). Findings:
 `flow.not_yaml`, `flow.too_large`, `flow.schema_invalid`, `flow.id_mismatch` (file name ≠ `id`),
-`flow.not_canonical`, `flow.duplicate_id`, `flow.unknown_screen`, `flow.unknown_edge`,
+`flow.not_canonical` (byte comparison against the canonical rendering: CRLF line endings, a missing final newline, or reordered content are each rejected; there is no line-ending normalisation), `flow.composed_id_invalid`, `flow.duplicate_id`, `flow.unknown_screen`, `flow.unknown_edge`,
 `flow.unknown_secret`, `flow.unknown_actor`, `flow.path_disconnected` (edge `n.to` ≠ edge
 `n+1.from`), `flow.path_revisits_screen`, `flow.base_not_local`, `flow.scope_path_missing`,
 `flow.scope_path_outside_project`, `flow.approval_stale`, `flow.approved_with_drift`,

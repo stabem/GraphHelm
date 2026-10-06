@@ -1,6 +1,7 @@
 pub(super) mod amend;
 pub(super) mod approve;
 pub(super) mod assign;
+pub(crate) mod attachments;
 pub(super) mod briefing;
 pub(super) mod cancel;
 pub(super) mod claim;

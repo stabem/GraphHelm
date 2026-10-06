@@ -11,7 +11,9 @@ use std::io::{BufRead, BufReader, Read, Write};
 
 /// The framing bound: one message per line, and a line larger than this is refused without
 /// ever being buffered whole (the reader caps via bounded reads).
-pub(crate) const MAX_LINE_BYTES: usize = 1024 * 1024;
+/// 48 MiB (#313 Ruling 6): a `signal` with four 8 MiB images as base64 must fit on one line, or
+/// MCP parity with HTTP would be nominal.
+pub(crate) const MAX_LINE_BYTES: usize = 48 * 1024 * 1024;
 
 pub(crate) const PARSE_ERROR: i64 = -32700;
 pub(crate) const INVALID_REQUEST: i64 = -32600;

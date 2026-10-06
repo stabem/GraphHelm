@@ -630,7 +630,12 @@ fn build_router(state: ServeState) -> Router {
             get(routes::evidence),
         )
         .route("/v1/executions/{id}/start", post(routes::start))
-        .route("/v1/executions/{id}/signal", post(routes::signal))
+        .route(
+            "/v1/executions/{id}/signal",
+            // #313 Ruling 6: up to four 8 MiB images as base64 (42.7 MiB worst case). Only this
+            // route; the global 5 MiB limit below still bounds every other one.
+            post(routes::signal).layer(axum::extract::DefaultBodyLimit::max(48 * 1024 * 1024)),
+        )
         .route(
             "/v1/executions/{id}/native-chats",
             get(native_chats::requests).post(native_chats::send),
@@ -3182,6 +3187,7 @@ mod tests {
                             event_actor,
                             key,
                             None,
+                            &[],
                         )?)
                     })
                 },
@@ -3478,6 +3484,7 @@ mod tests {
                             event_actor,
                             key,
                             None,
+                            &[],
                         )?)
                     })
                 },

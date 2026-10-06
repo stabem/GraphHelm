@@ -481,6 +481,21 @@ fn signal_schema() -> serde_json::Value {
             "executionId": {"type": "string"},
             "signal": {"type": "object"},
             "evidenceOut": {"type": "string"},
+            // #313: images beside the signal, never inside the envelope. The Runtime re-checks
+            // every cap and the magic bytes; this schema only closes the wire shape.
+            "attachments": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "required": ["mediaType", "base64"],
+                    "properties": {
+                        "mediaType": {"enum": ["image/png", "image/jpeg", "image/webp"]},
+                        "base64": {"type": "string"},
+                    },
+                    "additionalProperties": false,
+                },
+            },
         }),
         &["executionId", "signal"],
     )
@@ -1485,6 +1500,10 @@ pub(crate) fn call(
             // it cannot write instead of sealing the envelope, which is what absence now means.
             if let Some(evidence_out) = str_arg(arguments, "evidenceOut") {
                 body["evidenceOut"] = serde_json::json!(evidence_out);
+            }
+            // Copied only when given, so a signal without images sends the same body as before.
+            if let Some(attachments) = arguments.get("attachments") {
+                body["attachments"] = attachments.clone();
             }
             api.request(
                 "POST",

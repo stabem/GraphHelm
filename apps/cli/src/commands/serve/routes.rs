@@ -2200,6 +2200,16 @@ pub(super) async fn signal(
     // Whether absence is ALLOWED is not decided here: `signal::execute` owns that rule, because it
     // is the function that knows the seal happens before the append. Deciding it twice is how the
     // API and the CLI come to disagree about when an envelope is durable.
+    // #313: attachments ride beside `signal`, parsed (every cap, every refusal) before the
+    // idempotent mutation, so a refused attachment never reaches the store. They are part of the
+    // body, so the request digest covers them: an identical replay replays, a changed one diverges.
+    let attachments = match payload.get("attachments") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => match execution::attachments::parse_json(value) {
+            Ok(attachments) => attachments,
+            Err(failure) => return respond_failure(SIGNAL_COMMAND, failure),
+        },
+    };
     let evidence_out = match payload.get("evidenceOut") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(path)) => Some(PathBuf::from(path)),
@@ -2260,6 +2270,7 @@ pub(super) async fn signal(
                         key,
                         sealing.as_deref(),
                         scoped_agent_authenticated,
+                        &attachments,
                     )
                 })
                 .await
@@ -4999,6 +5010,25 @@ pub(super) async fn evidence(
     // (`core/governor/src/materialize.rs`). Decrypting bytes this surface has already decided it
     // cannot render would put plaintext in memory for nothing.
     let media_type = sealed.media_type().as_str().to_owned();
+    // #313 Ruling 8: the three accepted image types are served as raw bytes under locked-down
+    // headers. Everything else that is not JSON or text (SVG included) stays refused below.
+    if let Some(image_type) = served_image_type(&media_type) {
+        let plaintext = match opener.open(scope, &sealed).await {
+            Ok(plaintext) => plaintext,
+            Err(error) => {
+                return evidence_refusal(&format!("the evidence could not be opened: {error}"));
+            }
+        };
+        let bytes = plaintext.expose(|bytes| {
+            (execution::attachments::sniff(bytes) == Some(image_type)).then(|| bytes.to_vec())
+        });
+        let Some(bytes) = bytes else {
+            return evidence_refusal(&format!(
+                "this evidence is sealed as {image_type} but its bytes are not one"
+            ));
+        };
+        return image_response(image_type, bytes);
+    }
     if !renders_as_text(&media_type) {
         return evidence_refusal(&format!(
             "this evidence is {media_type}, which this route does not render; it serves JSON and text only"
@@ -5056,6 +5086,30 @@ fn renders_as_text(media_type: &str) -> bool {
 /// One refusal shape for every way this read can decline, all of them 409: the request was
 /// well-formed and the server understood it, and what it could not do is a fact about this
 /// server's configuration or this evidence's state rather than about the caller's syntax.
+fn served_image_type(media_type: &str) -> Option<&'static str> {
+    ["image/png", "image/jpeg", "image/webp"]
+        .into_iter()
+        .find(|known| *known == media_type)
+}
+
+/// Raw image bytes with exactly the four headers of #313 Ruling 8.
+fn image_response(media_type: &'static str, bytes: Vec<u8>) -> Response {
+    use axum::http::header;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, media_type)
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'")
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| {
+            respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(EVIDENCE_COMMAND, "the image response could not be built").output,
+            )
+        })
+}
+
 fn evidence_refusal(message: &str) -> Response {
     respond(
         StatusCode::CONFLICT,

@@ -479,6 +479,7 @@ pub(crate) fn run(
                 actor,
                 idempotency_key("delivery-recorded"),
                 Some(sealing),
+                &[],
             )?;
             result["provenance"] = "reported".into();
             Ok(result)

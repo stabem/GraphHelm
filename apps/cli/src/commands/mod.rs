@@ -287,6 +287,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 evidence_out,
                 keyring,
                 key_id,
+                attach,
             } => execution::signal::run(
                 &events,
                 execution.as_deref(),
@@ -294,6 +295,7 @@ pub fn run(command: TopLevel) -> Outcome {
                 &evidence_out,
                 keyring.as_deref(),
                 key_id.as_deref(),
+                &attach,
             ),
             ExecutionCommand::Delivery {
                 events,

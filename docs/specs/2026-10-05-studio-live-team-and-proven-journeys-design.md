@@ -190,7 +190,7 @@ and the step's promise text from the contract.
 
 ## 5. Runtime changes
 
-### 5.1 Image evidence (ADR-042)
+### 5.1 Image evidence (ADR-043)
 
 Today evidence accepts any media type at rest (16 MiB per item) but the only read route refuses
 anything not JSON or text, and no route uploads a binary. Add:
@@ -233,7 +233,7 @@ is updated to say a refusal is final for that question.
 computed server-side because freshness needs git. Owner credentials; MCP and CLI parity as
 `graphhelm journeys --execution <id>` and an MCP `journeys` tool.
 
-## 6. Keel and JPD changes (ADR-043)
+## 6. Keel and JPD changes (ADR-044)
 
 ### 6.1 Journey contract: screens
 
@@ -321,7 +321,7 @@ route caches results per `(revision, HEAD)` pair.
   replace the request-status box.
 - `docs/keel/RECORDS.md`, `docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md`: the two capture records
   and the screen field.
-- `docs/reference/REFERENCE_STACK_AND_ADRS.md`: ADR-042 (image evidence) and ADR-043 (journey
+- `docs/reference/REFERENCE_STACK_AND_ADRS.md`: ADR-043 (image evidence) and ADR-044 (journey
   screens and captures).
 
 ## 9. Removed or replaced in the Studio
@@ -348,10 +348,10 @@ Each phase is its own issue and PR, in this order. Each PR lists the tests it ra
 2. **Actor alias and owner refusal** — Runtime owner-only signal checks, Studio "Name this
    bot" and "Refuse". Proof: Rust tests that a non-owner alias and a `codex` alias are refused;
    Studio tests that an alias renames the bot and a refusal closes the question.
-3. **Image evidence (ADR-042)** — attach, serve, MCP and CLI parity. Proof: Rust tests for each
+3. **Image evidence (ADR-043)** — attach, serve, MCP and CLI parity. Proof: Rust tests for each
    allowed type, wrong magic bytes, SVG refusal, size and count caps, no partial append,
    owner-only read, response headers, and the parity test.
-4. **Journey screens, captures, folding, route (ADR-043)** — schema field, capture and walked
+4. **Journey screens, captures, folding, route (ADR-044)** — schema field, capture and walked
    CLI, folding with freshness against a temporary git repository (fresh, stale with the file
    named, unknown for each cause), route and MCP parity.
 5. **Studio Journey tab and Before / after** — Proof: rendering tests over a folded fixture;

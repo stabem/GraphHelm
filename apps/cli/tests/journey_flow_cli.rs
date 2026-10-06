@@ -145,3 +145,20 @@ fn semantic_sabotage_is_refused_at_the_boundary() {
     }
 }
 
+#[test]
+fn canonical_bytes_reject_style_order_crlf_and_missing_newline() {
+    for flow in [
+        EXAMPLE.replace('\n', "\r\n"),
+        EXAMPLE.trim_end().to_owned(),
+        EXAMPLE.replace("actors: [shopper]", "actors:\n  - shopper"),
+        EXAMPLE.replace(
+            "schema: graphhelm.journey-flow/1\nid: checkout",
+            "id: checkout\nschema: graphhelm.journey-flow/1",
+        ),
+    ] {
+        let dir = project(&flow);
+        let (out, reply) = run(dir.path(), &["validate", "--all"]);
+        assert_eq!(out.status.code(), Some(2), "{reply}");
+        assert!(finding(&reply, "flow.not_canonical"), "{reply}");
+    }
+}

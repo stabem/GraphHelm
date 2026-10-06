@@ -331,7 +331,140 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     match read(file) {
-        Ok((_, value)) => semantic(file, &value, project),
+        Ok((text, value)) => {
+            let mut findings = semantic(file, &value, project);
+            if text != canonical(&value, false) {
+                findings.push(Finding::new(
+                    "flow.not_canonical",
+                    "",
+                    "flow bytes differ from canonical YAML",
+                ));
+            }
+            findings
+        }
         Err(findings) => findings,
     }
+}
+
+// Emit the schema's reading order, not map insertion order or a serializer's incidental style.
+fn scalar(value: &Value) -> String {
+    let Some(text) = value.as_str() else {
+        return value.to_string();
+    };
+    let plain = !text.is_empty()
+        && text.trim() == text
+        && !text.chars().any(char::is_control)
+        && !text.contains(": ")
+        && !text.contains(['#', ',', '[', ']', '{', '}'])
+        && !text.starts_with([
+            '-', '?', ':', '!', '&', '*', '|', '>', '\'', '"', '%', '@', '`',
+        ])
+        && serde_yaml_ng::from_str::<Value>(text).is_ok_and(|parsed| parsed == *value);
+    if plain {
+        text.to_owned()
+    } else {
+        serde_json::to_string(text).expect("string serialization")
+    }
+}
+
+fn inline(value: &Value, fields: &[&str]) -> String {
+    match value {
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|v| inline(v, fields))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(object) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .filter_map(|key| object.get(*key).map(|v| format!("{key}: {}", scalar(v))))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => scalar(value),
+    }
+}
+
+fn canonical(value: &Value, approval_projection: bool) -> String {
+    let mut out = String::new();
+    for field in [
+        "schema", "id", "title", "status", "approved", "base", "actors", "secrets", "risks",
+    ] {
+        if approval_projection && matches!(field, "status" | "approved") {
+            continue;
+        }
+        if let Some(v) = value.get(field) {
+            out.push_str(&format!(
+                "{field}: {}\n",
+                inline(v, &["revision", "digest"])
+            ));
+        }
+    }
+    for (group, fields) in [
+        (
+            "screens",
+            &["id", "title", "url", "state", "expect", "scope"][..],
+        ),
+        ("edges", &["id", "from", "to", "acts"][..]),
+    ] {
+        out.push_str(&format!("{group}:\n"));
+        let mut entries = value[group].as_array().unwrap().iter().collect::<Vec<_>>();
+        entries.sort_by_key(|v| v["id"].as_str().unwrap());
+        for entry in entries {
+            for &field in fields {
+                let Some(v) = entry.get(field) else {
+                    continue;
+                };
+                let prefix = if field == "id" { "  - " } else { "    " };
+                if field == "acts" {
+                    out.push_str("    acts:\n");
+                    for act in v.as_array().unwrap() {
+                        out.push_str(&format!(
+                            "      - {}\n",
+                            inline(act, &["kind", "role", "name", "text", "secret"])
+                        ));
+                    }
+                } else {
+                    out.push_str(&format!(
+                        "{prefix}{field}: {}\n",
+                        inline(v, &["role", "name"])
+                    ));
+                }
+            }
+        }
+    }
+    out.push_str("paths:\n");
+    let paths = value["paths"].as_object().unwrap();
+    for (name, path) in std::iter::once(("main", &paths["main"])).chain(
+        paths
+            .iter()
+            .filter(|(n, _)| n.as_str() != "main")
+            .map(|(n, p)| (n.as_str(), p)),
+    ) {
+        out.push_str(&format!("  {name}: {}\n", inline(path, &[])));
+    }
+    if !approval_projection {
+        let drift = value["drift"].as_array().unwrap();
+        if drift.is_empty() {
+            out.push_str("drift: []\n");
+        } else {
+            out.push_str("drift:\n");
+            for entry in drift {
+                for field in ["edge", "act", "code", "seen", "at", "healed"] {
+                    if let Some(v) = entry.get(field) {
+                        out.push_str(&format!(
+                            "{}{field}: {}\n",
+                            if field == "edge" { "  - " } else { "    " },
+                            scalar(v)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
 }

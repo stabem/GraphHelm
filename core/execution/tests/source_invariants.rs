@@ -104,7 +104,14 @@ fn the_execution_crate_depends_on_exactly_the_declared_crates() {
         .filter(|line| line.starts_with("graphhelm-"))
         .map(|line| line.split_whitespace().next().unwrap_or_default())
         .collect();
-    assert_eq!(declared, ["graphhelm-protocols", "graphhelm-events"]);
+    assert_eq!(
+        declared,
+        [
+            "graphhelm-protocols",
+            "graphhelm-events",
+            "graphhelm-policy"
+        ]
+    );
 }
 
 /// Every `.rs` file under `src/`, DERIVED — never a hand-written list.

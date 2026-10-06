@@ -3,12 +3,17 @@
 //! This crate is total and side-effect free: no clock, no randomness, no filesystem, no network and
 //! no adapter dependency. Every rule is a function over values so that replaying the same inputs
 //! reproduces the same decision exactly.
+//!
+//! One bounded exception: [`journeys::GitHistory`] runs `git` read-only (fixed arguments, no
+//! pathspec) to answer whether a screen capture is still fresh. The fold itself stays pure and
+//! reads history only through the [`journeys::ScopeHistory`] trait.
 
 pub mod attention;
 mod bounds;
 mod briefing;
 mod customs;
 mod dispatch;
+pub mod journeys;
 mod progress;
 mod ready;
 mod recovery;
@@ -32,6 +37,12 @@ pub use customs::{
 };
 pub use dispatch::{DispatchError, dispatch_plan, parallel_limit};
 pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
+pub use journeys::{
+    ArrowState, ArrowView, CaptureRecord, CaptureView, ChangedSince, ContractInput, Freshness,
+    GitHistory, JourneyView, JourneysView, ScopeHistory, ScreenInput, ScreenView, StepInput,
+    StepView, TransitionRecord, UnknownCause, Viewport, fold_journeys, valid_journey_id,
+    valid_revision,
+};
 pub use progress::{Progress, classify_progress};
 pub use ready::{
     DispatchUnavailable, DispatchView, ScheduleError, dispatch_candidates, dispatch_view,

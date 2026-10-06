@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 graphhelm-protocols = { path = "../protocols" }
 graphhelm-events = { path = "../events" }
+graphhelm-policy = { path = "../policy" }
 serde.workspace = true
 serde_json.workspace = true
 

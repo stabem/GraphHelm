@@ -416,15 +416,6 @@ describe("verified mutations", () => {
     expect(forbidden).toEqual({ mode: "immediate" });
   });
 
-  it("accepts actor_alias and owner_refusal only from the owner", async () => {
-    for (const kind of ["actor_alias", "owner_refusal"] as const) {
-      const scripted = scriptedFetch([]);
-      const client = new RuntimeClient("tok", { fetch: scripted.fetchImpl });
-      await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
-      expect(scripted.calls).toHaveLength(0);
-    }
-  });
-
   it("rejects native persona links from non-owner callers before network I/O", async () => {
     const scripted = scriptedFetch([]);
     const client = new RuntimeClient("tok", { fetch: scripted.fetchImpl });

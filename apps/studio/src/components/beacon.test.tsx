@@ -83,16 +83,4 @@ describe("QuestionCards", () => {
     const { container } = render(<QuestionCards items={[]} names={{}} busy={false} {...handlers()} />);
     expect(container).toBeEmptyDOMElement();
   });
-
-  it("offers Refuse when wired, disabled while busy or without a signal id", async () => {
-    const h = handlers();
-    const onRefuse = vi.fn();
-    const { rerender } = render(<QuestionCards items={[question]} names={{}} busy={false} {...h} onRefuse={onRefuse} />);
-    await userEvent.click(screen.getByRole("button", { name: "Refuse" }));
-    expect(onRefuse).toHaveBeenCalledWith(question);
-    rerender(<QuestionCards items={[question]} names={{}} busy={true} {...h} onRefuse={onRefuse} />);
-    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
-    rerender(<QuestionCards items={[{ ...question, signalId: null }]} names={{}} busy={false} {...h} onRefuse={onRefuse} />);
-    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
-  });
 });

@@ -890,7 +890,7 @@ export function useActorAliases(
           const value = JSON.parse(envelope.description) as { protocol?: unknown; displayName?: unknown };
           if (value.protocol !== "graphhelm-actor-alias-v1" || typeof value.displayName !== "string") continue;
           const name = value.displayName.trim();
-          if (name.length === 0 || name.length > 80) continue;
+          if (name.length === 0 || [...name].length > 80) continue;
           entries[envelope.to] = name; // ascending order: the newest record overwrites
         } catch {
           // An unreadable alias names nobody.

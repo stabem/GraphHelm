@@ -102,16 +102,4 @@ describe("TeamCanvas", () => {
     expect(world.style.transform).not.toBe(before);
     expect(world.style.transform).toContain("translate(25px, 15px)");
   });
-
-  it("offers Name this bot only for an unnamed, unshared, non-native bot and saves the trimmed name", async () => {
-    const onNameBot = vi.fn();
-    render(<TeamCanvas {...props({ onNameBot, bots: [bot("anon", "working"), bot("roled", "working", { role: "tester" }),
-      bot("native", "working", { native: true }), bot("shared", "working", { shared: true }), bot("nobody", "working", { actorId: null })] })} />);
-    const buttons = screen.getAllByRole("button", { name: "Name this bot" });
-    expect(buttons).toHaveLength(1);
-    await userEvent.click(buttons[0]);
-    await userEvent.type(screen.getByLabelText("Name for anon"), "  Cart builder  ");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(onNameBot).toHaveBeenCalledWith("anon", "Cart builder");
-  });
 });

@@ -97,7 +97,6 @@ import { dockReserve } from "./dock-reserve";
 import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
-/** Phase 2 fills this from actor_alias records; until then no alias exists. */
 
 function rawSha256(digest: string): string {
   return digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;

@@ -4448,3 +4448,122 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
     assert_eq!(reply["data"]["state"], "unavailable", "{reply}");
     assert_eq!(reply["data"]["suggestions"], serde_json::json!([]));
 }
+
+// #343: the first operations race at the public HTTP boundary, with no warm-up storage call.
+// Existing pause coverage can miss this bootstrap race or hide its refusal while polling.
+// Cost: 64 cold fixture Runtime processes per case, loopback requests and fresh CLI reopens.
+fn concurrent_cold_requests(two_starts: bool) {
+    for round in 0..64 {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = all_success_fixtures(directory.path());
+        let mut graphs = Vec::new();
+        for name in ["cold-first", "cold-second"] {
+            let graph_dir = directory.path().join(name);
+            std::fs::create_dir(&graph_dir).unwrap();
+            graphs.push(agent_chain_graph(&graph_dir, name));
+        }
+        let (_guard, base, token) = serve(&events);
+        assert!(
+            !events.join("format.json").exists(),
+            "round {round} was warmed before its requests"
+        );
+        assert!(!events.join("journal.jsonl").exists());
+        let first =
+            serde_json::json!({"file":graphs[0],"fixtures":fixtures,"mode":"manual","held":true});
+        let second =
+            serde_json::json!({"file":graphs[1],"fixtures":fixtures,"mode":"manual","held":true});
+        let barrier = std::sync::Barrier::new(3);
+        let responses = std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                barrier.wait();
+                post_json(
+                    &format!("{base}/v1/executions/cold-first/start"),
+                    &token,
+                    &[
+                        ("Idempotency-Key", "cold-first"),
+                        ("X-GraphHelm-Actor", "cold-client"),
+                        ("X-GraphHelm-Actor-Type", "agent"),
+                    ],
+                    &first,
+                )
+            });
+            let b = scope.spawn(|| {
+                barrier.wait();
+                if two_starts {
+                    post_json(
+                        &format!("{base}/v1/executions/cold-second/start"),
+                        &token,
+                        &[
+                            ("Idempotency-Key", "cold-second"),
+                            ("X-GraphHelm-Actor", "cold-client"),
+                            ("X-GraphHelm-Actor-Type", "agent"),
+                        ],
+                        &second,
+                    )
+                } else {
+                    let response =
+                        raw_request(&format!("{base}/v1/executions/cold-first"), Some(&token))
+                            .unwrap();
+                    (response.status, json_body(&response))
+                }
+            });
+            barrier.wait();
+            [a.join().unwrap(), b.join().unwrap()]
+        });
+        assert_eq!(
+            responses[0].0, 200,
+            "start, round {round}: {}",
+            responses[0].1
+        );
+        assert_eq!(responses[0].1["ok"], true, "{}", responses[0].1);
+        if two_starts || responses[1].0 == 200 {
+            assert_eq!(
+                responses[1].0, 200,
+                "second request, round {round}: {}",
+                responses[1].1
+            );
+            assert_eq!(responses[1].1["ok"], true, "{}", responses[1].1);
+        } else {
+            assert_eq!(
+                responses[1].0, 404,
+                "early status, round {round}: {}",
+                responses[1].1
+            );
+            assert_eq!(
+                responses[1].1["diagnostics"][0]["code"],
+                "GHCLI028_EXECUTION_NOT_FOUND"
+            );
+        }
+        for execution in if two_starts {
+            &['a', 'b'][..]
+        } else {
+            &['a'][..]
+        } {
+            let execution = if *execution == 'a' {
+                "cold-first"
+            } else {
+                "cold-second"
+            };
+            let reopened = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+                .args(["--json", "execution", "status", "--events"])
+                .arg(&events)
+                .args(["--execution", execution])
+                .output()
+                .unwrap();
+            let reply: Value = serde_json::from_slice(&reopened.stdout).unwrap();
+            assert!(
+                reopened.status.success(),
+                "fresh replay, round {round}: {reply}"
+            );
+            assert_eq!(reply["ok"], true, "{reply}");
+            assert_eq!(reply["data"]["executionId"], execution, "{reply}");
+        }
+    }
+}
+
+#[test]
+fn simultaneous_first_requests_preserve_a_cold_store() {
+    concurrent_cold_requests(false);
+    concurrent_cold_requests(true);
+}

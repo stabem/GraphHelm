@@ -3423,18 +3423,15 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
     Ok(LayoutState::RecognizedPartial)
 }
 
-/// #143: the shared fast path's acquisition — ONLY a layout already Complete with an
-/// existing lock file qualifies; everything else answers None and the caller runs the
-/// exclusive bootstrap exactly as before. Re-classifies under the shared lock (the same
-/// pure classifier, so the check still means something).
+/// #143: only a complete layout with an existing lock qualifies for the shared fast path.
+/// #343: acquire that lock BEFORE classifying children. A cold initializer can still be
+/// writing them; on Windows its DELETE-access creation handle excludes a concurrent open.
+/// An incomplete layout answers None and the caller takes the exclusive bootstrap path.
 fn initialize_root_shared_fast(
     root: &Path,
     root_handle: &File,
     failpoint: Option<LocalFailpoint>,
 ) -> Result<Option<File>, EventRepositoryError> {
-    if classify_layout(root, root_handle)? != LayoutState::Complete {
-        return Ok(None);
-    }
     if !collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
         .contains("repository.lock")
     {
@@ -3469,16 +3466,26 @@ fn initialize_root_locked(
     root_handle: &File,
     failpoint: Option<LocalFailpoint>,
 ) -> Result<File, EventRepositoryError> {
-    let initial = classify_layout(root, root_handle)?;
     let lock_present = collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
         .contains("repository.lock");
     let lock = if lock_present {
         open_child_file(root_handle, root, "repository.lock", true, false)?
     } else {
-        if initial == LayoutState::Complete {
-            return Err(EventRepositoryError::Integrity);
+        // Validate an unrecognized root before creating anything. If another initializer
+        // appeared since the name snapshot, its children may be mid-write: wait on its
+        // lock instead, then let repair_layout_locked classify authoritatively. A real
+        // layout/storage error still fails under that lock, or immediately if none appeared.
+        match classify_layout(root, root_handle) {
+            Ok(_) => open_or_create_repository_lock(root_handle, root)?,
+            Err(error) => {
+                if !collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
+                    .contains("repository.lock")
+                {
+                    return Err(error);
+                }
+                open_child_file(root_handle, root, "repository.lock", true, false)?
+            }
         }
-        open_or_create_repository_lock(root_handle, root)?
     };
     // #824: same shape as the shared acquisition above -- the real failure mode is a WAIT.
     if failpoint == Some(LocalFailpoint::InitializeRootLockExclusive) {

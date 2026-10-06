@@ -524,6 +524,11 @@ fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path(
     let (code, reply) = run(repo.path(), Some(&path));
     assert_eq!(code, 3, "{reply}");
     assert_eq!(reply["diagnostics"][0]["path"], "/journeys/0", "{reply}");
+    card["journeys"] = serde_json::json!(["a..b"]);
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/journeys/0", "{reply}");
 }
 
 #[test]

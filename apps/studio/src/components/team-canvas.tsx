@@ -123,7 +123,7 @@ export function TeamCanvas(props: TeamCanvasProps) {
         </button>
         {props.graphFileOpen && props.graphFileRow}
       </div>
-      <div className="team-sheet" aria-label="Team sheet" onPointerDown={onSheetDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+      <div className="team-sheet" aria-label="Team sheet" onPointerDown={onSheetDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
         onWheel={(event) => {
           if (!event.ctrlKey) return;
           setView((current) => ({ ...current, zoom: Math.min(2, Math.max(0.4, current.zoom * (1 - event.deltaY * 0.0015))) }));

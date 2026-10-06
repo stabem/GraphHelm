@@ -1725,9 +1725,9 @@ export default function App({
       to: string | null = null,
       via: string = "run",
       replyTo: string | null = null,
-    ) => {
+    ): Promise<boolean> => {
       const client = clientRef.current;
-      if (!client || selected === "") return;
+      if (!client || selected === "") return false;
       // The run this send belongs to. Its completion may only touch the say state while that
       // run is still on screen: the rail stays selectable during a send, and an unconditional
       // finally cleared `saying` under the NEXT run - whose box then read the busy-to-idle
@@ -1749,7 +1749,7 @@ export default function App({
         });
         if (evidence.result === "refused") {
           fail(evidence.diagnostics[0]?.message ?? "The Runtime refused the message.");
-          return;
+          return false;
         }
         if (evidence.result === "unknown") {
           // Deliberately not reported as sent. The append may well have landed, and saying "sent"
@@ -1757,10 +1757,14 @@ export default function App({
           fail(
             "The Runtime accepted this but it could not be confirmed in the log. Reload before sending it again.",
           );
+          await loadExecution(selected);
+          return false;
         }
         await loadExecution(selected);
+        return true;
       } catch (reason) {
         fail(messageOf(reason, "The message could not be sent."));
+        return false;
       } finally {
         if (clientRef.current === client && selectedRef.current === forRun) setSaying(null);
       }
@@ -2634,7 +2638,12 @@ export default function App({
                     if (first) setFocus({ kind: "node", id: first.id });
                   }} />
               </aside>}
-              onSend={(text, to, replyTo) => { void say(text, to, "chat", replyTo); setAnswering(null); }}
+              onSend={async (text, to, replyTo) => {
+                // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
+                const ok = await say(text, to, "chat", replyTo);
+                if (ok) setAnswering(null);
+                return ok;
+              }}
               sending={saying === "chat"} sendError={sayError?.via === "chat" ? sayError.text : ""}
               answering={answering} onClearAnswer={() => setAnswering(null)} composerFocus={composerFocus} highlight={highlight}
               onUseSuggestion={(text) => setMainChatSeed((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }))}

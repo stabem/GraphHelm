@@ -484,7 +484,8 @@ describe("live team layout", () => {
     expect(await screen.findByRole("dialog", { name: "While you were away" })).toBeInTheDocument();
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
     // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
-    // events and status are still the ones in memory. Only the status.executionId guard hides A's card here.
+    // events and status are still the ones in memory. select() clears status and events, which hides
+    // A's card; the status.executionId guard is defence-in-depth behind it.
     expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull());
     expect(screen.queryByText(/24 records/)).toBeNull();
@@ -2135,6 +2136,28 @@ describe("the answer path", () => {
     await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(client.signal).toHaveBeenCalled());
     expect(firstCall(client.signal)[2]).toMatchObject({ to: "codex" });
+  });
+
+  it("keeps the answer text and the Answering chip when the Runtime refuses the answer", async () => {
+    const client = askedClient({
+      signal: vi.fn(async () => ({
+        ...PAUSED_EVIDENCE,
+        action: "signal" as const,
+        result: "refused" as const,
+        diagnostics: [{ code: "GHCLI001_ARGUMENT_INVALID", message: "not now", path: "/to", severity: "error", source: "serve-cli" }],
+      })),
+    });
+    await open(client);
+    const why = await screen.findByLabelText("Needs you");
+    await within(why).findByText(/Qual porta devo usar para o deploy\?/);
+    await userEvent.click(within(why).getByRole("button", { name: "Answer" }));
+    const chat = screen.getByRole("complementary", { name: "Chat" });
+    await userEvent.type(within(chat).getByLabelText("Message"), "usa a 8080");
+    await userEvent.click(within(chat).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.signal).toHaveBeenCalled());
+    expect(await within(chat).findByRole("alert")).toHaveTextContent("not now");
+    expect(within(chat).getByLabelText("Message")).toHaveValue("usa a 8080");
+    expect(within(chat).getByText(/^Answering/)).toBeInTheDocument();
   });
 
   it("an answered question is no longer owed", async () => {

@@ -24,7 +24,8 @@ export interface ChatColumnProps {
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null };
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
-  onSend: (text: string, to: string | null, replyTo: string | null) => void;
+  /** Resolves true only once the Runtime confirmed the message; the draft is kept otherwise. */
+  onSend: (text: string, to: string | null, replyTo: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
   answering: { asker: string; signalId: string | null } | null;
@@ -43,20 +44,28 @@ export function composerMode(thread: ChatThread | undefined, nativeKeys: Readonl
 export function ChatColumn(props: ChatColumnProps) {
   const thread = props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
   const mode = composerMode(thread, props.nativeKeys);
-  const [draft, setDraft] = useState("");
+  // One draft per thread: a single shared draft followed the operator across tabs, so text
+  // written for one bot could be sent to another.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftKey = thread?.key ?? EVERYONE;
+  const draft = drafts[draftKey] ?? "";
+  const setDraftFor = (key: string, text: string) => setDrafts((current) => ({ ...current, [key]: text }));
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (props.composerFocus > 0) box.current?.focus(); }, [props.composerFocus]);
   useEffect(() => {
     if (props.highlight !== null) document.getElementById(`chat-msg-${props.highlight}`)?.scrollIntoView({ block: "center" });
   }, [props.highlight, props.selected]);
 
-  const send = () => {
+  const send = async () => {
     const text = draft.trim();
     if (text === "" || props.sending) return;
-    if (props.answering !== null) props.onSend(text, props.answering.asker, props.answering.signalId);
-    else if (thread?.kind === "direct") props.onSend(text, thread.participants[0], null);
-    else { const target = parseMention(text, props.bots); props.onSend(target.text, target.to, null); }
-    setDraft("");
+    const key = draftKey;
+    let ok: boolean;
+    if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
+    else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
+    else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }
+    // A refused or unconfirmed send keeps its words; only a delivered one clears its own thread.
+    if (ok) setDraftFor(key, "");
   };
   const suggestion = props.jev.suggestions[0];
   const showPrincipal = mode === "native" || mode === "record+principal";
@@ -97,7 +106,7 @@ export function ChatColumn(props: ChatColumnProps) {
           {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion && <>
             <p>{suggestion.draft}</p>
             <p className="jev-reason">{suggestion.reason}</p>
-            <button type="button" onClick={() => { setDraft(suggestion.draft); props.onUseSuggestion(suggestion.draft); box.current?.focus(); }}>Use</button>
+            <button type="button" onClick={() => { setDraftFor(draftKey, suggestion.draft); props.onUseSuggestion(suggestion.draft); box.current?.focus(); }}>Use</button>
           </>}
         </section>
       )}
@@ -107,9 +116,9 @@ export function ChatColumn(props: ChatColumnProps) {
             <p className="chat-answering">Answering {props.names[props.answering.asker] ?? props.answering.asker} <button type="button" onClick={props.onClearAnswer}>Clear</button></p>
           )}
           <label htmlFor="chat-message" className="sr-only">Message</label>
-          <textarea id="chat-message" ref={box} value={draft} rows={3} maxLength={MAX_MESSAGE_LENGTH} onChange={(event) => setDraft(event.target.value)}
+          <textarea id="chat-message" ref={box} value={draft} rows={3} maxLength={MAX_MESSAGE_LENGTH} onChange={(event) => setDraftFor(draftKey, event.target.value)}
             placeholder={thread?.kind === "direct" ? `Message ${thread.label}` : "Message everyone, or @name one bot"} />
-          <button type="button" disabled={props.sending || draft.trim() === ""} onClick={send}>Send</button>
+          <button type="button" disabled={props.sending || draft.trim() === ""} onClick={() => void send()}>Send</button>
           {props.sendError && <p role="alert">{props.sendError}</p>}
         </div>
       )}

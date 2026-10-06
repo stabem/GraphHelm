@@ -77,6 +77,28 @@ describe("ChatColumn", () => {
     expect(p.onSend).toHaveBeenCalledWith("Wait for review", "kit-1", "sig-q");
   });
 
+  it("keeps one draft per thread so text typed for one bot never follows to another", async () => {
+    const threads = [...THREADS, { key: "direct:kit-1", kind: "direct" as const, label: "loja kit 1", participants: ["kit-1"], messages: [] },
+      { key: "direct:kit-2", kind: "direct" as const, label: "loja kit 2", participants: ["kit-2"], messages: [] }];
+    const view = render(<ChatColumn {...props({ threads, selected: "direct:kit-1" })} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "only for kit 1");
+    view.rerender(<ChatColumn {...props({ threads, selected: "direct:kit-2" })} />);
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+    view.rerender(<ChatColumn {...props({ threads, selected: "direct:kit-1" })} />);
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("only for kit 1");
+  });
+
+  it("keeps the draft when the send is refused and clears it once delivered", async () => {
+    const onSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(<ChatColumn {...props({ onSend })} />);
+    const box = screen.getByRole("textbox", { name: "Message" });
+    await userEvent.type(box, "hello all");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(box).toHaveValue("hello all");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(box).toHaveValue("");
+  });
+
   it("puts a Jev suggestion in one dashed card whose Use fills the composer and never sends", async () => {
     const p = props({ jev: { suggestions: [{ to: null, draft: "Ask kit 2 for the cart diff", reason: "kit 2 went quiet", sourceSequences: [1] }], loading: false, issue: null } });
     render(<ChatColumn {...p} />);

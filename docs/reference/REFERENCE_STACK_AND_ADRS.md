@@ -1477,4 +1477,3 @@ git grep -n 'is_loopback' origin/main -- apps/cli/src/commands/serve   one site,
 **Consequences:** freshness is only as good as the Runtime's checkout; a capture taken on a commit the project does not have reports `unknown`. Studio rendering is phase 5; the Playwright observer `--journey`, DELIVERY guidance and the Keel card `journeys` field are phase 6.
 
 **Relationship:** builds on ADR-043; implements §5.4, §6.1–§6.4 and §7 of the Studio live-team spec.
-

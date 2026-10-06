@@ -40,4 +40,3 @@ The description is a JSON document with the schema
 `extensions/builtin/graphhelm-jpd/schemas/screen-capture.schema.json` or
 `transition-walked.schema.json`. A dirty capture is shown but never counts as fresh proof. Records
 whose ids are path-like (`/`, `\`, `:`, `..`) are ignored by the fold.
-

@@ -5083,9 +5083,7 @@ fn renders_as_text(media_type: &str) -> bool {
         || media_type.starts_with("text/")
 }
 
-/// One refusal shape for every way this read can decline, all of them 409: the request was
-/// well-formed and the server understood it, and what it could not do is a fact about this
-/// server's configuration or this evidence's state rather than about the caller's syntax.
+/// The image media type this read serves as raw bytes, or `None` for every other type.
 fn served_image_type(media_type: &str) -> Option<&'static str> {
     ["image/png", "image/jpeg", "image/webp"]
         .into_iter()
@@ -5110,6 +5108,9 @@ fn image_response(media_type: &'static str, bytes: Vec<u8>) -> Response {
         })
 }
 
+/// One refusal shape for every way this read can decline, all of them 409: the request was
+/// well-formed and the server understood it, and what it could not do is a fact about this
+/// server's configuration or this evidence's state rather than about the caller's syntax.
 fn evidence_refusal(message: &str) -> Response {
     respond(
         StatusCode::CONFLICT,

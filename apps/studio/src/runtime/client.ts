@@ -1782,7 +1782,7 @@ export class RuntimeClient {
   async signal(
     executionId: string,
     message: string,
-    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; kind?: "operator_note" | "native_persona_linked" } = {},
+    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; kind?: "operator_note" | "native_persona_linked" | "actor_alias" | "owner_refusal" } = {},
   ): Promise<MutationEvidence> {
     const id = checkedId(executionId, "executionId");
     if (typeof message !== "string" || message.trim().length === 0) {
@@ -1793,11 +1793,16 @@ export class RuntimeClient {
     }
     const actor = options.actor ?? OPERATOR_ACTOR;
     const kind = options.kind ?? "operator_note";
-    if (kind !== "operator_note" && kind !== "native_persona_linked") {
+    if (kind !== "operator_note" && kind !== "native_persona_linked" && kind !== "actor_alias" && kind !== "owner_refusal") {
       throw new RuntimeError("The signal kind is unsupported.", 0, []);
     }
     if (kind === "native_persona_linked" && actor.type !== "owner") {
       throw new RuntimeError("Native persona links must be recorded by the owner.", 0, []);
+    }
+    // A bot's display name and a refusal are the owner's words about the room; an agent that could
+    // record either would rename its peers or close questions it was asked (spec 4.1, 4.3).
+    if ((kind === "actor_alias" || kind === "owner_refusal") && actor.type !== "owner") {
+      throw new RuntimeError("Aliases and refusals must be recorded by the owner.", 0, []);
     }
     // THE BODY IS PART OF THE IDENTITY. The Runtime folds the canonical request body into its
     // derived idempotency key, so a retry under the same key must send byte-identical bytes -

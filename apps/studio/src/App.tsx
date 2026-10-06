@@ -71,7 +71,7 @@ import {
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, resetPanelCaches, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, resetPanelCaches, useActorAliases, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
@@ -83,7 +83,7 @@ import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { ChatColumn } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
-import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
+import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
@@ -98,7 +98,6 @@ import { actionLegality, hasEnded } from "./components/legality";
 import { loadProjectName, loadRemovedRuns, saveProjectName, saveRemovedRuns, validProjectName } from "./studio-preferences";
 
 /** Phase 2 fills this from actor_alias records; until then no alias exists. */
-const NO_ALIASES: Record<string, string> = {};
 
 function rawSha256(digest: string): string {
   return digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
@@ -1725,6 +1724,7 @@ export default function App({
       to: string | null = null,
       via: string = "run",
       replyTo: string | null = null,
+      kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
     ): Promise<boolean> => {
       const client = clientRef.current;
       if (!client || selected === "") return false;
@@ -1746,6 +1746,7 @@ export default function App({
           // The receipt the ledger settles by. Without it, an answer sent through the banner's
           // own button never retired the question it answered.
           ...(replyTo === null ? {} : { replyTo }),
+          ...(kind === "operator_note" ? {} : { kind }),
         });
         if (evidence.result === "refused") {
           fail(evidence.diagnostics[0]?.message ?? "The Runtime refused the message.");
@@ -1772,6 +1773,23 @@ export default function App({
     [loadExecution, selected],
   );
 
+  /** Spec 4.1: the owner names a bot. Recorded, so every Studio on this run reads the same name. */
+  const nameBot = useCallback(
+    (actorId: string, displayName: string) =>
+      say(JSON.stringify({ protocol: "graphhelm-actor-alias-v1", displayName }), actorId, "chat", null, "actor_alias"),
+    [say],
+  );
+  /** Spec 4.3: a final no to one question. Its replyTo retires the question like an answer does. */
+  const refuse = useCallback(
+    async (item: QuestionItem, reason?: string): Promise<boolean> => {
+      if (item.signalId === null) return false;
+      const trimmed = reason?.trim();
+      return say(JSON.stringify({ protocol: "graphhelm-owner-refusal-v1", ...(trimmed ? { reason: trimmed } : {}) }),
+        item.asker, "chat", item.signalId, "owner_refusal");
+    },
+    [say],
+  );
+
   const linkNativePersona = useCallback(async (nodeId: string, chat: NativeChatSummary, charter: string) => {
     const client = clientRef.current;
     const executionId = selected;
@@ -1795,6 +1813,7 @@ export default function App({
   // Derived AT THIS LEVEL because the crew lives on the canvas, not inside the chat panel.
   const personas = usePersonas(eventList, selected === "" ? undefined : selected, openEvidence);
   const nativePersonaLinks = useNativePersonaLinks(eventList, selected === "" ? undefined : selected, openEvidence);
+  const actorAliases = useActorAliases(eventList, selected === "" ? undefined : selected, openEvidence);
   const mainChatPersonas = useMemo(() => Object.values(nativePersonaLinks), [nativePersonaLinks]);
   // THE CONVERSATIONS, SORTED BY WHO IS TALKING TO WHOM. Three kinds, kept apart because reading
   // them mixed is what made the room illegible: the ROOM (said to nobody in particular - you are
@@ -1943,9 +1962,9 @@ export default function App({
     pendingDraftIds: durableProposals.map((proposal) => proposal.draftId), nodeNames, operatorId: OPERATOR_ACTOR.id }),
     [status, stale, eventList, envelopes, nativeRequests, durableProposals, nodeNames]);
   const waitingAskers = useMemo(() => new Set(needs.items.flatMap((item) => item.kind === "question" ? [item.asker] : [])), [needs]);
-  const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: NO_ALIASES, model,
+  const team = useMemo(() => teamModel({ events: eventList, envelopes, personas, nativeLinks: nativePersonaLinks, aliases: actorAliases, model,
     claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null, waitingAskers, now: clock }),
-    [eventList, envelopes, personas, nativePersonaLinks, model, claudeTaskRead, selected, waitingAskers, clock]);
+    [eventList, envelopes, personas, nativePersonaLinks, actorAliases, model, claudeTaskRead, selected, waitingAskers, clock]);
   const links = useMemo(() => teamLinks(eventList, envelopes, team.bots, clock), [eventList, envelopes, team, clock]);
   const botNames = useMemo(() => namesOf(team.bots), [team]);
   const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id), [workMessages, team]);
@@ -2625,6 +2644,7 @@ export default function App({
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
                 onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
                 onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onRefuse={(item) => void refuse(item)}
                 onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
                 stepActions={stepActions} />}
               jev={{ suggestions: currentReplySuggestions?.state === "ready" ? currentReplySuggestions.suggestions : [], loading: replyLoading, issue: currentReplyIssue }}
@@ -2745,6 +2765,7 @@ export default function App({
                 links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}
                 onSelectBot={(key) => { setThread(`direct:${key}`); setAnswering(null); }}
                 onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })}
+                onNameBot={nameBot}
                 onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
                 onOpenTask={(bot, task) => task.nodeId !== null ? setFocus({ kind: "node", id: task.nodeId }) : openRecords([task.sequence])}
                 graphFileOpen={graphFileOpen} onGraphFileOpenChange={setGraphFileOpen}

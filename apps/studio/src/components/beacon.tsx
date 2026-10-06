@@ -29,6 +29,8 @@ export interface QuestionCardsProps {
   busy: boolean;
   onChoose: (item: QuestionItem, choice: string) => void;
   onAnswer: (item: QuestionItem) => void;
+  /** Spec 4.3: a final no. Absent hides the button. */
+  onRefuse?: (item: QuestionItem) => void;
   onCheck: (item: NativeRequestItem) => void;
   stepActions: (item: StepItem | DraftItem) => ReactNode;
 }
@@ -39,7 +41,7 @@ function stepSentence(item: StepItem | DraftItem): string {
   return item.reason === "untriaged_interruption" ? `${item.name} was interrupted and awaits triage.` : `${item.name} is blocked.`;
 }
 
-export function QuestionCards({ items, names, busy, onChoose, onAnswer, onCheck, stepActions }: QuestionCardsProps) {
+export function QuestionCards({ items, names, busy, onChoose, onAnswer, onRefuse, onCheck, stepActions }: QuestionCardsProps) {
   if (items.length === 0) return null;
   return (
     <section className="question-cards" id={NEEDS_YOU_ID} aria-label="Needs you" tabIndex={-1}>
@@ -55,6 +57,7 @@ export function QuestionCards({ items, names, busy, onChoose, onAnswer, onCheck,
                   <button key={choice} type="button" disabled={busy} onClick={() => onChoose(item, choice)}>{choice}</button>
                 ))}
                 <button type="button" className="question-answer" disabled={busy} onClick={() => onAnswer(item)}>Answer</button>
+                {onRefuse && <button type="button" className="question-refuse" disabled={busy || item.signalId === null} onClick={() => onRefuse(item)}>Refuse</button>}
               </div>
             </article>
           );

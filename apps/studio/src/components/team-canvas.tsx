@@ -25,6 +25,24 @@ export interface TeamCanvasProps {
   graphFileRow: ReactNode;
   graphFileOpen: boolean;
   onGraphFileOpenChange: (open: boolean) => void;
+  /** Spec 4.1: the owner names an unnamed bot. Absent hides the control. */
+  onNameBot?: (actorId: string, displayName: string) => void | Promise<unknown>;
+}
+
+function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayName: string) => void | Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  if (bot.actorId === null) return null;
+  const actorId = bot.actorId;
+  if (!open) return <button type="button" className="team-bot-name-it" onClick={() => setOpen(true)}>Name this bot</button>;
+  const name = value.trim();
+  return (
+    <form className="team-bot-name-form" onSubmit={(event) => { event.preventDefault(); if (name.length === 0) return; void onSave(actorId, name); setOpen(false); setValue(""); }}>
+      <input aria-label={`Name for ${bot.name}`} maxLength={80} value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
+      <button type="submit" disabled={name.length === 0}>Save</button>
+      <button type="button" onClick={() => { setOpen(false); setValue(""); }}>Cancel</button>
+    </form>
+  );
 }
 
 const BOT_W = 220;
@@ -157,6 +175,7 @@ export function TeamCanvas(props: TeamCanvasProps) {
                 {bot.shared && <p className="team-bot-note">Shared actor: its records cannot be attributed to one chat.</p>}
                 <p className="team-bot-when">{bot.lastRecordAt === null ? "no record" : `last record ${ago(bot.lastRecordAt)}`}</p>
                 <button type="button" className="team-bot-details" onClick={() => props.onOpenBotDetails(bot.key)}>Details</button>
+                {props.onNameBot && bot.actorId !== null && bot.role === null && !bot.native && !bot.shared && <NameBot bot={bot} onSave={props.onNameBot} />}
                 {bot.tasks.length > 0 && (
                   <ol className="team-tasks" aria-label={`${bot.name} tasks`}>
                     {bot.tasks.map((task) => (

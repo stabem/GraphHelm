@@ -47,11 +47,30 @@ describe("needsYou", () => {
     expect(keys).toEqual(["question:seq-6", "question:seq-5"]);
   });
 
+  it("closes a question the owner refused, so the beacon count drops", () => {
+    expect(needsYou(base({ events: question, envelopes: asked })).state).toEqual({ kind: "lit", count: 1 });
+    const refused = [...question, { ...signal(6, "studio-operator", "sig-r"), payload: { kind: "owner_refusal", signalId: "sig-r" } }];
+    const result = needsYou(base({ events: refused, envelopes: { ...asked,
+      6: { to: "kit-3", replyTo: "sig-q", text: JSON.stringify({ protocol: "graphhelm-owner-refusal-v1" }) } } }));
+    expect(result.items).toEqual([]);
+    expect(result.state).toEqual({ kind: "dark" });
+  });
+
   it("closes a question only when the owner replies to it", () => {
     const ownerReply = [...question, signal(6, "studio-operator", "sig-a")];
     expect(needsYou(base({ events: ownerReply, envelopes: { ...asked, 6: { to: "kit-3", replyTo: "sig-q", text: "Wait" } } })).items).toEqual([]);
     const agentReply = [...question, signal(6, "kit-1", "sig-b")];
     expect(needsYou(base({ events: agentReply, envelopes: { ...asked, 6: { to: "kit-3", replyTo: "sig-q", text: "merge it" } } })).items).toHaveLength(1);
+  });
+
+  it("closes a question the owner refused and the beacon count drops", () => {
+    const two = [signal(4, "kit-2", "sig-p"), ...question];
+    const envelopes: EnvelopeRecord = { ...asked, 4: { to: "studio-operator", replyTo: null, text: "Deploy?" } };
+    expect(needsYou(base({ events: two, envelopes })).state).toEqual({ kind: "lit", count: 2 });
+    const refusal: RuntimeEvent = { ...signal(6, "studio-operator", "sig-r"), payload: { kind: "owner_refusal", signalId: "sig-r" } };
+    const after = needsYou(base({ events: [...two, refusal], envelopes: { ...envelopes, 6: { to: "kit-3", replyTo: "sig-q", text: JSON.stringify({ protocol: "graphhelm-owner-refusal-v1" }) } } }));
+    expect(after.state).toEqual({ kind: "lit", count: 1 });
+    expect(after.items.map((item) => item.key)).toEqual(["question:sig-p"]);
   });
 
   it("is unknown, never dark, when the connection is stale or the status is missing", () => {

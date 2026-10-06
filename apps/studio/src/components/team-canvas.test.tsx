@@ -49,6 +49,23 @@ describe("TeamCanvas", () => {
     expect(within(screen.getByRole("list", { name: "Who talks to whom" })).getAllByRole("listitem")).toHaveLength(2);
   });
 
+  it("offers Name this bot only for an unnamed, unchartered, non-native, unshared actor and saves the name", async () => {
+    const onNameBot = vi.fn();
+    render(<TeamCanvas {...props({ onNameBot, bots: [bot("kit-1", "working"), bot("lead", "working", { role: "Lead" }), bot("chat", "working", { native: true }),
+      bot("codex", "working", { shared: true }), bot("seat", "working", { actorId: null })] })} />);
+    expect(screen.getAllByRole("button", { name: "Name this bot" })).toHaveLength(1);
+    const card = screen.getByTestId("team-bot-kit-1");
+    await userEvent.click(within(card).getByRole("button", { name: "Name this bot" }));
+    await userEvent.type(within(card).getByRole("textbox", { name: "Name for kit-1" }), "  Cart builder ");
+    await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+    expect(onNameBot).toHaveBeenCalledWith("kit-1", "Cart builder");
+  });
+
+  it("hides Name this bot without a handler", () => {
+    render(<TeamCanvas {...props()} />);
+    expect(screen.queryByRole("button", { name: "Name this bot" })).toBeNull();
+  });
+
   it("folds other recorders into one expandable line", () => {
     render(<TeamCanvas {...props({ otherRecorders: [{ actorId: "merge-1", count: 2, lastRecordAt: null }, { actorId: "merge-2", count: 1, lastRecordAt: null }] })} />);
     expect(screen.getByText("2 other recorders")).toBeInTheDocument();
@@ -84,5 +101,17 @@ describe("TeamCanvas", () => {
     fireEvent.pointerMove(screen.getByLabelText("Team sheet"), { clientX: 25, clientY: 15, pointerId: 1 });
     expect(world.style.transform).not.toBe(before);
     expect(world.style.transform).toContain("translate(25px, 15px)");
+  });
+
+  it("offers Name this bot only for an unnamed, unshared, non-native bot and saves the trimmed name", async () => {
+    const onNameBot = vi.fn();
+    render(<TeamCanvas {...props({ onNameBot, bots: [bot("anon", "working"), bot("roled", "working", { role: "tester" }),
+      bot("native", "working", { native: true }), bot("shared", "working", { shared: true }), bot("nobody", "working", { actorId: null })] })} />);
+    const buttons = screen.getAllByRole("button", { name: "Name this bot" });
+    expect(buttons).toHaveLength(1);
+    await userEvent.click(buttons[0]);
+    await userEvent.type(screen.getByLabelText("Name for anon"), "  Cart builder  ");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onNameBot).toHaveBeenCalledWith("anon", "Cart builder");
   });
 });

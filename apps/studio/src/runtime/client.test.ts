@@ -399,6 +399,14 @@ describe("verified mutations", () => {
     expect(Object.keys(unsent)).not.toContain("to");
     expect(Object.keys(unsent)).not.toContain("replyTo");
     expect(unsent.type).toBe("operator_note");
+
+    for (const kind of ["actor_alias", "owner_refusal"] as const) {
+      const owned = scriptedFetch(routes());
+      await new RuntimeClient("tok", { fetch: owned.fetchImpl }).signal("demo", "{}", { to: "kit-1", replyTo: "sig-q", kind });
+      const body = (owned.calls.find((call) => call.method === "POST")?.body as { signal: Record<string, unknown> }).signal;
+      expect(body.type).toBe(kind);
+      expect(body.source).toMatchObject({ type: "user" });
+    }
   });
 
   it("does not expose immediate pause in the client type", () => {
@@ -408,6 +416,15 @@ describe("verified mutations", () => {
     expect(forbidden).toEqual({ mode: "immediate" });
   });
 
+  it("accepts actor_alias and owner_refusal only from the owner", async () => {
+    for (const kind of ["actor_alias", "owner_refusal"] as const) {
+      const scripted = scriptedFetch([]);
+      const client = new RuntimeClient("tok", { fetch: scripted.fetchImpl });
+      await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
+      expect(scripted.calls).toHaveLength(0);
+    }
+  });
+
   it("rejects native persona links from non-owner callers before network I/O", async () => {
     const scripted = scriptedFetch([]);
     const client = new RuntimeClient("tok", { fetch: scripted.fetchImpl });
@@ -415,6 +432,9 @@ describe("verified mutations", () => {
       kind: "native_persona_linked",
       actor: { id: "agent-1", type: "agent" },
     })).rejects.toThrow(/must be recorded by the owner/i);
+    for (const kind of ["actor_alias", "owner_refusal"] as const) {
+      await expect(client.signal("demo", "{}", { kind, actor: { id: "agent-1", type: "agent" } })).rejects.toThrow(/must be recorded by the owner/i);
+    }
     expect(scripted.calls).toHaveLength(0);
   });
 

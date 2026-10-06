@@ -48,6 +48,20 @@ describe("QuestionCards", () => {
     expect(within(card).queryByRole("button", { name: /refuse/i })).toBeNull();
   });
 
+  it("puts Refuse beside Answer and calls onRefuse; disabled without a signal id or while busy", async () => {
+    const h = handlers();
+    const onRefuse = vi.fn();
+    const { rerender } = render(<QuestionCards items={[question]} names={{}} busy={false} onRefuse={onRefuse} {...h} />);
+    const card = screen.getByRole("article", { name: "kit-3 asks" });
+    expect(within(card).getAllByRole("button").map((button) => button.textContent)).toEqual(["Wait", "Merge", "Answer", "Refuse"]);
+    await userEvent.click(within(card).getByRole("button", { name: "Refuse" }));
+    expect(onRefuse).toHaveBeenCalledWith(question);
+    rerender(<QuestionCards items={[{ ...question, signalId: null }]} names={{}} busy={false} onRefuse={onRefuse} {...h} />);
+    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
+    rerender(<QuestionCards items={[question]} names={{}} busy onRefuse={onRefuse} {...h} />);
+    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
+  });
+
   it("says an unconfirmed native request in plain words and keeps transport ids in details", async () => {
     const h = handlers();
     const item: NeedsYouItem = { kind: "native_request", key: "native:r1", requestId: "r1", threadId: "t-1", nodeId: "start", title: "loja kit 2", state: "unobserved", detail: "Send outcome is unobserved." };
@@ -68,5 +82,17 @@ describe("QuestionCards", () => {
   it("renders nothing when nothing needs you", () => {
     const { container } = render(<QuestionCards items={[]} names={{}} busy={false} {...handlers()} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("offers Refuse when wired, disabled while busy or without a signal id", async () => {
+    const h = handlers();
+    const onRefuse = vi.fn();
+    const { rerender } = render(<QuestionCards items={[question]} names={{}} busy={false} {...h} onRefuse={onRefuse} />);
+    await userEvent.click(screen.getByRole("button", { name: "Refuse" }));
+    expect(onRefuse).toHaveBeenCalledWith(question);
+    rerender(<QuestionCards items={[question]} names={{}} busy={true} {...h} onRefuse={onRefuse} />);
+    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
+    rerender(<QuestionCards items={[{ ...question, signalId: null }]} names={{}} busy={false} {...h} onRefuse={onRefuse} />);
+    expect(screen.getByRole("button", { name: "Refuse" })).toBeDisabled();
   });
 });

@@ -866,6 +866,45 @@ export function useNativePersonaLinks(
 
 const NO_NATIVE_PERSONAS: Record<string, { chat: NativeChatSummary; charter: string; nodeId: string }> = {};
 
+/** Display names the owner gave to bots (spec 4.1): an owner `actor_alias` signal whose sealed
+ * envelope names the bot in `to` and carries `graphhelm-actor-alias-v1`. Newest sequence wins. */
+export function useActorAliases(
+  events: RuntimeEvent[],
+  executionId: string | undefined,
+  openEvidence: ((executionId: string, evidenceId: string) => Promise<EvidenceContent>) | undefined,
+): Record<string, string> {
+  const [aliases, setAliases] = useState<{ executionId?: string; entries: Record<string, string> }>({ entries: {} });
+  useEffect(() => {
+    if (executionId === undefined || openEvidence === undefined) return;
+    let live = true;
+    const records = events.filter((event) => event.kind === "signal_recorded" && event.actorType === "owner" &&
+      (event.payload as { kind?: string } | null)?.kind === "actor_alias" && event.evidenceRefs.length > 0).sort((a, b) => a.sequence - b.sequence);
+    void (async () => {
+      const entries: Record<string, string> = {};
+      for (const record of records) {
+        try {
+          const sealed = await openSealed(executionId, record.evidenceRefs[0], openEvidence);
+          const envelope = JSON.parse(sealed.content) as { to?: unknown; description?: unknown; source?: { type?: string } };
+          if (envelope.source?.type !== "user" || typeof envelope.description !== "string") continue;
+          if (typeof envelope.to !== "string" || envelope.to.length === 0 || envelope.to === "codex") continue;
+          const value = JSON.parse(envelope.description) as { protocol?: unknown; displayName?: unknown };
+          if (value.protocol !== "graphhelm-actor-alias-v1" || typeof value.displayName !== "string") continue;
+          const name = value.displayName.trim();
+          if (name.length === 0 || name.length > 80) continue;
+          entries[envelope.to] = name; // ascending order: the newest record overwrites
+        } catch {
+          // An unreadable alias names nobody.
+        }
+      }
+      if (live) setAliases((previous) => previous.executionId === executionId && JSON.stringify(previous.entries) === JSON.stringify(entries) ? previous : { executionId, entries });
+    })();
+    return () => { live = false; };
+  }, [events, executionId, openEvidence]);
+  return aliases.executionId === executionId ? aliases.entries : NO_ALIASES;
+}
+
+const NO_ALIASES: Record<string, string> = {};
+
 export function useEnvelopes(
   events: RuntimeEvent[],
   executionId: string | undefined,

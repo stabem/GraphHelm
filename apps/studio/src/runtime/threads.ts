@@ -3,6 +3,7 @@
  * agents recorded to each other through the Runtime, not native chats talking directly.
  */
 import type { EnvelopeRecord } from "../graph/ledger";
+import { SCREEN_CAPTURE_PROTOCOL, TRANSITION_PROTOCOL } from "./journeys";
 import { botKeyOf, firstLine, type Bot } from "./team";
 import type { RuntimeEvent } from "./types";
 import type { WorkMessage } from "./work-conversation";
@@ -70,8 +71,28 @@ export function sealedNotesPending(events: RuntimeEvent[], envelopes: EnvelopeRe
 export interface ActivityItem { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null }
 export interface ActivityLine { sequence: number; text: string; at: string | null }
 
-export function describeActivity(item: ActivityItem, names: Record<string, string>, envelopes: EnvelopeRecord, operatorId: string): ActivityLine {
+/** A journey record (spec 6.2) said in words: its envelope text is a JSON document, never prose. */
+function journeyWords(text: string, stepTitle: (contractId: string, stepId: string) => string): string | null {
+  if (!text.startsWith("{")) return null;
+  let doc: unknown;
+  try { doc = JSON.parse(text); } catch { return null; }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return null;
+  const d = doc as Record<string, unknown>;
+  const str = (value: unknown) => typeof value === "string" && value.length > 0 ? value : null;
+  const contract = str(d.contractId);
+  if (contract === null) return null;
+  if (d.protocol === SCREEN_CAPTURE_PROTOCOL && str(d.stepId) !== null) return `captured ${stepTitle(contract, d.stepId as string)}`;
+  if (d.protocol === TRANSITION_PROTOCOL && str(d.fromStepId) !== null && str(d.toStepId) !== null) {
+    return `walked ${stepTitle(contract, d.fromStepId as string)} → ${stepTitle(contract, d.toStepId as string)}`;
+  }
+  return null;
+}
+
+export function describeActivity(item: ActivityItem, names: Record<string, string>, envelopes: EnvelopeRecord, operatorId: string,
+  stepTitle: (contractId: string, stepId: string) => string = (_contractId, stepId) => stepId): ActivityLine {
   const who = item.actorId === operatorId ? "You" : names[item.actorId ?? ""] ?? item.actorId ?? "Someone";
+  const journey = journeyWords(item.text ?? "", stepTitle);
+  if (journey !== null) return { sequence: item.sequence, text: `${who} ${journey}`, at: item.occurredAt };
   const words = firstLine(item.text ?? "", 80);
   const to = envelopes[item.sequence]?.to ?? null;
   const text = words === ""

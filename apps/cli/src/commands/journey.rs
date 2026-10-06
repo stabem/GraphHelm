@@ -27,12 +27,22 @@ const MAX_VIEWPORT: u32 = 16384;
 pub fn run(args: &JourneyArgs) -> Outcome {
     match &args.command {
         JourneyCommand::Capture(capture) => {
-            execution::finish(CAPTURE_COMMAND, run_capture(capture), |value| value)
+            execution::finish(CAPTURE_COMMAND, run_capture(capture), recorded)
         }
         JourneyCommand::Walked(walked) => {
-            execution::finish(WALKED_COMMAND, run_walked(walked), |value| value)
+            execution::finish(WALKED_COMMAND, run_walked(walked), recorded)
         }
     }
+}
+
+/// #319: a journey record is evidence and never proposes a graph change, so the shared signal
+/// reply always carries the Governor's `decision: "rejected"` with `signal_not_actionable`
+/// (`core/governor/src/inflight.rs` `decide_mutation`). That is the normal verdict for every
+/// evidence-only signal, not a refusal: the record is appended and folds. `outcome` says so in
+/// plain words; the Governor's fields stay as they are.
+fn recorded(mut value: serde_json::Value) -> serde_json::Value {
+    value["outcome"] = "recorded".into();
+    value
 }
 
 fn id(value: &str, pointer: &str) -> Result<(), Failure> {

@@ -2692,12 +2692,12 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .chat-column { flex: 0 0 340px; width: 340px; }
 .right-panel { flex: 0 0 280px; width: 280px; }
 .journey-empty { display: grid; place-items: center; height: 100%; color: var(--dim); }
-.journey-canvas { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 12px; overflow: auto; }
+.journey-canvas { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 12px; overflow-x: hidden; overflow-y: auto; }
 .journey-picker { font-size: 13px; color: var(--dim); }
 .journey-title { margin: 0; font-size: 15px; }
-.journey-steps { list-style: none; margin: 0; padding: 0; display: flex; align-items: flex-start; gap: 0; overflow-x: auto; }
-.journey-step { display: flex; align-items: center; }
-.journey-card { position: relative; display: flex; flex-direction: column; gap: 6px; width: 200px; padding: 10px; text-align: left; border: 1px solid var(--edge); border-radius: var(--r); background: var(--surface); color: inherit; }
+.journey-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: flex-start; row-gap: 12px; min-width: 0; }
+.journey-step { display: flex; align-items: center; flex: 1 1 200px; min-width: 0; max-width: 264px; }
+.journey-card { position: relative; display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; padding: 10px; text-align: left; border: 1px solid var(--edge); border-radius: var(--r); background: var(--surface); color: inherit; }
 .journey-card[data-state="stale"] { opacity: 0.55; filter: grayscale(0.8); border-color: var(--danger); }
 .journey-card[data-state="unknown"] { border-style: dashed; border-color: var(--faint); }
 .journey-card[data-state="missing"] { border-style: dashed; }
@@ -2709,7 +2709,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-crack { position: absolute; top: 8px; right: 8px; width: 16px; height: 16px; background: linear-gradient(135deg, transparent 45%, var(--danger) 45%, var(--danger) 55%, transparent 55%); }
 .journey-file { font-family: var(--mono); }
 .journey-unknown-badge { align-self: flex-start; padding: 2px 8px; border-radius: var(--r-pill); font-size: 11px; background: var(--raised); color: var(--dim); }
-.journey-arrow { display: flex; flex-direction: column; align-items: center; width: 64px; }
+.journey-arrow { display: flex; flex-direction: column; align-items: center; flex: 0 0 56px; }
 .journey-arrow-line { width: 100%; border-top: 2px solid var(--text); }
 .journey-arrow[data-state="never_walked"] .journey-arrow-line { border-top-style: dashed; border-color: var(--faint); }
 .journey-arrow[data-state="stale"] .journey-arrow-line { border-top-style: dashed; border-color: var(--danger); }
@@ -2719,6 +2719,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-full { max-width: 100%; border-radius: var(--r-sm); }
 .journey-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .journey-pair figure { margin: 0; }
+.journey-files { margin: 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .journey-promises { margin: 0; padding-left: 18px; }
 .right-journeys, .right-pairs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .right-pairs button { width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font-size: 13px; }

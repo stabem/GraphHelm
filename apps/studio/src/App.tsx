@@ -2009,7 +2009,11 @@ export default function App({
   }, [thread, threads]);
   const unread = useMemo(() => unreadCounts(threads, threadOpened), [threads, threadOpened]);
   const openingCount = useMemo(() => sealedNotesPending(eventList, envelopes), [eventList, envelopes]);
-  const activityLines = useMemo(() => recentActivity.map((item) => describeActivity(item, botNames, envelopes, OPERATOR_ACTOR.id)), [recentActivity, botNames, envelopes]);
+  const activityLines = useMemo(() => {
+    const stepTitle = (contractId: string, stepId: string) => journeysView?.journeys.find((journey) => journey.contractId === contractId)
+      ?.steps.find((step) => step.stepId === stepId)?.screen?.title ?? stepId;
+    return recentActivity.map((item) => describeActivity(item, botNames, envelopes, OPERATOR_ACTOR.id, stepTitle));
+  }, [recentActivity, botNames, envelopes, journeysView]);
   const assignedNodeIds = useMemo(() => new Set(team.bots.flatMap((bot) => bot.tasks.flatMap((task) => task.nodeId === null ? [] : [task.nodeId]))), [team]);
   const unassignedSteps = useMemo(() => model.nodes.filter((node) => !assignedNodeIds.has(node.id)), [model, assignedNodeIds]);
   const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);

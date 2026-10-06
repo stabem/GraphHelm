@@ -60,6 +60,7 @@ fn renderer_for(command: &str) -> Option<fn(&Value, Palette) -> String> {
         "gateway.setup" => Some(setup),
         "gateway.probe" => Some(probe),
         "init" => Some(init),
+        "journey.capture" | "journey.walked" => Some(journey_record),
         "setup" | "restore" => Some(adoption),
         _ => None,
     }
@@ -320,6 +321,28 @@ fn probe(data: &Value, palette: Palette) -> String {
     out
 }
 
+/// `journey capture` / `journey walked` (#319): the record was appended. The Governor's
+/// `rejected` / `signal_not_actionable` in the same envelope only says an evidence record cannot
+/// propose a graph change, so the person is told that in words instead of seeing "rejected".
+fn journey_record(data: &Value, palette: Palette) -> String {
+    let mut out = format!(
+        "{} {}\n\n",
+        palette.name(text(&data["kind"])),
+        palette.good("recorded.")
+    );
+    let _ = writeln!(out, "{}", field("Signal", text(&data["signalId"]), palette));
+    let _ = writeln!(
+        out,
+        "{}",
+        field("Execution", text(&data["executionId"]), palette)
+    );
+    out.push_str(
+        "\nEvidence only: it proposes no graph change, so the Governor's decision field reads \
+         \"rejected\" (signal_not_actionable). That is the normal answer for a journey record.\n",
+    );
+    out
+}
+
 /// `init`. What the project now has, then the commands that take the operator from an empty
 /// directory to a running execution.
 fn init(data: &Value, palette: Palette) -> String {
@@ -407,6 +430,28 @@ mod tests {
             command,
             data: Some(data),
             diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_journey_record_reads_as_recorded_not_as_rejected() {
+        for command in ["journey.capture", "journey.walked"] {
+            let rendered = render(
+                &success(
+                    command,
+                    json!({"executionId": "run-1", "signalId": "sig-1",
+                        "kind": "jpd.screen_captured", "decision": "rejected",
+                        "rejectionReason": "signal_not_actionable", "outcome": "recorded"}),
+                ),
+                Palette::plain(),
+            )
+            .unwrap();
+            assert!(
+                rendered.starts_with("jpd.screen_captured recorded."),
+                "{rendered}"
+            );
+            assert!(rendered.contains("sig-1"), "{rendered}");
+            assert!(rendered.contains("run-1"), "{rendered}");
         }
     }
 

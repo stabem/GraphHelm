@@ -61,4 +61,14 @@ describe("describeActivity", () => {
     expect(describeActivity({ sequence: 9, actorId: "kit-9", occurredAt: null, text: null }, names, {}, "studio-operator").text)
       .toBe("kit-9 recorded a sealed note");
   });
+
+  it("describes journey records in words, never as their JSON", () => {
+    const names = namesOf(BOTS);
+    const title = (contractId: string, stepId: string) => ({ "kit:cart": "Cart", "kit:home": "Home", "kit:kit": "Kit page" } as Record<string, string>)[`${contractId}:${stepId}`] ?? stepId;
+    const capture = JSON.stringify({ protocol: "graphhelm-screen-capture-v1", contractId: "kit", stepId: "cart", revision: "a".repeat(40), dirty: false, viewport: { width: 1, height: 1 }, observer: "kit-1" });
+    const walked = JSON.stringify({ protocol: "graphhelm-transition-walked-v1", contractId: "kit", fromStepId: "home", toStepId: "kit", revision: "a".repeat(40), observer: "kit-1", fromCaptureId: "a", toCaptureId: "b" });
+    expect(describeActivity({ sequence: 1, actorId: "kit-1", occurredAt: null, text: capture }, names, {}, "studio-operator", title).text).toBe("loja kit 1 captured Cart");
+    expect(describeActivity({ sequence: 2, actorId: "kit-1", occurredAt: null, text: walked }, names, {}, "studio-operator", title).text).toBe("loja kit 1 walked Home → Kit page");
+    expect(describeActivity({ sequence: 3, actorId: "kit-1", occurredAt: null, text: capture.replace("cart", "pay") }, names, {}, "studio-operator").text).toBe("loja kit 1 captured pay");
+  });
 });

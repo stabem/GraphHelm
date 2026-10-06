@@ -1,4 +1,5 @@
-//! `graphhelm journeys` (#315, spec §5.4): the proven-journey map of one run. Contracts come
+//! `graphhelm journeys` (#315, spec §5.4; project-wide since #332): the proven-journey map of the
+//! project, folded from every run in the store. Contracts come
 //! from `<project>/.graphhelm/journeys/<contractId>.json`; captures and walked transitions are
 //! ordinary signals (`jpd.screen_captured`, `jpd.transition_walked`) whose sealed envelopes are
 //! opened with the keyring; `graphhelm_execution::fold_journeys` does the rest.
@@ -71,7 +72,7 @@ fn valid_observer(observer: &str) -> bool {
 /// Ruling 2/3: a capture document, or `None` when it must be ignored.
 fn capture(
     signal_id: &str,
-    sequence: u64,
+    at: &Recorded<'_>,
     image_evidence_id: &str,
     text: &str,
 ) -> Option<CaptureRecord> {
@@ -91,7 +92,10 @@ fn capture(
             .is_none_or(|phase| phase == "before" || phase == "after");
     ok.then(|| CaptureRecord {
         signal_id: signal_id.to_owned(),
-        sequence,
+        execution_id: at.execution_id.to_owned(),
+        sequence: at.sequence,
+        recorded_at_ms: at.millis,
+        recorded_at: at.rfc3339.clone(),
         image_evidence_id: image_evidence_id.to_owned(),
         contract_id: doc.contract_id,
         step_id: doc.step_id,
@@ -107,7 +111,7 @@ fn capture(
     })
 }
 
-fn transition(signal_id: &str, sequence: u64, text: &str) -> Option<TransitionRecord> {
+fn transition(signal_id: &str, at: &Recorded<'_>, text: &str) -> Option<TransitionRecord> {
     let doc: TransitionDocument = serde_json::from_str(text).ok()?;
     let ok = doc.protocol == TRANSITION_PROTOCOL
         && valid_journey_id(&doc.contract_id)
@@ -119,7 +123,9 @@ fn transition(signal_id: &str, sequence: u64, text: &str) -> Option<TransitionRe
         && !doc.to_capture_id.is_empty();
     ok.then(|| TransitionRecord {
         signal_id: signal_id.to_owned(),
-        sequence,
+        execution_id: at.execution_id.to_owned(),
+        sequence: at.sequence,
+        recorded_at_ms: at.millis,
         contract_id: doc.contract_id,
         from_step_id: doc.from_step_id,
         to_step_id: doc.to_step_id,
@@ -136,74 +142,144 @@ pub(crate) struct Records {
     pub(crate) ignored: u64,
 }
 
-/// Replays the run and decodes every capture/transition signal. A record that cannot be opened
-/// or decoded is counted, never folded.
+/// Replays one run and decodes every capture/transition signal. A record that cannot be opened
+/// or decoded is counted, never folded. `graphhelm keel check --execution` reads this.
 pub(crate) fn records(
     events: &Path,
     execution: &str,
     keyring: &SignalKeyring,
 ) -> Result<Records, Failure> {
     let store = event_store(events).map_err(|e| execution::repository_failure(&e))?;
-    let (scope, _, history) = execution::resolve_stream(&store, Some(execution))?;
-    let opener = execution::signal::open_sealer(keyring)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|_| {
-            execution::execution_state("the evidence reader could not start", "/keyring")
-        })?;
-    let mut out = Records {
-        captures: Vec::new(),
-        transitions: Vec::new(),
-        ignored: 0,
-    };
-    for event in &history {
-        let EventKind::SignalRecorded(record) = &event.kind else {
-            continue;
-        };
-        let is_capture = record.kind == CAPTURE_KIND;
-        if !is_capture && record.kind != TRANSITION_KIND {
-            continue;
-        }
-        let signal_id = record.signal_id.as_str();
-        let expected_refs = if is_capture { 2 } else { 1 };
-        let envelope_id = format!("signal-{signal_id}");
-        let decoded = (|| {
-            if event.evidence_refs.len() != expected_refs
-                || event.evidence_refs[0].evidence_id().as_str() != envelope_id
-            {
-                return None;
-            }
-            let id = EvidenceId::parse(&envelope_id).ok()?;
-            let EvidenceRead::Available(sealed) = store.sealed_evidence(&scope, &id).ok()? else {
-                return None;
-            };
-            let plaintext = runtime.block_on(opener.open(scope.clone(), &sealed)).ok()?;
-            let value: serde_json::Value = plaintext
-                .expose(|bytes| serde_json::from_slice(bytes))
-                .ok()?;
-            let text = value.get("description")?.as_str()?.to_owned();
-            Some(text)
-        })();
-        let Some(text) = decoded else {
-            out.ignored += 1;
-            continue;
-        };
-        if is_capture {
-            let image = event.evidence_refs[1].evidence_id().as_str();
-            match capture(signal_id, event.sequence, image, &text) {
-                Some(record) => out.captures.push(record),
-                None => out.ignored += 1,
-            }
-        } else {
-            match transition(signal_id, event.sequence, &text) {
-                Some(record) => out.transitions.push(record),
-                None => out.ignored += 1,
-            }
-        }
+    let (scope, stream_id, history) = execution::resolve_stream(&store, Some(execution))?;
+    let mut out = empty();
+    let reader = Reader::new(keyring)?;
+    reader.decode(&store, &scope, &stream_id, &history, &mut out);
+    Ok(out)
+}
+
+/// #332: journeys are a project property. Every execution this Runtime's store can address is
+/// replayed and decoded into one set of records; the fold picks the newest capture per step.
+pub(crate) fn project_records(events: &Path, keyring: &SignalKeyring) -> Result<Records, Failure> {
+    let store = event_store(events).map_err(|e| execution::repository_failure(&e))?;
+    let mut streams = store
+        .list_streams()
+        .map_err(|e| execution::repository_failure(&e))?;
+    // The same rows `execution list` offers: only streams the rest of the API can address.
+    streams.retain(|stream| {
+        execution::addressable_scope(&stream.stream_id).is_ok_and(|scope| scope == stream.scope)
+    });
+    streams.sort_by(|left, right| left.stream_id.cmp(&right.stream_id));
+    let reader = Reader::new(keyring)?;
+    let mut out = empty();
+    for stream in streams {
+        let history = store
+            .read_replay_stream(&stream.scope, &stream.stream_id)
+            .map_err(|e| execution::repository_failure(&e))?;
+        reader.decode(&store, &stream.scope, &stream.stream_id, &history, &mut out);
     }
     Ok(out)
 }
 
+fn empty() -> Records {
+    Records {
+        captures: Vec::new(),
+        transitions: Vec::new(),
+        ignored: 0,
+    }
+}
+
+struct Reader {
+    opener: graphhelm_events::EvidenceProtector<graphhelm_sealed_key_provider::SealedKeyProvider>,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl Reader {
+    fn new(keyring: &SignalKeyring) -> Result<Self, Failure> {
+        let opener = execution::signal::open_sealer(keyring)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|_| {
+                execution::execution_state("the evidence reader could not start", "/keyring")
+            })?;
+        Ok(Self { opener, runtime })
+    }
+
+    fn decode(
+        &self,
+        store: &graphhelm_events::LocalEventRepository,
+        scope: &graphhelm_protocols::RepositoryScope,
+        execution_id: &str,
+        history: &[graphhelm_protocols::EventEnvelope],
+        out: &mut Records,
+    ) {
+        for event in history {
+            let EventKind::SignalRecorded(record) = &event.kind else {
+                continue;
+            };
+            let is_capture = record.kind == CAPTURE_KIND;
+            if !is_capture && record.kind != TRANSITION_KIND {
+                continue;
+            }
+            let signal_id = record.signal_id.as_str();
+            let expected_refs = if is_capture { 2 } else { 1 };
+            let envelope_id = format!("signal-{signal_id}");
+            let decoded = (|| {
+                if event.evidence_refs.len() != expected_refs
+                    || event.evidence_refs[0].evidence_id().as_str() != envelope_id
+                {
+                    return None;
+                }
+                let id = EvidenceId::parse(&envelope_id).ok()?;
+                let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, &id).ok()?
+                else {
+                    return None;
+                };
+                let plaintext = self
+                    .runtime
+                    .block_on(self.opener.open(scope.clone(), &sealed))
+                    .ok()?;
+                let value: serde_json::Value = plaintext
+                    .expose(|bytes| serde_json::from_slice(bytes))
+                    .ok()?;
+                let text = value.get("description")?.as_str()?.to_owned();
+                Some(text)
+            })();
+            let Some(text) = decoded else {
+                out.ignored += 1;
+                continue;
+            };
+            let at = Recorded {
+                execution_id,
+                sequence: event.sequence,
+                millis: event.occurred_at.as_datetime().timestamp_millis(),
+                rfc3339: event
+                    .occurred_at
+                    .as_datetime()
+                    .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+            };
+            if is_capture {
+                let image = event.evidence_refs[1].evidence_id().as_str();
+                match capture(signal_id, &at, image, &text) {
+                    Some(record) => out.captures.push(record),
+                    None => out.ignored += 1,
+                }
+            } else {
+                match transition(signal_id, &at, &text) {
+                    Some(record) => out.transitions.push(record),
+                    None => out.ignored += 1,
+                }
+            }
+        }
+    }
+}
+
+/// Where and when one signal was recorded.
+struct Recorded<'a> {
+    execution_id: &'a str,
+    sequence: u64,
+    millis: i64,
+    rfc3339: String,
+}
 pub(crate) fn contract_schemas() -> Option<&'static graphhelm_schema::OfflineSchemaSet> {
     static SCHEMAS: OnceLock<Option<graphhelm_schema::OfflineSchemaSet>> = OnceLock::new();
     SCHEMAS
@@ -342,14 +418,25 @@ fn contracts(project: &Path) -> (Vec<ContractInput>, Vec<serde_json::Value>) {
     (accepted, refused)
 }
 
-/// The shared read behind the CLI, `GET /v1/executions/{id}/journeys` and MCP `journeys`.
+/// The shared read behind the CLI, `GET /v1/journeys`, `GET /v1/executions/{id}/journeys` and
+/// MCP `journeys` (D-039). Journeys are a project property (#332): captures from every execution
+/// fold into one map, each capture naming the execution it came from. With `execution`, that
+/// execution must exist (the per-execution route keeps its addressing and refusals) and is echoed
+/// as `requestedExecution`; the map itself is the same project-wide one.
 pub(crate) fn read(
     events: &Path,
-    execution: &str,
+    execution: Option<&str>,
     project: &Path,
     keyring: &SignalKeyring,
 ) -> Result<serde_json::Value, Failure> {
-    let records = records(events, execution, keyring)?;
+    if let Some(execution) = execution {
+        let store = event_store(events).map_err(|e| execution::repository_failure(&e))?;
+        let (_, _, history) = execution::resolve_stream(&store, Some(execution))?;
+        if history.is_empty() {
+            return Err(execution::not_found());
+        }
+    }
+    let records = project_records(events, keyring)?;
     let (contracts, refused) = contracts(project);
     let view = fold_journeys(
         &contracts,
@@ -359,6 +446,10 @@ pub(crate) fn read(
     );
     let mut value =
         serde_json::to_value(view).expect("a view built from serializable fold types serializes");
+    value["scope"] = "project".into();
+    if let Some(execution) = execution {
+        value["requestedExecution"] = execution.into();
+    }
     value["refusedContracts"] = serde_json::Value::Array(refused);
     value["ignoredRecords"] = records.ignored.into();
     Ok(value)
@@ -366,7 +457,7 @@ pub(crate) fn read(
 
 pub fn run(
     events: &Path,
-    execution: &str,
+    execution: Option<&str>,
     project: &Path,
     keyring: &Path,
     key_id: &str,

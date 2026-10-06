@@ -87,12 +87,13 @@ const TOOLS: [ToolSpec; 33] = [
     },
     ToolSpec {
         name: "journeys",
-        description: "Read an execution's proven-journey map (GET /v1/executions/{executionId}/journeys): \
+        description: "Read the project's proven-journey map (GET /v1/journeys; with executionId, \
+                      GET /v1/executions/{executionId}/journeys, which must name an existing run): \
                       for every journey contract in the Runtime's project, each step with its \
-                      newest screen capture marked fresh, stale (naming the changed files) or \
-                      unknown (naming the cause), and the walked arrows between steps. Identical \
-                      on CLI, HTTP and MCP. Read-only.",
-        schema: execution_only_schema,
+                      newest screen capture from ANY run (naming the run it came from) marked \
+                      fresh, stale (naming the changed files) or unknown (naming the cause), and \
+                      the walked arrows between steps. Identical on CLI, HTTP and MCP. Read-only.",
+        schema: optional_execution_schema,
     },
     ToolSpec {
         name: "events",
@@ -406,6 +407,10 @@ fn topology_schema() -> serde_json::Value {
         }),
         &["file"],
     )
+}
+
+fn optional_execution_schema() -> serde_json::Value {
+    object_schema(serde_json::json!({"executionId": {"type": "string"}}), &[])
 }
 
 fn execution_only_schema() -> serde_json::Value {
@@ -1423,15 +1428,13 @@ pub(crate) fn call(
                 None,
             )
         }),
-        "journeys" => require(arguments, "executionId").map(|id| {
-            api.request(
-                "GET",
-                &url::segment_path(&["v1", "executions", id, "journeys"]),
-                None,
-                None,
-                None,
-            )
-        }),
+        "journeys" => {
+            let path = match str_arg(arguments, "executionId") {
+                Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),
+                None => url::segment_path(&["v1", "journeys"]),
+            };
+            Ok(api.request("GET", &path, None, None, None))
+        }
         "evidence" => require(arguments, "executionId").and_then(|id| {
             let evidence_id = require(arguments, "evidenceId")?;
             Ok(api.request(

@@ -1994,23 +1994,24 @@ export default function App({
     }
     return last;
   }, [eventList]);
-  const [journeysRead, setJourneysRead] = useState<{ executionId: string; view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
+  // Journeys are a project property (#332): one map folded from every run, read from
+  // `GET /v1/journeys` and kept across run switches. A run switch or a new jpd record re-reads it.
+  const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
-    if (client === null || selected === "") return undefined;
+    if (client === null) return undefined;
     let cancelled = false;
-    const run = selected;
-    Promise.resolve().then(() => client.journeys(run)).then((view) => {
-      if (!cancelled) setJourneysRead({ executionId: run, view, failed: false });
+    Promise.resolve().then(() => client.journeys()).then((view) => {
+      if (!cancelled) setJourneysRead({ view, failed: false });
     }, (reason: unknown) => {
       const failure = messageOf(reason, "");
-      if (!cancelled) setJourneysRead((prior) => prior !== null && prior.executionId === run ? { ...prior, failed: prior.view === null, failure } : { executionId: run, view: null, failed: true, failure });
+      if (!cancelled) setJourneysRead((prior) => prior !== null ? { ...prior, failed: prior.view === null, failure } : { view: null, failed: true, failure });
     });
     return () => { cancelled = true; };
   }, [selected, lastJpdSequence]);
-  const journeysView = journeysRead !== null && journeysRead.executionId === selected ? journeysRead.view : null;
-  const journeysFailure = journeysRead !== null && journeysRead.executionId === selected ? journeysRead.failure ?? null : null;
-  const journeysFailed = journeysRead !== null && journeysRead.executionId === selected && journeysRead.failed;
+  const journeysView = journeysRead?.view ?? null;
+  const journeysFailure = journeysRead?.failure ?? null;
+  const journeysFailed = journeysRead?.failed ?? false;
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
@@ -2827,7 +2828,8 @@ export default function App({
                   <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
             ) : (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
-                loadImage={(id) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(selected, id))}
+                loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
+                executionId={selected}
                 events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
                 detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail} />
             )}

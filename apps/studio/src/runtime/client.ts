@@ -1847,8 +1847,14 @@ export class RuntimeClient {
     );
   }
 
-  /** `GET /v1/executions/{id}/journeys` - the folded journey map (#316). */
-  async journeys(executionId: string): Promise<JourneysView> {
+  /**
+   * The folded journey map (#316). Journeys are a project property (#332): with no argument this
+   * is `GET /v1/journeys`; with an execution id, `GET /v1/executions/{id}/journeys` (same map).
+   */
+  async journeys(executionId?: string): Promise<JourneysView> {
+    if (executionId === undefined) {
+      return this.#request<JourneysView>({ method: "GET", path: "/v1/journeys", timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+    }
     const id = checkedId(executionId, "executionId");
     return this.#request<JourneysView>({
       method: "GET",

@@ -512,6 +512,26 @@ describe("live team layout", () => {
     await userEvent.click(tabs.getByRole("tab", { name: "Team" }));
     expect(layout).toHaveAttribute("data-mobile-tab", "team");
   });
+
+  it("shows a capture recorded in one run while another run is selected (#332)", async () => {
+    const capture = { signalId: "cap-cart", executionId: "demo-deploy", sequence: 9, recordedAt: "2026-08-27T12:00:00Z", imageEvidenceId: "img-cart",
+      revision: "abcdef1234567", dirty: false, viewport: { width: 800, height: 600 }, observer: "kit-1", freshness: "fresh", changedFiles: [] };
+    const view = { head: "abc", journeys: [{ contractId: "checkout", title: "Checkout", arrows: [],
+      steps: [{ stepId: "cart", screen: { screenId: "cart", title: "Cart", scopePaths: ["src/cart"] }, capture, promises: [] }] }] };
+    const journeys = vi.fn(async (executionId?: string) => (executionId === undefined ? view : { head: "abc", journeys: [] }));
+    const readImage = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:cart"), revokeObjectURL: vi.fn() });
+    await open(stubClient({ journeys, readImage }));
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
+    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
+    const card = await screen.findByRole("button", { name: "Cart, open detail" });
+    expect(card).not.toHaveTextContent("Not captured yet");
+    expect(journeys).toHaveBeenCalledWith();
+    expect(journeys.mock.calls.every((call: unknown[]) => call.length === 0)).toBe(true);
+    await waitFor(() => expect(readImage).toHaveBeenCalledWith("demo-deploy", "img-cart"));
+    await userEvent.click(card);
+    expect(screen.getByRole("dialog", { name: "Cart detail" })).toHaveTextContent("Captured in run demo-deploy (not the selected run)");
+  });
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */

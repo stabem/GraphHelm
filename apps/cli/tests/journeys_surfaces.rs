@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 const EVENTS_KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 const KEY_ID: &str = "owner-key";
 const RUN: &str = "journeys-surfaces";
+/// A second run of the same project that records nothing itself (#332).
+const OTHER_RUN: &str = "journeys-other";
 const AGENT_CREDENTIAL: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
 
@@ -115,21 +117,23 @@ fn prepared() -> Harness {
     std::fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
     let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/graphs/manual-override-deploy.yaml");
-    let output = graphhelm()
-        .args(["execution", "start", "--events"])
-        .arg(&events)
-        .args(["--execution", RUN, "--file"])
-        .arg(&graph)
-        .arg("--fixtures")
-        .arg(&fixtures)
-        .args(["--mode", "manual", "--held"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    for run in [RUN, OTHER_RUN] {
+        let output = graphhelm()
+            .args(["execution", "start", "--events"])
+            .arg(&events)
+            .args(["--execution", run, "--file"])
+            .arg(&graph)
+            .arg("--fixtures")
+            .arg(&fixtures)
+            .args(["--mode", "manual", "--held"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
 
     let project = scratch.path().join("project");
     let journeys = project.join(".graphhelm").join("journeys");
@@ -162,6 +166,10 @@ fn prepared() -> Harness {
 impl Harness {
     /// Records one signal through `execution signal`, with the PNG attached when `image`.
     fn signal(&self, id: &str, kind: &str, description: &Value, image: bool) {
+        self.signal_in(RUN, id, kind, description, image);
+    }
+
+    fn signal_in(&self, run: &str, id: &str, kind: &str, description: &Value, image: bool) {
         let file = self.scratch.path().join(format!("{id}.json"));
         let envelope = json!({"id": id, "source": {"type": "test", "id": "journey-observer"},
             "type": kind, "severity": "low", "description": description.to_string(),
@@ -173,7 +181,7 @@ impl Harness {
         command
             .args(["execution", "signal", "--events"])
             .arg(&self.events)
-            .args(["--execution", RUN, "--signal"])
+            .args(["--execution", run, "--signal"])
             .arg(&file)
             .arg("--evidence-out")
             .arg(self.scratch.path().join(format!("{id}-evidence.json")))
@@ -199,10 +207,17 @@ impl Harness {
     }
 
     fn cli(&self) -> Value {
-        let output = graphhelm()
-            .args(["journeys", "--events"])
-            .arg(&self.events)
-            .args(["--execution", RUN, "--project"])
+        self.cli_for(Some(RUN))
+    }
+
+    fn cli_for(&self, execution: Option<&str>) -> Value {
+        let mut command = graphhelm();
+        command.args(["journeys", "--events"]).arg(&self.events);
+        if let Some(execution) = execution {
+            command.args(["--execution", execution]);
+        }
+        let output = command
+            .arg("--project")
             .arg(&self.project)
             .arg("--keyring")
             .arg(&self.keyring)
@@ -305,6 +320,10 @@ fn dechunk(mut raw: &[u8]) -> Vec<u8> {
 }
 
 fn mcp(harness: &Harness, base: &str, token: &str) -> Value {
+    mcp_with(harness, base, token, &json!({"executionId": RUN}))
+}
+
+fn mcp_with(harness: &Harness, base: &str, token: &str, arguments: &Value) -> Value {
     let token_file = harness.scratch.path().join("mcp-token");
     std::fs::write(&token_file, token).unwrap();
     let lines = [
@@ -313,7 +332,7 @@ fn mcp(harness: &Harness, base: &str, token: &str) -> Value {
             "clientInfo":{"name":"conformance","version":"0"}}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
-            "params":{"name":"journeys","arguments":{"executionId": RUN}}}),
+            "params":{"name":"journeys","arguments": arguments}}),
     ];
     let mut input = String::new();
     for line in &lines {
@@ -367,6 +386,10 @@ fn cli_http_and_mcp_return_the_same_journey_map() {
     assert_eq!(steps[0]["promises"], json!(["The cart renders"]), "{cli}");
     assert!(steps[0]["capture"]["sequence"].is_u64(), "{cli}");
     assert_eq!(steps[0]["capture"]["signalId"], "cap-open");
+    assert_eq!(steps[0]["capture"]["executionId"], RUN);
+    assert!(steps[0]["capture"]["recordedAt"].is_string(), "{cli}");
+    assert_eq!(cli["scope"], "project");
+    assert_eq!(cli["requestedExecution"], RUN);
     assert_eq!(
         steps[0]["capture"]["imageEvidenceId"],
         "signal-cap-open-image-1"
@@ -410,4 +433,58 @@ fn the_route_without_a_project_refuses_naming_project() {
     );
     assert_eq!(status, 409, "{body}");
     assert_eq!(body["diagnostics"][0]["path"], "/project", "{body}");
+}
+
+/// #332: journeys are a project property. Captures recorded in one run show when another run of
+/// the same project is asked for, and on the project-level CLI, route and MCP tool alike.
+#[test]
+fn captures_from_one_run_show_for_every_run_and_the_project() {
+    let harness = prepared();
+    harness.capture("cap-open", "cart", "open-cart");
+    let description = json!({"protocol": "graphhelm-screen-capture-v1", "contractId": "cart",
+        "stepId": "review", "revision": harness.head, "dirty": false,
+        "viewport": {"width": 1280, "height": 720}, "observer": "owner"});
+    harness.signal_in(
+        OTHER_RUN,
+        "cap-review",
+        "jpd.screen_captured",
+        &description,
+        true,
+    );
+
+    let project = harness.cli_for(None)["data"].clone();
+    let steps = &project["journeys"][0]["steps"];
+    assert_eq!(steps[0]["capture"]["executionId"], RUN, "{project}");
+    assert_eq!(steps[1]["capture"]["executionId"], OTHER_RUN, "{project}");
+    assert_eq!(project["scope"], "project");
+    assert!(project.get("requestedExecution").is_none(), "{project}");
+
+    let mut other = harness.cli_for(Some(OTHER_RUN))["data"].clone();
+    assert_eq!(other["requestedExecution"], OTHER_RUN);
+    other.as_object_mut().unwrap().remove("requestedExecution");
+    assert_eq!(other, project, "a run's map differs from the project's");
+
+    let (_server, base, token) = harness.serve(true);
+    let (status, http) = get(&base, "/v1/journeys", Some(&token));
+    assert_eq!(status, 200, "{http}");
+    assert_eq!(
+        http["data"], project,
+        "GET /v1/journeys differs from the CLI"
+    );
+    let (status, http) = get(
+        &base,
+        &format!("/v1/executions/{OTHER_RUN}/journeys"),
+        Some(&token),
+    );
+    assert_eq!(status, 200, "{http}");
+    assert_eq!(http["data"]["journeys"], project["journeys"]);
+    let over_mcp = mcp_with(&harness, &base, &token, &json!({}));
+    assert_eq!(over_mcp["data"], project, "MCP differs from the CLI");
+
+    // A run that does not exist is still refused on the per-execution route.
+    let (status, _) = get(&base, "/v1/executions/no-such-run/journeys", Some(&token));
+    assert_eq!(status, 404);
+    // Owner-only: a scoped agent credential is refused on the project route.
+    let (status, _) = get(&base, "/v1/journeys", Some(AGENT_CREDENTIAL));
+    assert_eq!(status, 401);
 }

@@ -191,4 +191,37 @@ describe("the stylesheet and the components agree", () => {
     expect(rule).toMatch(/overflow:\s*hidden/);
     expect(CSS.match(/\.topbar-mission\s*\{[^}]*\}/)?.[0]).toMatch(/flex-wrap:\s*nowrap/);
   });
+  /** The first rule whose selector is exactly `selector`, comments stripped. */
+  const ruleOf = (selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return CODE.match(new RegExp(`(?:^|[}\\s])${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  };
+
+  // #325: the page scrolled 1633px past a 1064px window because `.sr-only` labels (position:
+  // absolute) in the scrolled run list had no positioned ancestor, so their containing block was
+  // the initial one and each label far down the list extended the document.
+  it("keeps absolutely positioned labels inside the shell and inside the run list (#325)", () => {
+    expect(ruleOf(".sr-only")).toMatch(/position:\s*absolute/);
+    expect(ruleOf(".app")).toMatch(/position:\s*relative/);
+    expect(ruleOf(".app")).toMatch(/overflow:\s*hidden/);
+    expect(ruleOf(".projects")).toMatch(/position:\s*relative/);
+    expect(ruleOf(".chat-scroll")).toMatch(/position:\s*relative/);
+  });
+
+  // #325: cards, tabs, messages and MainChat each scrolled or claimed full height, and the flex
+  // column squeezed the composer to zero. One scroll row, one docked row, no inner scrollers.
+  it("gives the Chat column one scroll region and a docked composer (#325)", () => {
+    expect(ruleOf(".chat-column")).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/);
+    expect(ruleOf(".chat-scroll")).toMatch(/overflow-y:\s*auto/);
+    for (const inner of [".chat-messages", ".chat-tabs", ".question-cards", ".main-chat-rail", ".main-chat"]) {
+      expect(ruleOf(inner), `${inner} must not scroll or claim a height of its own`).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)|(^|[^-])height:\s*100%|min-height:\s*100%/);
+    }
+  });
+
+  it("keeps the selected-run identity on one line instead of one glyph per row (#325)", () => {
+    const rule = ruleOf(".run-selection-identity");
+    expect(rule).not.toMatch(/flex-basis:\s*100%/);
+    expect(rule).toMatch(/white-space:\s*nowrap/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+  });
 });

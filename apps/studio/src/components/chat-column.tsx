@@ -3,8 +3,14 @@
  * composer for the selected tab's audience. Native sends stay in MainChat with its gating; this
  * column only decides which composer the tab gets. MainChat (the `principal` slot) is always
  * mounted and only hidden when the tab does not use it, so its gating and request ledger stay alive.
+ *
+ * Layout (#325): the column is two rows. `.chat-scroll` is the ONE vertical scroll region (cards,
+ * tabs, messages, Jev, and MainChat's history, portalled in through MainChatHistorySlot);
+ * `.chat-dock` holds the composers and never scrolls away. No child scrolls on its own.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+
+import { MainChatHistorySlot } from "./main-chat";
 
 import { MAX_MESSAGE_LENGTH } from "../runtime/client";
 import type { ReplySuggestion } from "../runtime/types";
@@ -69,9 +75,11 @@ export function ChatColumn(props: ChatColumnProps) {
   };
   const suggestion = props.jev.suggestions[0];
   const showPrincipal = mode === "native" || mode === "record+principal";
+  const [historySlot, setHistorySlot] = useState<HTMLElement | null>(null);
 
   return (
     <aside className="chat-column" aria-label="Chat">
+      <div className="chat-scroll">
       {props.cards}
       <div className="chat-tabs" role="tablist" aria-label="Threads">
         {props.threads.map((candidate) => {
@@ -110,6 +118,9 @@ export function ChatColumn(props: ChatColumnProps) {
           </>}
         </section>
       )}
+      <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
+      </div>
+      <div className="chat-dock">
       {(mode === "record" || mode === "record+principal") && (
         <div className="chat-composer">
           {props.answering !== null && (
@@ -122,7 +133,10 @@ export function ChatColumn(props: ChatColumnProps) {
           {props.sendError && <p role="alert">{props.sendError}</p>}
         </div>
       )}
-      <div className="chat-principal" hidden={!showPrincipal}>{props.principal}</div>
+      <div className="chat-principal" hidden={!showPrincipal}>
+        <MainChatHistorySlot.Provider value={historySlot}>{props.principal}</MainChatHistorySlot.Provider>
+      </div>
+      </div>
     </aside>
   );
 }

@@ -203,7 +203,7 @@ def main() -> int:
         except (OSError, ValueError, KeyError, TypeError):
             parser.error(f"cannot read a journey contract with steps at .graphhelm/journeys/{args.journey}.json")
     outcome = observe(Path(args.project), args.command, args.timeout)
-    if args.journey:
+    if args.journey and outcome["verdict"] in ("passed", "failed"):
         record_journey(args, Path(args.project), steps, outcome)
     print(json.dumps(outcome, indent=2))
     return {"passed": 0, "failed": 1}.get(outcome["verdict"], 2)

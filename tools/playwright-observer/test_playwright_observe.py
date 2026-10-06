@@ -172,10 +172,31 @@ class JourneyMode(unittest.TestCase):
         self.assertIn("--events", result.stderr)
 
     def test_a_path_like_journey_id_is_refused_before_anything_runs(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project), "--journey", "../x",
-                                 "--events", "e", "--execution", "x", "--keyring", "k", "--key-id", "i"],
+        # a..b has a valid contract file, so only the id check can refuse it.
+        (self.project / ".graphhelm" / "journeys" / "a..b.json").write_text(json.dumps(CONTRACT))
+        for bad in ("a..b", "../x"):
+            result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project), "--journey", bad,
+                                     "--events", "e", "--execution", "x", "--keyring", "k", "--key-id", "i",
+                                     "--graphhelm", f"{sys.executable} {self.fake_cli}"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, bad)
+            self.assertIn("valid journey id", result.stderr, bad)
+            self.assertFalse(self.calls.exists(), bad)
+
+    def test_an_unobserved_run_records_nothing_even_with_a_stale_report(self):
+        shots = {s: self.project / f"{s}.png" for s in ("home", "cart", "pay")}
+        for path in shots.values():
+            path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        stale = self.project / ".graphhelm" / "playwright-report.json"
+        stale.write_text(json.dumps(journey_report(shots, {})))
+        result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
+                                 "--command", "definitely-not-a-runner-xyz test",
+                                 "--journey", "checkout", "--events", "ev", "--execution", "run-1",
+                                 "--keyring", "kr", "--key-id", "key",
+                                 "--graphhelm", f"{sys.executable} {self.fake_cli}"],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["verdict"], "observer_missing")
         self.assertFalse(self.calls.exists())
 
 

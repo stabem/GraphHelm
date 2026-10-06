@@ -42,3 +42,5 @@ pair (`--graphhelm` or `GRAPHHELM_BIN` names the CLI). The four record flags are
 
 `--command` or `GRAPHHELM_PLAYWRIGHT_COMMAND` overrides the default
 `npx --no-install playwright test --reporter=json`.
+
+On Windows the command line is split without posix rules, so backslash paths such as `C:\Python\python.exe` survive in `--command` and `--graphhelm`. Journey captures are recorded only when the run was observed (`passed` or `failed`), never for `observer_missing`.

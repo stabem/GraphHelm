@@ -13,6 +13,7 @@ use graphhelm_execution::{ContractInput, valid_journey_id, valid_revision};
 use super::execution::{
     self, Failure, argument, attachments, idempotency_key, owner_actor, signal::SignalKeyring,
 };
+use super::journey_validate;
 use super::journeys::{
     CAPTURE_KIND, CAPTURE_PROTOCOL, TRANSITION_KIND, TRANSITION_PROTOCOL, contract, records,
 };
@@ -32,6 +33,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Walked(walked) => {
             execution::finish(WALKED_COMMAND, run_walked(walked), recorded)
         }
+        JourneyCommand::Validate(validate) => journey_validate::run(validate),
     }
 }
 

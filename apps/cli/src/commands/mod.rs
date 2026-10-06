@@ -10,6 +10,7 @@ mod gateway;
 mod hash;
 mod init;
 mod journey;
+mod journey_validate;
 mod journeys;
 mod keel;
 mod lint;

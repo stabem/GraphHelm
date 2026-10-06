@@ -26,8 +26,8 @@ pub(crate) const CAPTURE_KIND: &str = "jpd.screen_captured";
 pub(crate) const TRANSITION_KIND: &str = "jpd.transition_walked";
 pub(crate) const CAPTURE_PROTOCOL: &str = "graphhelm-screen-capture-v1";
 pub(crate) const TRANSITION_PROTOCOL: &str = "graphhelm-transition-walked-v1";
-const MAX_CONTRACT_BYTES: u64 = 1024 * 1024;
-const CONTRACT_SCHEMA_ID: &str =
+pub(crate) const MAX_CONTRACT_BYTES: u64 = 1024 * 1024;
+pub(crate) const CONTRACT_SCHEMA_ID: &str =
     "https://p50.dev/extensions/graphhelm-jpd/schemas/journey-contract.schema.json";
 
 #[derive(Deserialize)]
@@ -204,7 +204,7 @@ pub(crate) fn records(
     Ok(out)
 }
 
-fn contract_schemas() -> Option<&'static graphhelm_schema::OfflineSchemaSet> {
+pub(crate) fn contract_schemas() -> Option<&'static graphhelm_schema::OfflineSchemaSet> {
     static SCHEMAS: OnceLock<Option<graphhelm_schema::OfflineSchemaSet>> = OnceLock::new();
     SCHEMAS
         .get_or_init(|| {

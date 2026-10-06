@@ -41,6 +41,13 @@ signal, publish a graph, install an observer, enforce the lattice, or alter the 
    never substitute a merely convenient proxy.
 3. Keep facts distinct. HTTP acceptance does not prove delivery or rendering. A screenshot does not
    prove focus order, keyboard reachability, or successful durable storage.
+   For browser journeys the default observer is Playwright:
+   `tools/playwright-observer/playwright_observe.py --project <root> --journey <contractId>` with
+   `--events`, `--execution`, `--keyring` and `--key-id` runs one test per step (titled with the
+   step id), records a `jpd.screen_captured` signal per captured step and a `jpd.transition_walked`
+   signal per consecutive captured pair, and lists the rest under `journey.missing`. A capture is
+   evidence that a screen rendered at a revision; it is not proof of the promise. Its verdict
+   still comes from the Playwright exit, and the obligation still needs its own matched evidence.
 4. Select the smallest set of observers that covers every obligation at the required strength.
 5. Bind every planned evidence item to its promise id, Graph Version, code revision, configuration,
    fixtures, observer version, and freshness window. A matched item records its evidence kind,

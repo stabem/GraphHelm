@@ -5,6 +5,7 @@ use graphhelm_protocols::Diagnostic;
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Component, Path};
@@ -143,8 +144,17 @@ fn local_base(base: &str) -> bool {
         return false;
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.ends_with(':') {
+        return false;
+    }
     let (host, port) = if let Some(rest) = authority.strip_prefix("[::1]") {
-        ("[::1]", rest.strip_prefix(':').unwrap_or(rest))
+        let Some(port) = rest
+            .strip_prefix(':')
+            .or_else(|| rest.is_empty().then_some(""))
+        else {
+            return false;
+        };
+        ("[::1]", port)
     } else {
         authority.split_once(':').unwrap_or((authority, ""))
     };
@@ -227,6 +237,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             }
         }
     }
+    let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
         let contract_id = if name == "main" {
             id.to_owned()
@@ -254,6 +265,8 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             };
             let from = edge["from"].as_str().unwrap();
             let to = edge["to"].as_str().unwrap();
+            reached.insert(from);
+            reached.insert(to);
             if let Some(previous) = last
                 && previous != from
             {
@@ -277,6 +290,13 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     for (i, screen) in value["screens"].as_array().unwrap().iter().enumerate() {
+        if !reached.contains(screen["id"].as_str().unwrap()) {
+            findings.push(Finding::new(
+                "flow.unreachable_screen",
+                format!("/screens/{i}/id"),
+                "screen belongs to no path",
+            ));
+        }
         if !graphhelm_execution::valid_journey_id(&format!(
             "{}.visible",
             screen["id"].as_str().unwrap()
@@ -329,7 +349,23 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             "approved flow carries drift",
         ));
     }
+    if value["status"] == "approved"
+        && value["approved"]["digest"].as_str() != Some(approval_digest(value).as_str())
+    {
+        findings.push(Finding::new(
+            "flow.approval_stale",
+            "/approved/digest",
+            "approval does not bind this flow projection",
+        ));
+    }
     findings
+}
+
+fn approval_digest(flow: &Value) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(canonical(flow, true).as_bytes()))
+    )
 }
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
@@ -343,13 +379,13 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
                     "flow bytes differ from canonical YAML",
                 ));
             }
-            if findings.is_empty() {
+            if findings.iter().all(Finding::is_warning) {
                 for (id, contract) in compile(&value) {
                     let path = project
                         .join(".graphhelm/journeys")
                         .join(format!("{id}.json"));
                     if (value["status"] == "approved" || path.exists())
-                        && std::fs::read(&path).ok().as_deref()
+                        && output_bytes(&path).ok().as_deref()
                             != Some(contract_bytes(&contract).as_slice())
                     {
                         findings.push(Finding::new(
@@ -432,7 +468,7 @@ fn compile(flow: &Value) -> Vec<(String, Value)> {
         } else {
             format!("{id}.{name}")
         };
-        contracts.push((contract_id.clone(),json!({"contractId":contract_id,"version":1,"title":title,"taskScope":format!("journey-flow {id} path {name}"),"actors":actors.iter().map(|a|json!({"actorId":a,"name":a,"goal":title})).collect::<Vec<_>>(),"preconditions":[],"steps":steps,"promises":promises,"riskSignals":flow["risks"],"outOfScope":[]})));
+        contracts.push((contract_id.clone(),json!({"contractId":contract_id,"version":1,"title":title,"taskScope":format!("journey-flow {id} path {name}"),"actors":actors.iter().map(|a|json!({"actorId":a,"name":a.as_str().unwrap().chars().take(120).collect::<String>(),"goal":title})).collect::<Vec<_>>(),"preconditions":[],"steps":steps,"promises":promises,"riskSignals":flow["risks"],"outOfScope":[]})));
     }
     contracts
 }
@@ -441,6 +477,22 @@ fn contract_bytes(value: &Value) -> Vec<u8> {
     let mut bytes = serde_json::to_vec_pretty(value).expect("contract serialization");
     bytes.push(b'\n');
     bytes
+}
+
+fn output_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let limit = super::journeys::MAX_CONTRACT_BYTES;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit {
+        return Err(std::io::Error::other("unsafe or oversized output"));
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::other("output grew past size limit"));
+    }
+    Ok(bytes)
 }
 
 fn input_error(command: &'static str, message: &str) -> Outcome {
@@ -461,11 +513,16 @@ fn report(
     findings: Vec<Finding>,
     data: Value,
 ) -> Outcome {
-    let clean = findings.is_empty();
+    let clean = findings.iter().all(Finding::is_warning);
     let diagnostics = findings
         .iter()
         .map(|f| {
-            Diagnostic::error(
+            let diagnostic = if f.is_warning() {
+                Diagnostic::warning
+            } else {
+                Diagnostic::error
+            };
+            diagnostic(
                 crate::error_codes::GHCLI034_JOURNEY_FLOW_INVALID,
                 &f.message,
                 &f.pointer,
@@ -482,7 +539,13 @@ fn report(
             data: Some(data),
             diagnostics,
         },
-        exit_code: if clean { 0 } else { 2 },
+        exit_code: if clean {
+            0
+        } else if findings.iter().any(|f| f.code == "flow.compile_invalid") {
+            3
+        } else {
+            2
+        },
     }
 }
 
@@ -523,18 +586,20 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         return Err(std::io::Error::other("output symlink refused"));
     }
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    let mut owned = false;
     let result = (|| {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
+        owned = true;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&temp, path)
     })();
     // Remove only this invocation's temporary file, never a pre-existing one.
-    if result.is_err() && std::fs::symlink_metadata(&temp).is_ok_and(|m| m.is_file()) {
+    if owned && result.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
     result
@@ -543,6 +608,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
     const COMMAND: &str = "journey.compile";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let Ok(_lock) = write_lock(&project) else {
+        return input_error(COMMAND, "journey-flow write lock unavailable or unsafe");
+    };
     let Some(files) = files(&project, &args.ids) else {
         return input_error(COMMAND, "no safe journeys directory or invalid flow id");
     };
@@ -564,7 +632,7 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                         "flow must be canonical; use --fmt",
                     ));
                 }
-                if errors.is_empty() {
+                if errors.iter().all(Finding::is_warning) {
                     if args.fmt {
                         writes.insert(file.clone(), canonical(&flow, false).into_bytes());
                     }
@@ -589,7 +657,7 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                             }
                             let target = file.parent().unwrap().join(format!("{id}.json"));
                             let expected = contract_bytes(&contract);
-                            if let Ok(existing) = std::fs::read(&target)
+                            if let Ok(existing) = output_bytes(&target)
                                 && existing != expected
                             {
                                 let generated = serde_json::from_slice::<Value>(&existing)
@@ -625,18 +693,181 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
         reports.push(json!({"file":file.display().to_string(),"findings":errors.iter().map(|f|json!({"code":f.code,"pointer":f.pointer,"message":f.message})).collect::<Vec<_>>()}));
         findings.extend(errors);
     }
-    if findings.is_empty() && !args.check {
-        for (path, bytes) in &writes {
-            if atomic_write(path, bytes).is_err() {
-                return input_error(COMMAND, "flow output could not be written atomically");
-            }
-        }
+    if findings.iter().all(Finding::is_warning) && !args.check && write_batch(&writes).is_err() {
+        return input_error(
+            COMMAND,
+            "flow output could not be written; batch rollback attempted",
+        );
     }
     report(
         COMMAND,
         reports,
         findings,
         json!({"skipped":skipped,"written":if args.check {0}else{writes.len()}}),
+    )
+}
+
+fn write_lock(project: &Path) -> std::io::Result<std::fs::File> {
+    use fs2::FileExt;
+    let root = project.canonicalize()?;
+    let directory = project.join(".graphhelm").canonicalize()?;
+    if !directory.starts_with(&root) {
+        return Err(std::io::Error::other("project directory escapes root"));
+    }
+    let path = directory.join("journey-flow.lock");
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(std::io::Error::other("lock symlink refused"));
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    file.try_lock_exclusive()?;
+    Ok(file)
+}
+
+// Validate every destination and retain its prior bytes before the first mutation. Serialization
+// and conflict failures leave all outputs untouched; an I/O failure restores earlier writes.
+fn write_batch(writes: &BTreeMap<std::path::PathBuf, Vec<u8>>) -> std::io::Result<()> {
+    let mut backups = BTreeMap::new();
+    for path in writes.keys() {
+        let previous = match std::fs::symlink_metadata(path) {
+            Ok(m)
+                if m.file_type().is_symlink()
+                    || !m.is_file()
+                    || m.len() > super::journeys::MAX_CONTRACT_BYTES =>
+            {
+                return Err(std::io::Error::other("unsafe output destination"));
+            }
+            Ok(_) => Some(output_bytes(path)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        backups.insert(path.clone(), previous);
+    }
+    let mut completed: Vec<&Path> = Vec::new();
+    for (path, bytes) in writes {
+        if let Err(error) = atomic_write(path, bytes) {
+            let mut rollback_failed = false;
+            for previous in completed.into_iter().rev() {
+                let result = match &backups[previous] {
+                    Some(bytes) => atomic_write(previous, bytes),
+                    None => std::fs::remove_file(previous),
+                };
+                rollback_failed |= result.is_err();
+            }
+            return Err(if rollback_failed {
+                std::io::Error::other("output write and rollback both failed")
+            } else {
+                error
+            });
+        }
+        completed.push(path.as_path());
+    }
+    Ok(())
+}
+
+pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
+    const COMMAND: &str = "journey.approve";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let Some(files) = files(&project, std::slice::from_ref(&args.id)) else {
+        return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
+    };
+    let Ok(_lock) = write_lock(&project) else {
+        return input_error(COMMAND, "journey-flow write lock unavailable or unsafe");
+    };
+    let file = &files[0];
+    let (text, mut flow) = match read(file) {
+        Ok(value) => value,
+        Err(findings) => return report(COMMAND, vec![], findings, json!({})),
+    };
+    let mut findings = semantic(file, &flow, &project);
+    findings.retain(|f| !matches!(f.code, "flow.approval_stale" | "flow.approved_with_drift"));
+    if text != canonical(&flow, false) {
+        findings.push(Finding::new(
+            "flow.not_canonical",
+            "",
+            "approve requires a canonical flow",
+        ));
+    }
+    if !findings.iter().all(Finding::is_warning) {
+        return report(
+            COMMAND,
+            vec![
+                json!({"findings":findings.iter().map(|f|json!({"code":f.code,"pointer":f.pointer,"message":f.message})).collect::<Vec<_>>()}),
+            ],
+            findings,
+            json!({}),
+        );
+    }
+    let revision = match super::journey::head(&project) {
+        Ok(rev) if rev.len() == 40 => rev,
+        _ => {
+            return input_error(
+                COMMAND,
+                "project git revision is missing or unsupported; approval requires a committed SHA-1 repository",
+            );
+        }
+    };
+    flow["status"] = json!("approved");
+    flow["drift"] = json!([]);
+    flow["approved"] = json!({"revision":revision,"digest":approval_digest(&flow)});
+    let mut writes = BTreeMap::new();
+    for (id, contract) in compile(&flow) {
+        if !super::journeys::contract_schemas().is_some_and(|s| {
+            s.validate(
+                super::journeys::CONTRACT_SCHEMA_ID,
+                &contract,
+                "journey-flow",
+            )
+            .is_empty()
+        }) {
+            return report(
+                COMMAND,
+                vec![],
+                vec![Finding::new(
+                    "flow.compile_invalid",
+                    "",
+                    "compiled contract violates frozen schema",
+                )],
+                json!({}),
+            );
+        }
+        let path = file.parent().unwrap().join(format!("{id}.json"));
+        if let Ok(existing) = output_bytes(&path)
+            && existing != contract_bytes(&contract)
+            && !serde_json::from_slice::<Value>(&existing)
+                .is_ok_and(|v| v["taskScope"] == contract["taskScope"])
+        {
+            return report(
+                COMMAND,
+                vec![],
+                vec![Finding::new(
+                    "flow.contract_stale",
+                    format!("/journeys/{id}.json"),
+                    "approval cannot overwrite a handwritten contract",
+                )],
+                json!({}),
+            );
+        }
+        writes.insert(path, contract_bytes(&contract));
+    }
+    writes.insert(file.clone(), canonical(&flow, false).into_bytes());
+    if let Err(error) = write_batch(&writes) {
+        return input_error(
+            COMMAND,
+            if error.to_string() == "output write and rollback both failed" {
+                "output write and rollback failed; inspect project files"
+            } else {
+                "approval output could not be written; earlier writes restored"
+            },
+        );
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id":args.id,"status":"approved","approved":flow["approved"],"written":writes.len()}),
     )
 }
 
@@ -713,12 +944,18 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 let Some(v) = entry.get(field) else {
                     continue;
                 };
-                let prefix = if field == "id" { "  - " } else { "    " };
+                let prefix = if field == "id" {
+                    "  - ".to_owned()
+                } else {
+                    " ".repeat(4)
+                };
                 if field == "acts" {
-                    out.push_str("    acts:\n");
+                    out.push_str(&prefix);
+                    out.push_str("acts:\n");
                     for act in v.as_array().unwrap() {
                         out.push_str(&format!(
-                            "      - {}\n",
+                            "{:6}- {}\n",
+                            "",
                             inline(act, &["kind", "role", "name", "text", "secret"])
                         ));
                     }
@@ -752,7 +989,11 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                     if let Some(v) = entry.get(field) {
                         out.push_str(&format!(
                             "{}{field}: {}\n",
-                            if field == "edge" { "  - " } else { "    " },
+                            if field == "edge" {
+                                "  - ".to_owned()
+                            } else {
+                                " ".repeat(4)
+                            },
                             scalar(v)
                         ));
                     }

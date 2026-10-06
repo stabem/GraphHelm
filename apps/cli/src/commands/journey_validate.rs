@@ -31,6 +31,9 @@ pub(crate) struct Finding {
 }
 
 impl Finding {
+    pub(crate) fn is_warning(&self) -> bool {
+        self.code == "flow.unreachable_screen"
+    }
     pub(crate) fn new(
         code: &'static str,
         pointer: impl Into<String>,
@@ -102,7 +105,12 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         };
         let source = file.display().to_string();
         for finding in &findings {
-            diagnostics.push(Diagnostic::error(
+            let diagnostic = if finding.is_warning() {
+                Diagnostic::warning
+            } else {
+                Diagnostic::error
+            };
+            diagnostics.push(diagnostic(
                 if finding.code.starts_with("flow.") {
                     crate::error_codes::GHCLI034_JOURNEY_FLOW_INVALID
                 } else {
@@ -115,11 +123,13 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         }
         reports.push(json!({
             "file": source,
-            "ok": findings.is_empty(),
+            "ok": findings.iter().all(Finding::is_warning),
             "findings": findings.iter().map(Finding::json).collect::<Vec<_>>(),
         }));
     }
-    let clean = diagnostics.is_empty();
+    let clean = diagnostics
+        .iter()
+        .all(|d| d.severity == graphhelm_protocols::Severity::Warning);
     Outcome {
         output: CommandOutput {
             ok: clean,

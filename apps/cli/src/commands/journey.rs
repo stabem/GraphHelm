@@ -35,6 +35,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         }
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
+        JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
     }
 }
 
@@ -111,7 +112,7 @@ fn git(project: &Path, args: &[&str]) -> Option<String> {
         .flatten()
 }
 
-fn head(project: &Path) -> Result<String, Failure> {
+pub(crate) fn head(project: &Path) -> Result<String, Failure> {
     git(project, &["rev-parse", "--verify", "HEAD^{commit}"])
         .map(|text| text.trim().to_owned())
         .filter(|revision| valid_revision(revision))

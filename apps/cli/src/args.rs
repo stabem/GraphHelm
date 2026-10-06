@@ -118,13 +118,15 @@ pub enum JourneyCommand {
     Validate(JourneyValidateArgs),
     /// Generate frozen journey contracts from flow sources, or check/format their projection.
     Compile(JourneyCompileArgs),
+    /// Approve a canonical flow at the project's HEAD and write its generated contracts.
+    Approve(JourneyApproveArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct JourneyValidateArgs {
-    /// Contract files to check. Each must be named `<contractId>.json`.
+    /// Files to check: `<contractId>.json` or `<id>.journey.yaml`.
     pub files: Vec<PathBuf>,
-    /// Check every `<project>/.graphhelm/journeys/*.json`.
+    /// Check every JSON contract and journey-flow YAML in the project's journeys directory.
     #[arg(long)]
     pub all: bool,
     /// The repository root that `scopePaths` are relative to. Defaults to the current directory.
@@ -147,6 +149,13 @@ pub struct JourneyCompileArgs {
     /// Replace a differing handwritten contract. Generated contracts are projections.
     #[arg(long, conflicts_with = "check")]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyApproveArgs {
+    pub id: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

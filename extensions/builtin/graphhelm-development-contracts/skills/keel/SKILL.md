@@ -32,6 +32,16 @@ Record the card and the proof where the hooks and the Studio can see them: insid
 execution, as `keel.card` and `keel.proof` signals threaded by `replyTo`; outside one, the card at
 `.graphhelm/keel-card.json`. Shape: `docs/keel/RECORDS.md` in the GraphHelm repository.
 
+When the change touches a screen of a journey (a path listed in a step's `screen.scopePaths` in
+`.graphhelm/journeys/<contractId>.json`), name the journey in the card (`journeys: [contractId]`,
+or a `Journeys:` line in the PR body). With `--events`, `--execution`, `--keyring` and `--key-id`,
+`graphhelm keel check` then warns `keel.journey.no_fresh_capture` for each touched screen with no
+capture at the head. The warning is advisory and never blocks. Answer it by capturing: a `before`
+capture at the base and an `after` capture at the head, linked in the PR body (`docs/process/DELIVERY.md`
+in the GraphHelm repository, "Before/after captures for screens"); the Playwright observer's
+`--journey <contractId>` mode records the head captures in one run. A screen left uncaptured is
+reported as unobserved, not as passed.
+
 The full rules (the card and its bounds, surface counting, the verdict and its causes, the index,
 where to spend time): `REFERENCE.md` beside this file. Read it only when this digest does not
 answer your question.

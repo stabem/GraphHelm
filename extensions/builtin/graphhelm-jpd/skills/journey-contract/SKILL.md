@@ -18,6 +18,9 @@ only when an existing, current journey contract already covers the exact promise
 - For an existing execution, `tool:status` and the paged `tool:events` tail to recover current state
   and prior evidence references.
 - For a local graph draft, `cli:graph validate` and `cli:graph lint` to check the public Graph DSL.
+  They check graphs, not journey contracts.
+- `cli:journey validate` to check a contract file: the schema, the journey id rule, step, actor,
+  promise and screen consistency, and that every `scopePaths` entry exists in the repository.
 
 ## Mutations and effects
 
@@ -45,13 +48,25 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
    proof that a person could perceive or operate it.
 6. Record out-of-scope behavior and unresolved assumptions rather than silently broadening the
    journey.
+7. Give each user-visible step a `screen`: `screenId`, `title` and `scopePaths` (the
+   repository-relative files that render it, forward slashes, no leading `/`, no `..`, no globs).
+   `keel check` compares a diff against them to warn about screens with no fresh capture.
+8. Use ids that satisfy the journey id rule, `^[a-z0-9][a-z0-9._-]{0,127}$` with no `..`, for the
+   contract, every step and every screen; the schema alone also allows `:` and `/`, which journey
+   records refuse. A step id is also the exact title of the Playwright test that captures it.
+9. Save the contract as `.graphhelm/journeys/<contractId>.json` in the project, then run
+   `cli:journey validate` on it and fix every finding.
+
+For a project with no contracts yet, start with `journey-map`, which discovers the screens and
+drafts the first few contracts.
 
 When a Runtime is attached, MCP remains the read surface. CLI is a local/offline choice made before
 any later mutation. Never switch surfaces to retry an uncertain mutation.
 
 ## Completion
 
-Complete when the artifact conforms to `../../schemas/journey-contract.schema.json`, every promise has a
+Complete when `cli:journey validate` passes on the saved file (it applies
+`../../schemas/journey-contract.schema.json` and the checks above), every promise has a
 stable id and observable fact, failure and recovery behavior are explicit, and no proxy has been
 described as stronger evidence. Hand the contract to `observation-compiler`; do not call it proof.
 

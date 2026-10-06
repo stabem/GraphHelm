@@ -110,6 +110,22 @@ pub enum JourneyCommand {
     Capture(JourneyCaptureArgs),
     /// Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps.
     Walked(JourneyWalkedArgs),
+    /// Check journey contracts before anything records against them (#328): the contract schema,
+    /// the journey id rule, step, actor, promise and screen consistency, and that every screen
+    /// `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error.
+    Validate(JourneyValidateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyValidateArgs {
+    /// Contract files to check. Each must be named `<contractId>.json`.
+    pub files: Vec<PathBuf>,
+    /// Check every `<project>/.graphhelm/journeys/*.json`.
+    #[arg(long)]
+    pub all: bool,
+    /// The repository root that `scopePaths` are relative to. Defaults to the current directory.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

@@ -67,7 +67,13 @@ logical action.
 3. Execute semantic actions in order. Browser observers target role, label, accessible name,
    visible text, or stable product identity. Coordinates are allowed only for geometry behavior.
 4. Capture transitions and settled states, including loading, disabled, error, timeout, retry,
-   partial success, success, and recovery when reachable and required.
+   partial success, success, and recovery when reachable and required. For a contract saved as
+   `.graphhelm/journeys/<contractId>.json`, record screen captures and walked transitions with the
+   Playwright observer's `--journey <contractId>` mode, or one at a time with
+   `graphhelm journey capture` and `graphhelm journey walked`. `graphhelm journeys` (and the
+   Studio's Journey tab) shows each step's newest capture as fresh, stale or unknown against the
+   project history; read it before claiming a step was seen at this revision. A stale or missing
+   capture is unobserved, not passed.
 5. Map evidence to obligation ids. HTTP acceptance never substitutes for delivery or rendering;
    process exit zero never substitutes for the user-visible result.
 6. On any retry, invoke `retry-provenance` and keep the first failure, lineage, cause, and evidence

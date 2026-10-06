@@ -42,6 +42,8 @@ route suspected instruction injection through the existing policy and typed-sign
 ## Entry skills
 
 - `journey-contract`: specify the observable user journey and its failure contract.
+- `journey-map`: map journeys into an existing project from zero (screens, contracts, Playwright
+  tests, first capture baseline).
 - `observation-compiler`: lower promises into typed evidence obligations or `OBSERVER_MISSING`.
 - `plan-council`: select a risk-specific council and preserve arguments and dissent.
 - `defect-bounty`: normalize, minimize, replay, and try to falsify journey defect claims.

@@ -14,6 +14,7 @@
     "capabilities": [
       "skill.defect-bounty",
       "skill.journey-contract",
+      "skill.journey-map",
       "skill.journey-verifier",
       "skill.observation-compiler",
       "skill.plan-council",
@@ -63,6 +64,7 @@
       "entryFamilies": [
         "defect-bounty",
         "journey-contract",
+        "journey-map",
         "journey-verifier",
         "observation-compiler",
         "plan-council",
@@ -78,6 +80,16 @@
             "task:scope",
             "runtime:events",
             "runtime:status"
+          ],
+          "outputs": [
+            "schema:journey-contract"
+          ]
+        },
+        {
+          "family": "journey-map",
+          "inputs": [
+            "task:scope",
+            "schema:journey-contract"
           ],
           "outputs": [
             "schema:journey-contract"
@@ -1043,7 +1055,7 @@
           "id": "skill/journey-contract",
           "kind": "skill",
           "path": "skills/journey-contract/SKILL.md",
-          "sha256": "sha256:ee18d6b3b9d6bb4031fcc3dc09460a69b425c0133335d444fc9515454fa21bc5",
+          "sha256": "sha256:28f5f7e8fa89ea71865d8268af1e148a09f40404f045b191c171a3c0b884bb41",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1065,16 +1077,41 @@
           "surfaces": [
             "cli:graph lint",
             "cli:graph validate",
+            "cli:journey validate",
             "tool:events",
             "tool:status"
           ],
           "family": "journey-contract"
         },
         {
+          "id": "skill/journey-map",
+          "kind": "skill",
+          "path": "skills/journey-map/SKILL.md",
+          "sha256": "sha256:92ec9cd5ec40d69f7d457aa0b95fc21e28ecec92a7c018b9f72a2a3219ae3095",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose"
+          ],
+          "permissions": [
+            "package.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:journey validate"
+          ],
+          "family": "journey-map"
+        },
+        {
           "id": "skill/journey-verifier",
           "kind": "skill",
           "path": "skills/journey-verifier/SKILL.md",
-          "sha256": "sha256:a0bd299822b127e814c4455f6634871b2f529c12a60a53ece1d3d6ab55428eca",
+          "sha256": "sha256:3e0025082d8fa4cf5bba0f68ed17d12fa8c36f48f1459bd1851cb84111dffeba",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1132,7 +1169,7 @@
           "id": "skill/observation-compiler",
           "kind": "skill",
           "path": "skills/observation-compiler/SKILL.md",
-          "sha256": "sha256:34d15359e024b206f0cd90301f571df65c17d5fd023696856e1bf9d0ead94767",
+          "sha256": "sha256:be6db2c9743a8a4cc402839efa7e9467b470697952609a4275a34c2254ad9f40",
           "effects": [
             "artifact.local.write",
             "artifact.propose",

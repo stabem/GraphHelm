@@ -13,6 +13,7 @@ use graphhelm_protocols::{
     DraftProposed, EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, SignalRecorded,
 };
 
+use super::attachments::{ImageAttachment, MAX_ATTACHMENTS};
 use super::{
     Failure, append_event, argument, execution_state, finish, idempotency_key, load_projection,
     owner_actor, repository_failure, signal_invalid, signal_unrecordable,
@@ -55,11 +56,13 @@ pub fn run(
     evidence_out: &Path,
     keyring: Option<&Path>,
     key_id: Option<&str>,
+    attach: &[PathBuf],
 ) -> Outcome {
     finish(
         COMMAND,
-        sealing(keyring, key_id)
-            .and_then(|sealing| run_from_file(events, execution, signal, evidence_out, &sealing)),
+        sealing(keyring, key_id).and_then(|sealing| {
+            run_from_file(events, execution, signal, evidence_out, &sealing, attach)
+        }),
         |value| value,
     )
 }
@@ -117,9 +120,11 @@ fn run_from_file(
     signal: &Path,
     evidence_out: &Path,
     keyring: &SignalKeyring,
+    attach: &[PathBuf],
 ) -> Result<serde_json::Value, Failure> {
     let raw = std::fs::read(signal)
         .map_err(|_| argument("--signal does not name a readable file", "/signal"))?;
+    let attachments = super::attachments::from_files(attach)?;
     execute(
         events,
         execution,
@@ -128,6 +133,7 @@ fn run_from_file(
         owner_actor(),
         idempotency_key("signal-recorded"),
         Some(keyring),
+        &attachments,
     )
 }
 
@@ -192,6 +198,7 @@ pub(crate) fn open_sealer(
 /// the store is opened, before anything is read, because a caller who can preserve nothing must
 /// learn that before the work rather than after it. A browser is exactly that caller: it has no
 /// path on the Runtime's host, and until this it could not record a signal at all.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     events: &Path,
     execution: Option<&str>,
@@ -200,6 +207,7 @@ pub(crate) fn execute(
     actor: PersistedActor,
     key: OpaqueId,
     sealing: Option<&SignalKeyring>,
+    attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
     execute_authenticated(
         events,
@@ -210,6 +218,7 @@ pub(crate) fn execute(
         key,
         sealing,
         false,
+        attachments,
     )
 }
 
@@ -224,6 +233,7 @@ pub(crate) fn execute_authenticated(
     key: OpaqueId,
     sealing: Option<&SignalKeyring>,
     scoped_agent_authenticated: bool,
+    attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
     execute_authenticated_inner(
         events,
@@ -235,6 +245,7 @@ pub(crate) fn execute_authenticated(
         sealing,
         scoped_agent_authenticated,
         false,
+        attachments,
     )
 }
 
@@ -260,6 +271,7 @@ pub(crate) fn execute_native_observer(
         Some(sealing),
         false,
         true,
+        &[],
     )
 }
 
@@ -274,12 +286,26 @@ fn execute_authenticated_inner(
     sealing: Option<&SignalKeyring>,
     scoped_agent_authenticated: bool,
     allow_native: bool,
+    attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
     if evidence_out.is_none() && sealing.is_none() {
         return Err(argument(
             "this Runtime has no keyring, so the signal envelope can only be preserved as a file; \
              give \"evidenceOut\", or start the Runtime with --keyring and --key-id",
             "/evidenceOut",
+        ));
+    }
+    // Images are only ever kept sealed Confidential; an operator file cannot hold them (#313).
+    if !attachments.is_empty() && sealing.is_none() {
+        return Err(signal_invalid(
+            "attachments require a sealed keyring; start the Runtime with --keyring and --key-id",
+            "/attachments",
+        ));
+    }
+    if attachments.len() > MAX_ATTACHMENTS {
+        return Err(signal_invalid(
+            "a signal carries at most 4 attachments",
+            "/attachments",
         ));
     }
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
@@ -451,7 +477,28 @@ fn execute_authenticated_inner(
                         "/keyring",
                     )
                 })?;
-            Some(sealed)
+            let mut images = Vec::with_capacity(attachments.len());
+            for (index, image) in attachments.iter().enumerate() {
+                let input = EvidenceInput::new(
+                    image_evidence_id(&admitted.record, index),
+                    image.media_type,
+                    Sensitivity::Confidential,
+                    "standard",
+                    SecretBytes::new(image.bytes.clone()),
+                )
+                .map_err(|_| execution_state("an attachment cannot be sealed", "/attachments"))?;
+                images.push(
+                    runtime
+                        .block_on(protector.seal(scope.clone(), input))
+                        .map_err(|_| {
+                            execution_state(
+                                "an attachment could not be sealed; nothing was recorded",
+                                "/attachments",
+                            )
+                        })?,
+                );
+            }
+            Some((sealed, images))
         }
         None => None,
     };
@@ -464,10 +511,24 @@ fn execute_authenticated_inner(
             "/signal/proposal",
         ));
     }
-    let evidence_refs = sealed
-        .as_ref()
-        .map(|item| vec![item.reference().clone()])
-        .unwrap_or_default();
+    // Envelope first, then images in request order (#313).
+    let evidence_refs: Vec<_> = sealed
+        .iter()
+        .flat_map(|(item, images)| std::iter::once(item).chain(images))
+        .map(|item| item.reference().clone())
+        .collect();
+    let attachment_reply: Vec<_> = sealed
+        .iter()
+        .flat_map(|(_, images)| images)
+        .zip(attachments)
+        .map(|(item, image)| {
+            serde_json::json!({
+                "evidenceId": item.reference().evidence_id().as_str(),
+                "mediaType": image.media_type,
+                "bytes": image.bytes.len(),
+            })
+        })
+        .collect();
     let mut recorded = admitted.record.clone();
     recorded.scoped_agent_authenticated = (scoped_agent_authenticated
         && actor.actor_type() == graphhelm_protocols::PersistedActorType::Agent)
@@ -570,7 +631,7 @@ fn execute_authenticated_inner(
         // proposal submission would make an agent signal mutate the operational graph directly.
     }
     match sealed {
-        Some(item) => {
+        Some((item, images)) => {
             let next_sequence = store
                 .next_sequence(&scope, stream_id.as_str())
                 .map_err(|error| repository_failure(&error))?;
@@ -579,11 +640,10 @@ fn execute_authenticated_inner(
                 stream_id.clone(),
                 next_sequence,
                 pending,
-                if let Some(proposal) = proposal_sealed {
-                    vec![item, proposal]
-                } else {
-                    vec![item]
-                },
+                std::iter::once(item)
+                    .chain(images)
+                    .chain(proposal_sealed)
+                    .collect(),
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;
@@ -603,18 +663,28 @@ fn execute_authenticated_inner(
     // `accepted_mutations` (the `signal_recorded` fold touches neither), so the projection already
     // in hand is that point.
     let decision = decide_mutation(&projection, &admitted);
-    Ok(serde_json::json!({
+    let mut reply = serde_json::json!({
         "executionId": projection.execution_id,
         "signalId": signal_id(&admitted.record),
         "kind": admitted.record.kind,
         "mayProposeMutation": admitted.may_propose_mutation,
         "decision": decision_label(decision),
         "rejectionReason": rejection_label(decision),
-    }))
+    });
+    // Absent when empty, so replies without attachments stay byte-identical.
+    if !attachment_reply.is_empty() {
+        reply["attachments"] = serde_json::Value::Array(attachment_reply);
+    }
+    Ok(reply)
 }
 
 fn signal_id(record: &SignalRecorded) -> &str {
     record.signal_id.as_str()
+}
+
+/// `signal-<signalId>-image-<n>`, n from 1: deterministic so the envelope can cite it beforehand.
+fn image_evidence_id(record: &SignalRecorded, index: usize) -> String {
+    format!("signal-{}-image-{}", signal_id(record), index + 1)
 }
 
 /// `MutationDecision` carries no `Serialize` impl (`core/governor` exposes it as a plain enum,
@@ -639,5 +709,34 @@ fn rejection_label(decision: MutationDecision) -> Option<&'static str> {
         MutationDecision::Accept
         | MutationDecision::RequiresApproval
         | MutationDecision::Blocked => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attachments_without_a_keyring_are_refused_before_the_store_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = ImageAttachment {
+            media_type: "image/png",
+            bytes: vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        };
+        let refused = execute(
+            &dir.path().join("absent"),
+            None,
+            b"{}",
+            Some(&dir.path().join("evidence.json")),
+            owner_actor(),
+            OpaqueId::parse("key").ok().unwrap(),
+            None,
+            &[image],
+        )
+        .err()
+        .unwrap();
+        assert_eq!(refused.pointer, "/attachments");
+        assert_eq!(refused.code, super::super::SIGNAL_INVALID_CODE);
+        assert!(!dir.path().join("absent").exists());
     }
 }

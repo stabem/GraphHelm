@@ -826,6 +826,10 @@ pub enum ExecutionCommand {
         /// REQUIRED, with `--keyring`. The key id inside that keyring.
         #[arg(long = "key-id")]
         key_id: Option<String>,
+        /// A PNG, JPEG or WebP image (at most 8 MiB) sealed as Confidential evidence with the
+        /// signal. Repeatable, up to 4; the type is read from the file's bytes.
+        #[arg(long = "attach")]
+        attach: Vec<PathBuf>,
     },
     /// Record what a node delivered and why, with project-relative file and journey references.
     /// Claims are agent-reported; this command does not verify filesystem changes.

@@ -3182,6 +3182,7 @@ mod tests {
                             event_actor,
                             key,
                             None,
+                            &[],
                         )?)
                     })
                 },
@@ -3478,6 +3479,7 @@ mod tests {
                             event_actor,
                             key,
                             None,
+                            &[],
                         )?)
                     })
                 },

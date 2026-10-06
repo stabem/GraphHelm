@@ -641,6 +641,7 @@ fn append_notice(
         actor,
         key,
         Some(keyring),
+        &[],
     )?;
     Ok(())
 }

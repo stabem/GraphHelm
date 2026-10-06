@@ -2260,6 +2260,7 @@ pub(super) async fn signal(
                         key,
                         sealing.as_deref(),
                         scoped_agent_authenticated,
+                        &[],
                     )
                 })
                 .await

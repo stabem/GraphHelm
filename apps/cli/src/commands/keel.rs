@@ -510,6 +510,9 @@ mod tests {
                 command.arg("30");
                 command
             };
+            // The wrapper must exit while the descendant holds its pipe. The outer observer
+            // owns process-tree cleanup; waiting here would stop observing that boundary.
+            #[allow(clippy::zombie_processes)]
             let descendant = descendant.spawn().unwrap();
             std::fs::write(pid_path, descendant.id().to_string()).unwrap();
             return;

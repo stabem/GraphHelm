@@ -48,6 +48,13 @@ declared at planning time: it is added to `keel.yaml` `surface` and capped by `m
 | `keel.card.scope_too_wide`, `too_many_symbols`, `too_large` | No (warning) |
 | `keel.diff.unparseable` | Yes |
 | `keel.surface.<kind>_over_budget`, `keel.body.oversized_change` | No while `surfaceEnforcement: signal` (the shipped value) |
+| `keel.journey.no_fresh_capture`: the card names a journey, its scope touches a screen's scope path (equal, under, or containing), and that screen's newest capture is not fresh at the range head | No (warning) |
+| `keel.journey.contract_unreadable`: a journey the card names has no readable contract at `.graphhelm/journeys/<id>.json` | No (warning) |
+
+A card may name journeys in an optional `journeys` array (in a markdown card, a `Journeys:` line).
+`keel check` then folds those contracts at the range head; pass `--events <dir> --execution <id>
+--keyring <dir> --key-id <id>` (all four together) to read the run's screen captures, or every
+touched screen is reported as having no capture read.
 
 ## Output and exit codes
 

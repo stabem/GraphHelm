@@ -532,7 +532,6 @@ fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path(
 }
 
 #[test]
-#[ignore = "green after Task 2"]
 fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
     let repo = repository(&[]);
     let body = repo.path().join("body.md");

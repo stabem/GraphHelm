@@ -723,3 +723,33 @@ fn a_card_may_name_its_journeys_and_an_old_card_still_reads() {
     let new: graphhelm_policy::keel::Card = serde_json::from_slice(&new).unwrap();
     assert_eq!(new.journeys, ["checkout"]);
 }
+
+#[test]
+fn a_touched_screen_without_a_fresh_capture_is_a_warning_and_never_blocks() {
+    use graphhelm_policy::keel::{JourneyScreen, check_journeys};
+    let screen = |step: &str, scope: &str, not_fresh: Option<&str>| JourneyScreen {
+        contract_id: "checkout".into(),
+        step_id: step.into(),
+        scope_paths: vec![scope.into()],
+        not_fresh: not_fresh.map(str::to_owned),
+    };
+    let screens = [
+        screen(
+            "cart",
+            "web/cart/",
+            Some("no capture of this step was read"),
+        ),
+        screen("pay", "web/pay/", Some("stale")),
+        screen("home", "web/home/", None),
+    ];
+    let findings = check_journeys(&["web/cart/Line.tsx".into(), "web/home".into()], &screens);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].rule, "keel.journey.no_fresh_capture");
+    assert!(!findings[0].blocking);
+    assert_eq!(findings[0].path.as_deref(), Some("web/cart/Line.tsx"));
+    assert_eq!(
+        findings[0].detail,
+        "checkout/cart: no capture of this step was read"
+    );
+    assert_eq!(check_journeys(&["web".into()], &screens).len(), 2);
+}

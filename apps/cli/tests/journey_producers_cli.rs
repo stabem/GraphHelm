@@ -441,3 +441,124 @@ fn a_committed_change_in_scope_makes_the_capture_stale_naming_the_file() {
     assert_eq!(capture["freshness"], "stale", "{capture}");
     assert_eq!(capture["changedFiles"], json!(["web/cart/Line.tsx"]));
 }
+
+impl Harness {
+    /// `keel check` over `HEAD~1..HEAD` of the project with a card naming the `cart` journey.
+    fn keel_check(&self, scope: &[&str], with_records: bool) -> (i32, Value) {
+        let card = self.scratch.path().join("card.json");
+        std::fs::write(
+            &card,
+            serde_json::to_vec(&json!({
+                "promise": "the cart renders", "scopePaths": scope,
+                "proof": "npx playwright test", "journeys": ["cart"],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut command = graphhelm();
+        command
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(&self.project)
+            .arg("--card")
+            .arg(&card);
+        if with_records {
+            command
+                .arg("--events")
+                .arg(&self.events)
+                .args(["--execution", RUN, "--keyring"])
+                .arg(&self.keyring)
+                .args(["--key-id", KEY_ID]);
+        }
+        let output = command.output().unwrap();
+        (output.status.code().unwrap(), envelope(&output))
+    }
+}
+
+fn journey_warnings(reply: &Value) -> Vec<String> {
+    reply["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "keel.journey.no_fresh_capture")
+        .map(|d| d["message"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn keel_check_warns_for_a_touched_screen_until_it_has_a_fresh_capture_at_the_head() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    std::fs::write(harness.project.join("web/cart/Line.tsx"), "line 2").unwrap();
+    git(&harness.project, &["commit", "-qam", "edit cart"]);
+
+    let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], false);
+    assert_eq!(code, 0, "{reply}");
+    let warnings = journey_warnings(&reply);
+    assert_eq!(warnings.len(), 1, "{reply}");
+    assert!(warnings[0].contains("cart/open-cart"), "{reply}");
+    assert!(
+        warnings[0].contains("--events"),
+        "the warning says captures were not read: {reply}"
+    );
+
+    let (_, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
+    assert!(
+        journey_warnings(&reply)[0].contains("no capture"),
+        "{reply}"
+    );
+
+    harness.capture("open-cart", &[]);
+    let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        journey_warnings(&reply).is_empty(),
+        "a fresh capture at the head silences it: {reply}"
+    );
+
+    std::fs::write(harness.project.join("web/cart/Line.tsx"), "line 3").unwrap();
+    git(&harness.project, &["commit", "-qam", "edit cart again"]);
+    let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
+    assert_eq!(code, 0, "{reply}");
+    let warnings = journey_warnings(&reply);
+    assert!(
+        warnings[0].contains("web/cart/Line.tsx"),
+        "a stale capture names the changed file: {reply}"
+    );
+}
+
+#[test]
+fn keel_check_warns_on_a_missing_contract_and_ignores_untouched_screens() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    std::fs::write(harness.project.join("README.md"), "x").unwrap();
+    git(&harness.project, &["add", "-A"]);
+    git(&harness.project, &["commit", "-qm", "readme"]);
+    let (code, reply) = harness.keel_check(&["README.md"], false);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        journey_warnings(&reply).is_empty(),
+        "README.md touches no screen: {reply}"
+    );
+    std::fs::remove_file(harness.project.join(".graphhelm/journeys/cart.json")).unwrap();
+    let (code, reply) = harness.keel_check(&["README.md"], false);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        reply["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "keel.journey.contract_unreadable" && d["severity"] == "warning"),
+        "{reply}"
+    );
+}

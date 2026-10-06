@@ -864,6 +864,16 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
         ],
     };
+    // Pause observes an established stream, not two requests racing to bootstrap its layout.
+    // On Windows a bootstrap creator's DELETE handle can refuse the competing status open.
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
     let (_guard, base, token) = serve_with(&events, &extra);
 
     // `start` blocks for the whole story (the hanging model call) — run it on its own thread so
@@ -891,6 +901,13 @@ fn immediate_pause_interrupts_an_in_flight_node_and_resume_refuses_until_approve
     // status read every mutation replies with.
     let status_url = format!("{base}/v1/executions/{execution}");
     loop {
+        if start_handle.is_finished() {
+            let response = start_handle.join().unwrap();
+            panic!(
+                "start returned before running: {:?}",
+                response.as_ref().map(|r| (&r.status, &r.body))
+            );
+        }
         if let Ok(response) = raw_request(&status_url, Some(&token))
             && response.status == 200
         {
@@ -1117,6 +1134,16 @@ fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry(
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
         ],
     };
+    // Pause observes an established stream, not two requests racing to bootstrap its layout.
+    // On Windows a bootstrap creator's DELETE handle can refuse the competing status open.
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
     let (_guard, base, token) = serve_with(&events, &extra);
 
     let start_base = base.clone();
@@ -1138,6 +1165,13 @@ fn immediate_pause_honors_if_match_attributes_the_caller_and_recognises_a_retry(
 
     let status_url = format!("{base}/v1/executions/{execution}");
     loop {
+        if start_handle.is_finished() {
+            let response = start_handle.join().unwrap();
+            panic!(
+                "start returned before running: {:?}",
+                response.as_ref().map(|r| (&r.status, &r.body))
+            );
+        }
         if let Ok(response) = raw_request(&status_url, Some(&token))
             && response.status == 200
         {
@@ -1418,6 +1452,16 @@ fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
         ],
     };
+    // Pause observes an established stream, not two requests racing to bootstrap its layout.
+    // On Windows a bootstrap creator's DELETE handle can refuse the competing status open.
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
     let (_guard, base, token) = serve_with(&events, &extra);
 
     let start_base = base.clone();
@@ -1439,6 +1483,13 @@ fn immediate_pause_does_not_share_a_key_with_a_prior_graceful_pause() {
 
     let status_url = format!("{base}/v1/executions/{execution}");
     loop {
+        if start_handle.is_finished() {
+            let response = start_handle.join().unwrap();
+            panic!(
+                "start returned before running: {:?}",
+                response.as_ref().map(|r| (&r.status, &r.body))
+            );
+        }
         if let Ok(response) = raw_request(&status_url, Some(&token))
             && response.status == 200
         {
@@ -1606,6 +1657,16 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
         ],
     };
+    // Pause observes an established stream, not two requests racing to bootstrap its layout.
+    // On Windows a bootstrap creator's DELETE handle can refuse the competing status open.
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
     let (_guard, base, token) = serve_with(&events, &extra);
 
     let start_base = base.clone();
@@ -1627,6 +1688,13 @@ fn graceful_pause_during_a_draining_node_then_immediate_does_not_corrupt_the_str
 
     let status_url = format!("{base}/v1/executions/{execution}");
     loop {
+        if start_handle.is_finished() {
+            let response = start_handle.join().unwrap();
+            panic!(
+                "start returned before running: {:?}",
+                response.as_ref().map(|r| (&r.status, &r.body))
+            );
+        }
         if let Ok(response) = raw_request(&status_url, Some(&token))
             && response.status == 200
         {
@@ -1822,6 +1890,16 @@ fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_gra
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
         ],
     };
+    // Pause observes an established stream, not two requests racing to bootstrap its layout.
+    // On Windows a bootstrap creator's DELETE handle can refuse the competing status open.
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
     let (_guard, base, token) = serve_with(&events, &extra);
 
     let start_base = base.clone();
@@ -1843,6 +1921,13 @@ fn a_sequential_actor_reusing_a_committed_immediate_pause_key_is_refused_not_gra
 
     let status_url = format!("{base}/v1/executions/{execution}");
     loop {
+        if start_handle.is_finished() {
+            let response = start_handle.join().unwrap();
+            panic!(
+                "start returned before running: {:?}",
+                response.as_ref().map(|r| (&r.status, &r.body))
+            );
+        }
         if let Ok(response) = raw_request(&status_url, Some(&token))
             && response.status == 200
         {

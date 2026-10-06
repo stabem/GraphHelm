@@ -3,7 +3,8 @@ import { expect, it, vi } from "vitest";
 
 import { buildGraphModel } from "../graph/model";
 import type { RuntimeEvent } from "../runtime/types";
-import { NodePanel, resetPanelCaches, useNativePersonaLinks } from "./panel";
+import { NodePanel, resetPanelCaches, useActorAliases, useNativePersonaLinks } from "./panel";
+import { teamModel } from "../runtime/team";
 
 it("shows one real attempt and the model reply without opening accounting blobs", async () => {
   resetPanelCaches();
@@ -69,4 +70,26 @@ it("replays only owner membership for this activity and hides it on activity swi
   rerender({ run: "different-run" });
   expect(result.current).toEqual({});
   await waitFor(() => expect(result.current).toEqual({}));
+});
+
+// Sealed evidence I/O only: catches an agent renaming a peer, a malformed alias, and the older name winning.
+it("reads owner actor aliases, newest wins, and the bot carries the name", async () => {
+  resetPanelCaches();
+  const rows = [
+    { actorType: "owner", to: "kit-1", type: "user", name: "  Old name  " },
+    { actorType: "owner", to: "kit-1", type: "user", name: "Cart builder" },
+    { actorType: "agent", to: "kit-2", type: "tool", name: "Hijack" },
+    { actorType: "owner", to: "codex", type: "user", name: "Shared" },
+    { actorType: "owner", to: "kit-3", type: "user", name: "x".repeat(81) },
+  ];
+  const events: RuntimeEvent[] = rows.map((row, i) => ({ sequence: i + 1, kind: "signal_recorded", payload: { kind: "actor_alias" }, occurredAt: null, actorId: row.actorType === "owner" ? "studio-operator" : "kit-9", actorType: row.actorType, idempotencyKey: `alias-${i}`, eventId: `alias-${i}`, evidenceRefs: [`alias-${i}`] } as RuntimeEvent));
+  const openEvidence = vi.fn(async (_run: string, evidenceId: string) => {
+    const row = rows[Number(evidenceId.split("-").at(-1))];
+    return { evidenceId, content: JSON.stringify({ source: { type: row.type, id: "studio-operator" }, to: row.to, description: JSON.stringify({ protocol: (row as { protocol?: string }).protocol ?? "graphhelm-actor-alias-v1", displayName: row.name }) }), mediaType: "application/json", contentSha256: "hash", sensitivity: "confidential" };
+  });
+  const { result } = renderHook(() => useActorAliases(events, "run-a", openEvidence));
+  await waitFor(() => expect(result.current).toEqual({ "kit-1": "Cart builder" }));
+  expect(openEvidence).not.toHaveBeenCalledWith("run-a", "alias-2");
+  const team = teamModel({ events: [], envelopes: {}, personas: {}, nativeLinks: {}, aliases: result.current, model: null, claudeTasks: null, waitingAskers: new Set(), now: Date.parse("2026-10-05T12:00:00Z") });
+  expect(team.bots.find((bot) => bot.actorId === "kit-1")?.name).toBe("Cart builder");
 });

@@ -102,6 +102,11 @@ a duplicate the watcher reads twice. A real failure is `ok: false` with a diagno
 3. `tool:evidence` with that entry's `evidenceRefs[].evidenceId`.
 4. The content is the envelope; the sentence is its `description`.
 
+**A refusal is final.** An owner entry whose payload kind is `owner_refusal`, whose envelope
+`replyTo` names your question, carries `{"protocol": "graphhelm-owner-refusal-v1", "reason"?}` in its
+`description`. The owner said no to that question. Do not ask it again, and do not work around it by
+another route. Record what you do instead.
+
 ## Sleeping instead of polling
 
 1. `tool:wake_arm` with `executionId`, a chosen `rendezvousId`, and `cursor` at the current head.

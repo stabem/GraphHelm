@@ -132,6 +132,8 @@ export interface OpenQuestion {
   text: string;
   /** The signal id an answer's `replyTo` must cite to settle this debt. */
   signalId: string | null;
+  /** The sequence of the question's signal event; always present, so it can key a card when there is no signal id. */
+  sequence: number;
 }
 
 function signalIdOf(event: RuntimeEvent): string | null {
@@ -167,7 +169,7 @@ export function openQuestions(
     if (envelope.replyTo !== null && operatorSignalIds.has(envelope.replyTo)) continue;
     const signalId = signalIdOf(event);
     if (signalId !== null && answeredIds.has(signalId)) continue;
-    owed.push({ asker: event.actorId, at: event.occurredAt, text: envelope.text, signalId });
+    owed.push({ asker: event.actorId, at: event.occurredAt, text: envelope.text, signalId, sequence: event.sequence });
   }
   return owed;
 }

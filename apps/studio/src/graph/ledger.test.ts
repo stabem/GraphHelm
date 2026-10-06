@@ -53,7 +53,7 @@ describe("the shared ledger of unanswered questions", () => {
     const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];
     const envelopes = { 5: { to: OPERATOR, replyTo: null, text: "which region?" } };
     expect(openQuestions(events, envelopes, OPERATOR)).toEqual([
-      { asker: "codex", at: "2026-08-31T09:00:05Z", text: "which region?", signalId: "sig-5" },
+      { asker: "codex", at: "2026-08-31T09:00:05Z", text: "which region?", signalId: "sig-5", sequence: 5 },
     ]);
   });
 

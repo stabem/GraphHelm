@@ -9,6 +9,8 @@ mod gate;
 mod gateway;
 mod hash;
 mod init;
+mod journey;
+mod journeys;
 mod keel;
 mod lint;
 mod mcp;
@@ -554,6 +556,20 @@ pub fn run(command: TopLevel) -> Outcome {
         TopLevel::Mcp(args) => mcp::run(&args),
         TopLevel::WakeWait(args) => wake_wait::run(&args),
         TopLevel::Init(args) => init::run(&args),
+        TopLevel::Journeys(args) => {
+            let project = args
+                .project
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            journeys::run(
+                &args.events,
+                &args.execution,
+                &project,
+                &args.keyring,
+                &args.key_id,
+            )
+        }
+        TopLevel::Journey(args) => journey::run(&args),
         TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),

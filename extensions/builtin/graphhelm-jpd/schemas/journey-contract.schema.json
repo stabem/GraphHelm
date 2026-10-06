@@ -340,6 +340,54 @@
         },
         "failureContract": {
           "$ref": "#/$defs/failureContract"
+        },
+        "screen": {
+          "$ref": "#/$defs/screen"
+        }
+      },
+      "additionalProperties": false
+    },
+    "screen": {
+      "type": "object",
+      "required": [
+        "screenId",
+        "title",
+        "scopePaths"
+      ],
+      "properties": {
+        "screenId": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "scopePaths": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "allOf": [
+              {
+                "not": {
+                  "pattern": "^/"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "\\\\"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "\\.\\."
+                }
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false

@@ -149,13 +149,15 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 24] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 25] = [
     "start",
     "list",
     "topology",
     "status",
     // #1063. The resume briefing is a READ over an execution's store, beside status.
     "briefing",
+    // #315. The proven-journey map is a READ over an execution, beside briefing.
+    "journeys",
     "events",
     "evidence",
     "signal",

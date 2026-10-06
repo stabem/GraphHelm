@@ -64,12 +64,100 @@ pub enum TopLevel {
     Restore(AdoptionRestoreArgs),
     /// Build, verify, or query the Keel contract index, or check a diff against its card.
     Keel(KeelArgs),
+    /// The proven-journey map of one run (#315): each contract step with its newest screen
+    /// capture marked fresh, stale or unknown against the project's git history, and the walked
+    /// arrows between steps. Read-only; identical to `GET /v1/executions/{id}/journeys`.
+    Journeys(JourneysArgs),
+    /// Record journey proof into a run (#315): `capture` one screen of a contract step at the
+    /// project's current git revision, or `walked` one transition between two captured,
+    /// consecutive steps.
+    Journey(JourneyArgs),
     /// The Studio: `graphhelm studio start` brings the GraphHelm clone up to date and opens the
     /// Studio for the project in the current directory, starting its Runtime when none answers.
     Studio(StudioArgs),
     /// Update GraphHelm itself: fast-forward the clone this binary comes from to `origin/main`
     /// (only a clean `main`), then reinstall the CLI from it with `cargo install`.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneysArgs {
+    #[arg(long)]
+    pub events: PathBuf,
+    #[arg(long)]
+    pub execution: String,
+    /// The project whose `.graphhelm/journeys/` holds the contracts. Defaults to the current
+    /// directory.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The keyring that opens the run's sealed signal envelopes.
+    #[arg(long)]
+    pub keyring: PathBuf,
+    #[arg(long)]
+    pub key_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyArgs {
+    #[command(subcommand)]
+    pub command: JourneyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JourneyCommand {
+    /// Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the
+    /// project's HEAD and whether the working tree is dirty.
+    Capture(JourneyCaptureArgs),
+    /// Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps.
+    Walked(JourneyWalkedArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyRecordArgs {
+    #[arg(long)]
+    pub events: PathBuf,
+    #[arg(long)]
+    pub execution: String,
+    /// The keyring that seals the signal envelope.
+    #[arg(long)]
+    pub keyring: PathBuf,
+    #[arg(long)]
+    pub key_id: String,
+    /// The git project whose `.graphhelm/journeys/` holds the contract. Defaults to the current
+    /// directory.
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub contract: String,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyCaptureArgs {
+    #[command(flatten)]
+    pub record: JourneyRecordArgs,
+    #[arg(long)]
+    pub step: String,
+    /// A PNG, JPEG or WebP image of the screen.
+    #[arg(long)]
+    pub image: PathBuf,
+    /// `WIDTHxHEIGHT`; required unless the image is a PNG, whose header carries both.
+    #[arg(long)]
+    pub viewport: Option<String>,
+    #[arg(long)]
+    pub pr: Option<u64>,
+    /// `before` or `after`.
+    #[arg(long)]
+    pub phase: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyWalkedArgs {
+    #[command(flatten)]
+    pub record: JourneyRecordArgs,
+    #[arg(long)]
+    pub from: String,
+    #[arg(long)]
+    pub to: String,
 }
 
 #[derive(Debug, Args)]

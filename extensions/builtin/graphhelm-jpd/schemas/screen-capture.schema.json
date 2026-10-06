@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/screen-capture.schema.json",
+  "title": "GraphHelm JPD Screen Capture Record",
+  "type": "object",
+  "required": [
+    "protocol",
+    "contractId",
+    "stepId",
+    "revision",
+    "dirty",
+    "viewport",
+    "observer"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "graphhelm-screen-capture-v1"
+    },
+    "contractId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "stepId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "dirty": {
+      "type": "boolean"
+    },
+    "viewport": {
+      "type": "object",
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        }
+      },
+      "additionalProperties": false
+    },
+    "observer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "pr": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "phase": {
+      "enum": [
+        "before",
+        "after"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

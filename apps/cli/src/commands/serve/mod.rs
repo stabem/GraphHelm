@@ -624,6 +624,7 @@ fn build_router(state: ServeState) -> Router {
             get(routes::reply_suggestions),
         )
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
+        .route("/v1/executions/{id}/journeys", get(routes::journeys))
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",

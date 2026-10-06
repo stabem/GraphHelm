@@ -25,3 +25,18 @@ Rules:
 
 No new node types and no new tools: these are ordinary graph signals (`schemas/graph-signal.schema.json`),
 so the Runtime's existing evidence and threading rules apply unchanged.
+
+## Screen captures and walked transitions (ADR-044)
+
+Two more signal kinds prove a journey visually. They are not part of the `replyTo` thread above;
+the fold groups them by contract and step.
+
+| Signal `type` | Description `protocol` | Producer | Carries |
+|---|---|---|---|
+| `jpd.screen_captured` | `graphhelm-screen-capture-v1` | `graphhelm journey capture` | `contractId`, `stepId`, `revision`, `dirty`, `viewport`, `observer`, optional `pr` and `phase`; exactly one image attachment |
+| `jpd.transition_walked` | `graphhelm-transition-walked-v1` | `graphhelm journey walked` | `contractId`, `fromStepId`, `toStepId`, `revision`, `observer`, `fromCaptureId`, `toCaptureId` |
+
+The description is a JSON document with the schema
+`extensions/builtin/graphhelm-jpd/schemas/screen-capture.schema.json` or
+`transition-walked.schema.json`. A dirty capture is shown but never counts as fresh proof. Records
+whose ids are path-like (`/`, `\`, `:`, `..`) are ignored by the fold.

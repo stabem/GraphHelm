@@ -125,7 +125,7 @@ fn built_in_jpd_extension_is_a_closed_digest_bound_package() {
     assert_eq!(result["ok"], true);
     assert_eq!(result["data"]["id"], "graphhelm-jpd");
     assert_eq!(result["data"]["version"], "0.1.0");
-    assert_eq!(result["data"]["contributionCount"], 53);
+    assert_eq!(result["data"]["contributionCount"], 55);
     assert!(
         result["data"]["packageDigest"]
             .as_str()
@@ -1605,4 +1605,120 @@ fn jpd_defect_independence_is_distinct_input_with_candidate_authority() {
             .is_empty(),
         "shape validation cannot claim authoritative independence without the registered validator"
     );
+}
+
+/// A journey step may name the screen it shows, and the two phase-4 records are closed documents.
+/// The contract is built here because the package ships no complete contract fixture.
+#[test]
+fn journey_screens_and_capture_records_validate() {
+    let root = package_root();
+    let schemas = package_schemas(&root);
+    let contract_schema = schema_id(&root, "journey-contract.schema.json");
+    let refused =
+        |schema: &str, value: &Value| !schemas.validate(schema, value, "jpd-screen").is_empty();
+    let accepted = |schema: &str, value: &Value| {
+        let diagnostics = schemas.validate(schema, value, "jpd-screen");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    };
+
+    let action = serde_json::json!({
+        "kind": "navigate",
+        "target": {"strategy": "visible_text", "value": "Cart", "geometryClaim": false}
+    });
+    let step = serde_json::json!({
+        "stepId": "open-cart",
+        "actorId": "shopper",
+        "semanticAction": action,
+        "expectedStates": ["stable"],
+        "failureContract": {
+            "timeoutSeconds": 30,
+            "visibleError": "Cart did not open",
+            "safeStop": "Stay on the page",
+            "recoveryAction": null,
+            "prohibitedSideEffects": []
+        }
+    });
+    let contract = |step: Value| {
+        serde_json::json!({
+            "contractId": "cart",
+            "version": 1,
+            "title": "Cart",
+            "taskScope": "Open the cart",
+            "actors": [{"actorId": "shopper", "name": "Shopper", "goal": "Buy"}],
+            "preconditions": [],
+            "steps": [step],
+            "promises": [{
+                "promiseId": "cart-renders",
+                "stepId": "open-cart",
+                "statement": "The cart renders",
+                "requiredFact": "content_rendered",
+                "requiredEvidenceKinds": ["visual_capture"],
+                "requiredObserverCapability": "browser",
+                "statesToObserve": ["stable"],
+                "maxEvidenceAgeSeconds": 3600
+            }],
+            "riskSignals": [],
+            "outOfScope": []
+        })
+    };
+    accepted(&contract_schema, &contract(step.clone()));
+
+    let with_screen = |screen: Value| {
+        let mut value = step.clone();
+        value["screen"] = screen;
+        contract(value)
+    };
+    let screen = serde_json::json!({
+        "screenId": "cart-page", "title": "Cart", "scopePaths": ["web/cart/"]
+    });
+    accepted(&contract_schema, &with_screen(screen.clone()));
+
+    let mut extra = screen.clone();
+    extra["extra"] = serde_json::json!(true);
+    assert!(refused(&contract_schema, &with_screen(extra)));
+    for bad in ["/etc", r"web\cart", "web/../cart"] {
+        let mut value = screen.clone();
+        value["scopePaths"] = serde_json::json!([bad]);
+        assert!(refused(&contract_schema, &with_screen(value)), "{bad}");
+    }
+    let mut missing = screen.clone();
+    missing.as_object_mut().unwrap().remove("screenId");
+    assert!(refused(&contract_schema, &with_screen(missing)));
+
+    let revision = "a".repeat(40);
+    let capture_schema = schema_id(&root, "screen-capture.schema.json");
+    let capture = serde_json::json!({
+        "protocol": "graphhelm-screen-capture-v1",
+        "contractId": "cart", "stepId": "open-cart", "revision": revision,
+        "dirty": false, "viewport": {"width": 1280, "height": 720},
+        "observer": "actor-1", "pr": 7, "phase": "after"
+    });
+    accepted(&capture_schema, &capture);
+    let mut during = capture.clone();
+    during["phase"] = serde_json::json!("during");
+    assert!(refused(&capture_schema, &during));
+    let mut no_dirty = capture.clone();
+    no_dirty.as_object_mut().unwrap().remove("dirty");
+    assert!(refused(&capture_schema, &no_dirty));
+    let mut extra = capture.clone();
+    extra["extra"] = serde_json::json!(1);
+    assert!(refused(&capture_schema, &extra));
+
+    let walked_schema = schema_id(&root, "transition-walked.schema.json");
+    let walked = serde_json::json!({
+        "protocol": "graphhelm-transition-walked-v1",
+        "contractId": "cart", "fromStepId": "open-cart", "toStepId": "pay",
+        "revision": revision, "observer": "actor-1",
+        "fromCaptureId": "sig-1", "toCaptureId": "sig-2"
+    });
+    accepted(&walked_schema, &walked);
+    let mut no_to = walked.clone();
+    no_to.as_object_mut().unwrap().remove("toCaptureId");
+    assert!(refused(&walked_schema, &no_to));
+    let mut bad_protocol = walked.clone();
+    bad_protocol["protocol"] = serde_json::json!("graphhelm-screen-capture-v1");
+    assert!(refused(&walked_schema, &bad_protocol));
+    let mut extra = walked.clone();
+    extra["extra"] = serde_json::json!(1);
+    assert!(refused(&walked_schema, &extra));
 }

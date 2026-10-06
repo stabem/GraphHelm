@@ -1670,6 +1670,47 @@ pub(super) async fn briefing(
     }
 }
 
+/// `GET /v1/executions/{id}/journeys` (#315): `graphhelm journeys`'s own `data`, read by the same
+/// `journeys::read`. The project is the one this Runtime was started with and the keyring is the
+/// Runtime's own; nothing from the request names a path. Owner credentials only: a scoped agent
+/// credential is refused by `agent_route_allowed`.
+pub(super) async fn journeys(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    let command = crate::commands::journeys::COMMAND;
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            command,
+            execution::execution_state(
+                "journeys require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            command,
+            execution::execution_state("journeys require a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        crate::commands::journeys::read(&events, &execution_id, &project, &keyring)
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(command, "the journeys task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(command, value).output),
+        Err(failure) => respond_failure(command, failure),
+    }
+}
+
 /// `GET /v1/executions/{id}/events?after=N&limit=M`: a page of the raw event envelope tail, read
 /// through the same `execution::resolve_stream` the CLI's replay path uses, sliced by `after`
 /// (exclusive) and `limit` (default 100, max 1000). Envelopes serialize verbatim — their payloads
@@ -5083,9 +5124,7 @@ fn renders_as_text(media_type: &str) -> bool {
         || media_type.starts_with("text/")
 }
 
-/// One refusal shape for every way this read can decline, all of them 409: the request was
-/// well-formed and the server understood it, and what it could not do is a fact about this
-/// server's configuration or this evidence's state rather than about the caller's syntax.
+/// The image media type this read serves as raw bytes, or `None` for every other type.
 fn served_image_type(media_type: &str) -> Option<&'static str> {
     ["image/png", "image/jpeg", "image/webp"]
         .into_iter()
@@ -5110,6 +5149,9 @@ fn image_response(media_type: &'static str, bytes: Vec<u8>) -> Response {
         })
 }
 
+/// One refusal shape for every way this read can decline, all of them 409: the request was
+/// well-formed and the server understood it, and what it could not do is a fact about this
+/// server's configuration or this evidence's state rather than about the caller's syntax.
 fn evidence_refusal(message: &str) -> Response {
     respond(
         StatusCode::CONFLICT,

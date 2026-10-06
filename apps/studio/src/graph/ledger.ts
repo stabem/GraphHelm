@@ -93,7 +93,6 @@ export function address_of(text: string, mediaType: string): { to: string | null
   }
 }
 
-/** The envelope a signal's sealed evidence carried, keyed by the signal event's sequence. */
 /** The envelope a signal's sealed evidence carried, keyed by the signal event's sequence.
  * `recommendations` is the graph-signal envelope's own field (schemas/graph-signal.schema.json);
  * absent when the envelope carried none or was not JSON. */

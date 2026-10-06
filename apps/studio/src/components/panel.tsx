@@ -905,7 +905,7 @@ export function useEnvelopes(
           setEnvelopes((previous) => {
             const before = previous.forId === executionId ? previous.map[carrier.sequence] : undefined;
             if (before?.to === opened.to && before.replyTo === opened.replyTo && before.text === opened.text
-              && (before.recommendations ?? []).join(" ") === (opened.recommendations ?? []).join(" ")) return previous;
+              && (before.recommendations ?? []).join("\u0000") === (opened.recommendations ?? []).join("\u0000")) return previous;
             return {
               forId: executionId,
               map: { ...(previous.forId === executionId ? previous.map : {}), [carrier.sequence]: opened },

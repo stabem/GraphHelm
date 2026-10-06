@@ -595,6 +595,10 @@ pub fn run(command: TopLevel) -> Outcome {
                 prove_target_dir,
                 prove_timeout_secs,
                 prove_command,
+                events,
+                execution,
+                keyring,
+                key_id,
             } => keel::check(
                 &repo,
                 &diff,
@@ -603,6 +607,12 @@ pub fn run(command: TopLevel) -> Outcome {
                     target_dir: prove_target_dir,
                     timeout_secs: prove_timeout_secs,
                     command: prove_command,
+                }),
+                events.map(|events| keel::JourneyRecords {
+                    events,
+                    execution: execution.unwrap_or_default(),
+                    keyring: keyring.unwrap_or_default(),
+                    key_id: key_id.unwrap_or_default(),
                 }),
             ),
         },

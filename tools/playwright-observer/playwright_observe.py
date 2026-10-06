@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -25,6 +26,14 @@ import sys
 DEFAULT_COMMAND = "npx --no-install playwright test --reporter=json"
 REPORT = Path(".graphhelm") / "playwright-report.json"
 OBSERVED = {0: "passed", 1: "failed"}
+
+
+def _split(command: str) -> list[str]:
+    """Split a command line; on Windows keep backslashes in paths (posix shlex would eat them)."""
+    if os.name != "nt":
+        return shlex.split(command)
+    return [part[1:-1] if len(part) > 1 and part[0] == part[-1] and part[0] in "\"'" else part
+            for part in shlex.split(command, posix=False)]
 
 
 def _tests(suites: list, path: list[str], out: list[str]) -> None:
@@ -39,7 +48,7 @@ def _tests(suites: list, path: list[str], out: list[str]) -> None:
 
 
 def observe(project: Path, command: str, timeout: int) -> dict:
-    argv = shlex.split(command)
+    argv = _split(command)
     if shutil.which(argv[0]) is None:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{argv[0]}` is not on PATH"]}
@@ -92,14 +101,110 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     return {"verdict": verdict, "exitCode": result.returncode, "evidence": evidence}
 
 
+def _shots(suites: list, out: dict) -> None:
+    """Map each spec title to its last test's status and screenshot path (a step-named attachment wins)."""
+    for suite in suites:
+        for spec in suite.get("specs", []):
+            for test in spec.get("tests", []):
+                results = test.get("results") or [{}]
+                attachments = [a for a in results[-1].get("attachments") or []
+                               if isinstance(a, dict) and a.get("contentType") == "image/png" and a.get("path")]
+                named = [a for a in attachments if a.get("name") == spec.get("title")]
+                auto = [a for a in attachments if a.get("name") == "screenshot"]
+                chosen = (named or auto or [None])[0]
+                out[spec.get("title")] = {"status": test.get("status", "?"),
+                                          "path": chosen["path"] if chosen else None}
+        _shots(suite.get("suites", []), out)
+
+
+def _run_cli(graphhelm: str, tail: list[str], base: list[str]) -> str | None:
+    """Run one `graphhelm journey ...`; None on success, else the reason it was refused."""
+    try:
+        result = subprocess.run(_split(graphhelm) + tail[:2] + base + tail[2:],
+                                capture_output=True, text=True, timeout=120)
+    except FileNotFoundError:
+        return "graphhelm not found"
+    except subprocess.TimeoutExpired:
+        return "capture refused: timed out"
+    try:
+        envelope = json.loads(result.stdout)
+    except ValueError:
+        envelope = {}
+    if result.returncode == 0 and isinstance(envelope, dict) and envelope.get("ok") is True:
+        return None
+    diagnostics = envelope.get("diagnostics") if isinstance(envelope, dict) else None
+    message = None
+    if isinstance(diagnostics, list) and diagnostics and isinstance(diagnostics[0], dict):
+        message = diagnostics[0].get("message")
+    return f"capture refused: {message or f'exit {result.returncode}'}"
+
+
+def record_journey(args, project: Path, steps: list[str], outcome: dict) -> None:
+    shots: dict = {}
+    report_path = project / REPORT
+    try:
+        report = json.loads(report_path.read_bytes())
+        if isinstance(report, dict) and isinstance(report.get("suites"), list):
+            _shots(report["suites"], shots)
+    except (OSError, ValueError):
+        pass
+    base = ["--events", args.events, "--execution", args.execution, "--keyring", args.keyring,
+            "--key-id", args.key_id, "--project", str(project), "--contract", args.journey]
+    captured: list[str] = []
+    missing: dict[str, str] = {}
+    walked: list[list[str]] = []
+    for step in steps:
+        shot = shots.get(step)
+        if shot is None:
+            missing[step] = "no test titled with the step id"
+        elif shot["status"] != "expected":
+            missing[step] = f"test {shot['status']}"
+        elif shot["path"] is None:
+            missing[step] = "no screenshot"
+        else:
+            reason = _run_cli(args.graphhelm, ["journey", "capture", "--step", step, "--image", shot["path"]], base)
+            if reason:
+                missing[step] = reason
+            else:
+                captured.append(step)
+                outcome["evidence"].append(f"journey {args.journey}: captured {step}")
+    for a, b in zip(steps, steps[1:]):
+        if a in captured and b in captured:
+            if _run_cli(args.graphhelm, ["journey", "walked", "--from", a, "--to", b], base) is None:
+                walked.append([a, b])
+                outcome["evidence"].append(f"journey {args.journey}: walked {a} -> {b}")
+    outcome["journey"] = {"contractId": args.journey, "captured": captured, "walked": walked, "missing": missing}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--project", default=".", help="directory holding playwright.config and tests")
     parser.add_argument("--command",
                         default=os.environ.get("GRAPHHELM_PLAYWRIGHT_COMMAND", DEFAULT_COMMAND))
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--journey", help="journey contract id: record a capture per step and a walk per arrow")
+    parser.add_argument("--events", help="Runtime events dir (with --journey)")
+    parser.add_argument("--execution", help="execution id (with --journey)")
+    parser.add_argument("--keyring", help="keyring path (with --journey)")
+    parser.add_argument("--key-id", help="signing key id (with --journey)")
+    parser.add_argument("--graphhelm", default=os.environ.get("GRAPHHELM_BIN", "graphhelm"))
     args = parser.parse_args()
+    steps: list[str] = []
+    if args.journey:
+        absent = [f"--{f.replace('_', '-')}" for f in ("events", "execution", "keyring", "key_id")
+                  if not getattr(args, f)]
+        if absent:
+            parser.error(f"--journey needs {', '.join(absent)}")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", args.journey) or ".." in args.journey:
+            parser.error(f"--journey id {args.journey!r} is not a valid journey id")
+        try:
+            contract = json.loads((Path(args.project) / ".graphhelm" / "journeys" / f"{args.journey}.json").read_bytes())
+            steps = [s["stepId"] for s in contract["steps"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            parser.error(f"cannot read a journey contract with steps at .graphhelm/journeys/{args.journey}.json")
     outcome = observe(Path(args.project), args.command, args.timeout)
+    if args.journey and outcome["verdict"] in ("passed", "failed"):
+        record_journey(args, Path(args.project), steps, outcome)
     print(json.dumps(outcome, indent=2))
     return {"passed": 0, "failed": 1}.get(outcome["verdict"], 2)
 

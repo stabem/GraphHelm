@@ -48,6 +48,23 @@ there; say so in the PR body with `OBSERVER_MISSING: Runtime records (no Runtime
 rather than skipping silently. Studio, the Stop and edit locks and the Runtime signals are not
 observed in such a session, and the PR body must not claim they were.
 
+**Before/after captures for screens (guidance, not a gate).** When the card's scope touches a
+journey screen's `scopePaths` (`.graphhelm/journeys/<contractId>.json`), record, for each touched
+screen, a `before` capture at the base and an `after` capture at the head, and link both in the PR
+body:
+
+    git checkout <base>   # then run the app
+    graphhelm journey capture --events <dir> --execution <id> --keyring <dir> --key-id <id>       --contract <contractId> --step <stepId> --image before.png --pr <N> --phase before
+    git checkout <head>   # then run the app
+    graphhelm journey capture ... --image after.png --pr <N> --phase after
+
+`tools/playwright-observer/playwright_observe.py --journey <contractId>` (with the same `--events`,
+`--execution`, `--keyring`, `--key-id`) records the head captures and the walked transitions in one
+run. Name the journeys in the card (`journeys: [contractId]`, or a `Journeys:` line in the PR body);
+`graphhelm keel check` (same four flags) then warns, without blocking, about a touched screen with
+no fresh capture at the head. Gates are off since 2026-09-24: a PR without captures is reviewed and
+merged like any other, and the review says what was not observed.
+
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind

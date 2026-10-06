@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use graphhelm_policy::keel::{self as policy_keel, Card, KeelPolicy};
+use graphhelm_execution::{
+    ChangedSince, Freshness, GitHistory, ScopeHistory, UnknownCause, fold_journeys,
+    valid_journey_id,
+};
+use graphhelm_policy::keel::{self as policy_keel, Card, Finding, JourneyScreen, KeelPolicy};
 use graphhelm_policy::keel_prove::{self, ProveOptions};
 use graphhelm_protocols::Diagnostic;
 
@@ -55,6 +59,15 @@ pub(super) struct ProveArgs {
     pub(super) command: Option<String>,
 }
 
+/// `--events`, `--execution`, `--keyring`, `--key-id`: the run whose screen captures a card's
+/// `journeys` are checked against (#321).
+pub(super) struct JourneyRecords {
+    pub(super) events: PathBuf,
+    pub(super) execution: String,
+    pub(super) keyring: PathBuf,
+    pub(super) key_id: String,
+}
+
 /// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]
 /// [--prove-new-tests]` (#1330, #1333).
 ///
@@ -66,6 +79,7 @@ pub(super) fn check(
     range: &str,
     card_path: Option<&Path>,
     prove: Option<ProveArgs>,
+    records: Option<JourneyRecords>,
 ) -> Outcome {
     if range.starts_with('-') || !range.contains("..") {
         return input_error("--diff takes a git range `<base>..<head>`", "/diff");
@@ -88,6 +102,13 @@ pub(super) fn check(
         .split_once("...")
         .or_else(|| range.split_once(".."))
         .unwrap_or((range, "HEAD"));
+    // A revision that starts with `-` would be read by git as an option, not a revision.
+    if base.starts_with('-') || head.starts_with('-') {
+        return input_error(
+            "--diff takes a git range `<base>..<head>`; a revision may not start with '-'",
+            "/diff",
+        );
+    }
     let base = if base.is_empty() { "HEAD" } else { base };
     let head = if head.is_empty() { "HEAD" } else { head };
     let merge_base = match Command::new("git")
@@ -153,6 +174,13 @@ pub(super) fn check(
         card.as_ref().map(|(card, bytes)| (card, *bytes)),
         &policy,
     );
+    let mut report = report;
+    if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
+        match journey_findings(repo, head, card, records.as_ref()) {
+            Ok(findings) => report.findings.extend(findings),
+            Err(outcome) => return *outcome,
+        }
+    }
     let proof = match prove {
         None => None,
         Some(args) => {
@@ -215,6 +243,136 @@ pub(super) fn check(
         },
         exit_code: if refused { 2 } else { 0 },
     }
+}
+
+/// A history pinned to the range head: the working tree may be checked out elsewhere.
+struct AtHead {
+    git: GitHistory,
+    head: String,
+}
+
+impl ScopeHistory for AtHead {
+    fn head(&self) -> Option<String> {
+        Some(self.head.clone())
+    }
+
+    fn changed_since(&self, revision: &str, head: &str) -> ChangedSince {
+        self.git.changed_since(revision, head)
+    }
+}
+
+/// Spec §6.3, advisory: the card's journeys folded at the range head; one warning per touched
+/// screen whose newest capture is not fresh there, and one per contract that cannot be read.
+fn journey_findings(
+    repo: &Path,
+    head: &str,
+    card: &Card,
+    records: Option<&JourneyRecords>,
+) -> Result<Vec<Finding>, Box<Outcome>> {
+    let object = format!("{head}^{{commit}}");
+    let head_sha = match Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", &object])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        }
+        Ok(_) => {
+            return Err(Box::new(input_error(
+                format!("git rev-parse {head} did not name a commit"),
+                "/diff",
+            )));
+        }
+        Err(error) => {
+            return Err(Box::new(input_error(
+                format!("git did not start: {error}"),
+                "/repo",
+            )));
+        }
+    };
+    let mut findings = Vec::new();
+    let mut contracts = Vec::new();
+    let directory = repo.join(".graphhelm").join("journeys");
+    for id in &card.journeys {
+        let read = if valid_journey_id(id) {
+            super::journeys::contract(&directory.join(format!("{id}.json")), id)
+        } else {
+            Err("invalid_journey_id")
+        };
+        match read {
+            Ok(contract) => contracts.push(contract),
+            Err(reason) => findings.push(Finding {
+                rule: "keel.journey.contract_unreadable".to_owned(),
+                path: None,
+                detail: format!("{id}: {reason}"),
+                blocking: false,
+            }),
+        }
+    }
+    let (captures, transitions) = match records {
+        Some(records) => {
+            let keyring = super::execution::signal::SignalKeyring {
+                directory: records.keyring.clone(),
+                key_id: records.key_id.clone(),
+            };
+            match super::journeys::records(&records.events, &records.execution, &keyring) {
+                Ok(read) => (read.captures, read.transitions),
+                Err(failure) => return Err(Box::new(failure.into_outcome(COMMAND))),
+            }
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+    let history = AtHead {
+        git: GitHistory::new(repo),
+        head: head_sha,
+    };
+    let view = fold_journeys(&contracts, &captures, &transitions, &history);
+    let mut screens = Vec::new();
+    for journey in view.journeys {
+        for step in journey.steps {
+            let Some(screen) = step.screen else {
+                continue;
+            };
+            let not_fresh = match step.capture {
+                None => Some(if records.is_some() {
+                    "no capture of this step was read".to_owned()
+                } else {
+                    "no capture of this step was read (pass --events, --execution, --keyring \
+                     and --key-id to read the run's captures)"
+                        .to_owned()
+                }),
+                Some(capture) => match capture.freshness {
+                    Freshness::Fresh => None,
+                    Freshness::Stale => Some(format!(
+                        "code changed after the capture at {}: {}",
+                        &capture.revision[..8.min(capture.revision.len())],
+                        capture.changed_files.join(", ")
+                    )),
+                    Freshness::Unknown => Some(format!(
+                        "freshness unknown ({})",
+                        match capture.unknown_cause {
+                            Some(UnknownCause::Dirty) => "taken from uncommitted code",
+                            Some(UnknownCause::NoScopePaths) => "screen has no scope paths",
+                            Some(UnknownCause::RevisionMissing) => {
+                                "revision not in the repository"
+                            }
+                            Some(UnknownCause::NoGit) | None => "no git history",
+                        }
+                    )),
+                },
+            };
+            screens.push(JourneyScreen {
+                contract_id: journey.contract_id.clone(),
+                step_id: step.step_id,
+                scope_paths: screen.scope_paths,
+                not_fresh,
+            });
+        }
+    }
+    findings.extend(policy_keel::check_journeys(&card.scope_paths, &screens));
+    Ok(findings)
 }
 
 fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
@@ -323,6 +481,7 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
                 ),
             ),
             "exported" | "exported symbols" => ("exportedSymbols", list()),
+            "journeys" => ("journeys", list()),
             _ => continue,
         };
         card.entry(key).or_insert(value);

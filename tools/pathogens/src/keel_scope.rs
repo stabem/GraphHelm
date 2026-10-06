@@ -116,6 +116,7 @@ fn card(scope: &[&str], symbols: &[&str]) -> Card {
         proof: "cargo test -p parser".to_owned(),
         exported_symbols: symbols.iter().map(|symbol| (*symbol).to_owned()).collect(),
         allowance: None,
+        journeys: Vec::new(),
     }
 }
 

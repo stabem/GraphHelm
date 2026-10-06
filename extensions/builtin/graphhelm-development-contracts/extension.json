@@ -1047,7 +1047,7 @@
           "id": "schema/keel-card",
           "kind": "schema",
           "path": "schemas/keel-card.schema.json",
-          "sha256": "sha256:c487907662251f6e9c95466ccdac286660d949c3d69c440a4d0332b65d72e359",
+          "sha256": "sha256:158ce06ebfd4cf876686c7e62905fb4a26a085bc3a1c702a58a2e35b818cbcd9",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1061,6 +1061,20 @@
           "kind": "fixture",
           "path": "fixtures/keel-card/valid/card-full.json",
           "sha256": "sha256:01e6de743d2819a49f86287b0ab7baf1a1185b23932ff31d958ec1e4cc3b2626",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/keel-card.schema.json"
+        },
+        {
+          "id": "fixture/keel-card-valid-journeys",
+          "kind": "fixture",
+          "path": "fixtures/keel-card/valid/card-journeys.json",
+          "sha256": "sha256:8794a5ded2bad641175694bdc791876c074551ed87822bf07287678da2092963",
           "effects": [],
           "permissions": [],
           "requires": {

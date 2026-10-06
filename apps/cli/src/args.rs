@@ -263,6 +263,17 @@ pub enum KeelCommand {
         /// report's testcase named exactly `{name}` decides. Without it those tests are unproven.
         #[arg(long, requires = "prove_new_tests")]
         prove_command: Option<String>,
+        /// With a card that names `journeys`: the run whose screen captures `keel check` reads
+        /// (with `--execution`, `--keyring`, `--key-id`). Without them every touched screen is
+        /// reported as having no capture read.
+        #[arg(long, requires_all = ["execution", "keyring", "key_id"])]
+        events: Option<PathBuf>,
+        #[arg(long, requires = "events")]
+        execution: Option<String>,
+        #[arg(long, requires = "events")]
+        keyring: Option<PathBuf>,
+        #[arg(long, requires = "events")]
+        key_id: Option<String>,
     },
 }
 

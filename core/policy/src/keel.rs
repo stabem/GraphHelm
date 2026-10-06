@@ -466,6 +466,9 @@ pub struct Card {
     pub exported_symbols: Vec<String>,
     #[serde(default)]
     pub allowance: Option<SurfaceBudget>,
+    /// Journey contract ids whose screens prove the promise (spec §6.3). Advisory only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub journeys: Vec<String>,
 }
 
 /// One path a diff touches, as read from its headers.
@@ -1030,4 +1033,46 @@ fn first_string_literal(text: &str) -> String {
         }
     }
     String::new()
+}
+
+/// One screen of a journey a card names, with whether its newest capture is fresh at the head.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JourneyScreen {
+    pub contract_id: String,
+    pub step_id: String,
+    pub scope_paths: Vec<String>,
+    /// `None` when the newest capture is fresh at the head; otherwise why not, in words.
+    pub not_fresh: Option<String>,
+}
+
+/// Spec §6.3, advisory: one `keel.journey.no_fresh_capture` warning per screen whose scope the
+/// card's scope touches (a path equal to, under, or containing the other, Keel's prefix meaning)
+/// and whose newest capture is not fresh. Never blocking.
+#[must_use]
+pub fn check_journeys(card_scope: &[String], screens: &[JourneyScreen]) -> Vec<Finding> {
+    fn under(path: &str, root: &str) -> bool {
+        let root = root.trim_end_matches('/');
+        path == root || path.trim_end_matches('/') == root || path.starts_with(&format!("{root}/"))
+    }
+    fn touches(a: &str, b: &str) -> bool {
+        under(a, b) || under(b, a)
+    }
+    screens
+        .iter()
+        .filter_map(|screen| {
+            let reason = screen.not_fresh.as_ref()?;
+            let path = card_scope.iter().find(|card_path| {
+                screen
+                    .scope_paths
+                    .iter()
+                    .any(|screen_path| touches(card_path, screen_path))
+            })?;
+            Some(Finding {
+                rule: "keel.journey.no_fresh_capture".to_owned(),
+                path: Some(path.clone()),
+                detail: format!("{}/{}: {reason}", screen.contract_id, screen.step_id),
+                blocking: false,
+            })
+        })
+        .collect()
 }

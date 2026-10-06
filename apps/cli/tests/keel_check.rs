@@ -170,6 +170,42 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
 }
 
 #[test]
+fn an_option_shaped_base_or_head_is_input_error_exit_3() {
+    let repo = repository(&[]);
+    for range in ["HEAD~1..-x", "-x..HEAD", "HEAD~1...-x"] {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                &format!("--diff={range}"),
+                "--repo",
+            ])
+            .arg(repo.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_eq!(output.status.code(), Some(3), "{range}: {stdout}");
+        let reply: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/diff",
+            "{range}: {stdout}"
+        );
+        // A range that itself starts with `-` is refused by the earlier check; the others must be
+        // refused by ours, before git can read the revision as an option.
+        if !range.starts_with('-') {
+            assert!(
+                reply["diagnostics"][0]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("may not start with '-'")),
+                "{range}: refused by us, not by git: {stdout}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_schema_invalid_card_is_rejected_with_the_failing_field_path() {
     let repo = repository(&[]);
     let scratch = tempfile::tempdir().unwrap();
@@ -506,4 +542,46 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
     let (code, reply) = run(repo.path(), Some(&body));
     assert_ne!(code, 0, "{reply}");
     assert!(reply.to_string().contains("scopePaths"), "{reply}");
+}
+
+#[test]
+fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path() {
+    let repo = repository(&[]);
+    let path = repo.path().join("card.json");
+    let mut card = serde_json::json!({
+        "promise": "added() exists", "scopePaths": ["src"], "proof": "cargo test",
+        "exportedSymbols": ["added"], "journeys": ["checkout"],
+    });
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 0, "{reply}");
+    card["journeys"] = serde_json::json!(["../etc"]);
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/journeys/0", "{reply}");
+    card["journeys"] = serde_json::json!(["a..b"]);
+    fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
+    let (code, reply) = run(repo.path(), Some(&path));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["path"], "/journeys/0", "{reply}");
+}
+
+#[test]
+fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
+    let repo = repository(&[]);
+    let body = repo.path().join("body.md");
+    fs::write(
+        &body,
+        "Promise: added() exists\nScope: `src`\nProof: `cargo test`\nExported: `added`\nJourneys: `checkout`\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        codes(&reply).iter().any(
+            |c| c == "keel.journey.no_fresh_capture" || c == "keel.journey.contract_unreadable"
+        ),
+        "{reply}"
+    );
 }

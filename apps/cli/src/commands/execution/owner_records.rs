@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn blank_long_unknown_or_wrong_protocol_alias_is_refused() {
         for description in [
-            named("   "),
+            named(&" ".repeat(3)),
             named(""),
             named(&"n".repeat(81)),
             named("bad\nname"),

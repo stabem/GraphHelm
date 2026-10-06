@@ -2671,9 +2671,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* Studio layout (spec section 3): Projects, Chat, Canvas, Right panel. */
 .topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--edge); }
-.topbar-mission { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 4px; }
+.topbar-mission { flex: 1; min-width: 0; display: flex; flex-wrap: nowrap; align-items: baseline; column-gap: 4px; }
+.topbar-mission .run-project { flex-shrink: 0; white-space: nowrap; }
 .topbar-mission .run-project { font-size: 15px; color: var(--dim); }
-.topbar-mission .run-name { font-size: 15px; font-weight: 600; background: none; border: 0; color: inherit; padding: 0; text-align: left; }
+.topbar-mission .run-name { font-size: 15px; font-weight: 600; background: none; border: 0; color: inherit; padding: 0; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-menu { position: relative; font-size: 12px; }
 .topbar-menu > summary { cursor: pointer; color: var(--dim); }
 .topbar-menu[open] > .topbar-menu-body { position: absolute; right: 0; top: 28px; z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; }

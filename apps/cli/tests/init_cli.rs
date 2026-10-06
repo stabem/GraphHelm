@@ -701,7 +701,13 @@ fn a_negated_ignore_line_is_not_taken_as_ignored() {
     let (data, _, _) = init(project.path());
     assert_eq!(data["data"]["gitignore"]["state"], "appended");
     let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
-    assert!(text.ends_with(".graphhelm/\n"), "{text:?}");
+    assert_eq!(
+        text.lines()
+            .filter(|line| line.trim_start_matches('!') == ".graphhelm/")
+            .next_back(),
+        Some(".graphhelm/"),
+        "{text:?}"
+    );
     assert!(
         text.lines().filter(|line| *line == ".graphhelm/").count() == 2,
         "{text:?}"

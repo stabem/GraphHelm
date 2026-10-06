@@ -8,6 +8,11 @@ The graph is not an illustrative animation. Each node represents a real unit of 
 
 ## 2. Main structure
 
+> **Superseded (2026-10-05).** The layout in this section is replaced by
+> `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §3–§4 (Projects · Chat ·
+> Team canvas · Right panel, needs-you beacon, question cards, handover). The text below is kept
+> for history; where the two disagree, the 2026-10-05 spec wins.
+
 Standard desktop layout:
 
 ```text
@@ -45,6 +50,11 @@ The references guide the functional organization. The final visual design must b
 These values are defaults, not fixed constraints.
 
 ## 3. Top bar
+
+> **Superseded (2026-10-05).** The layout in this section is replaced by
+> `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §3–§4 (Projects · Chat ·
+> Team canvas · Right panel, needs-you beacon, question cards, handover). The text below is kept
+> for history; where the two disagree, the 2026-10-05 spec wins.
 
 Components:
 
@@ -91,6 +101,11 @@ Sections:
 Each project shows badges for active executions, blockers, stale docs, pending dreams, and connection status.
 
 ## 5. Graph canvas
+
+> **Superseded (2026-10-05).** The layout in this section is replaced by
+> `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §3–§4 (Projects · Chat ·
+> Team canvas · Right panel, needs-you beacon, question cards, handover). The text below is kept
+> for history; where the two disagree, the 2026-10-05 spec wins.
 
 ### 5.1 Anatomy of a node
 
@@ -176,6 +191,11 @@ On hover, it shows origin, destination, condition, payload, and last traversal.
 
 ## 6. Chat and Command Composer
 
+> **Superseded (2026-10-05).** The layout in this section is replaced by
+> `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §3–§4 (Projects · Chat ·
+> Team canvas · Right panel, needs-you beacon, question cards, handover). The text below is kept
+> for history; where the two disagree, the 2026-10-05 spec wins.
+
 ### 6.1 Components
 
 - multiline field;
@@ -221,6 +241,11 @@ Autocomplete for:
 Genuinely necessary questions enter the graph as `human_decision` and appear in the chat. The user can respond there or in the node inspector.
 
 ## 7. Running agents panel
+
+> **Superseded (2026-10-05).** The layout in this section is replaced by
+> `docs/specs/2026-10-05-studio-live-team-and-proven-journeys-design.md` §3–§4 (Projects · Chat ·
+> Team canvas · Right panel, needs-you beacon, question cards, handover). The text below is kept
+> for history; where the two disagree, the 2026-10-05 spec wins.
 
 Compact list by status:
 

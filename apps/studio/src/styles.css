@@ -2790,3 +2790,5 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   .team-link-live, .team-bot-working .team-bot-avatar, .beacon-lit .beacon-dot { animation: none; }
 }
+
+.journey-failure { margin: 0.5rem 0 0; font-size: 0.85rem; opacity: 0.85; overflow-wrap: anywhere; }

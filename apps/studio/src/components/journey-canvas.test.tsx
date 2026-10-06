@@ -118,3 +118,11 @@ describe("journey tab stylesheet fits the canvas", () => {
     expect(rule(".journey-card")).toMatch(/overflow-wrap:\s*anywhere/);
   });
 });
+
+describe("a journeys read that failed", () => {
+  it("shows the Runtime's own message under the empty state", () => {
+    render(<JourneyCanvas {...props({ view: null, failed: true, failure: "journeys require an explicit --project on this Runtime" })} />);
+    expect(screen.getByText("Journeys could not be read.")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("explicit --project");
+  });
+});

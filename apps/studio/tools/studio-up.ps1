@@ -21,6 +21,8 @@ param(
     [int] $StudioPort = 5183,
     # A label for the rail; purely cosmetic.
     [string] $Project = "",
+    # The project's absolute path, forwarded to `serve --project`; the journeys route refuses without it.
+    [string] $ProjectPath = "",
     # The graphhelm binary. Defaults to PATH; point it at a `cargo build` output if unreleased.
     [string] $GraphHelm = "graphhelm",
     # Sealing (PR #467 review): without a keyring the Runtime cannot seal a message envelope,
@@ -132,7 +134,9 @@ if ($alive) {
     }
 }
 if (-not $alive) {
-    $serveArgs = @("serve", "--events", $Events, "--bind", $Bind)
+    $serveArgs = @("serve", "--events", ('"' + $Events + '"'), "--bind", $Bind)
+    # Windows PowerShell 5.1 joins ArgumentList without quoting, so a path with spaces is quoted by hand.
+    if ($ProjectPath) { $serveArgs += @("--project", ('"' + $ProjectPath.TrimEnd([char]92, [char]47) + '"')) }
     if ($Keyring) { $serveArgs += @("--keyring", $Keyring) }
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
     if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }

@@ -812,7 +812,7 @@
           "id": "schema/journey-contract",
           "kind": "schema",
           "path": "schemas/journey-contract.schema.json",
-          "sha256": "sha256:1fdc2294d0de671622d74f4fa2f228422d82badf5d0933928182c66ba537da76",
+          "sha256": "sha256:59500dae6c64b69e0e8fa959a69b4fdefec3edf14c3e28a63097ea7d54e103f6",
           "effects": [],
           "permissions": [],
           "requires": {

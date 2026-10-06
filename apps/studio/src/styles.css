@@ -2108,7 +2108,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .talk { position: absolute; inset: 0 auto 0 0; z-index: 8; width: min(360px, 100%); box-shadow: var(--float); }
   .chat-col, .node-col { inset: 0 0 0 auto; z-index: 10; }
   .scene { width: 100%; }
-  .split:has(> .node-col, > .chat-col) .scene .dock { display: none; }
+  .studio-columns:has(> .node-col, > .chat-col) .scene .dock { display: none; }
   .topbar .run-name { max-width: none; }
   .tools button, .dock button, .icon-action, .mobile-toggle, .ghost { min-height: 40px; }
   .icon-action, .mobile-toggle, .ghost { min-width: 36px; }
@@ -2675,7 +2675,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .topbar-mission .run-name { font-size: 15px; font-weight: 600; background: none; border: 0; color: inherit; padding: 0; text-align: left; }
 .topbar-menu { position: relative; font-size: 12px; }
 .topbar-menu > summary { cursor: pointer; color: var(--dim); }
-.topbar-menu[open] > :not(summary) { position: absolute; right: 0; top: 28px; z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; }
+.topbar-menu[open] > .topbar-menu-body { position: absolute; right: 0; top: 28px; z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; }
 .studio-columns { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
 .mobile-tabs { display: none; }
 .canvas-column { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }

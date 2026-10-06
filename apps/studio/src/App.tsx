@@ -2463,6 +2463,7 @@ export default function App({
           )}
           <details className="topbar-menu">
             <summary>Run details</summary>
+            <div className="topbar-menu-body">
             {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">
@@ -2485,6 +2486,7 @@ export default function App({
                 })}
               </span>
             ) : null}
+            </div>
           </details>
             <button
               type="button"
@@ -2691,8 +2693,7 @@ export default function App({
               * one thing this screen promised not to do. */}
             {focus.kind === "agent" && (
               <aside className="talk chat-col">
-              {(
-                <AgentPanel
+              <AgentPanel
                   // KEYED BY WHO IT BELONGS TO: a prop change re-addressed a LIVE composer
                   // without remounting - agent A's half-typed draft stood one Enter from
                   // shipping to agent B (round-4).
@@ -2717,8 +2718,7 @@ export default function App({
                   onSay={nativePersonaLinks[focus.id] === undefined ? (message, to) => void say(message, to, "agent") : undefined}
                   saying={saying === "agent"}
                   sayError={sayError?.via === "agent" ? sayError.text : ""}
-                />
-              )}
+              />
               </aside>
             )}
 

@@ -444,10 +444,11 @@ describe("live team layout", () => {
     const many = Array.from({ length: 24 }, (_, i) => ({ sequence: 20 + i, kind: "signal_recorded", payload: { kind: "operator_note", signalId: `s${i}` },
       occurredAt: new Date(Date.parse("2026-08-27T12:30:00Z") + i * 60_000).toISOString(), actorId: "kit-1", actorType: "agent",
       idempotencyKey: null, eventId: `e${20 + i}`, evidenceRefs: [] }));
-    return stubClient({ getEvents: vi.fn(async () => ({ head: 43, events: [
+    // Run A (demo-deploy) has the long gap; run B (demo-calm) has a short log, so it never earns a card.
+    return stubClient({ getEvents: vi.fn(async (executionId: string) => executionId === "demo-calm" ? { head: 4, events: [] } : { head: 43, events: [
       { sequence: 1, kind: "execution_form_declared", payload: { executionId: "demo-deploy", nodeIds: ["implementation"] }, occurredAt: "2026-08-27T12:00:00Z", actorId: "system-cli", actorType: "system", idempotencyKey: "k0", eventId: "e1", evidenceRefs: [] },
       ...many,
-    ] })), getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, headSequence: 43 })) });
+    ] }), getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, headSequence: executionId === "demo-calm" ? 4 : 43 })) });
   }
 
   it("lights the beacon for a blocked step and opens its card with the legal action", async () => {
@@ -478,10 +479,15 @@ describe("live team layout", () => {
 
   it("does not show run A's handover after switching to run B", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");
     await open(longGapClient());
     expect(await screen.findByRole("dialog", { name: "While you were away" })).toBeInTheDocument();
     await userEvent.click(within(screen.getByRole("navigation", { name: "Projects" })).getByText("demo-calm", { exact: true }).closest("button")!);
+    // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
+    // events and status are still the ones in memory. Only the status.executionId guard hides A's card here.
+    expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull();
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "While you were away" })).toBeNull());
+    expect(screen.queryByText(/24 records/)).toBeNull();
   });
 
   it("resume without a graph file selects the Team tab and focuses the graph field by state", async () => {

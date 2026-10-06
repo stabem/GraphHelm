@@ -17,8 +17,6 @@ pub(crate) struct ImageAttachment {
     pub(crate) bytes: Vec<u8>,
 }
 
-// HTTP and MCP call this in the next step of #313; until then only the tests do.
-#[allow(dead_code)]
 /// Parses the transport form. Every refusal is `GHCLI003` and happens before any write.
 pub(crate) fn parse_json(value: &serde_json::Value) -> Result<Vec<ImageAttachment>, Failure> {
     let items = value

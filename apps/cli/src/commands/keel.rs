@@ -537,7 +537,17 @@ mod tests {
             let mut ready = [0];
             let result = connection
                 .read_exact(&mut ready)
-                .and_then(|()| connection.read(&mut [0]).map(|bytes| (ready, bytes)));
+                .and_then(|()| {
+                    connection.read(&mut [0]).or_else(|error| {
+                        // TerminateProcess closes a Windows socket with a reset rather than EOF.
+                        if error.kind() == std::io::ErrorKind::ConnectionReset {
+                            Ok(0)
+                        } else {
+                            Err(error)
+                        }
+                    })
+                })
+                .map(|bytes| (ready, bytes));
             let _ = observed.send(result);
         });
         let mut command = Command::new(std::env::current_exe().unwrap());

@@ -84,6 +84,7 @@ fn step(id: &str, screen: Option<ScreenInput>) -> StepInput {
     StepInput {
         step_id: id.into(),
         screen,
+        promises: Vec::new(),
     }
 }
 
@@ -345,4 +346,29 @@ fn the_view_serializes_in_the_served_shape() {
     assert_eq!(shown["imageEvidenceId"], "c1-img");
     assert!(shown.get("pr").is_none());
     assert_eq!(value["journeys"][0]["contractId"], "cart");
+}
+
+#[test]
+fn promises_and_capture_sequence_reach_the_serialized_view() {
+    if !git_available() {
+        return;
+    }
+    let dir = repo();
+    let mut first = step("pay", None);
+    first.promises = vec!["Total is shown".into(), "Pay button works".into()];
+    let contract = ContractInput {
+        contract_id: "cart".into(),
+        title: "Cart".into(),
+        steps: vec![first],
+    };
+    let head = git(dir.path(), &["rev-parse", "HEAD"]);
+    let captures = [capture("c1", 7, "pay", &head, false)];
+    let view = fold_journeys(&[contract], &captures, &[], &GitHistory::new(dir.path()));
+    let json = serde_json::to_value(&view).unwrap();
+    let step = &json["journeys"][0]["steps"][0];
+    assert_eq!(
+        step["promises"],
+        serde_json::json!(["Total is shown", "Pay button works"])
+    );
+    assert_eq!(step["capture"]["sequence"], 7);
 }

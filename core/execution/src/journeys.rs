@@ -59,6 +59,8 @@ pub struct StepInput {
     pub step_id: String,
     /// The screen behind the step, when the contract names one.
     pub screen: Option<ScreenInput>,
+    /// The statements of the contract promises that name this step, in contract order.
+    pub promises: Vec<String>,
 }
 
 /// The screen a step shows and the source paths that draw it.
@@ -301,6 +303,8 @@ pub struct StepView {
     pub screen: Option<ScreenView>,
     /// The capture shown (Ruling 4), when any exists.
     pub capture: Option<CaptureView>,
+    /// The promise statements that name this step, in contract order.
+    pub promises: Vec<String>,
 }
 
 /// A step's screen as served.
@@ -321,6 +325,8 @@ pub struct ScreenView {
 pub struct CaptureView {
     /// The capture's signal id.
     pub signal_id: String,
+    /// The event sequence the capture was recorded at; higher is newer.
+    pub sequence: u64,
     /// The image evidence id.
     pub image_evidence_id: String,
     /// The revision captured at.
@@ -500,6 +506,7 @@ fn fold_one(
                         oracle.assess(capture, step.screen.as_ref());
                     CaptureView {
                         signal_id: capture.signal_id.clone(),
+                        sequence: capture.sequence,
                         image_evidence_id: capture.image_evidence_id.clone(),
                         revision: capture.revision.clone(),
                         dirty: capture.dirty,
@@ -520,6 +527,7 @@ fn fold_one(
                     scope_paths: screen.scope_paths.clone(),
                 }),
                 capture,
+                promises: step.promises.clone(),
             }
         })
         .collect();

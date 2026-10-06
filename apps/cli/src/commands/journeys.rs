@@ -227,6 +227,15 @@ struct ContractFile {
     contract_id: String,
     title: String,
     steps: Vec<StepFile>,
+    #[serde(default)]
+    promises: Vec<PromiseFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromiseFile {
+    step_id: String,
+    statement: String,
 }
 
 #[derive(Deserialize)]
@@ -285,6 +294,7 @@ pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'stati
     }) {
         return Err("invalid_id");
     }
+    let promises = file.promises;
     Ok(ContractInput {
         contract_id: file.contract_id,
         title: file.title,
@@ -292,6 +302,11 @@ pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'stati
             .steps
             .into_iter()
             .map(|step| StepInput {
+                promises: promises
+                    .iter()
+                    .filter(|promise| promise.step_id == step.step_id)
+                    .map(|promise| promise.statement.clone())
+                    .collect(),
                 step_id: step.step_id,
                 screen: step.screen.map(|screen| ScreenInput {
                     screen_id: screen.screen_id,

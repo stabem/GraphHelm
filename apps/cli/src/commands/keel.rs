@@ -102,6 +102,13 @@ pub(super) fn check(
         .split_once("...")
         .or_else(|| range.split_once(".."))
         .unwrap_or((range, "HEAD"));
+    // A revision that starts with `-` would be read by git as an option, not a revision.
+    if base.starts_with('-') || head.starts_with('-') {
+        return input_error(
+            "--diff takes a git range `<base>..<head>`; a revision may not start with '-'",
+            "/diff",
+        );
+    }
     let base = if base.is_empty() { "HEAD" } else { base };
     let head = if head.is_empty() { "HEAD" } else { head };
     let merge_base = match Command::new("git")

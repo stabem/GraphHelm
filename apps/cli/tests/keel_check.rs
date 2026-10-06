@@ -170,6 +170,42 @@ fn a_range_that_is_not_a_range_or_a_card_that_is_not_a_card_is_input_error_exit_
 }
 
 #[test]
+fn an_option_shaped_base_or_head_is_input_error_exit_3() {
+    let repo = repository(&[]);
+    for range in ["HEAD~1..-x", "-x..HEAD", "HEAD~1...-x"] {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                &format!("--diff={range}"),
+                "--repo",
+            ])
+            .arg(repo.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_eq!(output.status.code(), Some(3), "{range}: {stdout}");
+        let reply: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/diff",
+            "{range}: {stdout}"
+        );
+        // A range that itself starts with `-` is refused by the earlier check; the others must be
+        // refused by ours, before git can read the revision as an option.
+        if !range.starts_with('-') {
+            assert!(
+                reply["diagnostics"][0]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("may not start with '-'")),
+                "{range}: refused by us, not by git: {stdout}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_schema_invalid_card_is_rejected_with_the_failing_field_path() {
     let repo = repository(&[]);
     let scratch = tempfile::tempdir().unwrap();

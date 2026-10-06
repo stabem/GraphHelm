@@ -1,7 +1,10 @@
 //! Bounded flow source files; frozen JSON contracts remain the reader boundary.
 use super::journey_validate::Finding;
+use crate::output::{CommandOutput, Outcome};
+use graphhelm_protocols::Diagnostic;
 use graphhelm_schema::OfflineSchemaSet;
 use serde_json::Value;
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Component, Path};
@@ -340,10 +343,301 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
                     "flow bytes differ from canonical YAML",
                 ));
             }
+            if findings.is_empty() {
+                for (id, contract) in compile(&value) {
+                    let path = project
+                        .join(".graphhelm/journeys")
+                        .join(format!("{id}.json"));
+                    if (value["status"] == "approved" || path.exists())
+                        && std::fs::read(&path).ok().as_deref()
+                            != Some(contract_bytes(&contract).as_slice())
+                    {
+                        findings.push(Finding::new(
+                            "flow.contract_stale",
+                            format!("/journeys/{id}.json"),
+                            "generated contract differs or is missing",
+                        ));
+                    }
+                }
+            }
             findings
         }
         Err(findings) => findings,
     }
+}
+
+fn compile(flow: &Value) -> Vec<(String, Value)> {
+    let id = flow["id"].as_str().unwrap();
+    let title = flow["title"].as_str().unwrap_or(id);
+    let actors = flow["actors"].as_array().unwrap();
+    let screens: BTreeMap<_, _> = flow["screens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["id"].as_str().unwrap(), s))
+        .collect();
+    let edges: BTreeMap<_, _> = flow["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["id"].as_str().unwrap(), e))
+        .collect();
+    let mut contracts = Vec::new();
+    for (name, path) in flow["paths"].as_object().unwrap() {
+        let edges: Vec<_> = path
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| edges[e.as_str().unwrap()])
+            .collect();
+        let visited = std::iter::once(edges[0]["from"].as_str().unwrap())
+            .chain(edges.iter().map(|e| e["to"].as_str().unwrap()));
+        let (mut steps, mut promises) = (Vec::new(), Vec::new());
+        for (index, sid) in visited.enumerate() {
+            let screen = screens[sid];
+            let action = if index == 0 {
+                json!({"kind":"navigate","target":{"strategy":"label","value":screen["url"],"geometryClaim":false}})
+            } else {
+                let act = edges[index - 1]["acts"].as_array().unwrap().last().unwrap();
+                json!({"kind":act["kind"],"target":{"strategy":"accessible_name","value":act["name"],"role":act["role"],"geometryClaim":false}})
+            };
+            let mut step = json!({"stepId":sid,"actorId":actors[0],"semanticAction":action,"expectedStates":[screen["state"]],"failureContract":{"timeoutSeconds":30,"visibleError":format!("screen {sid} not reached"),"safeStop":"stop replay","recoveryAction":null,"prohibitedSideEffects":[]}});
+            if screen["scope"].is_array() {
+                step["screen"] = json!({"screenId":sid,"title":screen["title"].as_str().unwrap_or(sid),"scopePaths":screen["scope"]});
+            }
+            let statement = format!(
+                "shows {}",
+                screen["expect"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| format!(
+                        "{} {:?}",
+                        e["role"].as_str().unwrap(),
+                        e["name"].as_str().unwrap()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            // Bound at a character boundary; slicing 1024 raw bytes could panic on Unicode.
+            let mut end = statement.len().min(1024);
+            while !statement.is_char_boundary(end) {
+                end -= 1;
+            }
+            promises.push(json!({"promiseId":format!("{sid}.visible"),"stepId":sid,"statement":&statement[..end],"requiredFact":"content_rendered","requiredEvidenceKinds":["visual_capture"],"requiredObserverCapability":"browser","statesToObserve":[screen["state"]],"maxEvidenceAgeSeconds":604800}));
+            steps.push(step);
+        }
+        let contract_id = if name == "main" {
+            id.to_owned()
+        } else {
+            format!("{id}.{name}")
+        };
+        contracts.push((contract_id.clone(),json!({"contractId":contract_id,"version":1,"title":title,"taskScope":format!("journey-flow {id} path {name}"),"actors":actors.iter().map(|a|json!({"actorId":a,"name":a,"goal":title})).collect::<Vec<_>>(),"preconditions":[],"steps":steps,"promises":promises,"riskSignals":flow["risks"],"outOfScope":[]})));
+    }
+    contracts
+}
+
+fn contract_bytes(value: &Value) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec_pretty(value).expect("contract serialization");
+    bytes.push(b'\n');
+    bytes
+}
+
+fn input_error(command: &'static str, message: &str) -> Outcome {
+    Outcome::application(
+        command,
+        Diagnostic::error(
+            crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+            message,
+            "/project",
+            "graphhelm",
+        ),
+    )
+}
+
+fn report(
+    command: &'static str,
+    files: Vec<Value>,
+    findings: Vec<Finding>,
+    data: Value,
+) -> Outcome {
+    let clean = findings.is_empty();
+    let diagnostics = findings
+        .iter()
+        .map(|f| {
+            Diagnostic::error(
+                crate::error_codes::GHCLI034_JOURNEY_FLOW_INVALID,
+                &f.message,
+                &f.pointer,
+                "journey-flow",
+            )
+        })
+        .collect();
+    let mut data = data;
+    data["files"] = json!(files);
+    Outcome {
+        output: CommandOutput {
+            ok: clean,
+            command,
+            data: Some(data),
+            diagnostics,
+        },
+        exit_code: if clean { 0 } else { 2 },
+    }
+}
+
+fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
+    let root = project.canonicalize().ok()?;
+    let directory = project.join(".graphhelm/journeys");
+    if !directory.canonicalize().ok()?.starts_with(&root) {
+        return None;
+    }
+    if !ids.is_empty() {
+        if !ids
+            .iter()
+            .all(|id| graphhelm_execution::valid_journey_id(id))
+        {
+            return None;
+        }
+        return Some(
+            ids.iter()
+                .map(|id| directory.join(format!("{id}.journey.yaml")))
+                .collect(),
+        );
+    }
+    let mut files: Vec<_> = std::fs::read_dir(directory)
+        .ok()?
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?
+        .into_iter()
+        .map(|e| e.path())
+        .filter(|p| p.to_string_lossy().ends_with(".journey.yaml"))
+        .collect();
+    files.sort();
+    Some(files)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(std::io::Error::other("output symlink refused"));
+    }
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    // Remove only this invocation's temporary file, never a pre-existing one.
+    if result.is_err() && std::fs::symlink_metadata(&temp).is_ok_and(|m| m.is_file()) {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
+    const COMMAND: &str = "journey.compile";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let Some(files) = files(&project, &args.ids) else {
+        return input_error(COMMAND, "no safe journeys directory or invalid flow id");
+    };
+    if files.is_empty() {
+        return input_error(COMMAND, "no flow files found");
+    }
+    let (mut reports, mut findings, mut writes, mut skipped) =
+        (Vec::new(), Vec::new(), BTreeMap::new(), Vec::new());
+    for file in files {
+        let mut errors;
+        match read(&file) {
+            Err(e) => errors = e,
+            Ok((text, flow)) => {
+                errors = semantic(&file, &flow, &project);
+                if !args.fmt && text != canonical(&flow, false) {
+                    errors.push(Finding::new(
+                        "flow.not_canonical",
+                        "",
+                        "flow must be canonical; use --fmt",
+                    ));
+                }
+                if errors.is_empty() {
+                    if args.fmt {
+                        writes.insert(file.clone(), canonical(&flow, false).into_bytes());
+                    }
+                    if flow["status"] == "draft" && !args.include_draft {
+                        skipped.push(json!({"id":flow["id"],"reason":"draft"}));
+                    } else {
+                        for (id, contract) in compile(&flow) {
+                            if !super::journeys::contract_schemas().is_some_and(|s| {
+                                s.validate(
+                                    super::journeys::CONTRACT_SCHEMA_ID,
+                                    &contract,
+                                    "journey-flow",
+                                )
+                                .is_empty()
+                            }) {
+                                errors.push(Finding::new(
+                                    "flow.compile_invalid",
+                                    "",
+                                    "compiled contract violates frozen schema",
+                                ));
+                                continue;
+                            }
+                            let target = file.parent().unwrap().join(format!("{id}.json"));
+                            let expected = contract_bytes(&contract);
+                            if let Ok(existing) = std::fs::read(&target)
+                                && existing != expected
+                            {
+                                let generated = serde_json::from_slice::<Value>(&existing)
+                                    .is_ok_and(|v| v["taskScope"] == contract["taskScope"]);
+                                if args.check || (!generated && !args.force) {
+                                    errors.push(Finding::new(
+                                        "flow.contract_stale",
+                                        format!("/journeys/{id}.json"),
+                                        "contract differs; handwritten files require --force",
+                                    ));
+                                    continue;
+                                }
+                            } else if args.check && !target.exists() {
+                                errors.push(Finding::new(
+                                    "flow.contract_stale",
+                                    format!("/journeys/{id}.json"),
+                                    "generated contract is missing",
+                                ));
+                                continue;
+                            }
+                            if writes.insert(target, expected).is_some() {
+                                errors.push(Finding::new(
+                                    "flow.contract_stale",
+                                    format!("/journeys/{id}.json"),
+                                    "multiple flows claim the same output",
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        reports.push(json!({"file":file.display().to_string(),"findings":errors.iter().map(|f|json!({"code":f.code,"pointer":f.pointer,"message":f.message})).collect::<Vec<_>>()}));
+        findings.extend(errors);
+    }
+    if findings.is_empty() && !args.check {
+        for (path, bytes) in &writes {
+            if atomic_write(path, bytes).is_err() {
+                return input_error(COMMAND, "flow output could not be written atomically");
+            }
+        }
+    }
+    report(
+        COMMAND,
+        reports,
+        findings,
+        json!({"skipped":skipped,"written":if args.check {0}else{writes.len()}}),
+    )
 }
 
 // Emit the schema's reading order, not map insertion order or a serializer's incidental style.

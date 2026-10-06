@@ -116,6 +116,8 @@ pub enum JourneyCommand {
     /// the journey id rule, step, actor, promise and screen consistency, and that every screen
     /// `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error.
     Validate(JourneyValidateArgs),
+    /// Generate frozen journey contracts from flow sources, or check/format their projection.
+    Compile(JourneyCompileArgs),
 }
 
 #[derive(Debug, Args)]
@@ -128,6 +130,23 @@ pub struct JourneyValidateArgs {
     /// The repository root that `scopePaths` are relative to. Defaults to the current directory.
     #[arg(long)]
     pub project: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyCompileArgs {
+    /// Flow ids. Omit to select every .journey.yaml source under the project.
+    pub ids: Vec<String>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long, conflicts_with = "fmt")]
+    pub check: bool,
+    #[arg(long)]
+    pub fmt: bool,
+    #[arg(long)]
+    pub include_draft: bool,
+    /// Replace a differing handwritten contract. Generated contracts are projections.
+    #[arg(long, conflicts_with = "check")]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]

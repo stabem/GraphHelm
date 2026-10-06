@@ -1,0 +1,147 @@
+{
+  "actors": [
+    {
+      "actorId": "shopper",
+      "goal": "Shopper pays for the cart",
+      "name": "shopper"
+    }
+  ],
+  "contractId": "checkout",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "cart.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Cart\", button \"Checkout\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "cart"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "pay.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows textbox \"Password\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "pay"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "done.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Order placed\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "done"
+    }
+  ],
+  "riskSignals": [
+    "money"
+  ],
+  "steps": [
+    {
+      "actorId": "shopper",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen cart not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "app/cart/page.tsx"
+        ],
+        "screenId": "cart",
+        "title": "cart"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/cart"
+        }
+      },
+      "stepId": "cart"
+    },
+    {
+      "actorId": "shopper",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen pay not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "app/checkout/page.tsx",
+          "app/api/pay/route.ts"
+        ],
+        "screenId": "pay",
+        "title": "pay"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Checkout"
+        }
+      },
+      "stepId": "pay"
+    },
+    {
+      "actorId": "shopper",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen done not reached"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Pay now"
+        }
+      },
+      "stepId": "done"
+    }
+  ],
+  "taskScope": "journey-flow checkout path main",
+  "title": "Shopper pays for the cart",
+  "version": 1
+}

@@ -162,3 +162,48 @@ fn canonical_bytes_reject_style_order_crlf_and_missing_newline() {
         assert!(finding(&reply, "flow.not_canonical"), "{reply}");
     }
 }
+
+#[test]
+fn compile_formats_drafts_and_preserves_handwritten_contracts() {
+    let dir = project(&EXAMPLE.replace('\n', "\r\n"));
+    let (out, reply) = run(dir.path(), &["compile", "--fmt", "--include-draft"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".graphhelm/journeys/checkout.journey.yaml"))
+            .unwrap(),
+        EXAMPLE
+    );
+    let path = dir.path().join(".graphhelm/journeys/checkout.json");
+    let first = std::fs::read(&path).unwrap();
+    assert_eq!(first, include_bytes!("fixtures/journey_flow/checkout.json"));
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["checked"], 2);
+    let (out, reply) = run(dir.path(), &["compile", "--include-draft"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(std::fs::read(&path).unwrap(), first);
+    std::fs::write(&path, b"{\"handwritten\":true}\n").unwrap();
+    for args in [
+        &["compile", "--check", "--include-draft"][..],
+        &["compile", "--include-draft"][..],
+        &["validate", "--all"][..],
+    ] {
+        let (out, reply) = run(dir.path(), args);
+        assert_eq!(out.status.code(), Some(2), "{reply}");
+        assert!(reply.to_string().contains("flow.contract_stale"), "{reply}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"handwritten\":true}\n");
+    }
+    let (out, reply) = run(dir.path(), &["compile", "--include-draft", "--force"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(std::fs::read(&path).unwrap(), first);
+    let draft = project(EXAMPLE);
+    let (out, reply) = run(draft.path(), &["compile"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["skipped"][0]["reason"], "draft");
+    assert!(
+        !draft
+            .path()
+            .join(".graphhelm/journeys/checkout.json")
+            .exists()
+    );
+}

@@ -34,6 +34,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
             execution::finish(WALKED_COMMAND, run_walked(walked), recorded)
         }
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
+        JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
     }
 }
 

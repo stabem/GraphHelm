@@ -3,6 +3,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 import { fastUserEvent } from "../test/user-event";
 import { RightPanel } from "./right-panel";
+import type { BeforeAfterPair, CaptureDocument } from "../runtime/journeys";
+import type { JourneyView } from "../runtime/types";
 
 const userEvent = fastUserEvent();
 afterEach(cleanup);
@@ -20,5 +22,26 @@ describe("RightPanel", () => {
     render(<RightPanel activity={[{ sequence: 7, text: "loja kit 1 asked you “Merge now?”", at: null }]} onOpenActivity={onOpen} />);
     await userEvent.click(screen.getByRole("button", { name: /loja kit 1 asked you/ }));
     expect(onOpen).toHaveBeenCalledWith(7);
+  });
+  it("lists journeys with a proven bar and before/after pairs, each opening its target", async () => {
+    const cap = (freshness: "fresh" | "stale" | "unknown") => ({ signalId: "s", sequence: 1, imageEvidenceId: "i", revision: "r", dirty: false,
+      viewport: { width: 1, height: 1 }, observer: "kit-1", freshness, changedFiles: [] });
+    const journey: JourneyView = { contractId: "checkout", title: "Checkout", arrows: [], steps: [
+      { stepId: "cart", screen: { screenId: "cart", title: "Cart", scopePaths: [] }, capture: cap("fresh"), promises: [] },
+      { stepId: "pay", capture: cap("stale"), promises: [] },
+      { stepId: "done", capture: null, promises: [] },
+    ] };
+    const doc = (sequence: number, phase: "before" | "after"): CaptureDocument => ({ sequence, signalId: null, imageEvidenceId: "x", contractId: "checkout",
+      stepId: "cart", revision: "r", dirty: false, observer: "kit-1", actorId: "kit-1", pr: 9, phase, occurredAt: null });
+    const pair: BeforeAfterPair = { contractId: "checkout", stepId: "cart", pr: 9, before: doc(1, "before"), after: doc(2, "after"), observer: "kit-1", actorId: "kit-1" };
+    const onOpenJourney = vi.fn();
+    const onOpenPair = vi.fn();
+    render(<RightPanel activity={[]} onOpenActivity={vi.fn()} journeys={[journey]} beforeAfter={[pair]}
+      onOpenJourney={onOpenJourney} onOpenPair={onOpenPair} botName={(id) => `Bot ${id}`} />);
+    expect(screen.getByRole("img", { name: "1 of 3 steps proven" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Checkout/ }));
+    expect(onOpenJourney).toHaveBeenCalledWith("checkout");
+    await userEvent.click(screen.getByRole("button", { name: "PR #9 · Cart · Bot kit-1" }));
+    expect(onOpenPair).toHaveBeenCalledWith(pair);
   });
 });

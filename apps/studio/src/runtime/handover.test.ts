@@ -75,6 +75,32 @@ describe("buildHandover", () => {
   });
 });
 
+describe("buildHandover screen captures", () => {
+  const cap = (sequence: number, minutes: number): RuntimeEvent => ({
+    ...ev(sequence, minutes, "signal_recorded", "kit-1", { kind: "jpd.screen_captured", signalId: `s${sequence}` }),
+    evidenceRefs: [`signal-s${sequence}`, `img-${sequence}`],
+  });
+  const doc = (over: Record<string, unknown>) => ({ to: null, replyTo: null, text: JSON.stringify({ protocol: "graphhelm-screen-capture-v1",
+    contractId: "checkout", stepId: "cart", revision: "abc1234", dirty: false, viewport: { width: 1, height: 1 }, observer: "kit-1", ...over }) });
+  const run = (extra: RuntimeEvent[], envelopes: Record<number, { to: null; replyTo: null; text: string }>) => buildHandover({
+    events: [...events, ...extra], bots: [bot("kit-1")], model: null, claudeTasks: null, openItems: [], fromSeq: 10, toSeq: 50, envelopes,
+  }).shipped.filter((line) => line.text.includes("captured"));
+
+  it("counts an after capture as shipped and cites its matching before", () => {
+    const lines = run([cap(41, 100), cap(42, 101), cap(43, 102)],
+      { 41: doc({ pr: 7, phase: "before" }), 42: doc({ pr: 7, phase: "before" }), 43: doc({ pr: 7, phase: "after" }) });
+    expect(lines).toEqual([{ text: "kit 1 captured cart after (PR #7)", sequences: [43, 42] }]);
+  });
+  it("cites only the after when no before exists, and omits PR when absent", () => {
+    expect(run([cap(41, 100)], { 41: doc({ phase: "after" }) })).toEqual([{ text: "kit 1 captured cart after", sequences: [41] }]);
+  });
+  it("ignores before captures, invalid documents and a missing envelopes input", () => {
+    expect(run([cap(41, 100), cap(42, 101)], { 41: doc({ phase: "before" }), 42: { to: null, replyTo: null, text: "nope" } })).toEqual([]);
+    const h = buildHandover({ events: [...events, cap(41, 100)], bots: [], model: null, claudeTasks: null, openItems: [], fromSeq: 10, toSeq: 50 });
+    expect(h.shipped.some((line) => line.text.includes("captured"))).toBe(false);
+  });
+});
+
 describe("last seen storage", () => {
   afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
   it("round-trips per project and run", () => {

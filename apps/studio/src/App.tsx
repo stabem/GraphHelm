@@ -81,6 +81,9 @@ import { GraphFileRow } from "./components/graph-file-row";
 import { Beacon, NEEDS_YOU_ID, QuestionCards } from "./components/beacon";
 import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
+import { JourneyCanvas } from "./components/journey-canvas";
+import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
+import type { JourneysView } from "./runtime/types";
 import { ChatColumn } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
@@ -1966,6 +1969,36 @@ export default function App({
     [eventList, envelopes, personas, nativePersonaLinks, actorAliases, model, claudeTaskRead, selected, waitingAskers, clock]);
   const links = useMemo(() => teamLinks(eventList, envelopes, team.bots, clock), [eventList, envelopes, team, clock]);
   const botNames = useMemo(() => namesOf(team.bots), [team]);
+  // Journeys (phase 5, T5): read on run select and again whenever a new `jpd.*` signal lands in the
+  // tail. No interval of its own. A failed read keeps the last view; with none, the tab says so.
+  const lastJpdSequence = useMemo(() => {
+    let last = 0;
+    for (const event of eventList) {
+      if (event.kind !== "signal_recorded") continue;
+      const kind = event.payload !== null && typeof event.payload === "object" ? (event.payload as Record<string, unknown>).kind : undefined;
+      if (typeof kind === "string" && kind.startsWith("jpd.") && event.sequence > last) last = event.sequence;
+    }
+    return last;
+  }, [eventList]);
+  const [journeysRead, setJourneysRead] = useState<{ executionId: string; view: JourneysView | null; failed: boolean } | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null || selected === "") return undefined;
+    let cancelled = false;
+    const run = selected;
+    Promise.resolve().then(() => client.journeys(run)).then((view) => {
+      if (!cancelled) setJourneysRead({ executionId: run, view, failed: false });
+    }, () => {
+      if (!cancelled) setJourneysRead((prior) => prior !== null && prior.executionId === run ? { ...prior, failed: prior.view === null } : { executionId: run, view: null, failed: true });
+    });
+    return () => { cancelled = true; };
+  }, [selected, lastJpdSequence]);
+  const journeysView = journeysRead !== null && journeysRead.executionId === selected ? journeysRead.view : null;
+  const journeysFailed = journeysRead !== null && journeysRead.executionId === selected && journeysRead.failed;
+  const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
+  const [journeyContract, setJourneyContract] = useState<string | null>(null);
+  const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
+  const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id), [workMessages, team]);
   const [thread, setThread] = useState(EVERYONE);
   const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
@@ -2006,8 +2039,8 @@ export default function App({
   const head = status?.headSequence ?? 0;
   const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
     ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
-        openItems: needs.items, fromSeq: seenSeq!, toSeq: head })
-    : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs]);
+        openItems: needs.items, envelopes, fromSeq: seenSeq!, toSeq: head })
+    : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);
   const markSeen = useCallback(() => {
     if (selected === "" || head === 0) return;
     writeLastSeen(projectKey, selected, head);
@@ -2772,9 +2805,10 @@ export default function App({
                   demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
                   <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
             ) : (
-              <section className="journey-empty" aria-label="Journey">
-                <p>No journeys mapped yet. A journey appears here once its screens are captured.</p>
-              </section>
+              <JourneyCanvas view={journeysView} failed={journeysFailed} contractId={journeyContract} onSelectContract={setJourneyContract}
+                loadImage={(id) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(selected, id))}
+                events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
+                detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail} />
             )}
             {handover !== null && <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} />}
 
@@ -3189,7 +3223,14 @@ export default function App({
               )}
               </aside>
             )}
-            <RightPanel activity={activityLines} onOpenActivity={(sequence) => openRecords([sequence])} />
+            <RightPanel activity={activityLines} onOpenActivity={(sequence) => openRecords([sequence])}
+              journeys={journeysView?.journeys ?? []} beforeAfter={beforeAfter} botName={botNameOf}
+              onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }}
+              onOpenPair={(pair: BeforeAfterPair) => {
+                const known = journeysView?.journeys.some((j) => j.contractId === pair.contractId && j.steps.some((step) => step.stepId === pair.stepId)) ?? false;
+                if (!known) { openRecords([pair.before.sequence, pair.after.sequence]); return; }
+                setJourneyContract(pair.contractId); setJourneyDetail(pair.stepId); chooseCanvas("journey");
+              }} />
             {openDocument && <DocumentEditor document={openDocument.reference}
               readDocument={readProjectDocument} saveDocument={saveProjectDocument}
               onAttentionChange={documentAttentionChanged}

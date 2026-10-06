@@ -3,7 +3,9 @@
  * nobody touched between the last sequence the owner saw and now. Every line cites the event
  * sequences it came from. Missing or unreadable storage means no card - never a wrong one.
  */
+import type { EnvelopeRecord } from "../graph/ledger";
 import type { GraphModel } from "../graph/model";
+import { captureDocuments } from "./journeys";
 import type { NeedsYouItem } from "./needs-you";
 import { firstLine, timeOf, type Bot } from "./team";
 import type { ClaudeTaskReadModel } from "./team-tasks";
@@ -16,7 +18,7 @@ const SETTLED = new Set(["succeeded", "waived", "skipped"]);
 
 export interface HandoverLine { text: string; sequences: number[] }
 export interface Handover { fromSeq: number; toSeq: number; eventCount: number; gapMinutes: number; shipped: HandoverLine[]; needsYou: HandoverLine[]; quiet: HandoverLine[]; untouched: HandoverLine[] }
-export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; fromSeq: number; toSeq: number }
+export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number }
 
 function payloadOf(event: RuntimeEvent): Record<string, unknown> {
   return event.payload !== null && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, unknown> : {};
@@ -53,6 +55,19 @@ export function buildHandover(input: HandoverInput): Handover {
       const task = input.claudeTasks?.tasks.find((candidate) => candidate.completedSequence === event.sequence);
       shipped.push({ text: task ? `${botName(event.actorId)} finished “${task.taskSubject}”` : `${botName(event.actorId)} finished a task`, sequences: [event.sequence] });
     }
+  }
+
+  // An `after` screen capture is shipped work: the line cites the capture and its matching before.
+  const captures = captureDocuments(input.events, input.envelopes ?? {});
+  for (const capture of captures) {
+    if (capture.phase !== "after" || capture.sequence <= input.fromSeq || capture.sequence > input.toSeq) continue;
+    const before = captures
+      .filter((c) => c.phase === "before" && c.contractId === capture.contractId && c.stepId === capture.stepId && c.pr === capture.pr && c.sequence < capture.sequence)
+      .at(-1);
+    shipped.push({
+      text: `${botName(capture.actorId)} captured ${capture.stepId} after${capture.pr ? ` (PR #${capture.pr})` : ""}`,
+      sequences: before === undefined ? [capture.sequence] : [capture.sequence, before.sequence],
+    });
   }
 
   // Everything the beacon counts. Questions are placed in the gap by sequence; native requests,

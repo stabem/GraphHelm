@@ -364,6 +364,8 @@ fn cli_http_and_mcp_return_the_same_journey_map() {
     let cart = &journeys[0];
     assert_eq!(cart["contractId"], "cart");
     let steps = cart["steps"].as_array().unwrap();
+    assert_eq!(steps[0]["promises"], json!(["The cart renders"]), "{cli}");
+    assert!(steps[0]["capture"]["sequence"].is_u64(), "{cli}");
     assert_eq!(steps[0]["capture"]["signalId"], "cap-open");
     assert_eq!(
         steps[0]["capture"]["imageEvidenceId"],

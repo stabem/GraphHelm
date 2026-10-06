@@ -25,9 +25,9 @@ use crate::output::{CommandOutput, Outcome};
 const COMMAND: &str = "journey.validate";
 
 pub(crate) struct Finding {
-    code: &'static str,
-    pointer: String,
-    message: String,
+    pub(crate) code: &'static str,
+    pub(crate) pointer: String,
+    pub(crate) message: String,
 }
 
 impl Finding {
@@ -103,7 +103,11 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         let source = file.display().to_string();
         for finding in &findings {
             diagnostics.push(Diagnostic::error(
-                GHCLI033_JOURNEY_CONTRACT_INVALID,
+                if finding.code.starts_with("flow.") {
+                    crate::error_codes::GHCLI034_JOURNEY_FLOW_INVALID
+                } else {
+                    GHCLI033_JOURNEY_CONTRACT_INVALID
+                },
                 format!("{}: {}", finding.code, finding.message),
                 finding.pointer.clone(),
                 source.clone(),

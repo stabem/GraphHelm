@@ -77,3 +77,71 @@ fn spec_example_is_valid_and_unknown_keys_are_refused() {
         assert!(finding(&reply, "flow.schema_invalid"), "{reply}");
     }
 }
+
+#[test]
+fn semantic_sabotage_is_refused_at_the_boundary() {
+    for (flow, code) in [
+        (
+            EXAMPLE.replace("id: checkout", "id: another"),
+            "flow.id_mismatch",
+        ),
+        (EXAMPLE.replace("id: done", "id: cart"), "flow.duplicate_id"),
+        (
+            EXAMPLE.replace("to: pay", "to: ghost"),
+            "flow.unknown_screen",
+        ),
+        (
+            EXAMPLE.replace("[cart.checkout, pay.submit]", "[cart.checkout, ghost]"),
+            "flow.unknown_edge",
+        ),
+        (
+            EXAMPLE.replace("secret: shopper_password", "secret: ghost"),
+            "flow.unknown_secret",
+        ),
+        (
+            EXAMPLE.replace("from: pay", "from: cart"),
+            "flow.path_disconnected",
+        ),
+        (
+            EXAMPLE.replace("to: done", "to: cart"),
+            "flow.path_revisits_screen",
+        ),
+        (
+            EXAMPLE.replace("http://localhost:3000", "https://example.com"),
+            "flow.base_not_local",
+        ),
+        (
+            EXAMPLE.replace("app/cart/page.tsx", "app/missing.tsx"),
+            "flow.scope_path_missing",
+        ),
+        (
+            EXAMPLE.replace("app/cart/page.tsx", "app/../../outside.tsx"),
+            "flow.scope_path_outside_project",
+        ),
+        (format!("{EXAMPLE}{}", " ".repeat(32768)), "flow.too_large"),
+        (
+            EXAMPLE.replace(
+                "title: Shopper pays for the cart",
+                "title: &label Shopper pays for the cart",
+            ),
+            "flow.not_yaml",
+        ),
+        (
+            EXAMPLE.replace("id: checkout", "id: checkout\nid: checkout"),
+            "flow.not_yaml",
+        ),
+    ] {
+        let dir = project(&flow);
+        let (out, reply) = run(dir.path(), &["validate", "--all"]);
+        assert_eq!(out.status.code(), Some(2), "{code}: {reply}");
+        assert!(finding(&reply, code), "{code}: {reply}");
+        assert!(
+            reply["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "GHCLI034_JOURNEY_FLOW_INVALID")
+        );
+    }
+}
+

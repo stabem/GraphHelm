@@ -72,4 +72,3 @@ describe("describeActivity", () => {
     expect(describeActivity({ sequence: 3, actorId: "kit-1", occurredAt: null, text: capture.replace("cart", "pay") }, names, {}, "studio-operator").text).toBe("loja kit 1 captured pay");
   });
 });
-

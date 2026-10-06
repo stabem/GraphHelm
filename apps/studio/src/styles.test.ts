@@ -38,6 +38,7 @@ const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 const SET_ELSEWHERE: Record<string, string> = {
   "--rail": "App.tsx writes it inline from the operator's dragged width; the CSS reads it with a fallback",
   "--dock-reserve": "App.tsx writes it inline on .scene from the docks' measured height (#1083 F9); the CSS reads it with a fallback",
+  "--bot-hue": "team-canvas.tsx writes it inline on each .team-bot from the bot persona hue; the CSS reads it for the avatar, outline and pulse",
 };
 
 /** Classes the components render that intentionally have no rule of their own. Each entry names

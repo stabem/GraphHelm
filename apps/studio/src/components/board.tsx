@@ -17,7 +17,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, FileCode2, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote, Waypoints } from "lucide-react";
+import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote } from "lucide-react";
+import { GraphFileRow } from "./graph-file-row";
 
 import type { GraphModel, GraphNode } from "../graph/model";
 import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
@@ -1273,43 +1274,7 @@ export function Board({
       )}
 
       {showConnect && (
-      <div className="graph-file">
-        <span className="wrap">
-          <FileCode2 aria-hidden="true" />
-          <label>
-            <span className="sr-only">Graph file path on the Runtime host</span>
-            <input
-              ref={fileRef}
-              value={graphFile}
-              onChange={(event) => onGraphFileChange(event.target.value)}
-              placeholder="Graph file on the Runtime host…"
-            />
-          </label>
-        </span>
-        <button
-          type="button"
-          onClick={onDrawConnections}
-          disabled={busy || graphFile.trim().length === 0}
-          title="Read this file's shape and check it against the hash this run recorded"
-        >
-          <Waypoints aria-hidden="true" />
-          connect
-        </button>
-        {demonstration && onFixtureFileChange && (
-          <span className="wrap">
-            <FileCode2 aria-hidden="true" />
-            <label>
-              <span className="sr-only">Fixture file path on the Runtime host, sent with resume</span>
-              <input
-                value={fixtureFile}
-                onChange={(event) => onFixtureFileChange(event.target.value)}
-                placeholder="Fixture file for resume (optional)…"
-                title="A demonstration run's outcomes come from a fixture file. Name one here and resume sends it; leave it empty and the resumed node waits for input."
-              />
-            </label>
-          </span>
-        )}
-      </div>
+      <GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={onDrawConnections} busy={busy} demonstration={demonstration} fixtureFile={fixtureFile} onFixtureFileChange={onFixtureFileChange} inputRef={fileRef} />
       )}
 
       <p className="canvas-hints" aria-hidden="true">

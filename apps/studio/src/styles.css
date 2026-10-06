@@ -3011,3 +3011,35 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .rail-view-menu button { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .rail-view-menu button:hover, .rail-view-menu button[aria-pressed="true"] { background: color-mix(in oklab, var(--text) 7%, transparent); }
 .rail-view-menu button svg { width: 14px; height: 14px; }
+
+/* Team canvas (spec 4.2). */
+.team-canvas { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.team-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--edge); }
+.team-toolbar button { display: inline-flex; gap: 6px; align-items: center; }
+.team-sheet { position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: grab; }
+.team-world { position: absolute; inset: 0; transform-origin: 0 0; }
+.team-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.team-link { stroke: var(--edge); stroke-width: 1.5; }
+.team-link-live { stroke: var(--text); stroke-width: 2.5; stroke-dasharray: 6 6; animation: team-link-flow 1.2s linear infinite; }
+@keyframes team-link-flow { to { stroke-dashoffset: -12; } }
+.team-bot { position: absolute; width: 220px; padding: 12px; border: 1px solid var(--edge); border-radius: 14px; background: var(--surface); }
+.team-bot-selected { outline: 2px solid hsl(var(--bot-hue) 70% 60%); }
+.team-bot-working .team-bot-avatar { animation: team-pulse 2.4s ease-in-out infinite; }
+@keyframes team-pulse { 50% { box-shadow: 0 0 0 6px hsl(var(--bot-hue) 70% 60% / 0.25); } }
+.team-bot-waiting_for_you { border-color: var(--signal); box-shadow: 0 0 0 2px var(--signal); }
+.team-bot-quiet { opacity: 0.6; }
+.team-bot-done .team-bot-state { color: var(--dim); }
+.team-bot-grip { position: absolute; right: 8px; top: 8px; cursor: grab; background: none; border: 0; color: var(--dim); }
+.team-bot-face { display: grid; grid-template-columns: 36px 1fr; gap: 2px 10px; align-items: center; width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; }
+.team-bot-avatar { grid-row: span 2; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: hsl(var(--bot-hue) 60% 45%); color: #fff; font-weight: 600; }
+.team-bot-name { font-weight: 600; }
+.team-bot-state, .team-bot-when, .team-bot-role, .team-bot-note { font-size: 12px; color: var(--dim); margin: 0; }
+.team-bot-doing { margin: 8px 0 4px; font-size: 13px; }
+.team-bot-details { font-size: 12px; }
+.team-tasks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.team-tasks button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 8px; background: none; color: inherit; }
+.team-task-done button { text-decoration: line-through; color: var(--dim); }
+.team-steps { position: absolute; width: 220px; padding: 12px; border: 1px dashed var(--edge); border-radius: 14px; }
+.team-steps h3 { margin: 0 0 8px; font-size: 13px; }
+.team-steps ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.team-others { padding: 8px 12px; border-top: 1px solid var(--edge); font-size: 12px; }

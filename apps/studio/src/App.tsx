@@ -71,7 +71,7 @@ import {
 } from "./graph/board";
 import { Connect } from "./components/Connect";
 import { Board } from "./components/board";
-import { AgentPanel, NodePanel, RunPanel, resetPanelCaches, useActorAliases, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
+import { AgentPanel, NodePanel, RunPanel, Thread, resetPanelCaches, useActorAliases, useEnvelopes, useNativePersonaLinks, usePersonas } from "./components/panel";
 import type { DocumentReference } from "./components/deliveries";
 import { DocumentEditor, type DocumentSaveRequest } from "./components/document-editor";
 import { NativeChats } from "./components/native-chats";
@@ -2074,13 +2074,20 @@ export default function App({
     return () => window.clearTimeout(timer);
   }, [handover, selected, head, markSeen]);
 
+  const [citedRecords, setCitedRecords] = useState<{ executionId: string; sequences: number[] } | null>(null);
+  const citationOrigin = useRef<HTMLElement | null>(null);
+  const citationPanel = useRef<HTMLElement | null>(null);
+  useEffect(() => { setCitedRecords(null); }, [selected]);
+  useEffect(() => { if (citedRecords !== null) citationPanel.current?.focus(); }, [citedRecords]);
+  const closeCitedRecords = () => { setCitedRecords(null); citationOrigin.current?.focus(); };
   const openRecords = (sequences: number[]) => {
     const first = sequences[0];
     if (first === undefined) return;
     const owner = threads.find((candidate) => candidate.messages.some((message) => message.sequence === first));
-    if (owner !== undefined) { setThread(owner.key); setHighlight(first); setMobileTab("chat"); return; }
-    setTalkOpen(true);
-    setFocus({ kind: "run" });
+    if (owner !== undefined && sequences.length === 1) { setThread(owner.key); setHighlight(first); setMobileTab("chat"); return; }
+    citationOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setMobileTab(canvasTab === "team" ? "team" : "journeys");
+    setCitedRecords({ executionId: selected, sequences });
   };
   const answerQuestion = (asker: string, signalId: string | null) => {
     const key = botKeyOf(team.bots, asker) ?? asker;
@@ -2686,7 +2693,20 @@ export default function App({
           <div className="studio-columns" data-mobile-tab={mobileTab}>
             <div className="mobile-tabs" role="tablist" aria-label="Studio columns">
               {(["chat", "team", "journeys"] as const).map((tab) => (
-                <button key={tab} type="button" role="tab" aria-selected={mobileTab === tab}
+                <button key={tab} id={`studio-tab-${tab}`} type="button" role="tab" aria-selected={mobileTab === tab}
+                  aria-controls={`studio-panel-${tab}`} tabIndex={mobileTab === tab ? 0 : -1}
+                  onKeyDown={(event) => {
+                    const tabs = ["chat", "team", "journeys"] as const;
+                    const index = tabs.indexOf(tab);
+                    const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
+                      : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
+                      : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : null;
+                    if (next === null) return;
+                    event.preventDefault();
+                    setMobileTab(next);
+                    if (next !== "chat") setCanvasTab(next === "team" ? "team" : "journey");
+                    document.getElementById(`studio-tab-${next}`)?.focus();
+                  }}
                   onClick={() => { setMobileTab(tab); if (tab !== "chat") setCanvasTab(tab === "team" ? "team" : "journey"); }}>
                   {tab === "chat" ? "Chat" : tab === "team" ? "Team" : "Journeys"}
                 </button>
@@ -2814,7 +2834,8 @@ export default function App({
               className="scene"
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
-            {canvasTab === "team" ? (
+            <div id="studio-panel-team" role="tabpanel" aria-labelledby="studio-tab-team" hidden={canvasTab !== "team"}>
+            {canvasTab === "team" && (
               <TeamCanvas storageKey={`graphhelm.team-positions:${projectKey}:${selected}`} bots={team.bots} otherRecorders={team.otherRecorders}
                 links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}
                 onSelectBot={(key) => { setThread(`direct:${key}`); setAnswering(null); }}
@@ -2826,12 +2847,24 @@ export default function App({
                 graphFileRow={<><GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={() => void drawConnections()} busy={busy}
                   demonstration={status.executor === "fixture"} fixtureFile={fixtureFile} onFixtureFileChange={setFixtureFile} inputRef={graphFileInput} />
                   <p className={`connection-note ${connectionTone}`} role="status">{connectionNote}</p></>} />
-            ) : (
+            )}
+            </div>
+            <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
+            {canvasTab === "journey" && (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
                 executionId={selected}
                 events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
                 detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail} />
+            )}
+            </div>
+            {citedRecords !== null && citedRecords.executionId === selected && (
+              <section ref={citationPanel} className="journey-detail cited-records" role="dialog" aria-modal="false" aria-label="Cited records" tabIndex={-1}
+                onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeCitedRecords(); } }}>
+                <div className="journey-detail-head"><h2>Cited records</h2><button type="button" onClick={closeCitedRecords}>Close cited records</button></div>
+                <Thread events={eventList.filter((event) => citedRecords.sequences.includes(event.sequence))} executionId={selected} openEvidence={openEvidence}
+                  emptyMessage="The cited records are not in the loaded history." />
+              </section>
             )}
             {handover !== null && <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} />}
 

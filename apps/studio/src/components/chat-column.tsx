@@ -162,6 +162,7 @@ export function ChatColumn(props: ChatColumnProps) {
 
   return (
     <aside className="chat-column" aria-label="Chat" ref={column} style={{ "--chat-w": `${width}px` } as CSSProperties} data-resizing={dragging || undefined}>
+      <div className="chat-tabpanel" id="studio-panel-chat" role="tabpanel" aria-labelledby="studio-tab-chat">
       <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
       <div className="chat-tabs" role="tablist" aria-label="Threads">
         {props.threads.map((candidate) => {
@@ -237,6 +238,7 @@ export function ChatColumn(props: ChatColumnProps) {
           event.preventDefault();
           resizeBy(next);
         }} />
+      </div>
     </aside>
   );
 }

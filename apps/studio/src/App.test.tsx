@@ -500,6 +500,53 @@ describe("live team layout", () => {
     await waitFor(() => expect(screen.getByLabelText("Graph file path on the Runtime host")).toHaveFocus());
   });
 
+
+  it("links mobile tabs to panels and moves selection and focus with arrows, Home and End", async () => {
+    await open(stubClient());
+    const tabs = within(screen.getByRole("tablist", { name: "Studio columns" }));
+    const team = tabs.getByRole("tab", { name: "Team" });
+    const chat = tabs.getByRole("tab", { name: "Chat" });
+    const journeys = tabs.getByRole("tab", { name: "Journeys" });
+    expect(chat).toHaveAttribute("tabindex", "-1");
+    team.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(journeys).toHaveFocus();
+    expect(journeys).toHaveAttribute("aria-selected", "true");
+    const panel = document.getElementById(journeys.getAttribute("aria-controls")!);
+    expect(panel).toHaveAttribute("role", "tabpanel");
+    expect(panel).toHaveAttribute("aria-labelledby", journeys.id);
+    await userEvent.keyboard("{ArrowRight}");
+    expect(chat).toHaveFocus();
+    expect(document.getElementById(chat.getAttribute("aria-controls")!)).toHaveAttribute("role", "tabpanel");
+    await userEvent.keyboard("{End}");
+    expect(journeys).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(chat).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(journeys).toHaveFocus();
+  });
+
+  it("opens the exact lifecycle record cited by a handover line instead of the whole run", async () => {
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    const client = longGapClient();
+    const baseEvents = client.getEvents;
+    client.getEvents = vi.fn(async (id: string) => {
+      const data = await baseEvents();
+      return { ...data, events: data.events.map((event) => event.sequence === 20
+        ? { ...event, kind: "node_outcome_recorded", payload: { nodeId: "implementation", outcome: "succeeded", nextState: "succeeded" } }
+        : event) };
+    }) as typeof client.getEvents;
+    await open(client);
+    const card = await screen.findByRole("dialog", { name: "While you were away" });
+    await userEvent.click(within(card).getByRole("button", { name: "implementation succeeded" }));
+    const records = await screen.findByRole("dialog", { name: "Cited records" });
+    expect(within(records).getByRole("button", { name: "#20" })).toBeInTheDocument();
+    expect(within(records).queryByRole("button", { name: "#21" })).toBeNull();
+    expect(localStorage.getItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy")).toBe("1");
+    await userEvent.click(within(records).getByRole("button", { name: "Close cited records" }));
+    expect(screen.queryByRole("dialog", { name: "Cited records" })).toBeNull();
+  });
+
   it("below 768 px the Chat / Team / Journeys tabs choose the one visible column", async () => {
     await open(stubClient());
     const layout = document.querySelector(".studio-columns") as HTMLElement;

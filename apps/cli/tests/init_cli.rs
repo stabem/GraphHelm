@@ -374,15 +374,39 @@ fn outside_a_git_work_tree_no_gitignore_is_written() {
     assert!(!project.path().join(".gitignore").exists());
 }
 
+/// Runtime-generated harness configuration must stay untracked even in projects provisioned
+/// by an older init, and an explicit un-ignore must not keep it stageable.
+#[test]
+fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
+    for existing in ["", ".graphhelm/\n", ".graphhelm/\n.mcp.json\n!.mcp.json\n"] {
+        let project = git_project();
+        std::fs::write(project.path().join(".gitignore"), existing).unwrap();
+        init(project.path());
+        let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
+        assert!(text.lines().any(|line| line == "/.mcp.json"), "{text:?}");
+        let before = text;
+        let (data, _, _) = init(project.path());
+        assert_eq!(data["data"]["gitignore"]["state"], "existing");
+        assert_eq!(
+            std::fs::read_to_string(project.path().join(".gitignore")).unwrap(),
+            before
+        );
+    }
+}
+
 #[test]
 fn a_gitignore_that_already_ignores_the_directory_is_left_alone() {
     let project = git_project();
-    std::fs::write(project.path().join(".gitignore"), "target/\n/.graphhelm\n").unwrap();
+    std::fs::write(
+        project.path().join(".gitignore"),
+        "target/\n/.graphhelm\n/.mcp.json\n",
+    )
+    .unwrap();
     let (data, _, _) = init(project.path());
     assert_eq!(data["data"]["gitignore"]["state"], "existing");
     assert_eq!(
         std::fs::read_to_string(project.path().join(".gitignore")).unwrap(),
-        "target/\n/.graphhelm\n"
+        "target/\n/.graphhelm\n/.mcp.json\n"
     );
 }
 

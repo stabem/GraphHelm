@@ -20,7 +20,7 @@
 //! - `codex.config.toml` — the `[mcp_servers.graphhelm]` snippet, when Codex is registered.
 //!
 //! And beside it: `<project>/.mcp.json` (merged, never clobbered) for Claude Code, and the
-//! `.graphhelm/` line in `<project>/.gitignore` when the project is a git work tree.
+//! `.graphhelm/` and `/.mcp.json` lines in `<project>/.gitignore` when the project is a git work tree.
 //!
 //! **What never appears on stdout or stderr:** the token's bytes and the key's bytes. `data`
 //! reports paths and `created`/`existing` per artifact; the printed `next` commands read the key
@@ -53,7 +53,7 @@ const MCP_SERVER_NAME: &str = "graphhelm";
 const MCP_ACTOR: &str = "agent-chat";
 /// The block appended to `.gitignore`. The comment line is what makes a second run recognize its
 /// own work without parsing; the pattern is what git reads.
-const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer token, event store, sealing key.\n.graphhelm/\n";
+const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer token, event store, sealing key.\n.graphhelm/\n/.mcp.json\n";
 /// `.mcp.json` and `.gitignore` are small hand-edited files; anything past this is not one, and
 /// is refused before being read into memory (PR #1070 review: the ignore file had no bound).
 const MAX_EDITED_FILE_BYTES: u64 = 1024 * 1024;
@@ -472,7 +472,7 @@ fn is_git_work_tree(project: &Path) -> bool {
         .any(|directory| directory.join(".git").exists())
 }
 
-/// The spellings a hand-written `.gitignore` may already use for the same directory. Read line by
+/// The spellings a hand-written `.gitignore` may already use for the Runtime directory and MCP file. Read line by
 /// line rather than through `git check-ignore`, which would need git on PATH and a subprocess for
 /// a five-line answer.
 ///
@@ -492,11 +492,15 @@ fn is_git_work_tree(project: &Path) -> bool {
 ///   outcome: a spare block is harmless, a stageable key is not.
 fn already_ignored(gitignore: &str) -> bool {
     let mut ignored = false;
+    let mut mcp_ignored = false;
     for line in gitignore.lines().map(str::trim_end) {
         let (negated, pattern) = match line.strip_prefix('!') {
             Some(rest) => (true, rest),
             None => (false, line),
         };
+        if matches!(pattern, ".mcp.json" | "/.mcp.json") {
+            mcp_ignored = !negated;
+        }
         if matches!(
             pattern,
             ".graphhelm/" | ".graphhelm" | "/.graphhelm/" | "/.graphhelm" | ".graphhelm/**"
@@ -511,7 +515,7 @@ fn already_ignored(gitignore: &str) -> bool {
             ignored = false;
         }
     }
-    ignored
+    ignored && mcp_ignored
 }
 
 pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Failure> {
@@ -524,7 +528,7 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
         && metadata.len() > MAX_EDITED_FILE_BYTES
     {
         return Err(refused(
-            "the .gitignore file is larger than init will read; add the .graphhelm/ line by hand",
+            "the .gitignore file is larger than init will read; add the .graphhelm/ and /.mcp.json lines by hand",
             "/gitignore",
         ));
     }
@@ -779,39 +783,51 @@ mod tests {
             ".graphhelm/**",
         ] {
             assert!(
-                already_ignored(&format!("target/\n{spelling}\n")),
+                already_ignored(&format!("/.mcp.json\ntarget/\n{spelling}\n")),
                 "{spelling:?}"
             );
         }
         // Git keeps LEADING whitespace as part of the pattern: `  .graphhelm/` ignores nothing
         // (`git check-ignore` exits 1), so it must not count as existing coverage.
-        assert!(!already_ignored("target/\n  .graphhelm  \n"));
-        assert!(!already_ignored("target/\n  .graphhelm/\n"));
-        assert!(!already_ignored("target/\n.graphhelm-other/\n"));
-        assert!(!already_ignored(""));
+        assert!(!already_ignored("/.mcp.json\ntarget/\n  .graphhelm  \n"));
+        assert!(!already_ignored("/.mcp.json\ntarget/\n  .graphhelm/\n"));
+        assert!(!already_ignored("/.mcp.json\ntarget/\n.graphhelm-other/\n"));
+        assert!(!already_ignored("/.mcp.json\n"));
     }
 
     #[test]
     fn a_later_negation_wins_and_a_later_ignore_wins_back() {
-        assert!(!already_ignored(".graphhelm/\n!.graphhelm/\n"));
-        assert!(already_ignored(".graphhelm/\n!.graphhelm/\n/.graphhelm\n"));
-        assert!(!already_ignored("!.graphhelm/\n"));
+        assert!(!already_ignored("/.mcp.json\n.graphhelm/\n!.graphhelm/\n"));
+        assert!(already_ignored(
+            "/.mcp.json\n.graphhelm/\n!.graphhelm/\n/.graphhelm\n"
+        ));
+        assert!(!already_ignored("/.mcp.json\n!.graphhelm/\n"));
         // A negation BELOW the directory un-ignores that file (`git status` shows
         // `?? .graphhelm/serve.key`), so the fold answers "not ignored" and the block is appended.
-        assert!(!already_ignored(".graphhelm/**\n!.graphhelm/serve.key\n"));
-        assert!(!already_ignored(".graphhelm/\n!/.graphhelm/keyring\n"));
         assert!(!already_ignored(
-            ".graphhelm/\n!.graphhelm/serve.key\n!.graphhelm/\n"
+            "/.mcp.json\n.graphhelm/**\n!.graphhelm/serve.key\n"
+        ));
+        assert!(!already_ignored(
+            "/.mcp.json\n.graphhelm/\n!/.graphhelm/keyring\n"
+        ));
+        assert!(!already_ignored(
+            "/.mcp.json\n.graphhelm/\n!.graphhelm/serve.key\n!.graphhelm/\n"
         ));
         // ...and a later whole-directory ignore wins the file back.
         assert!(already_ignored(
-            ".graphhelm/**\n!.graphhelm/serve.key\n.graphhelm/\n"
+            "/.mcp.json\n.graphhelm/**\n!.graphhelm/serve.key\n.graphhelm/\n"
         ));
         // Trailing whitespace on the negation is not part of the pattern either.
-        assert!(!already_ignored(".graphhelm/\n!.graphhelm/serve.key  \n"));
+        assert!(!already_ignored(
+            "/.mcp.json\n.graphhelm/\n!.graphhelm/serve.key  \n"
+        ));
         // A negation of some other directory's file does not touch ours.
-        assert!(already_ignored(".graphhelm/\n!other/.graphhelm/x\n"));
-        assert!(already_ignored(".graphhelm/\n!.graphhelm-other/x\n"));
+        assert!(already_ignored(
+            "/.mcp.json\n.graphhelm/\n!other/.graphhelm/x\n"
+        ));
+        assert!(already_ignored(
+            "/.mcp.json\n.graphhelm/\n!.graphhelm-other/x\n"
+        ));
     }
 
     #[test]

@@ -21,6 +21,37 @@ function props(overrides: Partial<TeamCanvasProps> = {}): TeamCanvasProps {
 afterEach(() => { cleanup(); localStorage.clear(); });
 
 describe("TeamCanvas", () => {
+  it("moves the focused bot with arrow keys and keeps its position across remounts", async () => {
+    const p = props();
+    const { unmount } = render(<TeamCanvas {...p} />);
+    const grip = screen.getByRole("button", { name: "Move kit-2" });
+    grip.focus();
+    await userEvent.keyboard("{ArrowRight}{ArrowDown}{ArrowLeft}{ArrowUp}{ArrowRight}");
+    expect(screen.getByTestId("team-bot-kit-2")).toHaveStyle({ left: "570px", top: "32px" });
+    expect(p.onSelectBot).not.toHaveBeenCalled();
+    unmount();
+    render(<TeamCanvas {...p} />);
+    expect(screen.getByTestId("team-bot-kit-2")).toHaveStyle({ left: "570px", top: "32px" });
+  });
+
+  it("consumes ctrl-wheel for bounded canvas zoom while ordinary wheel stays available", () => {
+    const { container } = render(<TeamCanvas {...props()} />);
+    const sheet = screen.getByLabelText("Team sheet");
+    const world = container.querySelector(".team-world") as HTMLElement;
+    const normal = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+    fireEvent(sheet, normal);
+    expect(normal.defaultPrevented).toBe(false);
+    expect(world.style.transform).toContain("scale(1)");
+    const zoom = new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100 });
+    fireEvent(sheet, zoom);
+    expect(zoom.defaultPrevented).toBe(true);
+    expect(world.style.transform).toContain("scale(1.15)");
+    fireEvent.wheel(sheet, { ctrlKey: true, deltaY: -100000 });
+    expect(world.style.transform).toContain("scale(2)");
+    fireEvent.wheel(sheet, { ctrlKey: true, deltaY: 100000 });
+    expect(world.style.transform).toContain("scale(0.4)");
+  });
+
   it("shows every bot with its state in words, never 'stuck'", () => {
     render(<TeamCanvas {...props()} />);
     expect(screen.getByRole("button", { name: "coordinator, Working" })).toBeInTheDocument();

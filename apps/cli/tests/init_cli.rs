@@ -375,13 +375,42 @@ fn outside_a_git_work_tree_no_gitignore_is_written() {
 }
 
 /// Runtime-generated harness configuration must stay untracked even in projects provisioned
-/// by an older init, and an explicit un-ignore must not keep it stageable.
+/// by an older init, and literal or wildcard un-ignore must not keep it stageable.
 #[test]
 fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
-    for existing in ["", ".graphhelm/\n", ".graphhelm/\n.mcp.json\n!.mcp.json\n"] {
-        let project = git_project();
+    for existing in [
+        "",
+        ".graphhelm/\n",
+        ".graphhelm/\n.mcp.json\n!.mcp.json\n",
+        ".graphhelm/\n/.mcp.json\n!*.json\n",
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        let git = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(project.path())
+            .output()
+            .unwrap();
+        assert!(git.status.success(), "{git:?}");
         std::fs::write(project.path().join(".gitignore"), existing).unwrap();
         init(project.path());
+        for generated in [".mcp.json", ".graphhelm/serve.key"] {
+            let ignored = Command::new("git")
+                .args(["check-ignore", "--quiet", "--", generated])
+                .current_dir(project.path())
+                .output()
+                .unwrap();
+            assert!(
+                ignored.status.success(),
+                "{existing:?}: {generated} is stageable"
+            );
+            let status = Command::new("git")
+                .args(["status", "--short", "--", generated])
+                .current_dir(project.path())
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{status:?}");
+            assert!(status.stdout.is_empty(), "{status:?}");
+        }
         let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
         assert!(text.lines().any(|line| line == "/.mcp.json"), "{text:?}");
         let before = text;

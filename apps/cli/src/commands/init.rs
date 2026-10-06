@@ -486,10 +486,10 @@ fn is_git_work_tree(project: &Path) -> bool {
 /// `git check-ignore` and `git status`):
 /// - only TRAILING whitespace is stripped; a leading space is part of the pattern, so
 ///   `  .graphhelm/` ignores nothing and must not count;
-/// - a negation BELOW the directory (`!.graphhelm/serve.key` after `.graphhelm/**`) un-ignores
-///   that file, so any `!` line whose pattern lives under `.graphhelm/` also flips the answer to
-///   "not ignored". Appending the block last then wins the file back, which is the conservative
-///   outcome: a spare block is harmless, a stageable key is not.
+/// - negations may use wildcards (`!*.json`) or name a file below `.graphhelm/`. Rather than
+///   duplicate Git's pattern matcher, any negation clears both recognized protections. Later
+///   explicit ignore lines restore them; otherwise append the block last. A spare block is
+///   harmless, a stageable generated file is not.
 fn already_ignored(gitignore: &str) -> bool {
     let mut ignored = false;
     let mut mcp_ignored = false;
@@ -498,6 +498,10 @@ fn already_ignored(gitignore: &str) -> bool {
             Some(rest) => (true, rest),
             None => (false, line),
         };
+        if negated {
+            ignored = false;
+            mcp_ignored = false;
+        }
         if matches!(pattern, ".mcp.json" | "/.mcp.json") {
             mcp_ignored = !negated;
         }
@@ -506,13 +510,6 @@ fn already_ignored(gitignore: &str) -> bool {
             ".graphhelm/" | ".graphhelm" | "/.graphhelm/" | "/.graphhelm" | ".graphhelm/**"
         ) {
             ignored = !negated;
-        } else if negated
-            && pattern
-                .strip_prefix('/')
-                .unwrap_or(pattern)
-                .starts_with(".graphhelm/")
-        {
-            ignored = false;
         }
     }
     ignored && mcp_ignored

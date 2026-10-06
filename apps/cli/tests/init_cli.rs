@@ -703,8 +703,7 @@ fn a_negated_ignore_line_is_not_taken_as_ignored() {
     let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
     assert_eq!(
         text.lines()
-            .filter(|line| line.trim_start_matches('!') == ".graphhelm/")
-            .next_back(),
+            .rfind(|line| line.trim_start_matches('!') == ".graphhelm/"),
         Some(".graphhelm/"),
         "{text:?}"
     );

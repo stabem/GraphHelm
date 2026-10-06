@@ -800,7 +800,7 @@
           "id": "schema/journey-contract",
           "kind": "schema",
           "path": "schemas/journey-contract.schema.json",
-          "sha256": "sha256:c5ae0162ab27de328058d2392940876ad4a8f050791263ba3c0882b2148c8212",
+          "sha256": "sha256:59500dae6c64b69e0e8fa959a69b4fdefec3edf14c3e28a63097ea7d54e103f6",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -940,6 +940,19 @@
           "family": "retry-provenance"
         },
         {
+          "id": "schema/screen-capture",
+          "kind": "schema",
+          "path": "schemas/screen-capture.schema.json",
+          "sha256": "sha256:b6837de8f53ecad7eef71bec6122376379fedde375f06115484b35cee28f76c7",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
+        },
+        {
           "id": "schema/skill-capsule",
           "kind": "schema",
           "path": "schemas/skill-capsule.schema.json",
@@ -977,6 +990,19 @@
             "observers": []
           },
           "family": "skill-evaluator"
+        },
+        {
+          "id": "schema/transition-walked",
+          "kind": "schema",
+          "path": "schemas/transition-walked.schema.json",
+          "sha256": "sha256:5f62a6142d4fc2372801db36cffaa7f29e8587d8530b1cb791199e65929eb78f",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "journey-verifier"
         },
         {
           "id": "skill/defect-bounty",

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/extensions/graphhelm-jpd/schemas/transition-walked.schema.json",
+  "title": "GraphHelm JPD Transition Walked Record",
+  "type": "object",
+  "required": [
+    "protocol",
+    "contractId",
+    "fromStepId",
+    "toStepId",
+    "revision",
+    "observer",
+    "fromCaptureId",
+    "toCaptureId"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "graphhelm-transition-walked-v1"
+    },
+    "contractId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "fromStepId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "toStepId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:/-]*$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "observer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "fromCaptureId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "toCaptureId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "additionalProperties": false
+}

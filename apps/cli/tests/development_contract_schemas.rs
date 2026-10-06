@@ -920,7 +920,7 @@ fn the_bound_closed_artifacts_are_byte_identical_to_their_pins() {
     for (relative, pinned) in [
         (
             "extensions/builtin/graphhelm-jpd/schemas/journey-contract.schema.json",
-            "2bd688c56c603cc28a0086e5264ffd2f40e4000f",
+            "aacabe5131b7fd10b341cdba6f1800b4deab76d9",
         ),
         (
             "extensions/builtin/graphhelm-jpd/schemas/journey-verification-result.schema.json",

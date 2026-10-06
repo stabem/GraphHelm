@@ -65,6 +65,11 @@ function writePositions(key: string, positions: Positions): void {
   try { localStorage.setItem(key, JSON.stringify(positions)); } catch { /* per-viewer convenience only */ }
 }
 
+/** Keep a drag alive when the pointer leaves the sheet: the release still reaches us and persists. */
+function capture(event: ReactPointerEvent<HTMLElement>): void {
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* not capturable: the drag ends on the sheet only */ }
+}
+
 const HOME: Camera = { x: 0, y: 0, zoom: 1 };
 
 export function TeamCanvas(props: TeamCanvasProps) {
@@ -88,7 +93,9 @@ export function TeamCanvas(props: TeamCanvasProps) {
   const nameOf = (key: string) => bots.find((bot) => bot.key === key)?.name ?? key;
 
   const onSheetDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
+    // .team-world fills the sheet, so empty space is the sheet or the world; bots, tasks and buttons are not.
+    if ((event.target as Element).closest("article, button")) return;
+    capture(event);
     drag.current = { kind: "pan", id: "", start: { x: event.clientX, y: event.clientY }, origin: { x: view.x, y: view.y } };
   };
   const onMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -139,7 +146,7 @@ export function TeamCanvas(props: TeamCanvasProps) {
               <article key={bot.key} data-testid={`team-bot-${bot.key}`} className={`team-bot team-bot-${bot.state} ${props.selectedBot === bot.key ? "team-bot-selected" : ""}`}
                 style={{ left: `${at.x}px`, top: `${at.y}px`, "--bot-hue": String(bot.hue) } as CSSProperties}>
                 <button type="button" className="team-bot-grip" aria-label={`Move ${bot.name}`}
-                  onPointerDown={(event) => { event.stopPropagation(); drag.current = { kind: "bot", id: bot.key, start: { x: event.clientX, y: event.clientY }, origin: at }; }}>⋮⋮</button>
+                  onPointerDown={(event) => { event.stopPropagation(); capture(event); drag.current = { kind: "bot", id: bot.key, start: { x: event.clientX, y: event.clientY }, origin: at }; }}>⋮⋮</button>
                 <button type="button" className="team-bot-face" aria-label={`${bot.name}, ${botStateLabel(bot)}`} onClick={() => props.onSelectBot(bot.key)}>
                   <span className="team-bot-avatar" aria-hidden="true">{bot.name.slice(0, 1).toUpperCase()}</span>
                   <span className="team-bot-name">{bot.name}</span>

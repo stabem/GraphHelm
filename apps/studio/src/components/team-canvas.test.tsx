@@ -75,4 +75,14 @@ describe("TeamCanvas", () => {
     await userEvent.click(screen.getByRole("button", { name: "Start · waiting input" }));
     expect(p.onOpenNode).toHaveBeenCalledWith("start");
   });
+
+  it("pans when the pointer goes down on empty space", () => {
+    const { container } = render(<TeamCanvas {...props()} />);
+    const world = container.querySelector(".team-world") as HTMLElement;
+    const before = world.style.transform;
+    fireEvent.pointerDown(world, { clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(screen.getByLabelText("Team sheet"), { clientX: 25, clientY: 15, pointerId: 1 });
+    expect(world.style.transform).not.toBe(before);
+    expect(world.style.transform).toContain("translate(25px, 15px)");
+  });
 });

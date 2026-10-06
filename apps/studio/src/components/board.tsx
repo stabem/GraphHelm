@@ -17,74 +17,31 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, ArrowUpRight, GitBranch, MessageSquare, Users, Hand, Highlighter, Minus, MousePointer2, Plus, RotateCcw, StickyNote } from "lucide-react";
+import { Activity, ArrowUpRight, GitBranch, Hand, Minus, MousePointer2, Plus } from "lucide-react";
 import { GraphFileRow } from "./graph-file-row";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
-import type { AgentPresence } from "../runtime/session";
+import { isEntryNode, isFirstEntryNode, moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
 import { isAlarming } from "./format";
-import { CARD_HEIGHT, CARD_WIDTH, agentPositionOf, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, markId, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point, type Stroke } from "../graph/board";
+import { CARD_HEIGHT, CARD_WIDTH, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point } from "../graph/board";
 
 /** The pieces of page chrome that float over the canvas sheet (#1083 F8): the toolbar, the
  * header rows, the lint strip, the notes and connect row, the HUD capsule, and the scene's docks.
  * Measured at framing time, so whatever the container queries laid out is what is framed around. */
-const CANVAS_CHROME = ".tools, .canvas-story, .canvas-arrange, .board-navigator, .canvas-sections, .canvas-lint, .edge-note, .graph-file, .connection-legend, .canvas-hints, .work-view-switch";
+const CANVAS_CHROME = ".tools, .canvas-story, .canvas-arrange, .board-navigator, .canvas-sections, .canvas-lint, .edge-note, .graph-file, .connection-legend, .canvas-hints";
 function chromeRectsAround(sheet: HTMLElement | null): DOMRect[] {
   if (sheet === null) return [];
   const pieces = new Set<Element>();
   sheet.parentElement?.querySelectorAll(CANVAS_CHROME).forEach((piece) => pieces.add(piece));
   sheet.querySelectorAll(".run-capsule").forEach((piece) => pieces.add(piece));
-  sheet.closest(".scene")?.querySelectorAll(":scope > .dock, :scope > .work-view-switch").forEach((piece) => pieces.add(piece));
+  sheet.closest(".scene")?.querySelectorAll(":scope > .dock").forEach((piece) => pieces.add(piece));
   pieces.delete(sheet);
   return [...pieces].map((piece) => piece.getBoundingClientRect());
 }
 import { ago, hueOf, initialOf, readable } from "./format";
-import { WorkOverview, isEntryNode, isFirstEntryNode } from "./work-overview";
-import type { WorkOverviewProps } from "./work-overview";
 
 
-type Tool = "select" | "pen" | "note" | "hand";
-
-/** Minutes since an instant, or null when there is none - presence maths, kept honest. */
-function minutesSince(value?: string | null): number | null {
-  if (!value) return null;
-  const then = new Date(value).valueOf();
-  if (Number.isNaN(then)) return null;
-  return (Date.now() - then) / 60000;
-}
-
-/** How present a face looks: full within 5 minutes, dimmed to 30, faded past that. Driven only
- * by the log's own timestamps - never a pulse the data cannot back. */
-function presenceOf(minutes: number | null): number {
-  if (minutes === null) return 1;
-  if (minutes < 5) return 1;
-  if (minutes < 30) return 0.7;
-  return 0.45;
-}
-type Tone = Stroke["tone"];
-
-const TONES: Array<{ value: Tone; label: string }> = [
-  { value: "ink", label: "Grey" },
-  { value: "flag", label: "Amber" },
-  { value: "calm", label: "Green" },
-];
-
-/** An SVG path through the stroke's points, smoothed just enough to look drawn rather than
- * plotted. A polyline reads as a chart; this reads as a pen. */
-function pathOf(points: Point[]): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  let path = `M ${points[0].x} ${points[0].y}`;
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const current = points[index];
-    const midpoint = { x: (previous.x + current.x) / 2, y: (previous.y + current.y) / 2 };
-    path += ` Q ${previous.x} ${previous.y} ${midpoint.x} ${midpoint.y}`;
-  }
-  const last = points[points.length - 1];
-  return `${path} L ${last.x} ${last.y}`;
-}
+type Tool = "select" | "hand";
 
 /**
  * One edge, as an orthogonal run between the two block sides that face each other.
@@ -120,9 +77,6 @@ function edgePath(from: Point, to: Point, fromHeight = CARD_HEIGHT, toHeight = C
 
 export function Board({
   model,
-  projectName = null,
-  projectPath = null,
-  latestRecordedUpdate = null,
   board,
   selectedNode,
   onSelectNode,
@@ -133,40 +87,14 @@ export function Board({
   onGraphFileChange,
   onDrawConnections,
   busy,
-  crew = [],
-  recordedSessions = [],
-  workMessages = [],
-  agentWork = [],
-  selectedAgent = null,
-  onSelectAgent,
-  talks = [],
-  activity = [],
-  latestEvent = null,
-  subagents = null,
-  runTeam = null,
-  claudeTasks = null,
-  agentReports = {},
-  runStatus = null,
-  attention = null,
-  nextAction = null,
-  replyGuidance = null,
-  onNextAction,
-  selectedTalk = null,
-  onSelectTalk,
   focusGraphFile = 0,
   runId,
-  initialLayout = "canvas",
-  onCanvasChange,
   objective = null,
   demonstration = false,
-  ended = false,
   fixtureFile = "",
   onFixtureFileChange,
 }: {
   model: GraphModel;
-  projectName?: string | null;
-  projectPath?: string | null;
-  latestRecordedUpdate?: WorkOverviewProps["latestRecordedUpdate"];
   board: BoardState;
   selectedNode: string | null;
   onSelectNode: (nodeId: string | null) => void;
@@ -182,60 +110,25 @@ export function Board({
   onGraphFileChange: (value: string) => void;
   onDrawConnections: () => void;
   busy: boolean;
-  /** The room's roster, standing on the canvas as draggable blobs. Derived by App from the
-   * log; this component only places and moves them. `presence` is the newest
-   * `agent_presence_declared` this actor has made, or absent when the actor never declared one -
-   * absence renders no badge at all, never a placeholder. */
-  crew?: Array<{ id: string; charter: string | null; name?: string; lastAt?: string | null; presence?: AgentPresence | null }>;
-  recordedSessions?: WorkOverviewProps["recordedSessions"];
-  workMessages?: WorkOverviewProps["workMessages"];
-  agentWork?: WorkOverviewProps["agentWork"];
-  selectedAgent?: string | null;
-  onSelectAgent?: (agentId: string | null) => void;
-  /** The room's conversations, each one a bubble standing on the board. Derived by App from
-   * the envelopes; this component only places and moves them. */
-  talks?: Array<{ key: string; label: string; participants: string[]; count: number; lastAt: string | null; preview?: string | null }>;
-  activity?: WorkOverviewProps["activity"];
-  latestEvent?: WorkOverviewProps["latestEvent"];
-  subagents?: WorkOverviewProps["subagents"];
-  runTeam?: WorkOverviewProps["runTeam"];
-  claudeTasks?: WorkOverviewProps["claudeTasks"];
-  agentReports?: WorkOverviewProps["agentReports"];
-  runStatus?: string | null;
-  attention?: WorkOverviewProps["attention"];
-  nextAction?: WorkOverviewProps["nextAction"];
-  replyGuidance?: WorkOverviewProps["replyGuidance"];
-  onNextAction?: WorkOverviewProps["onNextAction"];
-  selectedTalk?: string | null;
-  onSelectTalk?: (talkKey: string | null) => void;
   /** Bumped when another control (the dock's resume) needs the person AT the graph-file box:
    * opens the row and puts the cursor in it. A nonce so a second walk works. */
   focusGraphFile?: number;
   /** The selected run's id, for the HUD capsule. Absent (a draft, no selection) renders none. */
   runId?: string;
-  initialLayout?: "overview" | "canvas";
-  onCanvasChange?: (canvas: boolean) => void;
   /** The run's objective from its briefing (#1077), for the entry node's card. */
   objective?: string | null;
   /** The run was started under the fixture executor (#1064). */
   demonstration?: boolean;
-  /** #1098 D5: the run reached a terminal status; passed straight through to the overview, which
-   * states an unverified topology in the tense that is true for a run nothing will add to. */
-  ended?: boolean;
   /** #1083 F2: a fixture file path on the RUNTIME's host, sent with `resume` as the API's
    * existing `fixtures` field. Offered only on a demonstration run - the fixture stands in for
    * the model there, and without it a resumed node has no outcome and parks `waiting_input`. */
   fixtureFile?: string;
   onFixtureFileChange?: (value: string) => void;
 }) {
-  const [organized, setOrganized] = useState(initialLayout === "overview");
-  useEffect(() => { onCanvasChange?.(!organized); }, [organized, onCanvasChange]);
   const [layoutUndo, setLayoutUndo] = useState<{ run: string | undefined; positions: BoardState["positions"]; agents: BoardState["agents"] } | null>(null);
   const arrangePending = useRef(false);
   const surface = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<Tool>("select");
-  const [tone, setTone] = useState<Tone>("ink");
-  const [drawing, setDrawing] = useState<Point[] | null>(null);
   /* The graph-file row is chrome nobody needs until they want connections drawn: shown when
      asked, or whenever the field already holds something worth seeing. */
   const [connectOpen, setConnectOpen] = useState(false);
@@ -258,7 +151,7 @@ export function Board({
   // The dock's resume button walks the person here when the path is missing: a control that
   // names its own missing ingredient should go fetch it, not sit as a labelled excuse.
   useEffect(() => {
-    if ((focusGraphFile ?? 0) > 0) { setOrganized(false); setConnectOpen(true); }
+    if ((focusGraphFile ?? 0) > 0) setConnectOpen(true);
   }, [focusGraphFile]);
   useEffect(() => {
     if (connectOpen && (focusGraphFile ?? 0) > 0) fileRef.current?.focus();
@@ -272,16 +165,13 @@ export function Board({
    * conditional on a ref — which does not re-render — so `pointerup` was simply never wired, and a
    * drag stayed armed after the button came up.
    */
-  const dragging = useRef<{ kind: "node" | "agent" | "note" | "pan" | "group"; id: string; grab: Point; origin: Point; moved: boolean } | null>(null);
+  const dragging = useRef<{ kind: "node" | "pan" | "group"; id: string; grab: Point; origin: Point; moved: boolean } | null>(null);
   /* Set when a real drag ends, read by the click that follows it: the click is the drag's
      echo, not an intent, and must not open or toggle anything. */
   const swallowClick = useRef(false);
-  const strokeRef = useRef<Point[] | null>(null);
   const boardRef = useRef(board);
-  const toneRef = useRef(tone);
   const changeRef = useRef(onChange);
   boardRef.current = board;
-  toneRef.current = tone;
   changeRef.current = onChange;
 
   const pointAt = useCallback((event: { clientX: number; clientY: number }): Point => {
@@ -321,14 +211,11 @@ export function Board({
         const dx = at.x - held.origin.x;
         const dy = at.y - held.origin.y;
         const positions = { ...boardRef.current.positions };
-        const agents = { ...boardRef.current.agents };
         for (const [prefixed, start] of groupStartRef.current) {
           const to = { x: start.x + dx, y: start.y + dy };
           if (prefixed.startsWith("node:")) positions[prefixed.slice(5)] = to;
-          else if (prefixed.startsWith("agent:")) agents[prefixed.slice(6)] = to;
-          else if (prefixed.startsWith("talk:")) agents[prefixed] = to;
         }
-        changeRef.current({ ...boardRef.current, positions, agents });
+        changeRef.current({ ...boardRef.current, positions });
         return;
       }
       if (marqueeRef.current !== null) {
@@ -346,23 +233,9 @@ export function Board({
           surface.current?.classList.add("dragging");
         }
         const to = { x: at.x - held.grab.x, y: at.y - held.grab.y };
-        changeRef.current(
-          held.kind === "node"
-            ? { ...boardRef.current, positions: { ...boardRef.current.positions, [held.id]: to } }
-            : held.kind === "note"
-              ? {
-                  ...boardRef.current,
-                  notes: boardRef.current.notes.map((candidate) =>
-                    candidate.id === held.id ? { ...candidate, at: to } : candidate,
-                  ),
-                }
-              : { ...boardRef.current, agents: { ...boardRef.current.agents, [held.id]: to } },
-        );
+        changeRef.current({ ...boardRef.current, positions: { ...boardRef.current.positions, [held.id]: to } });
         return;
       }
-      if (strokeRef.current === null) return;
-      strokeRef.current = [...strokeRef.current, pointAt(event)];
-      setDrawing(strokeRef.current);
     };
 
     const release = () => {
@@ -394,15 +267,6 @@ export function Board({
       }
       surface.current?.classList.remove("dragging");
       dragging.current = null;
-      const points = strokeRef.current;
-      strokeRef.current = null;
-      setDrawing(null);
-      if (points !== null && points.length > 1) {
-        changeRef.current({
-          ...boardRef.current,
-          strokes: [...boardRef.current.strokes, { id: markId(), tone: toneRef.current, points }],
-        });
-      }
     };
 
     window.addEventListener("pointermove", move);
@@ -449,112 +313,6 @@ export function Board({
     return [{ id: edge.id, type: edge.type, d: edgePath(from, to, nodeHeight(model.nodes.find(node => node.id === edge.from)!), nodeHeight(model.nodes.find(node => node.id === edge.to)!)) }];
   });
 
-  // The crew is placed by RANK, not roster order: total pair-talk traffic decides who holds
-  // the centre of the web. Deterministic - same log, same board.
-  const agentTraffic = new Map<string, number>();
-  for (const talk of talks) {
-    if (talk.key === "room") continue;
-    for (const id of talk.participants) {
-      agentTraffic.set(id, (agentTraffic.get(id) ?? 0) + talk.count);
-    }
-  }
-  const rankOf = new Map<string, number>();
-  [...crew]
-    .sort(
-      (a, b) =>
-        (agentTraffic.get(b.id) ?? 0) - (agentTraffic.get(a.id) ?? 0) || a.id.localeCompare(b.id),
-    )
-    .forEach((member, rank) => rankOf.set(member.id, rank));
-  // Agents within reach of each other form a huddle: a single-link clustering over the blob
-  // anchors, recomputed on every render and stored nowhere - drag apart and the ring is gone.
-  const agentPlaces = crew.map((member, index) => ({
-    id: member.id,
-    at: agentPositionOf(board, member.id, rankOf.get(member.id) ?? index),
-  }));
-  const HUDDLE_REACH = 110;
-  const clusterOf = new Map<string, number>();
-  agentPlaces.forEach((agent, index) => clusterOf.set(agent.id, index));
-  for (const a of agentPlaces) {
-    for (const b of agentPlaces) {
-      if (a.id === b.id) continue;
-      if (Math.hypot(a.at.x - b.at.x, a.at.y - b.at.y) > HUDDLE_REACH) continue;
-      const from = clusterOf.get(b.id)!;
-      const to = clusterOf.get(a.id)!;
-      if (from === to) continue;
-      for (const [id, cluster] of clusterOf) if (cluster === from) clusterOf.set(id, to);
-    }
-  }
-  const grouped = new Map<number, typeof agentPlaces>();
-  for (const agent of agentPlaces) {
-    const cluster = clusterOf.get(agent.id)!;
-    grouped.set(cluster, [...(grouped.get(cluster) ?? []), agent]);
-  }
-  const huddles = [...grouped.values()]
-    .filter((members) => members.length >= 2)
-    .map((members) => {
-      const xs = members.map((member) => member.at.x);
-      const ys = members.map((member) => member.at.y);
-      const minX = Math.min(...xs) - 58;
-      const maxX = Math.max(...xs) + 58;
-      const minY = Math.min(...ys) - 52;
-      const maxY = Math.max(...ys) + 64;
-      return {
-        key: members.map((member) => member.id).sort().join("+"),
-        cx: (minX + maxX) / 2,
-        cy: (minY + maxY) / 2,
-        rx: (maxX - minX) / 2,
-        ry: (maxY - minY) / 2,
-      };
-    });
-
-  // Separate lanes keep conversation links short and leave the work graph unobstructed.
-  // Stored positions always win; only an explicit Organize resets the operator's placement.
-  const BUBBLE_W = 280;
-  const BUBBLE_H = 148;
-  const occupied: BoardBounds[] = [
-    ...model.nodes.map((node, index) => ({ ...nodePosition(node.id, index), w: CARD_WIDTH, h: nodeHeight(node) })),
-    ...agentPlaces.map(({ at }) => ({ x: at.x - 88, y: at.y - 26, w: 176, h: 96 })),
-    ...talks.flatMap(talk => {
-      const at = board.agents[`talk:${talk.key}`];
-      return at ? [{ ...at, w: BUBBLE_W, h: BUBBLE_H }] : [];
-    }),
-  ];
-  const talkPlaces = [...talks].sort((a, b) => {
-    if (a.key === b.key) return 0;
-    if (a.key === "room") return -1;
-    if (b.key === "room") return 1;
-    return a.key.localeCompare(b.key);
-  }).map((talk, rank) => {
-    const stored = board.agents[`talk:${talk.key}`];
-    if (stored) return { talk, at: stored };
-    const at = { x: 280, y: 100 + rank * 180 };
-    // Every downward move clears at least one finite obstacle; no unchecked fallback.
-    for (let attempt = 0; attempt <= occupied.length; attempt += 1) {
-      const collisions = occupied.filter(zone => at.x < zone.x + zone.w + 18 && zone.x < at.x + BUBBLE_W + 18 && at.y < zone.y + zone.h + 18 && zone.y < at.y + BUBBLE_H + 18);
-      if (collisions.length === 0) break;
-      at.y = Math.max(...collisions.map(zone => zone.y + zone.h + 18));
-    }
-    occupied.push({ ...at, w: BUBBLE_W, h: BUBBLE_H });
-    return { talk, at };
-  });
-
-  const contentBounds = (() => {
-    const items: BoardBounds[] = [
-      ...model.nodes.map((node, index) => {
-        const at = nodePosition(node.id, index);
-        return { x: at.x, y: at.y, w: CARD_WIDTH, h: nodeHeight(node) };
-      }),
-      ...agentPlaces.map((agent) => ({ x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
-      ...talkPlaces.map(({ at }) => ({ x: at.x, y: at.y, w: BUBBLE_W, h: BUBBLE_H })),
-    ];
-    if (items.length === 0) return null;
-    items.push({ x: -8, y: 8, w: 1038, h: Math.max(330, crew.length * 140 + 104, talks.length * 180 + 104) });
-    const left = Math.min(...items.map((item) => item.x));
-    const top = Math.min(...items.map((item) => item.y));
-    const right = Math.max(...items.map((item) => item.x + item.w));
-    const bottom = Math.max(...items.map((item) => item.y + item.h));
-    return { x: left, y: top, w: right - left, h: bottom - top };
-  })();
   /** The work cards' own bounds (#1083 F8) - what first framing and `fit` frame. The lanes'
    * chrome, the agents and the conversations are not the work: counting them made a six-card
    * run open at 60% with two cards on screen, and `fit` drop to 15%. */
@@ -579,7 +337,7 @@ export function Board({
     // the resize observer put it back after every `fit`.
     const phone = typeof window !== "undefined" && window.innerWidth < 700;
     const mobileFocus = !wholeMap && !selection && box && phone && first ? { ...nodePosition(first.id, 0), w: CARD_WIDTH, h: nodeHeight(first) } : null;
-    const bounds = selection ?? mobileFocus ?? cardBounds ?? contentBounds;
+    const bounds = selection ?? mobileFocus ?? cardBounds;
     if (!box || box.width <= 0 || box.height <= 0 || !bounds) return;
     focusedBoundsRef.current = selection ?? null;
     // FRAME INSIDE WHAT IS NOT COVERED (#1083 F8, orchestrator verification at 1280x720). The
@@ -604,8 +362,8 @@ export function Board({
   const fitRef = useRef(fit);
   fitRef.current = fit;
   useEffect(() => {
-    if (!organized) fitRef.current();
-  }, [organized]);
+    fitRef.current();
+  }, []);
   useEffect(() => {
     if (arrangePending.current) {
       arrangePending.current = false;
@@ -617,11 +375,11 @@ export function Board({
     // Keyed by run AND by column count: a width change re-lays the default grid, and a frame
     // computed for the old grid would show the new one half off screen.
     const frameKey = `${runId ?? "draft"}@${columns}`;
-    if (framedRunRef.current !== frameKey && contentBounds !== null) {
+    if (framedRunRef.current !== frameKey && cardBounds !== null) {
       fit(undefined, true);
       framedRunRef.current = frameKey;
     }
-  }, [runId, contentBounds, columns]);
+  }, [runId, cardBounds, columns]);
   const measure = useCallback(() => {
     const box = surface.current?.getBoundingClientRect();
     if (box && box.width > 0) setSurfaceWidth((current) => (current === box.width ? current : box.width));
@@ -637,12 +395,6 @@ export function Board({
     observer.observe(element);
     return () => observer.disconnect();
   }, [measure]);
-  // The surface is `hidden` while the overview is up, and a hidden box measures zero: re-read
-  // it when the free canvas is shown, so the grid follows the width the cards actually get.
-  useEffect(() => {
-    if (!organized) measure();
-  }, [organized, measure]);
-
   const onSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     if (tool === "hand") {
@@ -656,37 +408,13 @@ export function Board({
       return;
     }
     event.preventDefault();
-    if (tool === "pen") {
-      const first = [pointAt(event)];
-      strokeRef.current = first;
-      setDrawing(first);
-      return;
-    }
-    if (tool === "note") {
-      onChange({ ...board, notes: [...board.notes, { id: markId(), at: pointAt(event), text: "" }] });
-      setTool("select");
-      return;
-    }
     // Select tool on empty board: a drag is a marquee. The click that ends an empty marquee is
     // swallowed; a plain click still deselects via onSurfaceClick.
     marqueeRef.current = { a: pointAt(event), b: pointAt(event) };
   };
 
   const showConnect = connectOpen || graphFile.trim().length > 0 || connectionTone === "refused";
-  const assignedNodeIds = selectedAgent === null
-    ? new Set<string>()
-    : new Set(model.nodes.filter((node) => node.assignedActor?.id === selectedAgent).map((node) => node.id));
-  const focusedNodeIds = new Set(assignedNodeIds);
-  if (selectedAgent !== null && model.edgesKnown) {
-    for (const edge of model.edges) {
-      if (assignedNodeIds.has(edge.from)) focusedNodeIds.add(edge.to);
-      if (assignedNodeIds.has(edge.to)) focusedNodeIds.add(edge.from);
-    }
-  }
-
   itemRectsRef.current = [
-    ...agentPlaces.map((agent) => ({ id: `agent:${agent.id}`, x: agent.at.x - 88, y: agent.at.y - 26, w: 176, h: 96 })),
-    ...talkPlaces.map(({ talk, at }) => ({ id: `talk:${talk.key}`, x: at.x, y: at.y, w: BUBBLE_W, h: BUBBLE_H })),
     ...model.nodes.map((node, index) => {
       const at = nodePosition(node.id, index);
       return { id: `node:${node.id}`, x: at.x, y: at.y, w: CARD_WIDTH, h: nodeHeight(node) };
@@ -699,13 +427,7 @@ export function Board({
     if (!pickedRef.current.has(prefixed) || pickedRef.current.size < 2) return false;
     const starts = new Map<string, Point>();
     for (const id of pickedRef.current) {
-      if (id.startsWith("agent:")) {
-        const at = agentPlaces.find((agent) => `agent:${agent.id}` === id)?.at;
-        if (at) starts.set(id, at);
-      } else if (id.startsWith("talk:")) {
-        const at = talkPlaces.find(({ talk }) => `talk:${talk.key}` === id)?.at;
-        if (at) starts.set(id, at);
-      } else if (id.startsWith("node:")) {
+      if (id.startsWith("node:")) {
         const index = model.nodes.findIndex((node) => `node:${node.id}` === id);
         if (index >= 0) starts.set(id, nodePosition(model.nodes[index].id, index));
       }
@@ -728,7 +450,6 @@ export function Board({
 
   const spaceHeld = useRef<Tool | null>(null);
   useEffect(() => {
-    if (organized) return;
     const typing = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       return Boolean(target?.closest("input, textarea, select, button, summary, a, [contenteditable='true'], [role='button']"));
@@ -767,7 +488,7 @@ export function Board({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [organized]);
+  }, []);
 
   // Ctrl+wheel zooms at the cursor; a plain wheel pans. Native listener because React's wheel
   // is passive and the browser's own page-zoom must be preempted.
@@ -808,25 +529,9 @@ export function Board({
   /** What the lint strip says, by kind (#1083): see `splitLint`. */
   const lintSplit = splitLint(model.lint, demonstration);
 
-  const undo = () => {
-    if (board.strokes.length > 0) {
-      onChange({ ...board, strokes: board.strokes.slice(0, -1) });
-      return;
-    }
-    if (board.notes.length > 0) onChange({ ...board, notes: board.notes.slice(0, -1) });
-  };
-
   return (
     <>
-      <div className="work-view-switch" role="group" aria-label="Workspace view">
-        <button type="button" aria-pressed={organized} onClick={() => setOrganized(true)}>Overview</button>
-        <button type="button" aria-pressed={!organized} onClick={() => setOrganized(false)}>Free canvas</button>
-      </div>
-      {organized && <div className="work-overview-scroll">
-        <WorkOverview model={model} projectName={projectName} projectPath={projectPath} latestRecordedUpdate={latestRecordedUpdate} crew={crew} recordedSessions={recordedSessions} workMessages={workMessages} agentWork={agentWork} talks={talks} activity={activity} latestEvent={latestEvent} subagents={subagents} runTeam={runTeam} claudeTasks={claudeTasks} agentReports={agentReports} runStatus={runStatus} attention={attention} nextAction={nextAction} replyGuidance={replyGuidance} onNextAction={onNextAction} selectedNode={selectedNode} onSelectNode={onSelectNode} selectedAgent={selectedAgent} onSelectAgent={onSelectAgent} selectedTalk={selectedTalk} onSelectTalk={onSelectTalk} runId={runId} objective={objective} demonstration={demonstration} ended={ended} />
-        <div className="work-verification"><span>{model.edgesKnown ? connectionNote : "Connect the run’s graph to see verified dependencies."}</span>{(!model.edgesKnown || graphFile.trim().length > 0) && <button type="button" onClick={() => { setOrganized(false); setConnectOpen(true); }}>Verify connections</button>}</div>
-      </div>}
-      <div className="free-canvas-content" hidden={organized}>
+      <div className="free-canvas-content">
       <div className="canvas-story">
         <span><Activity aria-hidden="true" /> Execution map</span>
         <h2>{model.nodes.length === 0 ? "Waiting for work to appear" : model.nodes.every(node => node.touches === 0) ? "No graph-node updates recorded" : `${model.nodes.filter(node => node.state === "running").length} running / ${model.nodes.filter(node => node.state === "blocked").length} blocked`}</h2>
@@ -890,20 +595,6 @@ export function Board({
           className="world"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
         >
-        <div className="canvas-region" style={{ left: -8, top: 8, width: 216, height: Math.max(420, crew.length * 140 + 104) }} aria-hidden="true">
-          <header><Users /><strong>People</strong><span>{crew.length}</span></header>
-          <p>Agents seen in this run</p>
-        </div>
-        <div className="canvas-region" style={{ left: 250, top: 8, width: 340, height: Math.max(330, talks.length * 180 + 104) }} aria-hidden="true">
-          <header><MessageSquare /><strong>Conversations</strong><span>{talks.length}</span></header>
-          <p>Who is talking to whom</p>
-        </div>
-        <div className="canvas-region work-region" style={{ left: 650, top: 8, width: Math.max(380, Math.min(columns, model.nodes.length) * 380), height: Math.max(330, ...model.nodes.map((node, index) => nodePosition(node.id, index).y + nodeHeight(node) + 24)) }}>
-          <header><GitBranch /><strong>Work</strong><span>{model.nodes.length}{model.rosterDeclared ? "" : "+"}</span></header>
-          <p>{model.edgesKnown ? "Verified dependencies connect these nodes" : "Connections have not been verified"}</p>
-          {!model.edgesKnown && <button type="button" onClick={() => setConnectOpen(true)}>Verify connections</button>}
-        </div>
-
         <svg className="sheet-ink" aria-hidden="true" width={inkWidth} height={inkHeight} style={{ width: `${inkWidth}px`, height: `${inkHeight}px` }}>
           <defs>
             <filter id="roughen" x="-5%" y="-5%" width="110%" height="110%">
@@ -922,36 +613,9 @@ export function Board({
               <path className="edge-tip" d="M 0 1 L 9 5 L 0 9" />
             </marker>
           </defs>
-          {talkPlaces.flatMap(({ talk, at }) =>
-            talk.participants.flatMap((id) => {
-              const anchor = agentPlaces.find((agent) => agent.id === id)?.at;
-              if (anchor === undefined) return [];
-              return [
-                <path
-                  key={`${talk.key}->${id}`}
-                  className={`talk-tie ${selectedTalk === talk.key ? "on" : ""}`}
-                  d={`M ${anchor.x + 88} ${anchor.y} C ${anchor.x + 132} ${anchor.y}, ${at.x - 64} ${at.y + 40}, ${at.x} ${at.y + 40}`}
-                />,
-              ];
-            }),
-          )}
-          {huddles.map((huddle) => (
-            <ellipse
-              key={huddle.key}
-              className="huddle"
-              cx={huddle.cx}
-              cy={huddle.cy}
-              rx={huddle.rx}
-              ry={huddle.ry}
-            />
-          ))}
           {edgeGeometry.map((edge) => (
             <path key={edge.id} className={`edge ${edge.type}`} d={edge.d} markerEnd="url(#edge-tip)" />
           ))}
-          {board.strokes.map((stroke) => (
-            <path key={stroke.id} className={`stroke ${stroke.tone}`} d={pathOf(stroke.points)} />
-          ))}
-          {drawing && <path className={`stroke ${tone} live`} d={pathOf(drawing)} />}
         </svg>
         {model.edgesKnown && model.edges.length > 0 && (
           <ul className="sr-only" aria-label="Verified dependencies">
@@ -960,47 +624,6 @@ export function Board({
             ))}
           </ul>
         )}
-
-        {board.notes.map((note) => (
-          <label
-            className="sheet-note"
-            key={note.id}
-            style={{ left: note.at.x, top: note.at.y }}
-            onPointerDown={(event) => {
-              // The textarea keeps the pointer for text selection; the border is the handle.
-              if (tool !== "select") return;
-              if ((event.target as HTMLElement).tagName === "TEXTAREA") return;
-              const here = pointAt(event);
-              dragging.current = {
-                kind: "note",
-                id: note.id,
-                grab: { x: here.x - note.at.x, y: here.y - note.at.y },
-                origin: here,
-                moved: false,
-              };
-            }}
-          >
-            <span className="sr-only">Note</span>
-            <textarea
-              value={note.text}
-              placeholder={"Write it down" + "\u2026"}
-              onChange={(event) =>
-                onChange({
-                  ...board,
-                  notes: board.notes.map((candidate) =>
-                    candidate.id === note.id ? { ...candidate, text: event.target.value } : candidate,
-                  ),
-                })
-              }
-              onBlur={() => {
-                // An empty note left behind is litter, not an annotation.
-                if (note.text.trim().length === 0) {
-                  onChange({ ...board, notes: board.notes.filter((candidate) => candidate.id !== note.id) });
-                }
-              }}
-            />
-          </label>
-        ))}
 
         {model.nodes.map((node, index) => (
           <NodeBlock
@@ -1011,17 +634,12 @@ export function Board({
             entry={isEntryNode(model, node.id)}
             objective={isFirstEntryNode(model, node.id) ? objective : null}
             selected={node.id === selectedNode}
-            focusVisible={selectedAgent === null || focusedNodeIds.has(node.id)}
             multi={picked.has(`node:${node.id}`)}
             onOpen={() => {
               if (swallowClick.current) return;
               focusedBoundsRef.current = itemRectsRef.current.find((item) => item.id === `node:${node.id}`) ?? null;
               onSelectNode(node.id);
             }}
-            highlight={
-              selectedAgent !== null ? `hsl(${hueOf(selectedAgent)} 52% 60%)` : null
-            }
-            highlightAgent={selectedAgent}
             onGrab={(event) => {
               if (tool !== "select") return;
               const here = pointAt(event);
@@ -1036,148 +654,6 @@ export function Board({
               };
             }}
           />
-        ))}
-
-        <div className="cast" aria-label="Agents in this room">
-        {agentPlaces.map((agent) => {
-        const presence = crew.find((member) => member.id === agent.id)?.presence ?? null;
-        return (
-          <article
-            key={agent.id}
-            className={`agent-blob ${selectedAgent === agent.id ? "picked" : ""} ${picked.has(`agent:${agent.id}`) ? "multi" : ""}`}
-            style={{ left: agent.at.x, top: agent.at.y }}
-            onPointerDown={(event) => {
-              if (tool !== "select") return;
-              const here = pointAt(event);
-              if (armGroup(`agent:${agent.id}`, here)) return;
-              dragging.current = {
-                kind: "agent",
-                id: agent.id,
-                grab: { x: here.x - agent.at.x, y: here.y - agent.at.y },
-                origin: here,
-                moved: false,
-              };
-            }}
-          >
-            <button
-              type="button"
-              className="agent-open"
-              onClick={() => {
-                if (swallowClick.current) return;
-                focusedBoundsRef.current = selectedAgent === agent.id ? null : itemRectsRef.current.find((item) => item.id === `agent:${agent.id}`) ?? null;
-                onSelectAgent?.(selectedAgent === agent.id ? null : agent.id);
-              }}
-            >
-              <span
-                className="avatar"
-                aria-hidden="true"
-                style={{
-                  background: `hsl(${hueOf(agent.id)} 52% 46%)`,
-                  opacity: presenceOf(minutesSince(crew.find((member) => member.id === agent.id)?.lastAt)),
-                }}
-              >
-                {initialOf(crew.find((member) => member.id === agent.id)?.name ?? agent.id)}
-              </span>
-              <span className="agent-name" title={crew.find((member) => member.id === agent.id)?.name ?? agent.id}>{crew.find((member) => member.id === agent.id)?.name ?? agent.id}</span>
-              {/* THE DECLARED CAPABILITY - never inferred from a route or a default. A session
-                * that declared nothing produced no `agent_presence_declared` event at all, so
-                * `presence` is null and this renders NOTHING: no "unknown", no placeholder. A
-                * declaration with no effort renders the model alone, with no dangling separator. */}
-              {presence &&
-                (() => {
-                  const declaration = presence.effort
-                    ? `${presence.model} · ${presence.effort}`
-                    : presence.model;
-                  return (
-                    // The TITLE carries the declaration itself, not only the explanation: the
-                    // badge is clipped to the card's width (#1057, Codex P2), and a 128-character
-                    // model name would otherwise be unreadable with no way to see the rest.
-                    <span
-                      className="agent-badge"
-                      aria-hidden="true"
-                      title={`${declaration} — declared by the session, never inferred`}
-                    >
-                      {declaration}
-                    </span>
-                  );
-                })()}
-              {/* Presentation only: the blob's accessible name stays the agent's id alone. */}
-              <span className="agent-when" aria-hidden="true">
-                {crew.find((member) => member.id === agent.id)?.lastAt == null
-                  ? "Activity not observed"
-                  : `Last report ${ago(crew.find((member) => member.id === agent.id)?.lastAt)} ago`}
-              </span>
-              {crew.find((member) => member.id === agent.id)?.charter != null && (
-                <span className="crew-role">persona</span>
-              )}
-            </button>
-          </article>
-        );
-        })}
-        </div>
-
-        {talkPlaces.map(({ talk, at }) => (
-          <article
-            key={talk.key}
-            className={`talk-bubble ${talk.key === "room" ? "room" : ""} ${selectedTalk === talk.key ? "picked" : ""} ${picked.has(`talk:${talk.key}`) ? "multi" : ""}`}
-            style={{ left: at.x, top: at.y }}
-            onPointerDown={(event) => {
-              if (tool !== "select") return;
-              const here = pointAt(event);
-              if (armGroup(`talk:${talk.key}`, here)) return;
-              dragging.current = {
-                kind: "agent",
-                id: `talk:${talk.key}`,
-                grab: { x: here.x - at.x, y: here.y - at.y },
-                origin: here,
-                moved: false,
-              };
-            }}
-          >
-            <button
-              type="button"
-              className="talk-open"
-              style={{
-                borderColor: talk.count >= 8 ? "var(--faint)" : undefined,
-                ...(selectedAgent !== null &&
-                selectedTalk !== talk.key &&
-                talk.participants.includes(selectedAgent)
-                  ? { boxShadow: `0 0 0 1.5px hsl(${hueOf(selectedAgent)} 52% 60%), var(--lift)` }
-                  : {}),
-              }}
-              onClick={() => {
-                if (swallowClick.current) return;
-                focusedBoundsRef.current = selectedTalk === talk.key ? null : itemRectsRef.current.find((item) => item.id === `talk:${talk.key}`) ?? null;
-                onSelectTalk?.(selectedTalk === talk.key ? null : talk.key);
-              }}
-            >
-              <span className="talk-line">
-                <span className="talk-faces" aria-hidden="true">
-                  {talk.participants.slice(0, 3).map((id) => (
-                    <span
-                      key={id}
-                      className="avatar mini"
-                      style={{ background: `hsl(${hueOf(id)} 52% 46%)` }}
-                    >
-                      {initialOf(id)}
-                    </span>
-                  ))}
-                  {talk.participants.length > 3 && (
-                    <span className="talk-more">+{talk.participants.length - 3}</span>
-                  )}
-                </span>
-                <span className="talk-name">
-                  <span className="talk-title">{talk.key === "room" ? "everyone" : talk.label}</span>
-                  {talk.key === "room" && <span className="talk-kind">the whole room</span>}
-                </span>
-              </span>
-              <span className="talk-preview">{talk.preview || "Message preview unavailable"}</span>
-              <span className="talk-meta">
-                <span>{talk.count} msg{talk.count === 1 ? "" : "s"}</span>
-                <span>{ago(talk.lastAt)}</span>
-              </span>
-            </button>
-          </article>
         ))}
 
         {model.nodes.length === 0 && <p className="sheet-empty">no work on this board yet</p>}
@@ -1197,12 +673,9 @@ export function Board({
       </div>
 
       <div className="connection-legend" aria-label="Connection types">
-        <span><i className="conversation-line" aria-hidden="true" />Conversation</span>
         {model.edgesKnown && <span><i className="dependency-line" aria-hidden="true" />Verified dependency</span>}
       </div>
       <div className="canvas-sections" role="group" aria-label="Explore canvas sections">
-        <button type="button" disabled={crew.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("agent:")); if (item) fit(item); }}>People</button>
-        <button type="button" disabled={talks.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("talk:")); if (item) fit(item); }}>Chats</button>
         <button type="button" disabled={model.nodes.length === 0} onClick={() => { const item = itemRectsRef.current.find(item => item.id.startsWith("node:")); if (item) fit(item); }}>Work</button>
         {!model.edgesKnown && <button type="button" aria-label="Verify work dependencies" onClick={() => setConnectOpen(true)}>Verify graph</button>}
       </div>
@@ -1213,19 +686,11 @@ export function Board({
           const item = itemRectsRef.current.find((candidate) => candidate.id === value);
           if (item) fit(item);
           if (value.startsWith("node:")) onSelectNode(value.slice(5));
-          else if (value.startsWith("agent:")) onSelectAgent?.(value.slice(6));
-          else if (value.startsWith("talk:")) onSelectTalk?.(value.slice(5));
         }}>
-          <option value="" disabled>Find people, chats or nodes</option>
+          <option value="" disabled>Find a node</option>
           <optgroup label="Nodes">
             {model.nodes.map((node) => <option key={node.id} value={`node:${node.id}`}>{node.id} · {readable(node.state)}</option>)}
           </optgroup>
-          {crew.length > 0 && <optgroup label="Agents">
-            {crew.map((agent) => <option key={agent.id} value={`agent:${agent.id}`}>{agent.id}</option>)}
-          </optgroup>}
-          {talks.length > 0 && <optgroup label="Conversations">
-            {talks.map((talk) => <option key={talk.key} value={`talk:${talk.key}`}>{talk.key === "room" ? "Everyone" : talk.label}</option>)}
-          </optgroup>}
         </select>
       </label>
       <p className={`edge-note ${connectionTone === "none" ? "" : connectionTone}`}>
@@ -1304,49 +769,6 @@ export function Board({
           <Hand aria-hidden="true" />
           pan
         </button>
-        <button
-          type="button"
-          className={tool === "pen" ? "on" : ""}
-          aria-pressed={tool === "pen"}
-          onClick={() => setTool("pen")}
-        >
-          <Highlighter aria-hidden="true" />
-          draw
-        </button>
-        <button
-          type="button"
-          className={tool === "note" ? "on" : ""}
-          aria-pressed={tool === "note"}
-          onClick={() => setTool("note")}
-        >
-          <StickyNote aria-hidden="true" />
-          note
-        </button>
-        <span className="tones">
-          {TONES.map((option) => (
-            <button
-              type="button"
-              key={option.value}
-              className={`${option.value} ${tone === option.value ? "on" : ""}`}
-              aria-pressed={tone === option.value}
-              onClick={() => {
-                setTone(option.value);
-                setTool("pen");
-              }}
-            >
-              <span className="sr-only">{option.label} pen</span>
-              <i aria-hidden="true" />
-            </button>
-          ))}
-        </span>
-        <button
-          type="button"
-          onClick={undo}
-          disabled={board.strokes.length === 0 && board.notes.length === 0}
-        >
-          <RotateCcw aria-hidden="true" />
-          undo
-        </button>
         <span className="zoomer">
           <button type="button" onClick={() => fit(undefined, true)} title="Frame the work nodes at a readable size">
             fit
@@ -1395,9 +817,6 @@ function NodeBlock({
   onOpen,
   onGrab,
   multi = false,
-  highlight = null,
-  highlightAgent = null,
-  focusVisible = true,
   objective = null,
 }: {
   multi?: boolean;
@@ -1410,10 +829,6 @@ function NodeBlock({
   selected: boolean;
   onOpen: () => void;
   onGrab: (event: React.PointerEvent) => void;
-  /** The picked agent's own colour: nodes this agent touched wear a thin ring of it. */
-  highlight?: string | null;
-  highlightAgent?: string | null;
-  focusVisible?: boolean;
 }) {
   const mood = moodOf(node.state);
   const last = node.history.at(-1);
@@ -1439,13 +854,10 @@ function NodeBlock({
   };
   return (
     <article
-      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""} ${!focusVisible ? "node-filtered-out" : ""}`}
+      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
       style={{
         left: at.x,
         top: at.y,
-        ...(highlight !== null && highlightAgent !== null && !selected && node.assignedActor?.id === highlightAgent
-          ? { boxShadow: `0 0 0 1.5px ${highlight}, var(--lift)` }
-          : {}),
       }}
       onPointerDown={onGrab}
     >

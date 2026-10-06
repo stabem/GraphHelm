@@ -2323,6 +2323,10 @@ export default function App({
 
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
 
+  // TEMPORARY (Task 11 of the studio redesign rewires these into the team canvas, chat column and
+  // right panel): the Overview that read them is gone, and the compiler rejects unread locals.
+  void [recordedSessions, subagentRead, claudeTaskRead, crew, agentWork, recentActivity, latestRecordedUpdate, latestEvent, agentReports, replyGuidance, focusRecordedAttention, focusPendingProposal];
+
   return (
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
@@ -2544,7 +2548,6 @@ export default function App({
             </aside>
             <div className="scene">
               <Board
-                initialLayout="overview"
                 model={draftModel}
                 board={board}
                 selectedNode={focus.kind === "node" ? focus.id : null}
@@ -2801,11 +2804,7 @@ export default function App({
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
             <Board
-              initialLayout="overview"
               model={model}
-              projectName={project}
-              projectPath={projectPath}
-              latestRecordedUpdate={latestRecordedUpdate}
               board={board}
               selectedNode={focusedNode}
               onSelectNode={(id) => {
@@ -2829,38 +2828,8 @@ export default function App({
               }}
               onDrawConnections={() => void drawConnections()}
               focusGraphFile={fileFocusNonce}
-              ended={ended}
               busy={busy}
               runId={selected === "" ? undefined : selected}
-              crew={crew}
-              recordedSessions={recordedSessions}
-              workMessages={workMessages}
-              agentWork={agentWork}
-              activity={recentActivity}
-              latestEvent={latestEvent}
-              subagents={subagentRead?.executionId === selected ? subagentRead : null}
-              runTeam={runTeamRead?.executionId === selected ? runTeamRead : null}
-              claudeTasks={claudeTaskRead?.executionId === selected ? claudeTaskRead : null}
-              attention={pendingOwnerReview ? "needs_you" : status.attention}
-              nextAction={pendingOwnerReview ? {
-                label: "Review pending proposal",
-                detail: "A sealed proposal is waiting for an owner review, assignment, and approval.",
-              } : waitingForInput && verdict?.key === "needs" && pendingQuestion !== null ? {
-                label: `Answer ${pendingQuestion.asker}`,
-                detail: pendingQuestion.text,
-              } : blockedAttentionNode && verdict?.key === "needs" ? {
-                label: "Review step needing attention",
-                detail: `${blockedAttentionNode} needs review before it can proceed. Open its recorded reason and controls.`,
-              } : null}
-              replyGuidance={replyGuidance}
-              onNextAction={pendingOwnerReview ? focusPendingProposal : waitingForInput ? focusRunReply : focusRecordedAttention}
-              agentReports={agentReports}
-              runStatus={status.status}
-              selectedAgent={focus.kind === "agent" ? focus.id : null}
-              onSelectAgent={(id) => setFocus(id === null ? { kind: "none" } : { kind: "agent", id })}
-              talks={talks}
-              selectedTalk={focus.kind === "talk" ? focus.id : null}
-              onSelectTalk={(id) => setFocus(id === null ? { kind: "none" } : { kind: "talk", id })}
               objective={briefing?.objective ?? null}
               demonstration={status.executor === "fixture"}
               fixtureFile={fixtureFile}

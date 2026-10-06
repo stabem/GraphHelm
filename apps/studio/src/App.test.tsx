@@ -467,8 +467,6 @@ async function open(client: ReturnType<typeof stubClient>, modelContext: ModelCo
     />,
   );
   await screen.findByLabelText("Projects");
-  // These existing journeys exercise the free canvas; overview has dedicated default-view coverage.
-  await userEvent.click(await screen.findByRole("button", { name: /^Free canvas$/ }));
   await userEvent.click(screen.getByText("Run actions"));
   // These conversation journeys explicitly open the optional pane.
   if (conversation && screen.getByRole("button", { name: "Toggle conversation" }).getAttribute("aria-expanded") !== "true") {

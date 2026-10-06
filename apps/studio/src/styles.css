@@ -3059,3 +3059,18 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .question-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .question-answer { font-weight: 600; }
 .question-details { margin-top: 6px; font-size: 12px; color: var(--dim); }
+/* Handover card (spec §4.5) and right panel (§4.6). */
+.handover-card { position: absolute; right: 16px; top: 56px; z-index: 20; width: min(420px, calc(100% - 32px)); max-height: calc(100% - 72px); overflow: auto; padding: 16px; border: 1px solid var(--edge); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--float); }
+.handover-card h2 { margin: 0; font-size: 16px; }
+.handover-span { margin: 4px 0 12px; color: var(--dim); font-size: 12px; }
+.handover-group h3 { margin: 12px 0 4px; font-size: 13px; }
+.handover-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.handover-group button { width: 100%; text-align: left; background: none; border: 0; padding: 4px 0; color: inherit; text-decoration: underline dotted; }
+.handover-empty { margin: 0; color: var(--dim); font-size: 12px; }
+.handover-dismiss { margin-top: 12px; font-weight: 600; }
+.right-panel { display: flex; flex-direction: column; gap: 16px; padding: 12px; overflow: auto; border-left: 1px solid var(--edge); }
+.right-section h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
+.right-empty { margin: 0; font-size: 13px; color: var(--dim); }
+.right-activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.right-activity button { width: 100%; text-align: left; background: none; border: 0; padding: 0; color: inherit; font-size: 13px; }
+.right-when { color: var(--dim); }

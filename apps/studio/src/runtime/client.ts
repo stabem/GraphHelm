@@ -28,6 +28,7 @@ import type {
   ExecutionStatus,
   ReplySuggestions,
   GraphTopology,
+  JourneysView,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -294,6 +295,8 @@ export class DisconnectedError extends Error {
     this.name = "DisconnectedError";
   }
 }
+
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 class RequestDeadlineError extends Error {
   constructor() {
@@ -1842,6 +1845,71 @@ export class RuntimeClient {
       // was minted just above.
       { ...options, idempotencyKey },
     );
+  }
+
+  /** `GET /v1/executions/{id}/journeys` - the folded journey map (#316). */
+  async journeys(executionId: string): Promise<JourneysView> {
+    const id = checkedId(executionId, "executionId");
+    return this.#request<JourneysView>({
+      method: "GET",
+      path: `/v1/executions/${encodeURIComponent(id)}/journeys`,
+      timeoutMs: RUNTIME_READ_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * The raw bytes of an image evidence item. The route answers image bytes (not an envelope) for
+   * png/jpeg/webp; anything else - a JSON refusal, another content type - is refused here. The
+   * token rides only the Authorization header and never reaches an error message.
+   */
+  async readImage(executionId: string, evidenceId: string): Promise<Blob> {
+    const id = checkedId(executionId, "executionId");
+    const evidence = checkedId(evidenceId, "evidenceId");
+    const token = this.#token;
+    if (token === null) throw new DisconnectedError();
+    const controller = new AbortController();
+    this.#activeRequests.add(controller);
+    let deadlineReached = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { deadlineReached = true; controller.abort(); reject(new RequestDeadlineError()); }, RUNTIME_READ_TIMEOUT_MS);
+    });
+    const cancelled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => { if (!deadlineReached) reject(new DisconnectedError()); }, { once: true });
+    });
+    try {
+      const response = await Promise.race([
+        this.#fetch(`${this.#baseUrl}/v1/executions/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidence)}`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }),
+        deadline,
+        cancelled,
+      ]);
+      if (!response.ok) {
+        throw new RuntimeError(
+          response.status === 401 ? "The bearer token was refused." : `The Runtime replied ${response.status}.`,
+          response.status,
+          [],
+        );
+      }
+      const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (!IMAGE_TYPES.includes(type)) {
+        throw new RuntimeError("The Runtime did not return an image for this evidence.", response.status, []);
+      }
+      return await Promise.race([response.blob(), deadline, cancelled]);
+    } catch (error) {
+      if (error instanceof DisconnectedError || error instanceof RuntimeError) throw error;
+      if (error instanceof RequestDeadlineError || deadlineReached) {
+        const message = "The Runtime did not answer before the request deadline.";
+        throw new RuntimeError(message, 0, [{ code: "GHSTUDIO_REQUEST_TIMEOUT", severity: "error", message, path: "/", source: "studio" }]);
+      }
+      throw new RuntimeError("The Runtime could not be reached at this address.", 0, []);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      this.#activeRequests.delete(controller);
+    }
   }
 
   /**

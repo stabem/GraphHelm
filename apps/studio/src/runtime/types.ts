@@ -338,3 +338,52 @@ export interface NativeChatRequest {
 export interface NativeChatRequestPage {
   requests: NativeChatRequest[];
 }
+
+/** `GET /v1/executions/{id}/journeys` (`JourneysView` in core/execution/src/journeys.rs, plus the
+ * two counters the CLI `read` adds). */
+export type CaptureFreshness = "fresh" | "stale" | "unknown";
+export type CaptureUnknownCause = "dirty" | "no_scope_paths" | "no_git" | "revision_missing";
+export type ArrowState = "walked" | "never_walked" | "stale";
+
+export interface CaptureView {
+  signalId: string;
+  sequence: number;
+  imageEvidenceId: string;
+  revision: string;
+  dirty: boolean;
+  viewport: { width: number; height: number };
+  observer: string;
+  pr?: number;
+  phase?: "before" | "after";
+  freshness: CaptureFreshness;
+  changedFiles: string[];
+  unknownCause?: CaptureUnknownCause;
+}
+
+export interface StepView {
+  stepId: string;
+  screen?: { screenId: string; title: string; scopePaths: string[] } | null;
+  capture?: CaptureView | null;
+  promises: string[];
+}
+
+export interface ArrowView {
+  fromStepId: string;
+  toStepId: string;
+  state: ArrowState;
+  transitionSignalId?: string;
+}
+
+export interface JourneyView {
+  contractId: string;
+  title: string;
+  steps: StepView[];
+  arrows: ArrowView[];
+}
+
+export interface JourneysView {
+  head: string | null;
+  journeys: JourneyView[];
+  refusedContracts?: Array<{ file: string; reason: string }>;
+  ignoredRecords?: number;
+}

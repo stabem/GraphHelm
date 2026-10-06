@@ -2006,8 +2006,8 @@ export default function App({
   const head = status?.headSequence ?? 0;
   const handover = useMemo(() => status !== null && status.executionId === selected && shouldShowHandover(eventList, seenSeq, head)
     ? buildHandover({ events: eventList, bots: team.bots, model, claudeTasks: claudeTaskRead?.executionId === selected ? claudeTaskRead : null,
-        openItems: needs.items, fromSeq: seenSeq!, toSeq: head })
-    : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs]);
+        openItems: needs.items, envelopes, fromSeq: seenSeq!, toSeq: head })
+    : null, [status, selected, eventList, seenSeq, head, team, model, claudeTaskRead, needs, envelopes]);
   const markSeen = useCallback(() => {
     if (selected === "" || head === 0) return;
     writeLastSeen(projectKey, selected, head);

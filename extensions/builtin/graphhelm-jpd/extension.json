@@ -15,6 +15,7 @@
       "skill.defect-bounty",
       "skill.journey-contract",
       "skill.journey-map",
+      "skill.journey-prove",
       "skill.journey-verifier",
       "skill.observation-compiler",
       "skill.plan-council",
@@ -65,6 +66,7 @@
         "defect-bounty",
         "journey-contract",
         "journey-map",
+        "journey-prove",
         "journey-verifier",
         "observation-compiler",
         "plan-council",
@@ -93,6 +95,16 @@
           ],
           "outputs": [
             "schema:journey-contract"
+          ]
+        },
+        {
+          "family": "journey-prove",
+          "inputs": [
+            "schema:journey-contract",
+            "runtime:events"
+          ],
+          "outputs": [
+            "artifact:screen-captures"
           ]
         },
         {
@@ -1108,6 +1120,34 @@
             "cli:journey validate"
           ],
           "family": "journey-map"
+        },
+        {
+          "id": "skill/journey-prove",
+          "kind": "skill",
+          "path": "skills/journey-prove/SKILL.md",
+          "sha256": "sha256:3885f4356d934e5d28fd1b3c1dee5968d3e878f4226b7fbde5abd6f4d502f73c",
+          "effects": [
+            "artifact.local.write",
+            "artifact.propose"
+          ],
+          "permissions": [
+            "package.read",
+            "workspace.artifact.write"
+          ],
+          "requires": {
+            "capabilities": [
+              "graphhelm.public-api"
+            ],
+            "observers": []
+          },
+          "surfaces": [
+            "cli:journey approve",
+            "cli:journey compile",
+            "cli:journey replay",
+            "cli:journey validate",
+            "cli:journeys"
+          ],
+          "family": "journey-prove"
         },
         {
           "id": "skill/journey-verifier",

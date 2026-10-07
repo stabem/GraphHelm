@@ -31,7 +31,8 @@ up)
   export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
   nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$dir" \
     --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
-  echo "serve $!" > "$pids"
+  echo "ports $rport $sport" > "$pids"
+  echo "serve $!" >> "$pids"
   for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
   curl -sf "http://127.0.0.1:$rport/health" > /dev/null || { echo "runtime did not answer on $rport"; cat "$dir/.graphhelm/serve.err"; exit 1; }
   # The seeded run: the manual-override example, one blocked node, one ready node.
@@ -58,12 +59,19 @@ up)
   echo "replay secret: export GRAPHHELM_SECRET_STUDIO_TOKEN=\"\$(head -1 '$dir/.graphhelm/events.token')\""
   ;;
 down)
+  # The recorded pids are the shell's; on Windows (Git Bash) they are MSYS pids, not the ones the
+  # OS knows, so the listeners are found by port instead. Only the fixture's two ports are touched.
   [ -f "$pids" ] || { echo "nothing recorded in $pids"; exit 0; }
-  while read -r name pid; do
-    if [ "$(uname -s | cut -c1-5)" = "MINGW" ] || [ "$(uname -s | cut -c1-6)" = "CYGWIN" ]; then taskkill //PID "$pid" //T //F > /dev/null 2>&1 || true
-    else kill "$pid" 2> /dev/null || true; fi
-    echo "stopped $name ($pid)"
-  done < "$pids"
+  ports=$(sed -n 's/^ports //p' "$pids")
+  if [ "$(uname -s | cut -c1-5)" = "MINGW" ] || [ "$(uname -s | cut -c1-6)" = "CYGWIN" ]; then
+    for port in $ports; do
+      for pid in $(netstat -ano | grep LISTENING | grep -E "127\.0\.0\.1:$port " | awk '{print $NF}' | sort -u); do
+        taskkill //PID "$pid" //T //F > /dev/null 2>&1 && echo "stopped port $port (pid $pid)"
+      done
+    done
+  else
+    while read -r name pid; do [ "$name" = ports ] && continue; kill "$pid" 2> /dev/null && echo "stopped $name ($pid)"; done < "$pids"
+  fi
   rm -f "$pids"
   ;;
 *) echo "unknown command: $cmd"; exit 2 ;;

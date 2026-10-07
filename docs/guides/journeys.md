@@ -54,18 +54,18 @@ Without it, `keel check` with records refuses with
 schema: graphhelm.journey-flow/1
 id: checkout
 title: Shopper pays for the cart
-status: draft            # draft | approved; approve sets it
-approved: null           # approve fills {digest, revision}
+status: draft
+approved: null
 base: http://localhost:3000
 actors: [shopper]
-secrets: [shopper_password]   # names only; values come from GRAPHHELM_SECRET_<name> at replay
+secrets: [shopper_password]
 risks: [money]
 screens:
   - id: cart
     url: /cart
     state: stable
     expect: [{role: heading, name: Cart}, {role: button, name: Checkout}]
-    scope: [app/cart/page.tsx]          # repo-relative files/dirs that render this screen, or `unknown`
+    scope: [app/cart/page.tsx]
   - id: pay
     url: /checkout
     state: stable
@@ -81,6 +81,15 @@ paths:
   main: [cart.checkout]
 drift: []
 ```
+
+The file must be canonical: `validate` checks the raw bytes, so **YAML comments are not
+allowed** (`flow.not_canonical`); `journey compile --fmt` rewrites a flow canonically.
+
+| Field | Meaning |
+|---|---|
+| `status`, `approved` | `draft` and `null` while you author; only `journey approve` sets `approved` and fills `{digest, revision}` |
+| `secrets` | names only; replay reads each value from `GRAPHHELM_SECRET_<name>` |
+| `scope` | repo-relative files or directories that render the screen, or `unknown` |
 
 Rules: ids match `^[a-z0-9][a-z0-9._-]{0,127}$`; acts and expectations name an ARIA role and
 accessible name, never a CSS selector; secrets are names, never values. Bounds: 32 KiB file,
@@ -140,8 +149,13 @@ graphhelm journey approve checkout --json
 ```
 
 It writes `status: approved` plus `approved: {digest, revision}` into the YAML and regenerates
-`checkout.json`. Editing an approved flow makes `validate` report `flow.approval_stale` until you
-approve again. Commit both files.
+`checkout.json`. Commit both files.
+
+**Approval belongs to the owner** (a person, in the Studio or with `journey approve`), never to an
+agent approving its own flow. To change an approved flow: set `status: draft` and `approved: null`
+(keep `drift`), edit, `journey validate`, `journey compile --include-draft`, then ask the owner to
+re-approve. While `status: approved`, an edited flow reports `flow.approval_stale`, and
+`compile --include-draft` does not regenerate it.
 
 ## 4. Replay (deterministic, no model)
 

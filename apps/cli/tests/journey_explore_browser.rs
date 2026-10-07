@@ -145,7 +145,7 @@ fn actual_exploration_redacts_model_input_and_repeats_the_same_draft() {
         assert!(!draft.contains(SECRET));
         assert!(draft.contains("approved: null"));
         assert!(draft.contains("status: draft"));
-        let flow: Value = serde_yaml::from_str(&draft).unwrap();
+        let flow: Value = serde_yaml_ng::from_str(&draft).unwrap();
         let edges = flow["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 2);
         let pay = edges.iter().find(|e| e["from"] == "pay").unwrap();

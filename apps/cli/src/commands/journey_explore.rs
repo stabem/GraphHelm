@@ -1048,6 +1048,17 @@ mod tests {
     // Catches rounding, duplicate inflation and query-driven false splits that
     // existing independent fingerprint tests cannot reach. Cost: memory only.
     #[test]
+    fn allow_act_matches_the_whole_accessible_name_only() {
+        let allow = permissions(&["Pay".to_owned()]).unwrap();
+        let act = |name: &str| json!({"kind": "activate", "role": "button", "name": name});
+        assert!(permitted(&act("Pay"), &allow).is_ok());
+        assert_eq!(
+            permitted(&act("Pay and delete all"), &allow).unwrap_err().0,
+            "explore.action_denied"
+        );
+    }
+
+    #[test]
     fn identity_uses_set_threshold_and_only_observed_query_distinctions() {
         let four = json!({"controls":[["button","a"],["button","b"],["button","c"],["button","d"]],"fingerprint":"left","url":"http://localhost/cart?tab=one"});
         let five = json!({"controls":[["button","a"],["button","b"],["button","c"],["button","d"],["button","e"]],"fingerprint":"right","url":"http://localhost/cart?tab=two"});

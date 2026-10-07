@@ -22,8 +22,8 @@ writing flows (that is `journey-map`) and not for exploring an unknown app (`jou
 ## Reads
 
 - `.graphhelm/journeys/*.journey.yaml` and the compiled `*.json` contracts.
-- `cli:journey validate --all`, `cli:journey compile --check`, `cli:journey approve`,
-  `cli:journey replay`, `cli:journeys`.
+- `cli:journey validate`, `cli:journey compile`, `cli:journey approve`, `cli:journey replay`,
+  `cli:journeys`.
 - The app's launch procedure (`package.json` scripts, a dev-server port, seed data).
 
 ## Mutations and effects

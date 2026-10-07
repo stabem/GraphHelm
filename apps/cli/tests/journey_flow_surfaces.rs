@@ -194,7 +194,20 @@ impl Harness {
         (guard, base, token)
     }
 
+    /// One MCP tool call as an `agent`-typed session (how every lane runs).
     fn mcp(&self, base: &str, token: &str, tool: &str, arguments: &Value) -> (bool, Value) {
+        self.mcp_as("agent", base, token, tool, arguments)
+    }
+
+    /// One MCP tool call; a JSON-RPC error comes back as `(false, <the whole reply>)`.
+    fn mcp_as(
+        &self,
+        actor_type: &str,
+        base: &str,
+        token: &str,
+        tool: &str,
+        arguments: &Value,
+    ) -> (bool, Value) {
         let token_file = self.scratch.path().join("mcp-token");
         std::fs::write(&token_file, token).unwrap();
         let lines = [
@@ -213,7 +226,7 @@ impl Harness {
         let output = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--url", base, "--token-file"])
             .arg(&token_file)
-            .args(["--actor", "agent-chat", "--actor-type", "agent"])
+            .args(["--actor", "agent-chat", "--actor-type", actor_type])
             .write_stdin(input)
             .timeout(Duration::from_secs(60))
             .output()
@@ -224,6 +237,9 @@ impl Harness {
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .find(|value| value["id"] == 2)
             .expect("a reply to the tool call");
+        if reply.get("error").is_some() {
+            return (false, reply);
+        }
         let text = reply["result"]["content"][0]["text"]
             .as_str()
             .unwrap_or_else(|| panic!("no tool text: {reply}"));
@@ -404,8 +420,26 @@ fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
     assert_eq!(cli_again["data"]["approved"], approved["data"]["approved"]);
     assert_eq!(harness.flow_text("checkout"), http_flow);
 
-    // MCP approve reaches the same path.
-    let (ok, over_mcp) = harness.mcp(&base, &token, "journey_approve", &json!({"id": "basket"}));
+    // Only the owner approves: an agent-typed MCP session is refused with a stable code before
+    // any request, even holding the owner token, and nothing is written.
+    let basket = harness.flow_text("basket");
+    let (ok, refused) = harness.mcp(&base, &token, "journey_approve", &json!({"id": "basket"}));
+    assert!(!ok, "{refused}");
+    assert_eq!(
+        refused["error"]["data"]["code"], "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY",
+        "{refused}"
+    );
+    assert_eq!(harness.flow_text("basket"), basket);
+    assert_eq!(flow(&harness.flows(), "basket")["status"], "draft");
+
+    // An owner-typed MCP session reaches the same path as the CLI.
+    let (ok, over_mcp) = harness.mcp_as(
+        "owner",
+        &base,
+        &token,
+        "journey_approve",
+        &json!({"id": "basket"}),
+    );
     assert!(ok, "{over_mcp}");
     assert_eq!(over_mcp["data"]["status"], "approved");
     let listed = harness.flows();

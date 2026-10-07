@@ -324,7 +324,7 @@ The owner reviews and approves flows in the Studio Journey tab (#353). The tab r
 `GET /v1/journey-flows` (CLI `graphhelm journey flows`, MCP `journey_flows`): each flow's status
 (`draft`, `approved`, or `approval_stale` when an approved flow was edited), drift, validate
 findings, whether Approve would be accepted, and its screens and edges. Approve calls
-`POST /v1/journey-flows/<id>/approve` (MCP `journey_approve`), which runs exactly
+`POST /v1/journey-flows/<id>/approve` (MCP `journey_approve`, refused with `GHCLI036_JOURNEY_APPROVE_OWNER_ONLY` for an agent-typed session: only the owner approves), which runs exactly
 `graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 

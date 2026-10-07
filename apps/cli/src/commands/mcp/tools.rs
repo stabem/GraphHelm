@@ -97,12 +97,20 @@ const TOOLS: [ToolSpec; 35] = [
     },
     ToolSpec {
         name: "journey_flows",
-        description: "List the Runtime project's journey-flow sources for review                       (GET /v1/journey-flows; `graphhelm journey flows`): each flow's status                       (draft, approved, approval_stale), drift, validate findings, whether                       journey_approve would accept it, and its screens, edges and paths.                       Identical on CLI, HTTP and MCP. Read-only.",
+        description: "List the Runtime project's journey-flow sources for review \
+                      (GET /v1/journey-flows; `graphhelm journey flows`): each flow's status \
+                      (draft, approved, approval_stale), drift, validate findings, whether \
+                      journey_approve would accept it, and its screens, edges and paths. \
+                      Identical on CLI, HTTP and MCP. Read-only.",
         schema: no_arguments_schema,
     },
     ToolSpec {
         name: "journey_approve",
-        description: "Approve one journey flow (POST /v1/journey-flows/{id}/approve; exactly                       `graphhelm journey approve <id>`): binds it to the project's HEAD, clears                       drift and writes its compiled contracts. Refused, writing nothing, while                       validate reports findings. Owner credentials only.",
+        description: "Approve one journey flow (POST /v1/journey-flows/{id}/approve; exactly \
+                      `graphhelm journey approve <id>`): binds it to the project's HEAD, clears \
+                      drift and writes its compiled contracts. Refused, writing nothing, while \
+                      validate reports findings. Owner sessions only: an agent-typed MCP session \
+                      is refused, because only the owner approves a journey.",
         schema: journey_approve_schema,
     },
     ToolSpec {
@@ -1460,6 +1468,16 @@ pub(crate) fn call(
             None,
             None,
         )),
+        // #353: approving a journey is the owner's decision. An agent-typed session (every lane
+        // runs as one) is refused before any request, whatever credential the session holds.
+        "journey_approve" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
+            code: INVALID_PARAMS,
+            message: "journey_approve is owner-only: only the owner approves a journey flow                       (Studio Journey tab or `graphhelm journey approve`)"
+                .to_owned(),
+            data: Some(serde_json::json!({
+                "code": crate::error_codes::GHCLI036_JOURNEY_APPROVE_OWNER_ONLY
+            })),
+        }),
         "journey_approve" => require(arguments, "id").map(|id| {
             api.request(
                 "POST",

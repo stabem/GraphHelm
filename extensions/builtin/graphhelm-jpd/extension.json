@@ -1113,7 +1113,7 @@
           "id": "skill/journey-verifier",
           "kind": "skill",
           "path": "skills/journey-verifier/SKILL.md",
-          "sha256": "sha256:b405fc49165702da6e868e97d55c20d28137499f07140663d8f806d401d3176f",
+          "sha256": "sha256:dfa7b598bc519914097b8215d1b7106beab0eac096cf2bae5c28d898599f5fc8",
           "effects": [
             "artifact.local.write",
             "artifact.propose",

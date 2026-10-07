@@ -69,7 +69,7 @@ logical action.
 4. Capture transitions and settled states, including loading, disabled, error, timeout, retry,
    partial success, success, and recovery when reachable and required. A contract generated from
    a flow (`.graphhelm/journeys/<id>.journey.yaml`) is verified only after
-   `cli:journey validate` with `--all` is clean; a flow still `draft`, or reported
+   `graphhelm journey validate --all` is clean; a flow still `draft`, or reported
    `flow.approval_stale`, is not owner-approved, and the result says so rather than treating it
    as accepted. For a contract saved as `.graphhelm/journeys/<contractId>.json`, compiled or
    hand-written, record screen captures and walked transitions with the

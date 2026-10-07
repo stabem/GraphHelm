@@ -2,7 +2,7 @@ schema: graphhelm.journey-flow/1
 id: studio-node-window
 title: Owner opens a graph step's window from the team canvas
 status: approved
-approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:3e28087a5be18119e3e144b3e45ac267098c011b8a39ae1a0e1fc2d911b1545b}
+approved: {revision: 7b09242430064c3cd3dd4b89ed61d75981326e0c, digest: sha256:7df68f1311bc98e171f0106364decf373723d3d4dca16841a0a3c3c5a1b0c6e6}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -10,13 +10,13 @@ risks: [critical_ux]
 screens:
   - id: node
     title: "Node window (demo step: deploy)"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Node deploy}, {role: heading, name: Deploy}, {role: button, name: Close this node}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/keel-chain.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx]

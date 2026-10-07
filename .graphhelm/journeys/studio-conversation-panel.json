@@ -81,7 +81,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "run"

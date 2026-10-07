@@ -2,28 +2,14 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner opens the Models panel",
+      "goal": "Owner adds a model route (draft: the fixture Runtime has no gateway manifest, so Add model is disabled there)",
       "name": "owner"
     }
   ],
-  "contractId": "studio-models",
+  "contractId": "studio-add-model",
   "outOfScope": [],
   "preconditions": [],
   "promises": [
-    {
-      "maxEvidenceAgeSeconds": 604800,
-      "promiseId": "run.visible",
-      "requiredEvidenceKinds": [
-        "visual_capture"
-      ],
-      "requiredFact": "content_rendered",
-      "requiredObserverCapability": "browser",
-      "statement": "shows navigation \"Projects\", button \"models\"",
-      "statesToObserve": [
-        "stable"
-      ],
-      "stepId": "run"
-    },
     {
       "maxEvidenceAgeSeconds": 604800,
       "promiseId": "models.visible",
@@ -37,6 +23,20 @@
         "stable"
       ],
       "stepId": "models"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "edit-route.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows form \"Edit route\", textbox \"Route id\", combobox \"Wire format\", textbox \"Base URL\", textbox \"Model\", checkbox \"Enabled\", button \"apply\", button \"cancel\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "edit-route"
     }
   ],
   "riskSignals": [
@@ -44,36 +44,6 @@
     "authentication"
   ],
   "steps": [
-    {
-      "actorId": "owner",
-      "expectedStates": [
-        "stable"
-      ],
-      "failureContract": {
-        "prohibitedSideEffects": [],
-        "recoveryAction": null,
-        "safeStop": "stop replay",
-        "timeoutSeconds": 30,
-        "visibleError": "screen run not reached"
-      },
-      "screen": {
-        "scopePaths": [
-          "apps/studio/src/App.tsx",
-          "apps/studio/src/components/rail.tsx"
-        ],
-        "screenId": "run",
-        "title": "A run is open: rail, chat, team canvas, side panel"
-      },
-      "semanticAction": {
-        "kind": "navigate",
-        "target": {
-          "geometryClaim": false,
-          "strategy": "label",
-          "value": "/?session=studio-fixture"
-        }
-      },
-      "stepId": "run"
-    },
     {
       "actorId": "owner",
       "expectedStates": [
@@ -96,18 +66,47 @@
         "title": "Models panel: routes, probes, Add model"
       },
       "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture"
+        }
+      },
+      "stepId": "models"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen edit-route not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/components/models.tsx"
+        ],
+        "screenId": "edit-route",
+        "title": "Edit route form for a new model"
+      },
+      "semanticAction": {
         "kind": "activate",
         "target": {
           "geometryClaim": false,
           "role": "button",
           "strategy": "accessible_name",
-          "value": "models"
+          "value": "Add model"
         }
       },
-      "stepId": "models"
+      "stepId": "edit-route"
     }
   ],
-  "taskScope": "journey-flow studio-models path main",
-  "title": "Owner opens the Models panel",
+  "taskScope": "journey-flow studio-add-model path main",
+  "title": "Owner adds a model route (draft: the fixture Runtime has no gateway manifest, so Add model is disabled there)",
   "version": 1
 }

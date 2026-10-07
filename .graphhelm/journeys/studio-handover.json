@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner reads While you were away and dismisses it",
+      "goal": "Owner reads While you were away and dismisses it (draft: needs a localStorage last-seen seed the replay cannot set)",
       "name": "owner"
     }
   ],
@@ -69,7 +69,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "handover"
@@ -110,6 +110,6 @@
     }
   ],
   "taskScope": "journey-flow studio-handover path main",
-  "title": "Owner reads While you were away and dismisses it",
+  "title": "Owner reads While you were away and dismisses it (draft: needs a localStorage last-seen seed the replay cannot set)",
   "version": 1
 }

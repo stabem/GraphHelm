@@ -18,10 +18,12 @@ ids=("$@")
 # Default order respects the fixture's state: flows that only read, then flows that record,
 # then flows that change the run's state, destructive ones last (cancel, disconnect). A flow
 # listed here that has no file is skipped; a file not listed here runs after them.
-ORDER="studio-see-team studio-journey-tab studio-mobile studio-node-window studio-models studio-add-project studio-conversation-panel studio-chat-send studio-rename-project studio-name-bot studio-answer-question studio-handover studio-answer-node studio-edit-delivery-document studio-connect-existing-chat studio-new-task studio-run-actions studio-connect studio-disconnect"
+ORDER="studio-see-team studio-journey-tab studio-mobile studio-node-window studio-models studio-add-model studio-add-project studio-conversation-panel studio-chat-send studio-rename-project studio-answer-question studio-refuse-question studio-name-bot studio-handover studio-answer-node studio-edit-delivery-document studio-connect-existing-chat studio-new-task studio-run-actions studio-connect studio-disconnect"
 if [ ${#ids[@]} -eq 0 ]; then
-  for id in $ORDER; do [ -f "$repo/.graphhelm/journeys/$id.journey.yaml" ] && ids+=("$id"); done
-  for f in "$repo"/.graphhelm/journeys/studio-*.journey.yaml; do id=$(basename "$f" .journey.yaml); case " $ORDER " in *" $id "*) ;; *) ids+=("$id");; esac; done
+  approved() { grep -q '^status: approved$' "$repo/.graphhelm/journeys/$1.journey.yaml" 2>/dev/null; }
+  for id in $ORDER; do approved "$id" && ids+=("$id"); done
+  for f in "$repo"/.graphhelm/journeys/studio-*.journey.yaml; do id=$(basename "$f" .journey.yaml); case " $ORDER " in *" $id "*) ;; *) approved "$id" && ids+=("$id");; esac; done
+  for f in "$repo"/.graphhelm/journeys/studio-*.journey.yaml; do id=$(basename "$f" .journey.yaml); approved "$id" || echo "skipped (draft): $id"; done
 fi
 green=0; red=0
 for id in "${ids[@]}"; do

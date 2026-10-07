@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Team\", heading \"Planny asks\"",
+      "statement": "shows region \"Team\", button \"Move Planny\"",
       "statesToObserve": [
         "success"
       ],
@@ -83,7 +83,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "run"
@@ -138,7 +138,7 @@
           "apps/studio/src/components/beacon.tsx"
         ],
         "screenId": "named",
-        "title": "The alias is recorded; the bot reads by its new name everywhere"
+        "title": "The alias is recorded; the bot reads by its new name (demo: Planny)"
       },
       "semanticAction": {
         "kind": "submit",

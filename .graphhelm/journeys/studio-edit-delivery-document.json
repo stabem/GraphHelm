@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner opens a delivered document from a node window and saves an edit to the project",
+      "goal": "Owner edits a delivered document and saves it (draft: needs a node_delivery with a text document)",
       "name": "owner"
     }
   ],
@@ -85,7 +85,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "node"
@@ -155,6 +155,6 @@
     }
   ],
   "taskScope": "journey-flow studio-edit-delivery-document path main",
-  "title": "Owner opens a delivered document from a node window and saves an edit to the project",
+  "title": "Owner edits a delivered document and saves it (draft: needs a node_delivery with a text document)",
   "version": 1
 }

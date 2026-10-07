@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs",
+      "goal": "Owner on a phone moves between the Chat, Team and Journeys tabs (draft: needs a 375 px viewport the flow cannot declare)",
       "name": "owner"
     }
   ],
@@ -85,7 +85,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "team"
@@ -158,6 +158,6 @@
     }
   ],
   "taskScope": "journey-flow studio-mobile path main",
-  "title": "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs",
+  "title": "Owner on a phone moves between the Chat, Team and Journeys tabs (draft: needs a 375 px viewport the flow cannot declare)",
   "version": 1
 }

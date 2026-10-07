@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-mobile
-title: "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs"
-status: approved
-approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:2b3f6a717276add65f3396e7571e1b4655c43d069e7f0a46363db676bb477901}
+title: "Owner on a phone moves between the Chat, Team and Journeys tabs (draft: needs a 375 px viewport the flow cannot declare)"
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -10,19 +10,19 @@ risks: [accessibility, critical_ux]
 screens:
   - id: chat
     title: "Mobile: Chat tab"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: tablist, name: Studio columns}, {role: complementary, name: Chat}, {role: textbox, name: Message}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/chat-column.tsx]
   - id: journeys
     title: "Mobile: Journeys tab"
-    url: /
+    url: /?session=studio-fixture
     state: empty
     expect: [{role: tablist, name: Studio columns}, {role: region, name: Journey}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/journey-canvas.tsx]
   - id: team
     title: "Mobile: Team tab (default)"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: tablist, name: Studio columns}, {role: tab, name: Chat}, {role: tab, name: Team}, {role: tab, name: Journeys}, {role: region, name: Team}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/team-canvas.tsx]

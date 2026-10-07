@@ -2,46 +2,46 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner opens the Models panel",
+      "goal": "Owner answers, or refuses, a question an agent asked",
       "name": "owner"
     }
   ],
-  "contractId": "studio-models",
+  "contractId": "studio-refuse-question",
   "outOfScope": [],
   "preconditions": [],
   "promises": [
     {
       "maxEvidenceAgeSeconds": 604800,
-      "promiseId": "run.visible",
+      "promiseId": "asked.visible",
       "requiredEvidenceKinds": [
         "visual_capture"
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows navigation \"Projects\", button \"models\"",
+      "statement": "shows region \"Needs you\", heading \"planner asks\", button \"Answer\", button \"Refuse\"",
       "statesToObserve": [
         "stable"
       ],
-      "stepId": "run"
+      "stepId": "asked"
     },
     {
       "maxEvidenceAgeSeconds": 604800,
-      "promiseId": "models.visible",
+      "promiseId": "refused.visible",
       "requiredEvidenceKinds": [
         "visual_capture"
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Models\", heading \"Models\", button \"Add model\", button \"Close models\"",
+      "statement": "shows region \"Team\", article \"Implementação concluída is blocked.\"",
       "statesToObserve": [
-        "stable"
+        "success"
       ],
-      "stepId": "models"
+      "stepId": "refused"
     }
   ],
   "riskSignals": [
-    "security",
-    "authentication"
+    "critical_ux",
+    "ambiguous_behavior"
   ],
   "steps": [
     {
@@ -54,15 +54,19 @@
         "recoveryAction": null,
         "safeStop": "stop replay",
         "timeoutSeconds": 30,
-        "visibleError": "screen run not reached"
+        "visibleError": "screen asked not reached"
       },
       "screen": {
         "scopePaths": [
           "apps/studio/src/App.tsx",
-          "apps/studio/src/components/rail.tsx"
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts",
+          "apps/studio/src/graph/ledger.ts",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/client.ts"
         ],
-        "screenId": "run",
-        "title": "A run is open: rail, chat, team canvas, side panel"
+        "screenId": "asked",
+        "title": "A question card waits in Needs you (demo asker: planner)"
       },
       "semanticAction": {
         "kind": "navigate",
@@ -72,28 +76,28 @@
           "value": "/?session=studio-fixture"
         }
       },
-      "stepId": "run"
+      "stepId": "asked"
     },
     {
       "actorId": "owner",
       "expectedStates": [
-        "stable"
+        "success"
       ],
       "failureContract": {
         "prohibitedSideEffects": [],
         "recoveryAction": null,
         "safeStop": "stop replay",
         "timeoutSeconds": 30,
-        "visibleError": "screen models not reached"
+        "visibleError": "screen refused not reached"
       },
       "screen": {
         "scopePaths": [
           "apps/studio/src/App.tsx",
-          "apps/studio/src/components/models.tsx",
-          "apps/studio/src/runtime/client.ts"
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts"
         ],
-        "screenId": "models",
-        "title": "Models panel: routes, probes, Add model"
+        "screenId": "refused",
+        "title": "The refusal is recorded; the card leaves Needs you"
       },
       "semanticAction": {
         "kind": "activate",
@@ -101,13 +105,13 @@
           "geometryClaim": false,
           "role": "button",
           "strategy": "accessible_name",
-          "value": "models"
+          "value": "Refuse"
         }
       },
-      "stepId": "models"
+      "stepId": "refused"
     }
   ],
-  "taskScope": "journey-flow studio-models path main",
-  "title": "Owner opens the Models panel",
+  "taskScope": "journey-flow studio-refuse-question path main",
+  "title": "Owner answers, or refuses, a question an agent asked",
   "version": 1
 }

@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner answers a node that waits for input, with or without evidence",
+      "goal": "Owner answers a node that waits for input, with or without evidence (draft: needs a waiting_input node and a graph file path the fixture does not seed)",
       "name": "owner"
     }
   ],
@@ -84,7 +84,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "run"
@@ -155,6 +155,6 @@
     }
   ],
   "taskScope": "journey-flow studio-answer-node path main",
-  "title": "Owner answers a node that waits for input, with or without evidence",
+  "title": "Owner answers a node that waits for input, with or without evidence (draft: needs a waiting_input node and a graph file path the fixture does not seed)",
   "version": 1
 }

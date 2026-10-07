@@ -2,7 +2,7 @@ schema: graphhelm.journey-flow/1
 id: studio-new-task
 title: Owner starts a new task in the project
 status: approved
-approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:c6e5e996af8561c72f832b9560da9effcd3e31e5f34c9db0113fd5fafd49a7c0}
+approved: {revision: 7b09242430064c3cd3dd4b89ed61d75981326e0c, digest: sha256:d1147a99f83a1d3431849b41e4fa855b499e586d1cd133febdb43c9b59be7267}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -10,19 +10,19 @@ risks: [critical_ux, external_delivery]
 screens:
   - id: compose
     title: New task composer
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: New task}, {role: heading, name: New task}, {role: textbox, name: What should this task do?}, {role: combobox, name: Model}, {role: button, name: start this task}, {role: button, name: Discard this task}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/compose.tsx, apps/studio/src/components/board.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: New task in demo}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx]
   - id: started
     title: The new run opens
-    url: /
+    url: /?session=studio-fixture
     state: success
     expect: [{role: region, name: Canvas}, {role: tab, name: Team (live)}, {role: region, name: Team}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/client.ts]

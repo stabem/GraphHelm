@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner pauses a run, or cancels it behind a confirmation",
+      "goal": "Owner pauses a run, or cancels it behind a confirmation (draft: Run actions is a <summary> with no ARIA role (driver.locator_missing))",
       "name": "owner"
     }
   ],
@@ -84,7 +84,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "run"
@@ -155,6 +155,6 @@
     }
   ],
   "taskScope": "journey-flow studio-run-actions path main",
-  "title": "Owner pauses a run, or cancels it behind a confirmation",
+  "title": "Owner pauses a run, or cancels it behind a confirmation (draft: Run actions is a <summary> with no ARIA role (driver.locator_missing))",
   "version": 1
 }

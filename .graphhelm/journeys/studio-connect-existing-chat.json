@@ -2,7 +2,7 @@
   "actors": [
     {
       "actorId": "owner",
-      "goal": "Owner connects an existing native chat as the team's coordinator",
+      "goal": "Owner connects an existing native chat as the team's coordinator (draft: the node window exceeds the driver snapshot cap (driver.snapshot_too_large))",
       "name": "owner"
     }
   ],
@@ -69,7 +69,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/"
+          "value": "/?session=studio-fixture"
         }
       },
       "stepId": "run"
@@ -109,6 +109,6 @@
     }
   ],
   "taskScope": "journey-flow studio-connect-existing-chat path main",
-  "title": "Owner connects an existing native chat as the team's coordinator",
+  "title": "Owner connects an existing native chat as the team's coordinator (draft: the node window exceeds the driver snapshot cap (driver.snapshot_too_large))",
   "version": 1
 }

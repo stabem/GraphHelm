@@ -20,7 +20,7 @@
 //! - `codex.config.toml` — the `[mcp_servers.graphhelm]` snippet, when Codex is registered.
 //!
 //! And beside it: `<project>/.mcp.json` (merged, never clobbered) for Claude Code, and the
-//! `.graphhelm/` and `/.mcp.json` lines in `<project>/.gitignore` when the project is a git work tree.
+//! `.graphhelm/` and `/.mcp.json` lines in `<project>/.gitignore`, checked by Git when it is available.
 //!
 //! **What never appears on stdout or stderr:** the token's bytes and the key's bytes. `data`
 //! reports paths and `created`/`existing` per artifact; the printed `next` commands read the key
@@ -28,6 +28,7 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::{Map, Value, json};
@@ -57,6 +58,8 @@ const GITIGNORE_BLOCK: &str = "\n# GraphHelm Runtime working directory: bearer t
 /// `.mcp.json` and `.gitignore` are small hand-edited files; anything past this is not one, and
 /// is refused before being read into memory (PR #1070 review: the ignore file had no bound).
 const MAX_EDITED_FILE_BYTES: u64 = 1024 * 1024;
+/// Bound the keyring directory inventory before spawning a Git check for each artifact.
+const MAX_KEYRING_IGNORE_PATHS: usize = 1024;
 
 /// The per-family redaction-safe failure, same shape as `serve`'s and `gateway`'s own. The fields
 /// are readable by `gateway setup` (#1139), which reuses this module's provisioning and reports
@@ -113,8 +116,6 @@ pub(super) enum State {
     Merged,
     /// `.gitignore`: the file existed and the block was appended to it.
     Appended,
-    /// `.gitignore`: the project is not a git work tree, so nothing was written.
-    NotAGitWorkTree,
 }
 
 impl State {
@@ -124,7 +125,6 @@ impl State {
             Self::Existing => "existing",
             Self::Merged => "merged",
             Self::Appended => "appended",
-            Self::NotAGitWorkTree => "not_a_git_work_tree",
         }
     }
 }
@@ -248,7 +248,6 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
     let (key_state, keyring_state) = (sealing.key_state, sealing.keyring_state);
 
     let gitignore_path = project.join(GITIGNORE_FILE);
-    let gitignore_state = ensure_gitignore(&project, &gitignore_path)?;
 
     let mut registrations = Vec::new();
     for harness in harnesses {
@@ -275,6 +274,9 @@ fn execute(args: &InitArgs) -> Result<Value, Failure> {
             }
         });
     }
+
+    // Check the generated paths after all registrations have been written.
+    let gitignore_state = ensure_gitignore(&project, &gitignore_path)?;
 
     let token_name = token_path
         .file_name()
@@ -460,72 +462,16 @@ fn ensure_owner_only_directory(path: &Path, pointer: &'static str) -> Result<Sta
     Ok(state)
 }
 
-/// A git work tree has `.git` at its root: a directory for a plain clone, a FILE for a worktree
-/// or submodule (`gitdir: ...`). Both count, and so does an ANCESTOR carrying one: a project that
-/// is a subdirectory of a repository (a monorepo) is inside that work tree even though it has no
-/// `.git` of its own, and `git add -A` from the root would stage the secrets (PR #1070 review;
-/// verified with a nested directory). The block still goes into `<project>/.gitignore` — a nested
-/// ignore file governs its own subtree, so the root's file is never edited. Nothing is shelled out.
-fn is_git_work_tree(project: &Path) -> bool {
-    project
-        .ancestors()
-        .any(|directory| directory.join(".git").exists())
-}
-
-/// The spellings a hand-written `.gitignore` may already use for the Runtime directory and MCP file. Read line by
-/// line rather than through `git check-ignore`, which would need git on PATH and a subprocess for
-/// a five-line answer.
-///
-/// Git's rule is THE LAST MATCHING LINE WINS, and a `!` line un-ignores: `.graphhelm/` followed by
-/// `!.graphhelm/` leaves the directory tracked, and a first-match predicate would have reported
-/// `existing` and left both secrets stageable (PR #1070 review). So this folds every line in order
-/// and answers with the final state; when that state is "not ignored" the block is appended, and
-/// because it is appended LAST it is the rule git applies.
-///
-/// Two more details follow git rather than intuition (PR #1070 review, measured with
-/// `git check-ignore` and `git status`):
-/// - only TRAILING whitespace is stripped; a leading space is part of the pattern, so
-///   `  .graphhelm/` ignores nothing and must not count;
-/// - negations may use wildcards (`!*.json`) or name a file below `.graphhelm/`. Rather than
-///   duplicate Git's pattern matcher, an uncertain negation clears both protections. Later
-///   explicit ignore lines restore them; otherwise append the block last. A spare block is
-///   harmless, a stageable generated file is not.
-fn already_ignored(gitignore: &str) -> bool {
-    let mut ignored = false;
-    let mut mcp_ignored = false;
-    for line in gitignore.lines().map(str::trim_end) {
-        let (negated, pattern) = match line.strip_prefix('!') {
-            Some(rest) => (true, rest),
-            None => (false, line),
-        };
-        if matches!(pattern, ".mcp.json" | "/.mcp.json") {
-            mcp_ignored = !negated;
-        } else if matches!(
-            pattern,
-            ".graphhelm/" | ".graphhelm" | "/.graphhelm/" | "/.graphhelm" | ".graphhelm/**"
-        ) {
-            ignored = !negated;
-        } else if negated {
-            if pattern
-                .strip_prefix('/')
-                .unwrap_or(pattern)
-                .starts_with(".graphhelm/")
-            {
-                ignored = false;
-            } else if pattern.contains(['*', '?', '[']) {
-                ignored = false;
-                mcp_ignored = false;
-            }
-        }
-    }
-    ignored && mcp_ignored
-}
-
+/// Git is the ignore-pattern authority. Without usable Git, append our exact block last once;
+/// a fallback never claims to have interpreted hand-written patterns or negations.
 pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Failure> {
-    if !is_git_work_tree(project) {
-        return Ok(State::NotAGitWorkTree);
-    }
     let unwritable = || refused("the .gitignore file could not be written", "/gitignore");
+    let unchecked = || {
+        refused(
+            "Git could not verify generated-file ignore protection",
+            "/gitignore",
+        )
+    };
     refuse_symlink(path, "/gitignore")?;
     if let Ok(metadata) = std::fs::metadata(path)
         && metadata.len() > MAX_EDITED_FILE_BYTES
@@ -535,29 +481,98 @@ pub(super) fn ensure_gitignore(project: &Path, path: &Path) -> Result<State, Fai
             "/gitignore",
         ));
     }
-    match std::fs::read_to_string(path) {
-        Ok(existing) => {
-            if already_ignored(&existing) {
-                return Ok(State::Existing);
-            }
-            let mut text = existing;
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            text.push_str(GITIGNORE_BLOCK);
-            std::fs::write(path, text).map_err(|_| unwritable())?;
-            Ok(State::Appended)
-        }
+    let (mut text, state) = match std::fs::read_to_string(path) {
+        Ok(existing) => (existing, State::Appended),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::write(path, GITIGNORE_BLOCK.trim_start_matches('\n'))
-                .map_err(|_| unwritable())?;
-            Ok(State::Created)
+            (String::new(), State::Created)
         }
-        Err(_) => Err(refused(
-            "the .gitignore file exists and could not be read",
-            "/gitignore",
-        )),
+        Err(_) => {
+            return Err(refused(
+                "the .gitignore file exists and could not be read",
+                "/gitignore",
+            ));
+        }
+    };
+    let git_command = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(project)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    };
+    let use_git = match git_command()
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .stdout(Stdio::piped())
+        .output()
+    {
+        Ok(output) => output.status.success() && output.stdout == b"true\n",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => return Err(unchecked()),
+    };
+    let mut generated = vec![
+        PathBuf::from(CLAUDE_CODE_FILE),
+        PathBuf::from(RUNTIME_DIRECTORY).join(""),
+        PathBuf::from(RUNTIME_DIRECTORY).join(KEY_FILE),
+        secret_file::token_path(&PathBuf::from(RUNTIME_DIRECTORY).join(EVENTS_DIRECTORY)),
+        PathBuf::from(RUNTIME_DIRECTORY).join(CODEX_SNIPPET_FILE),
+    ];
+    if use_git {
+        // Inspect actual keyring artifact names without duplicating the adapter's private layout.
+        let keyring = PathBuf::from(RUNTIME_DIRECTORY).join(KEYRING_DIRECTORY);
+        match std::fs::read_dir(project.join(&keyring)) {
+            Ok(entries) => {
+                for (index, entry) in entries.take(MAX_KEYRING_IGNORE_PATHS + 1).enumerate() {
+                    if index == MAX_KEYRING_IGNORE_PATHS {
+                        return Err(unchecked());
+                    }
+                    let entry = entry.map_err(|_| unchecked())?;
+                    generated.push(keyring.join(entry.file_name()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unchecked()),
+        }
     }
+    let protected = || -> Result<bool, Failure> {
+        for generated in &generated {
+            let status = git_command()
+                .args(["check-ignore", "-q", "--no-index", "--"])
+                .arg(generated)
+                .status()
+                .map_err(|_| unchecked())?;
+            match status.code() {
+                Some(0) => {}
+                Some(1) => return Ok(false),
+                _ => return Err(unchecked()),
+            }
+        }
+        Ok(true)
+    };
+    if if use_git {
+        protected()?
+    } else {
+        text.ends_with(GITIGNORE_BLOCK.trim_start_matches('\n'))
+    } {
+        return Ok(State::Existing);
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(GITIGNORE_BLOCK.trim_start_matches('\n'));
+    std::fs::write(path, text).map_err(|_| unwritable())?;
+    if use_git && !protected()? {
+        return Err(refused(
+            "generated files remain unignored after the protective block was appended",
+            "/gitignore",
+        ));
+    }
+    Ok(state)
 }
 
 /// Simple and stated: Claude Code when the project or the home directory carries `.claude/`;
@@ -775,63 +790,6 @@ fn next_steps(paths: &NextPaths<'_>) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_hand_written_ignore_line_in_any_common_spelling_counts() {
-        for spelling in [
-            ".graphhelm/",
-            "/.graphhelm",
-            ".graphhelm  ",
-            ".graphhelm/\t",
-            ".graphhelm/**",
-        ] {
-            assert!(
-                already_ignored(&format!("/.mcp.json\ntarget/\n{spelling}\n")),
-                "{spelling:?}"
-            );
-        }
-        // Git keeps LEADING whitespace as part of the pattern: `  .graphhelm/` ignores nothing
-        // (`git check-ignore` exits 1), so it must not count as existing coverage.
-        assert!(!already_ignored("/.mcp.json\ntarget/\n  .graphhelm  \n"));
-        assert!(!already_ignored("/.mcp.json\ntarget/\n  .graphhelm/\n"));
-        assert!(!already_ignored("/.mcp.json\ntarget/\n.graphhelm-other/\n"));
-        assert!(!already_ignored("/.mcp.json\n"));
-    }
-
-    #[test]
-    fn a_later_negation_wins_and_a_later_ignore_wins_back() {
-        assert!(!already_ignored("/.mcp.json\n.graphhelm/\n!.graphhelm/\n"));
-        assert!(already_ignored(
-            "/.mcp.json\n.graphhelm/\n!.graphhelm/\n/.graphhelm\n"
-        ));
-        assert!(!already_ignored("/.mcp.json\n!.graphhelm/\n"));
-        // A negation BELOW the directory un-ignores that file (`git status` shows
-        // `?? .graphhelm/serve.key`), so the fold answers "not ignored" and the block is appended.
-        assert!(!already_ignored(
-            "/.mcp.json\n.graphhelm/**\n!.graphhelm/serve.key\n"
-        ));
-        assert!(!already_ignored(
-            "/.mcp.json\n.graphhelm/\n!/.graphhelm/keyring\n"
-        ));
-        assert!(!already_ignored(
-            "/.mcp.json\n.graphhelm/\n!.graphhelm/serve.key\n!.graphhelm/\n"
-        ));
-        // ...and a later whole-directory ignore wins the file back.
-        assert!(already_ignored(
-            "/.mcp.json\n.graphhelm/**\n!.graphhelm/serve.key\n.graphhelm/\n"
-        ));
-        // Trailing whitespace on the negation is not part of the pattern either.
-        assert!(!already_ignored(
-            "/.mcp.json\n.graphhelm/\n!.graphhelm/serve.key  \n"
-        ));
-        // A negation of some other directory's file does not touch ours.
-        assert!(already_ignored(
-            "/.mcp.json\n.graphhelm/\n!other/.graphhelm/x\n"
-        ));
-        assert!(already_ignored(
-            "/.mcp.json\n.graphhelm/\n!.graphhelm-other/x\n"
-        ));
-    }
 
     #[test]
     fn key_ids_are_shell_safe_or_refused() {

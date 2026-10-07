@@ -545,19 +545,24 @@ impl Driver {
 
     pub(super) fn close(mut self) -> Result<()> {
         self.call("close", json!({}), "/observer/close")?;
+        // Each step after the close reply names itself, so a failed close says which one.
         let trailing = self
             .replies
             .recv_timeout(OP_BUDGET)
-            .map_err(|_| failure("replay.timeout", "/observer/close", 1))??;
+            .map_err(|_| failure("replay.timeout", "/observer/close/eof", 1))??;
         if trailing.is_some() {
-            return Err(failure("replay.driver_frame_invalid", "/observer/close", 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                "/observer/close/trailing",
+                1,
+            ));
         }
         let owned = self.owned.take().unwrap();
         owned
             .cleanup()
             .recv_timeout(Duration::from_secs(1))
-            .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close", 1))?
-            .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close", 1))?;
+            .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?
+            .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?;
         Ok(())
     }
 }

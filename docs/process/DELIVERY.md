@@ -150,8 +150,8 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 `graphhelm execution signal --signal <file>`. The Runtime refuses a `task.*` signal whose
 `source.id`, or whose `lane` / `reviewer` (on a verdict) / `merger`, is not the actor recording it
 (`GHCLI038_ACTOR_MISMATCH`), so each lane needs its own actor: export `GRAPHHELM_ACTOR=<your
-ListAgents name>` and start the MCP server without a shared `--actor` (an explicit `--actor`
-wins over the variable).
+ListAgents name>` before the MCP server starts; it wins over the shared `--actor agent-chat`
+registration (#389).
 
 ## 6. Housekeeping
 

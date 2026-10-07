@@ -57,6 +57,7 @@ pub const GHCLI031_KEEL_CHECK_INPUT: &str = "GHCLI031_KEEL_CHECK_INPUT";
 pub const GHCLI032_STUDIO_REFUSED: &str = "GHCLI032_STUDIO_REFUSED";
 /// `graphhelm journey validate` found a contract that journeys cannot use as written (#328).
 pub const GHCLI033_JOURNEY_CONTRACT_INVALID: &str = "GHCLI033_JOURNEY_CONTRACT_INVALID";
+pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -99,6 +100,7 @@ pub const ALL: &[&str] = &[
     GHCLI031_KEEL_CHECK_INPUT,
     GHCLI032_STUDIO_REFUSED,
     GHCLI033_JOURNEY_CONTRACT_INVALID,
+    GHCLI034_JOURNEY_FLOW_INVALID,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

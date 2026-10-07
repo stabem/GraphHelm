@@ -133,6 +133,12 @@
       "documentVersion": "1.0.0",
       "path": "schemas/activation-receipt.schema.json",
       "sha256": "sha256:cc15ac68882f8344530845421899ab50782742c7f8fe251dfcd7cff896a75faa"
+    },
+    "journey-flow": {
+      "id": "https://p50.dev/schemas/journey-flow.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/journey-flow.schema.json",
+      "sha256": "sha256:06e34ec2cf521ed373d380a8807ab4f7ff974ae44cac6bf1729cec3e750680d9"
     }
   }
 }

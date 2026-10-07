@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/journey-flow.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Journey Flow",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "graphhelm.journey-flow/1"
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "approved"
+      ]
+    },
+    "approved": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/approval",
+          "type": "object"
+        }
+      ]
+    },
+    "base": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "actors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      },
+      "minItems": 0,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "risks": {
+      "type": "array",
+      "maxItems": 24,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "accessibility",
+          "ambiguous_behavior",
+          "authentication",
+          "concurrency",
+          "critical_ux",
+          "external_delivery",
+          "irreversible_effect",
+          "money",
+          "multiple_components",
+          "personal_data",
+          "production_impact",
+          "recovery",
+          "security"
+        ]
+      }
+    },
+    "screens": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/screen"
+      },
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      },
+      "minItems": 1,
+      "maxItems": 128
+    },
+    "paths": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "required": [
+        "main"
+      ],
+      "propertyNames": {
+        "$ref": "#/$defs/id"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/id"
+        },
+        "minItems": 1,
+        "maxItems": 128
+      }
+    },
+    "drift": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/drift"
+      },
+      "minItems": 0,
+      "maxItems": 128
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "status",
+    "approved",
+    "base",
+    "actors",
+    "secrets",
+    "risks",
+    "screens",
+    "edges",
+    "paths",
+    "drift"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+      "not": {
+        "pattern": "\\.\\."
+      }
+    },
+    "expect": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "role",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "act": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "navigate",
+            "activate",
+            "enter_text",
+            "select",
+            "upload",
+            "download",
+            "wait_for",
+            "inspect",
+            "submit",
+            "recover",
+            "approve"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "secret": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "kind",
+        "role",
+        "name"
+      ],
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "text",
+          "secret"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "kind": {
+                  "const": "enter_text"
+                }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "text"
+                  ]
+                },
+                {
+                  "required": [
+                    "secret"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "screen": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^/(?!/)",
+          "not": {
+            "pattern": "\\\\"
+          }
+        },
+        "state": {
+          "enum": [
+            "loading",
+            "disabled",
+            "empty",
+            "error",
+            "retrying",
+            "success",
+            "partial_success",
+            "recovered",
+            "stable"
+          ]
+        },
+        "expect": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expect"
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "const": "unknown",
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^[^/.][^*?]*$"
+              },
+              "minItems": 1,
+              "maxItems": 64
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "state",
+        "expect",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "from": {
+          "$ref": "#/$defs/id"
+        },
+        "to": {
+          "$ref": "#/$defs/id"
+        },
+        "acts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/act"
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "acts"
+      ],
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "revision",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "drift": {
+      "type": "object",
+      "properties": {
+        "edge": {
+          "$ref": "#/$defs/id"
+        },
+        "act": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "code": {
+          "enum": [
+            "drift.locator_missing",
+            "drift.locator_ambiguous",
+            "drift.wrong_screen",
+            "drift.screen_changed",
+            "drift.expect_failed"
+          ]
+        },
+        "seen": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "healed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "edge",
+        "act",
+        "code",
+        "seen",
+        "at"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

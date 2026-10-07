@@ -116,7 +116,7 @@ keys on it: `journey validate`, `journey capture`/`walked`, `journeys` (freshnes
 Journey tab, and the Keel card `journeys` field. The contract is also **linear**: steps in order,
 arrows between consecutive steps.
 
-**Decision (proposed D-057): the YAML is a new artifact, `journey-flow`, that compiles
+**Decision (accepted D-057): the YAML is a new artifact, `journey-flow`, that compiles
 deterministically to contracts. The flow is the source; the contract JSON is a generated
 projection.**
 
@@ -229,7 +229,9 @@ CLI error code `GHCLI034_JOURNEY_FLOW_INVALID` (exit 2 envelope). Findings:
 `flow.unknown_secret`, `flow.unknown_actor`, `flow.path_disconnected` (edge `n.to` ≠ edge
 `n+1.from`), `flow.path_revisits_screen`, `flow.base_not_local`, `flow.scope_path_missing`,
 `flow.scope_path_outside_project`, `flow.approval_stale`, `flow.approved_with_drift`,
-`flow.contract_stale`, `flow.unreachable_screen` (a screen in no path; warning severity).
+`flow.contract_stale`, `flow.compile_invalid` (compiler output violates the frozen schema; exit 3), `flow.unreachable_screen` (a screen in no path; warning severity).
+`flow.unknown_actor` is reserved: version 1 declares actor ids and compilation uses the first
+actor; there is no per-edge actor reference yet.
 Explore/replay runtime codes: `explore.host_refused`, `explore.budget_spent`,
 `explore.goal_unreached`, `explore.model_invalid_reply`, plus the `drift.*` and `driver.*` codes.
 

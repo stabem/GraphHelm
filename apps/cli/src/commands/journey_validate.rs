@@ -24,14 +24,21 @@ use crate::output::{CommandOutput, Outcome};
 
 const COMMAND: &str = "journey.validate";
 
-struct Finding {
-    code: &'static str,
-    pointer: String,
-    message: String,
+pub(crate) struct Finding {
+    pub(crate) code: &'static str,
+    pub(crate) pointer: String,
+    pub(crate) message: String,
 }
 
 impl Finding {
-    fn new(code: &'static str, pointer: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn is_warning(&self) -> bool {
+        self.code == "flow.unreachable_screen"
+    }
+    pub(crate) fn new(
+        code: &'static str,
+        pointer: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             code,
             pointer: pointer.into(),
@@ -68,7 +75,10 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         let mut found: Vec<PathBuf> = entries
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .filter(|path| {
+                path.extension().is_some_and(|ext| ext == "json")
+                    || path.to_string_lossy().ends_with(".journey.yaml")
+            })
             .collect();
         found.sort();
         files.extend(found);
@@ -79,20 +89,33 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
     let mut reports = Vec::new();
     let mut diagnostics = Vec::new();
     for file in &files {
-        let findings = match read(file) {
-            Ok(value) => check(file, &value, &project),
-            Err(Some(message)) => vec![Finding::new("not_json", "", message)],
-            Err(None) => {
-                return input_error(
-                    format!("{} could not be read as a file", file.display()),
-                    "/files",
-                );
+        let findings = if file.to_string_lossy().ends_with(".journey.yaml") {
+            super::journey_flow::check(file, &project)
+        } else {
+            match read(file) {
+                Ok(value) => check(file, &value, &project),
+                Err(Some(message)) => vec![Finding::new("not_json", "", message)],
+                Err(None) => {
+                    return input_error(
+                        format!("{} could not be read as a file", file.display()),
+                        "/files",
+                    );
+                }
             }
         };
         let source = file.display().to_string();
         for finding in &findings {
-            diagnostics.push(Diagnostic::error(
-                GHCLI033_JOURNEY_CONTRACT_INVALID,
+            let diagnostic = if finding.is_warning() {
+                Diagnostic::warning
+            } else {
+                Diagnostic::error
+            };
+            diagnostics.push(diagnostic(
+                if finding.code.starts_with("flow.") {
+                    crate::error_codes::GHCLI034_JOURNEY_FLOW_INVALID
+                } else {
+                    GHCLI033_JOURNEY_CONTRACT_INVALID
+                },
                 format!("{}: {}", finding.code, finding.message),
                 finding.pointer.clone(),
                 source.clone(),
@@ -100,11 +123,13 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
         }
         reports.push(json!({
             "file": source,
-            "ok": findings.is_empty(),
+            "ok": findings.iter().all(Finding::is_warning),
             "findings": findings.iter().map(Finding::json).collect::<Vec<_>>(),
         }));
     }
-    let clean = diagnostics.is_empty();
+    let clean = diagnostics
+        .iter()
+        .all(|d| d.severity == graphhelm_protocols::Severity::Warning);
     Outcome {
         output: CommandOutput {
             ok: clean,

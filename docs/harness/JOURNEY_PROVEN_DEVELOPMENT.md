@@ -293,3 +293,36 @@ Journey Verification Result schema validation is shape-only. It does not registe
 authenticate receipts, recompute input or coverage digests, or determine evidence freshness. A
 candidate may become authoritative only when a registered deterministic JPD validator performs
 those checks. Issue #210 ships the contract for that future validator, not the validator itself.
+
+## Journey flows
+
+A `.graphhelm/journeys/<id>.journey.yaml` file is the source for screens, semantic
+edges and named paths. Its bounded, closed schema is
+[`journey-flow.schema.json`](../../schemas/journey-flow.schema.json). The `main` path
+compiles to `<id>.json`; another path compiles to `<id>.<path>.json`. Generated files
+use the unchanged journey-contract schema and existing journey-map readers.
+
+```powershell
+graphhelm journey validate --all --project .
+graphhelm journey compile --fmt --include-draft --project .
+graphhelm journey approve checkout --project .
+```
+
+Validation checks JSON contracts and flow YAML, including raw canonical bytes,
+references, local hosts and scope containment. `flow.unreachable_screen` is a warning.
+Compilation skips drafts unless `--include-draft` is supplied. `--fmt` writes canonical
+YAML; `--check` compares without writing; `--force` explicitly replaces a differing
+handwritten contract. Edit the source flow and compile again instead of hand-editing
+JSON owned by a flow.
+
+Approval requires a committed SHA-1 Git project and canonical valid YAML. It binds the current
+Git revision and SHA-256 of canonical YAML with `status`, `approved` and `drift` omitted,
+clears drift and generates contracts. Editing that projection invalidates approval.
+This is file approval, not proof that a browser journey ran.
+
+Writers take a nonblocking project lock, preflight all destinations, replace each file
+through a synced temporary file and restore earlier files when a later write fails.
+The batch is not crash-atomic across files: a process or host failure can require
+recompilation. No browser, model or operational graph mutation is performed.
+Stable finding codes are listed in the
+[design specification](../specs/2026-10-06-journey-explore-design.md#7-diagnostic-codes-stable-new-codes-may-be-added-none-renamed).

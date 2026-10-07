@@ -498,7 +498,7 @@ fn checked_in_catalog_reports_the_additive_evolutions_as_one_minor_step() {
     );
     let value = output_json(&output);
     assert_eq!(value["data"]["releaseVersion"], "1.1.0");
-    assert_eq!(value["data"]["schemaCount"], 22);
+    assert_eq!(value["data"]["schemaCount"], 23);
 }
 
 #[test]

@@ -528,11 +528,12 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
             "event-envelope",
             "execution-accounting-receipt",
             "graph-signal",
+            "journey-flow",
             "node",
             "restore-plan"
         ],
         "the deliberate divergences from 1.0.0 include the five additive adoption contracts \
-         from #1188, context-provenance, event-envelope, accounting, signals and the node crew"
+         from #1188, context-provenance, event-envelope, accounting, signals, journey-flow and the node crew"
     );
     for change in &report.changes {
         assert_ne!(

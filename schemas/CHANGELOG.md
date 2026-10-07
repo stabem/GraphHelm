@@ -1,5 +1,9 @@
 # Schema Changelog
 
+## journey-flow 1.0.0 (#339)
+
+New bounded, closed journey-flow YAML source contract. It compiles to the unchanged JPD contract schema. Catalog digest uses canonical JSON, as required by the existing schema-evolution contract.
+
 ## event-envelope 1.1.0 - `subagent_reused.basis` gains `session_unavailable` (ADR-042, #298)
 
 **`event-envelope`: one more `basis` value.** `$defs/subagentReused/properties/basis` widens its

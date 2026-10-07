@@ -104,7 +104,10 @@ fn copy_tree(from: &Path, to: &Path) {
 fn a_fresh_home_receives_every_bundled_entry_and_a_second_run_changes_nothing() {
     let home = tempfile::tempdir().unwrap();
     let expected = bundled();
-    assert!(expected.contains(&"graphhelm-jpd".to_owned()), "{expected:?}");
+    assert!(
+        expected.contains(&"graphhelm-jpd".to_owned()),
+        "{expected:?}"
+    );
     assert!(
         expected.contains(&"graphhelm-guide".to_owned()),
         "{expected:?}"
@@ -142,7 +145,10 @@ fn a_packaged_skill_finds_the_package_files_it_cites() {
     let text = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
     let cited = "../../schemas/journey-contract.schema.json";
     assert!(text.contains(cited), "the skill no longer cites {cited}");
-    assert!(skill.join(cited).is_file(), "{cited} dangles in the install");
+    assert!(
+        skill.join(cited).is_file(),
+        "{cited} dangles in the install"
+    );
 }
 
 #[test]
@@ -207,7 +213,10 @@ fn an_entry_dropped_from_the_bundle_is_removed_only_when_still_ours() {
 
     let dry = sync(home.path(), &["--dry-run"]);
     assert_eq!(names(&dry, "removed"), vec!["ghost"]);
-    assert!(skills.join("ghost").exists(), "--dry-run must write nothing");
+    assert!(
+        skills.join("ghost").exists(),
+        "--dry-run must write nothing"
+    );
 
     let report = sync(home.path(), &[]);
     assert_eq!(names(&report, "removed"), vec!["ghost"]);
@@ -238,7 +247,9 @@ fn a_manifest_name_that_leaves_the_skills_directory_is_refused() {
 #[test]
 fn a_leftover_staging_directory_is_refused_not_deleted() {
     let home = tempfile::tempdir().unwrap();
-    let staging = home.path().join("skills/.graphhelm-guide.graphhelm-staging");
+    let staging = home
+        .path()
+        .join("skills/.graphhelm-guide.graphhelm-staging");
     std::fs::create_dir_all(&staging).unwrap();
     std::fs::write(staging.join("keep.txt"), "not yours").unwrap();
 
@@ -258,7 +269,11 @@ fn the_home_defaults_to_codex_home() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert!(home.path().join("skills/graphhelm-guide/SKILL.md").is_file());
+    assert!(
+        home.path()
+            .join("skills/graphhelm-guide/SKILL.md")
+            .is_file()
+    );
 }
 
 fn walk(dir: &Path) -> Vec<PathBuf> {

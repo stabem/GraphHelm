@@ -63,7 +63,7 @@ fn codex_home(home: Option<&Path>) -> Result<PathBuf, String> {
 fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
-        && !name.contains(['/', '\', ':'])
+        && !name.contains(['/', '\\', ':'])
         && Path::new(name).components().count() == 1
 }
 
@@ -79,7 +79,9 @@ fn bundled() -> Result<BTreeMap<String, PathBuf>, String> {
     let mut bundle_root = None;
     let mut add = |name: String, path: PathBuf| -> Result<(), String> {
         if !plain_name(&name) {
-            return Err(format!("bundled entry name {name:?} is not a plain directory name"));
+            return Err(format!(
+                "bundled entry name {name:?} is not a plain directory name"
+            ));
         }
         if let Some(other) = entries.insert(name.clone(), path.clone()) {
             return Err(format!(

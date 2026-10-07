@@ -197,13 +197,16 @@ graphhelm skills sync --host codex --dry-run   # report what would change
 graphhelm skills sync --host codex             # install or update
 ```
 
-The home defaults to `CODEX_HOME`, then `~/.codex` (`--home <dir>` overrides). It installs every
-bundled skill (the Keel/JPD packages pinned in `extensions/releases/` and the plugin skills) under
-`<home>/skills/<name>/`, records what it wrote in `<home>/skills/.graphhelm-skills.json`, and
-reports `added`, `updated`, `unchanged`, `adopted`, `removed`, `modified` and `foreign`. It never
-writes a directory it did not install (`foreign`; one already holding the exact bundled bytes is
-`adopted`), never overwrites a hand edit (`modified`), and removes a skill dropped from the bundle
-only when it still holds the bytes it wrote. Run it again after updating GraphHelm.
+The home defaults to `CODEX_HOME`, then `~/.codex` (`--home <dir>` overrides). Each Keel/JPD
+package pinned in `extensions/releases/` is installed whole as `<home>/skills/<package-id>/` (its
+skills cite package files such as `../../schemas/...`), after checking that the source still
+matches its pin. Each plugin skill is installed as `<home>/skills/<name>/`. It records what it
+wrote in `<home>/skills/.graphhelm-skills.json` and reports `added`, `updated`, `unchanged`,
+`adopted`, `removed`, `modified` and `foreign`. It never writes a directory it did not install
+(`foreign`; one already holding the exact bundled bytes is `adopted`), never overwrites a hand
+edit (`modified`), and removes an entry dropped from the bundle only when it still holds the bytes
+it wrote. Run it again after updating GraphHelm. Old flat hand copies of package skills (for
+example `skills/keel`) are reported as `foreign`; remove them by hand, or Codex sees two copies.
 
 **Verify for each requested host:** its plugin list shows `graphhelm` installed and enabled
 (in Claude Code, `/plugin`), and a new session offers the guide skill:

@@ -284,30 +284,139 @@ pub(crate) fn read_within(
 
 type FoldKey = (std::path::PathBuf, String);
 
+/// How many streams serve keeps folded at once. The owner's Runtime stays up for days and reads
+/// dozens of runs; each entry is one run's projection, so the count is the memory bound (#378).
+const FOLD_CACHE_STREAMS: usize = 32;
+/// A stream nobody has read for this long is dropped; its next read folds it again.
+const FOLD_CACHE_IDLE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+struct Fold {
+    generation: graphhelm_events::ProjectionGeneration,
+    used: std::time::Instant,
+}
+
+#[derive(Default)]
+struct FoldCacheInner {
+    folds: std::sync::Mutex<std::collections::BTreeMap<FoldKey, Fold>>,
+    /// Streams a background fold is already finishing, so a burst of refused reads starts one.
+    warming: std::sync::Mutex<std::collections::BTreeSet<FoldKey>>,
+}
+
 /// #371: serve keeps one projection generation per stream, so a read folds only the events
 /// appended since the last read. Before this, every status, briefing and reply-suggestions read
 /// refolded a ~9k-event stream from sequence 1 inside a 5 s budget, and about one read in five ran
-/// out. Off for one-shot commands, which fold once and exit.
-static SHARED_FOLDS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<FoldKey, graphhelm_events::ProjectionGeneration>>,
-> = std::sync::OnceLock::new();
-/// Streams a background fold is already finishing, so a burst of refused reads starts one.
-static WARMING: std::sync::Mutex<std::collections::BTreeSet<FoldKey>> =
-    std::sync::Mutex::new(std::collections::BTreeSet::new());
+/// out. Off for one-shot commands, which fold once and exit. A value rather than only a global so
+/// a test owns its own instance instead of switching the cache on for every test in the process.
+#[derive(Clone, Default)]
+struct FoldCache(std::sync::Arc<FoldCacheInner>);
+
+static SHARED_FOLDS: std::sync::OnceLock<FoldCache> = std::sync::OnceLock::new();
 
 pub(crate) fn enable_shared_fold_cache() {
-    let _ = SHARED_FOLDS.set(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let _ = SHARED_FOLDS.set(FoldCache::default());
+}
+
+/// Clears a stream's warming mark when the warmer ends, however it ends: a panic unwinds through
+/// this drop too, so a stream is never left marked with no warmer running (#378).
+struct WarmingClaim {
+    cache: FoldCache,
+    key: FoldKey,
+}
+
+impl Drop for WarmingClaim {
+    fn drop(&mut self) {
+        if let Ok(mut warming) = self.cache.0.warming.lock() {
+            warming.remove(&self.key);
+        }
+    }
+}
+
+impl FoldCache {
+    fn get(&self, key: &FoldKey) -> Option<graphhelm_events::ProjectionGeneration> {
+        let mut folds = self.0.folds.lock().ok()?;
+        let fold = folds.get_mut(key)?;
+        fold.used = std::time::Instant::now();
+        Some(fold.generation.clone())
+    }
+
+    fn store(&self, key: &FoldKey, generation: graphhelm_events::ProjectionGeneration) {
+        self.store_at(key, generation, std::time::Instant::now());
+    }
+
+    /// Keeps the furthest generation (a slower concurrent read must not rewind a faster one),
+    /// then drops idle streams and, past the cap, the least recently used.
+    fn store_at(
+        &self,
+        key: &FoldKey,
+        generation: graphhelm_events::ProjectionGeneration,
+        now: std::time::Instant,
+    ) {
+        let Ok(mut folds) = self.0.folds.lock() else {
+            return;
+        };
+        match folds.get_mut(key) {
+            Some(current)
+                if current.generation.watermark().last_sequence()
+                    > generation.watermark().last_sequence() =>
+            {
+                current.used = now;
+            }
+            _ => {
+                folds.insert(
+                    key.clone(),
+                    Fold {
+                        generation,
+                        used: now,
+                    },
+                );
+            }
+        }
+        folds.retain(|_, fold| now.saturating_duration_since(fold.used) <= FOLD_CACHE_IDLE);
+        while folds.len() > FOLD_CACHE_STREAMS {
+            let Some(oldest) = folds
+                .iter()
+                .min_by_key(|(_, fold)| fold.used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            folds.remove(&oldest);
+        }
+    }
+
+    /// Marks `key` as warming, or `None` when a warmer already runs for it.
+    fn claim_warming(&self, key: &FoldKey) -> Option<WarmingClaim> {
+        let mut warming = self.0.warming.lock().ok()?;
+        warming.insert(key.clone()).then(|| WarmingClaim {
+            cache: self.clone(),
+            key: key.clone(),
+        })
+    }
+
+    /// Finishes `generation` over `suffix` (only the events it has not folded) off the request.
+    fn warm(
+        &self,
+        key: FoldKey,
+        mut generation: graphhelm_events::ProjectionGeneration,
+        suffix: Vec<graphhelm_protocols::EventEnvelope>,
+    ) {
+        let Some(claim) = self.claim_warming(&key) else {
+            return;
+        };
+        let cache = self.clone();
+        std::thread::spawn(move || {
+            let _claim = claim;
+            let folded = suffix
+                .chunks(graphhelm_events::MAX_READ_PAGE)
+                .try_for_each(|page| generation.apply_page(page));
+            if folded.is_ok() {
+                cache.store(&key, generation);
+            }
+        });
+    }
 }
 
 /// [`graphhelm_events::replay_within`], resumed from serve's cached generation when one exists.
-///
-/// The cached generation is reused only when the history still holds the event it stopped at, by
-/// sequence AND hash; anything else (a different journal, a rewrite) folds from genesis. The fold
-/// is `ProjectionGeneration::apply_page`, which runs the same per-event checks and the same
-/// `apply_projection_event` as `replay_within` (`a_discarded_generation_rebuilds_to_identical_state`
-/// holds them equal), so a corrupt event still refuses and nothing corrupt is cached. When the
-/// budget runs out, the pages already folded are kept, and a background thread finishes the fold:
-/// the next read answers instead of starting over. That is the cold-start path too.
 fn fold_within(
     events: &Path,
     scope: &graphhelm_protocols::RepositoryScope,
@@ -315,9 +424,28 @@ fn fold_within(
     history: &[graphhelm_protocols::EventEnvelope],
     budget: &graphhelm_events::ReadBudget,
 ) -> Result<graphhelm_events::ExecutionProjection, graphhelm_events::ReplayError> {
-    let Some(cache) = SHARED_FOLDS.get() else {
-        return graphhelm_events::replay_within(scope, stream, history, budget);
-    };
+    match SHARED_FOLDS.get() {
+        Some(cache) => fold_cached(cache, events, scope, stream, history, budget),
+        None => graphhelm_events::replay_within(scope, stream, history, budget),
+    }
+}
+
+/// The cached generation is reused only when the history still holds the event it stopped at, by
+/// sequence AND hash; anything else (a different journal, a rewrite) folds from genesis. The fold
+/// is `ProjectionGeneration::apply_page`, which runs the same per-event checks and the same
+/// `apply_projection_event` as `replay_within` (`a_discarded_generation_rebuilds_to_identical_state`
+/// holds them equal), so a corrupt event still refuses and nothing corrupt is cached. When the
+/// budget runs out, the pages already folded are kept, and a background thread finishes the fold
+/// over only the events left: the next read answers instead of starting over. That is the
+/// cold-start path too.
+fn fold_cached(
+    cache: &FoldCache,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<graphhelm_events::ExecutionProjection, graphhelm_events::ReplayError> {
     if history.len() > graphhelm_events::MAX_READ_ALL {
         return Err(graphhelm_events::ReplayError::LimitExceeded);
     }
@@ -328,12 +456,10 @@ fn fold_within(
             serde_json::to_string(scope).map_err(|_| graphhelm_events::ReplayError::Corrupt)?
         ),
     );
-    let cached = cache
-        .lock()
-        .map_err(|_| graphhelm_events::ReplayError::Corrupt)?
+    let mut generation = match cache
         .get(&key)
-        .cloned();
-    let mut generation = match cached.filter(|generation| resumable(generation, history)) {
+        .filter(|generation| resumable(generation, history))
+    {
         Some(generation) => generation,
         None => graphhelm_events::ProjectionGeneration::new(
             scope.clone(),
@@ -345,20 +471,20 @@ fn fold_within(
     };
     let start = usize::try_from(generation.watermark().last_sequence())
         .map_err(|_| graphhelm_events::ReplayError::Corrupt)?;
-    let mut walked = 0_u64;
+    let mut walked = 0_usize;
     let remaining = history.get(start..).unwrap_or_default();
     for page in remaining.chunks(graphhelm_events::MAX_READ_PAGE) {
         generation.apply_page(page)?;
         let before = walked;
-        walked += page.len() as u64;
+        walked += page.len();
         // Checked between pages, never after the last: a finished fold is not refused for the
         // time it already spent (the caller's post-render `check_now` still bounds the read).
-        if walked as usize == remaining.len() {
+        if walked == remaining.len() {
             break;
         }
-        if let Err(exceeded) = budget.check_progress(before, walked) {
-            store_fold(cache, &key, generation.clone());
-            warm_in_background(key, generation, history.to_vec());
+        if let Err(exceeded) = budget.check_progress(before as u64, walked as u64) {
+            cache.store(&key, generation.clone());
+            cache.warm(key, generation, remaining[walked..].to_vec());
             return Err(graphhelm_events::ReplayError::BudgetExceeded {
                 walked: exceeded.walked,
                 limit_millis: exceeded.limit_millis,
@@ -366,7 +492,7 @@ fn fold_within(
         }
     }
     let projection = generation.projection().clone();
-    store_fold(cache, &key, generation);
+    cache.store(&key, generation);
     Ok(projection)
 }
 
@@ -385,54 +511,6 @@ fn resumable(
             .get(index)
             .is_some_and(|event| Some(&event.event_hash) == watermark.last_event_hash()),
     }
-}
-
-/// Keeps the furthest generation: a slower concurrent read must not rewind a faster one.
-fn store_fold(
-    cache: &std::sync::Mutex<
-        std::collections::BTreeMap<FoldKey, graphhelm_events::ProjectionGeneration>,
-    >,
-    key: &FoldKey,
-    generation: graphhelm_events::ProjectionGeneration,
-) {
-    let Ok(mut folds) = cache.lock() else { return };
-    let further = folds.get(key).is_none_or(|current| {
-        current.watermark().last_sequence() <= generation.watermark().last_sequence()
-    });
-    if further {
-        folds.insert(key.clone(), generation);
-    }
-}
-
-fn warm_in_background(
-    key: FoldKey,
-    mut generation: graphhelm_events::ProjectionGeneration,
-    history: Vec<graphhelm_protocols::EventEnvelope>,
-) {
-    let Some(cache) = SHARED_FOLDS.get() else {
-        return;
-    };
-    let Ok(mut warming) = WARMING.lock() else {
-        return;
-    };
-    if !warming.insert(key.clone()) {
-        return;
-    }
-    drop(warming);
-    std::thread::spawn(move || {
-        let start = usize::try_from(generation.watermark().last_sequence()).unwrap_or(usize::MAX);
-        let folded = history
-            .get(start..)
-            .unwrap_or_default()
-            .chunks(graphhelm_events::MAX_READ_PAGE)
-            .try_for_each(|page| generation.apply_page(page));
-        if folded.is_ok() {
-            store_fold(cache, &key, generation);
-        }
-        if let Ok(mut warming) = WARMING.lock() {
-            warming.remove(&key);
-        }
-    });
 }
 
 pub fn run(
@@ -771,7 +849,8 @@ mod tests {
     /// the cache every read refuses. Cost: 2,500 events in a tempdir, a few seconds in debug.
     #[test]
     fn a_lapsed_read_keeps_its_folded_pages_so_a_later_read_answers() {
-        super::enable_shared_fold_cache();
+        // A private cache: the process-global one stays off for every other test (#378).
+        let cache = super::FoldCache::default();
         let directory = tempfile::tempdir().unwrap();
         seed(directory.path(), 2_500);
         let store = crate::commands::event_store(directory.path()).unwrap();
@@ -788,7 +867,7 @@ mod tests {
                 Arc::new(LapsingClock(AtomicU64::new(0))),
                 chrono::Duration::seconds(5),
             );
-            match super::fold_within(directory.path(), &scope, &stream, &history, &lapsed) {
+            match super::fold_cached(&cache, directory.path(), &scope, &stream, &history, &lapsed) {
                 Ok(projection) => {
                     answered = Some(projection);
                     break;
@@ -803,6 +882,83 @@ mod tests {
             serde_json::to_value(&projection).unwrap(),
             serde_json::to_value(&direct).unwrap(),
             "the resumed fold must equal a full replay"
+        );
+    }
+
+    fn fold_key(name: &str) -> super::FoldKey {
+        (std::path::PathBuf::from(name), String::new())
+    }
+
+    fn empty_generation() -> graphhelm_events::ProjectionGeneration {
+        let scope = RepositoryScope::new(
+            WorkspaceId::parse(super::super::WORKSPACE).unwrap(),
+            ProjectId::parse(super::super::PROJECT).unwrap(),
+            Some(ExecutionId::parse("execution-budget").unwrap()),
+        );
+        graphhelm_events::ProjectionGeneration::new(
+            scope,
+            "execution-budget".to_owned(),
+            "serve-status".to_owned(),
+            1,
+            1,
+        )
+        .unwrap()
+    }
+
+    /// #378: the owner's Runtime stays up for days and reads dozens of runs, and #376 kept every
+    /// stream it ever folded. The cache holds at most its cap, drops the least recently used
+    /// first, and drops every stream idle past the limit. Cost: in-memory, no I/O.
+    #[test]
+    fn the_fold_cache_keeps_at_most_its_cap_and_drops_idle_streams() {
+        let cache = super::FoldCache::default();
+        let t0 = std::time::Instant::now();
+        for index in 0..super::FOLD_CACHE_STREAMS + 5 {
+            cache.store_at(
+                &fold_key(&format!("events-{index}")),
+                empty_generation(),
+                t0 + std::time::Duration::from_secs(index as u64),
+            );
+        }
+        {
+            let folds = cache.0.folds.lock().unwrap();
+            assert_eq!(folds.len(), super::FOLD_CACHE_STREAMS);
+            assert!(
+                !folds.contains_key(&fold_key("events-0")),
+                "the least recently used stream goes first"
+            );
+        }
+        cache.store_at(
+            &fold_key("late"),
+            empty_generation(),
+            t0 + super::FOLD_CACHE_IDLE + std::time::Duration::from_secs(3_600),
+        );
+        assert_eq!(
+            cache.0.folds.lock().unwrap().len(),
+            1,
+            "every stream idle past the limit is dropped"
+        );
+    }
+
+    /// #378: #376 cleared a stream's warming mark only when the warmer returned, so a warmer that
+    /// panicked left the stream marked and no later read could warm it again. Cost: one thread.
+    #[test]
+    fn a_warmer_that_panics_releases_its_stream() {
+        let cache = super::FoldCache::default();
+        let key = fold_key("events");
+        let claim = cache.claim_warming(&key).expect("the first claim succeeds");
+        assert!(
+            cache.claim_warming(&key).is_none(),
+            "a running warmer holds its stream"
+        );
+        let panicked = std::thread::spawn(move || {
+            let _claim = claim;
+            panic!("the warmer failed");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(
+            cache.claim_warming(&key).is_some(),
+            "a panicked warmer must not leave its stream marked"
         );
     }
 }

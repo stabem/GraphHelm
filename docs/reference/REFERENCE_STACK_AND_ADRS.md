@@ -1502,12 +1502,14 @@ recursive deletes, so leftovers waited for the owner.
    nothing. Git ancestry cannot say "merged" under squash merge, so the sweep never infers it. A
    workspace is removed only when it is `released`, its worktree is clean, and `HEAD` still equals
    the released sha. Otherwise it is kept with a reason: `not_released`, `dirty`,
-   `moved_after_release`, `worktree_unreadable`, `linked_path` or `contains_link`. "Clean" is
+   `moved_after_release`, `worktree_unreadable`, `linked_path`, `scan_failed` or `contains_link`. "Clean" is
    git's: tracked and untracked files. **Releasing a workspace consents to deleting its ignored
    files** (`.env`, local databases, build output) along with the rest.
 4. **Removal never leaves the workspace.** Before git runs, `wt/` is walked without following
    links. A symlink, junction or other reparse point anywhere in it, at a tracked or an ignored
-   path, keeps the workspace as `contains_link` and names the first one found, because
+   path, keeps the workspace as `contains_link` and names the first one found. The scan fails
+   closed: a folder or entry it cannot read keeps the workspace as `scan_failed`, naming the path
+   and the error, because
    `git worktree remove` recurses through a junction and deletes what it points at (found in the
    #374 review). Only a link-free worktree goes to `git worktree remove` without `--force` (a
    second cleanliness check at the act). Then `target/`, `tmp/` and `logs/` are deleted by a walk that
@@ -1520,6 +1522,10 @@ recursive deletes, so leftovers waited for the owner.
    `workspace_sweep` refuses an agent-typed session before any request, whatever credential the
    session holds. Claim and release stay CLI-local: an agent creates and releases only its own
    directories.
+
+**Accepted risks:** a link created between the scan and `git worktree remove` is not caught (the
+sweep acts on released workspaces nothing should still write to); ignored files of a released
+workspace are deleted (§3).
 
 **Deferred:** a disk budget and free-space floor, a Runtime timer, idle and PR-closed triggers, a
 Studio usage panel, and a shared build cache per root.

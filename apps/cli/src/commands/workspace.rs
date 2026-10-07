@@ -297,23 +297,26 @@ fn is_link(metadata: &std::fs::Metadata) -> bool {
 /// The first link (symlink, junction or other reparse point) under `path`, relative to it, found
 /// without following any link. `git worktree remove` recurses through a junction at an ignored
 /// path and deletes what it points at, so a worktree holding one is never handed to git (#374).
-fn first_link(path: &Path, base: &Path) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(path).ok()?;
-    for entry in entries.filter_map(Result::ok) {
-        let child = entry.path();
-        let Ok(metadata) = std::fs::symlink_metadata(&child) else {
-            continue;
-        };
+///
+/// Fails closed: a directory or entry the scan cannot read is an `Err` naming it, and the caller
+/// keeps the workspace. An unread directory may hold a link.
+fn first_link(path: &Path, base: &Path) -> Result<Option<PathBuf>, (PathBuf, String)> {
+    let relative = |p: &Path| p.strip_prefix(base).unwrap_or(p).to_path_buf();
+    let entries = std::fs::read_dir(path).map_err(|e| (relative(path), e.to_string()))?;
+    for entry in entries {
+        let child = entry.map_err(|e| (relative(path), e.to_string()))?.path();
+        let metadata =
+            std::fs::symlink_metadata(&child).map_err(|e| (relative(&child), e.to_string()))?;
         if is_link(&metadata) {
-            return Some(child.strip_prefix(base).unwrap_or(&child).to_path_buf());
+            return Ok(Some(relative(&child)));
         }
         if metadata.is_dir()
-            && let Some(found) = first_link(&child, base)
+            && let Some(found) = first_link(&child, base)?
         {
-            return Some(found);
+            return Ok(Some(found));
         }
     }
-    None
+    Ok(None)
 }
 
 fn size_of(path: &Path) -> u64 {
@@ -369,13 +372,21 @@ fn live(root: &Path, record: &Value) -> Value {
     let linked = [root.join(lane), dir.clone(), worktree.clone()]
         .iter()
         .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| is_link(&m)));
+    let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let mut scan_error = None;
     let link_in_worktree = if linked {
         None
     } else {
-        first_link(&worktree, &worktree).map(|p| p.to_string_lossy().replace('\\', "/"))
+        match first_link(&worktree, &worktree) {
+            Ok(found) => found.map(|p| slash(&p)),
+            Err((at, error)) => {
+                scan_error = Some(json!({"path": slash(&at), "error": error}));
+                None
+            }
+        }
     };
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
-        "linked": linked, "linkInWorktree": link_in_worktree,
+        "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
         "releasedHead": record["releasedHead"], "sizeBytes": size_of(&dir)})
 }
@@ -399,6 +410,9 @@ fn keep_reason(view: &Value) -> Option<&'static str> {
     }
     if view["linked"] == json!(true) {
         return Some("linked_path");
+    }
+    if !view["scanError"].is_null() {
+        return Some("scan_failed");
     }
     if !view["linkInWorktree"].is_null() {
         return Some("contains_link");
@@ -428,7 +442,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         if let Some(reason) = keep_reason(&view) {
             if reason != "already_swept" {
                 kept.push(json!({"lane": lane, "task": task, "reason": reason,
-                    "link": view["linkInWorktree"]}));
+                    "link": view["linkInWorktree"], "scanError": view["scanError"]}));
             }
             continue;
         }

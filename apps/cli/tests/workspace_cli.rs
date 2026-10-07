@@ -266,6 +266,79 @@ fn a_link_anywhere_in_the_worktree_keeps_the_workspace_and_its_target_survives()
     assert_eq!(code, 3, "{refused}");
 }
 
+/// Makes `dir` unlistable for the current user until the guard drops (Windows: a deny ACE for
+/// list-directory; elsewhere mode 000).
+struct Unreadable(std::path::PathBuf);
+
+impl Unreadable {
+    fn new(dir: &Path) -> Self {
+        #[cfg(windows)]
+        {
+            let user = std::env::var("USERNAME").unwrap();
+            let out = Command::new("icacls")
+                .arg(dir)
+                .args(["/deny", &format!("{user}:(RD)")])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        Self(dir.to_path_buf())
+    }
+}
+
+impl Drop for Unreadable {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            let user = std::env::var("USERNAME").unwrap_or_default();
+            let _ = Command::new("icacls")
+                .arg(&self.0)
+                .args(["/remove:d", &user])
+                .output();
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+}
+
+/// #374 review: the link scan must fail closed. A folder it cannot read may hold a junction, so a
+/// read error keeps the workspace (`scan_failed`, naming the folder) instead of sweeping it.
+#[test]
+fn an_unreadable_folder_in_the_worktree_keeps_the_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "locked");
+    let wt = root.join("lane").join("locked").join("wt");
+    let hidden = wt.join("ignored").join("sealed");
+    std::fs::create_dir_all(&hidden).unwrap();
+    release(root_s, "lane", "locked");
+    let guard = Unreadable::new(&hidden);
+    if std::fs::read_dir(&hidden).is_ok() {
+        drop(guard);
+        panic!("precondition: the folder must be unreadable to this user (running as root?)");
+    }
+    let (code, swept) = run(&["sweep", "--root", root_s, "--apply"]);
+    drop(guard);
+    assert_eq!(code, 0, "{swept}");
+    assert_eq!(swept["data"]["removed"], serde_json::json!([]), "{swept}");
+    assert_eq!(swept["data"]["kept"][0]["reason"], "scan_failed", "{swept}");
+    assert_eq!(
+        swept["data"]["kept"][0]["scanError"]["path"], "ignored/sealed",
+        "{swept}"
+    );
+    assert!(hidden.is_dir(), "the unreadable folder was removed");
+}
+
 mod support;
 
 struct Server(std::process::Child);

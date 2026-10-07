@@ -40,7 +40,7 @@ pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use journeys::{
     ArrowState, ArrowView, CaptureRecord, CaptureView, ChangedSince, ContractInput, Freshness,
     GitHistory, JourneyView, JourneysView, ScopeHistory, ScreenInput, ScreenView, StepInput,
-    StepView, TransitionRecord, UnknownCause, Viewport, fold_journeys, valid_journey_id,
+    StepAction, StepView, TransitionRecord, UnknownCause, Viewport, fold_journeys, valid_journey_id,
     valid_revision,
 };
 pub use progress::{Progress, classify_progress};

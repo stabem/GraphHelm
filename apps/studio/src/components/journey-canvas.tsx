@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import type { BeforeAfterPair } from "../runtime/journeys";
 import { captureAge } from "../runtime/journeys";
-import type { ArrowView, CaptureUnknownCause, CaptureView, JourneysView, RuntimeEvent, StepView } from "../runtime/types";
+import type { ArrowView, CaptureUnknownCause, CaptureView, JourneysView, RuntimeEvent, StepAction, StepView } from "../runtime/types";
 import { ago } from "./format";
 import { useImageUrl } from "./use-image-url";
 
@@ -43,6 +43,41 @@ function titleOf(step: StepView): string {
   return step.screen?.title ?? step.stepId;
 }
 
+/** #379: verbs for the contract's semantic action kinds, said as what the user does. */
+const ACTION_VERB: Record<string, string> = {
+  navigate: "Goes to",
+  activate: "Clicks",
+  enter_text: "Types into",
+  select: "Chooses",
+  upload: "Uploads a file to",
+  download: "Downloads",
+  wait_for: "Waits for",
+  inspect: "Looks at",
+  submit: "Submits",
+  recover: "Recovers with",
+  approve: "Approves",
+};
+
+/** One plain sentence for a step's action: `Clicks “Checkout”`, `Opens /cart`. */
+export function actionText(action: StepAction): string {
+  if (action.kind === "navigate" && action.strategy === "url") return `Opens ${action.target}`;
+  const verb = ACTION_VERB[action.kind] ?? action.kind.replace(/_/g, " ");
+  return `${verb} “${action.target}”`;
+}
+
+/** What the user does and must see on one step, above the capture's provenance. */
+function Plain({ step }: { step: StepView }) {
+  const states = step.expectedStates ?? [];
+  return (
+    <>
+      {step.action ? <span className="journey-does"><span className="journey-label">Does</span> {actionText(step.action)}</span> : null}
+      {step.promises.length > 0
+        ? <span className="journey-sees"><span className="journey-label">Sees</span> {step.promises.join("; ")}</span>
+        : states.length > 0 ? <span className="journey-sees"><span className="journey-label">Reaches</span> {states.join(", ")}</span> : null}
+    </>
+  );
+}
+
 function Shot({ evidenceId, executionId, loadImage, alt, className }: { evidenceId: string; executionId?: string; loadImage: (id: string, executionId?: string) => Promise<Blob>; alt: string; className: string }) {
   const { url, error } = useImageUrl(() => (executionId === undefined ? loadImage(evidenceId) : loadImage(evidenceId, executionId)), `${executionId ?? ""}/${evidenceId}`);
   if (url !== null) return <img className={className} src={url} alt={alt} />;
@@ -67,10 +102,11 @@ function Freshness({ capture }: { capture: CaptureView }) {
   return null;
 }
 
-function Arrow({ arrow }: { arrow: ArrowView | undefined }) {
+function Arrow({ arrow, next }: { arrow: ArrowView | undefined; next: StepView }) {
   const state = arrow?.state ?? "never_walked";
   return (
     <div className="journey-arrow" data-state={state} aria-label={`Arrow: ${state.replace("_", " ")}`}>
+      {next.action ? <span className="journey-arrow-act">{actionText(next.action)}</span> : null}
       <span className="journey-arrow-line" />
       {state !== "walked" && <span className="journey-arrow-label">{state === "stale" ? "stale" : "never walked"}</span>}
     </div>
@@ -125,6 +161,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
                   <Shot evidenceId={capture.imageEvidenceId} executionId={capture.executionId} loadImage={loadImage} alt={`${titleOf(step)} screenshot`} className="journey-thumb" />
                 )}
                 <strong className="journey-card-title">{titleOf(step)}</strong>
+                <Plain step={step} />
                 {capture !== null && (
                   <span className="journey-meta">
                     {botName(capture.observer)} · {capture.revision.slice(0, 7)} · {at === null ? "age unknown" : ago(new Date(at).toISOString())}
@@ -132,7 +169,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
                 )}
                 {capture !== null && <Freshness capture={capture} />}
               </button>
-              {next !== undefined && <Arrow arrow={arrow} />}
+              {next !== undefined && <Arrow arrow={arrow} next={next} />}
             </li>
           );
         })}

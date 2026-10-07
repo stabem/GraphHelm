@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::{
-    CaptureRecord, ContractInput, GitHistory, ScreenInput, StepInput, TransitionRecord, Viewport,
+    CaptureRecord, ContractInput, GitHistory, ScreenInput, StepAction, StepInput, TransitionRecord, Viewport,
     fold_journeys, valid_journey_id, valid_revision,
 };
 use graphhelm_protocols::{EventKind, EvidenceId};
@@ -319,6 +319,24 @@ struct PromiseFile {
 struct StepFile {
     step_id: String,
     screen: Option<ScreenFile>,
+    #[serde(default)]
+    semantic_action: Option<ActionFile>,
+    #[serde(default)]
+    expected_states: Vec<String>,
+}
+
+/// The served part of a `semanticAction` (#379). `input` is deliberately not read: it may hold
+/// typed text, and the map needs only what the user acts on.
+#[derive(Deserialize)]
+struct ActionFile {
+    kind: String,
+    target: TargetFile,
+}
+
+#[derive(Deserialize)]
+struct TargetFile {
+    strategy: String,
+    value: String,
 }
 
 #[derive(Deserialize)]
@@ -383,6 +401,12 @@ pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'stati
                     .filter(|promise| promise.step_id == step.step_id)
                     .map(|promise| promise.statement.clone())
                     .collect(),
+                action: step.semantic_action.map(|action| StepAction {
+                    kind: action.kind,
+                    target: action.target.value,
+                    strategy: action.target.strategy,
+                }),
+                expected_states: step.expected_states,
                 step_id: step.step_id,
                 screen: step.screen.map(|screen| ScreenInput {
                     screen_id: screen.screen_id,

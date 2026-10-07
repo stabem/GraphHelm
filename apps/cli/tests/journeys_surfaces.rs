@@ -46,7 +46,8 @@ fn step(id: &str, scope: &str) -> Value {
         "actorId": "shopper",
         "semanticAction": {
             "kind": "navigate",
-            "target": {"strategy": "visible_text", "value": "Cart", "geometryClaim": false}
+            "target": {"strategy": "visible_text", "value": "Cart", "geometryClaim": false},
+            "input": "typed-sentinel-379"
         },
         "expectedStates": ["stable"],
         "failureContract": {
@@ -384,6 +385,15 @@ fn cli_http_and_mcp_return_the_same_journey_map() {
     assert_eq!(cart["contractId"], "cart");
     let steps = cart["steps"].as_array().unwrap();
     assert_eq!(steps[0]["promises"], json!(["The cart renders"]), "{cli}");
+    // #379: the map says what the user does and must reach on each step; the action's `input`
+    // (typed text, possibly a secret) is never served.
+    assert_eq!(
+        steps[0]["action"],
+        json!({"kind": "navigate", "target": "Cart", "strategy": "visible_text"}),
+        "{cli}"
+    );
+    assert_eq!(steps[0]["expectedStates"], json!(["stable"]), "{cli}");
+    assert!(!cli.to_string().contains("typed-sentinel-379"), "{cli}");
     assert!(steps[0]["capture"]["sequence"].is_u64(), "{cli}");
     assert_eq!(steps[0]["capture"]["signalId"], "cap-open");
     assert_eq!(steps[0]["capture"]["executionId"], RUN);

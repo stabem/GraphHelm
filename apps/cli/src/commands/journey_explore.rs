@@ -682,7 +682,8 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                     .as_array_mut()
                     .unwrap()
                     .push(edge_id.clone().into());
-                cache["edges"][&edge_id] = json!({"acts":locators});
+                // The replay cache schema stores an edge as its bare locator list.
+                cache["edges"][&edge_id] = Value::Array(locators.clone());
                 pending = Vec::new();
                 locators = Vec::new();
             }

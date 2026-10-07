@@ -240,7 +240,10 @@ fn a_link_anywhere_in_the_worktree_keeps_the_workspace_and_its_target_survives()
     let (code, swept) = run(&["sweep", "--root", root_s, "--apply"]);
     assert_eq!(code, 0, "{swept}");
     assert_eq!(swept["data"]["removed"], serde_json::json!([]), "{swept}");
-    assert_eq!(swept["data"]["kept"][0]["reason"], "contains_link", "{swept}");
+    assert_eq!(
+        swept["data"]["kept"][0]["reason"], "contains_link",
+        "{swept}"
+    );
     assert_eq!(swept["data"]["kept"][0]["link"], "ignored/link", "{swept}");
     assert_eq!(
         std::fs::read_to_string(victim.join("keep.txt")).unwrap(),
@@ -249,8 +252,16 @@ fn a_link_anywhere_in_the_worktree_keeps_the_workspace_and_its_target_survives()
     );
     assert!(wt.is_dir());
     let (code, refused) = run(&[
-        "claim", "--root", root_s, "--lane", "lane", "--task", "opt", "--repo",
-        repo.to_str().unwrap(), "--base=--orphan",
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "opt",
+        "--repo",
+        repo.to_str().unwrap(),
+        "--base=--orphan",
     ]);
     assert_eq!(code, 3, "{refused}");
 }

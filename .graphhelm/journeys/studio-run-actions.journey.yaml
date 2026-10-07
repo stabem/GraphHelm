@@ -1,0 +1,65 @@
+schema: graphhelm.journey-flow/1
+id: studio-run-actions
+title: "Owner pauses a run, or cancels it behind a confirmation"
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [irreversible_effect, critical_ux]
+screens:
+  - id: actions
+    title: Run actions open in the dock
+    url: /
+    state: stable
+    expect: [{role: button, name: pause · finish in-flight}, {role: button, name: pause now · interrupt}, {role: button, name: resume}, {role: button, name: sweep}, {role: button, name: Cancel execution}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+  - id: cancel-confirm
+    title: Cancel asks for confirmation in place
+    url: /
+    state: stable
+    expect: [{role: button, name: "yes, cancel it"}, {role: button, name: keep running}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+  - id: cancelled
+    title: "The run is cancelled; nothing is left to pause, resume or cancel"
+    url: /
+    state: success
+    expect: [{role: button, name: sweep}, {role: region, name: Team}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+  - id: paused
+    title: The pause is read back from the log
+    url: /
+    state: success
+    expect: [{role: button, name: resume}, {role: button, name: sweep}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: region, name: Canvas}, {role: region, name: Team}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+edges:
+  - id: actions.cancel
+    from: actions
+    to: cancel-confirm
+    acts:
+      - {kind: activate, role: button, name: Cancel execution}
+  - id: actions.pause
+    from: actions
+    to: paused
+    acts:
+      - {kind: activate, role: button, name: pause · finish in-flight}
+  - id: cancel-confirm.yes
+    from: cancel-confirm
+    to: cancelled
+    acts:
+      - {kind: activate, role: button, name: "yes, cancel it"}
+  - id: run.actions
+    from: run
+    to: actions
+    acts:
+      - {kind: activate, role: summary, name: Run actions}
+paths:
+  main: [run.actions, actions.pause]
+  cancel: [run.actions, actions.cancel, cancel-confirm.yes]
+drift: []

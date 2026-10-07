@@ -1088,7 +1088,7 @@
           "id": "skill/journey-map",
           "kind": "skill",
           "path": "skills/journey-map/SKILL.md",
-          "sha256": "sha256:170e4b04303fadd539688c8a28570b85a073d4ac1acd3b82fd2518ad1d785b04",
+          "sha256": "sha256:0ffbc80e3d848a8efac6c4ddba5af378cb845c4f9a22488d368e062c84e6fc1e",
           "effects": [
             "artifact.local.write",
             "artifact.propose"

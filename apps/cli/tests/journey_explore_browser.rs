@@ -184,3 +184,144 @@ fn actual_exploration_redacts_model_input_and_repeats_the_same_draft() {
             .any(|v| v["prompt"].as_str().unwrap().contains("«secret:password»"))
     );
 }
+
+const DESTRUCTIVE_MODEL: &str = r#"
+let input=''; process.stdin.setEncoding('utf8');
+process.stdin.on('data',chunk=>input+=chunk);
+process.stdin.on('end',()=>{
+  const match=/<observation>([\s\S]*)<\/observation>/.exec(input);
+  if(!match)process.exit(1);
+  const d=JSON.parse(match[1]), current=d.current, visited=d.visited;
+  let proposal;
+  if(current.includes('heading "Account deleted"')) proposal=visited.includes('deleted /account/deleted')?
+    {done:true}:{newScreen:{id:'deleted',title:'Deleted'}};
+  else if(current.includes('heading "Account"')) proposal=visited.includes('account /account')?
+    {act:{kind:'activate',role:'button',name:'Delete account'}}:{newScreen:{id:'account',title:'Account'}};
+  else proposal={giveUp:'goal_unreachable'};
+  process.stdout.write(JSON.stringify({subtype:'success',result:JSON.stringify(proposal),usage:{input_tokens:1,output_tokens:1}}));
+});
+"#;
+
+/// The fixture app with its command channel kept open, so the test can read the server-side
+/// effect counters after the CLI has run.
+struct Fixture {
+    app: App,
+    lines: mpsc::Receiver<String>,
+}
+impl Fixture {
+    fn start(script: &Path) -> Self {
+        let mut command = Command::new("node");
+        command
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        graphhelm_process_tree::configure(&mut command);
+        let mut child = command.spawn().expect("OBSERVER_MISSING: local Node app");
+        let group = graphhelm_process_tree::create(&child).unwrap();
+        let output = child.stdout.take().unwrap();
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let first = lines
+            .recv_timeout(Duration::from_secs(30))
+            .expect("OBSERVER_MISSING: app startup");
+        let value: Value = serde_json::from_str(&first).unwrap();
+        let base = value["base"].as_str().unwrap().to_owned();
+        Self {
+            app: App { child, group, base },
+            lines,
+        }
+    }
+    fn deletes(&mut self) -> u64 {
+        use std::io::Write;
+        let stdin = self.app.child.stdin.as_mut().unwrap();
+        stdin.write_all(b"counts\n").unwrap();
+        stdin.flush().unwrap();
+        let line = self.lines.recv_timeout(Duration::from_secs(10)).unwrap();
+        serde_json::from_str::<Value>(&line).unwrap()["deletes"]
+            .as_u64()
+            .unwrap()
+    }
+}
+
+fn observed_project(root: &Path, name: &str, toolchain: &std::ffi::OsStr) -> std::path::PathBuf {
+    let project = root.join(name);
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("package.json"), "{\"private\":true}").unwrap();
+    let linked = Command::new("node")
+        .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
+        .arg(Path::new(toolchain).join("node_modules"))
+        .arg(project.join("node_modules"))
+        .status()
+        .unwrap();
+    assert!(linked.success());
+    let observer = project.join(".graphhelm/observers");
+    std::fs::create_dir_all(&observer).unwrap();
+    std::fs::write(
+        observer.join("journey_driver.mjs"),
+        include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    project
+}
+
+// #356 Task 2: a deny-listed act must never reach the app, whatever the model proposes.
+// Observer: the fixture server's own delete counter (a durable server-side effect), with
+// a positive control in which an operator --allow-act lets the same act through.
+#[test]
+#[ignore = "requires explicitly installed local Playwright/Chromium observer"]
+fn a_denied_act_never_reaches_the_app_and_an_allowed_one_does() {
+    let toolchain = std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+        .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT");
+    let root = tempfile::tempdir().unwrap();
+    let app_script = root.path().join("app.mjs");
+    std::fs::write(
+        &app_script,
+        include_str!("../../../tools/journey-driver/fixture-server.mjs"),
+    )
+    .unwrap();
+    let mut fixture = Fixture::start(&app_script);
+    let model = root.path().join("model.cjs");
+    std::fs::write(&model, DESTRUCTIVE_MODEL).unwrap();
+    let manifest = root.path().join("routes.json");
+    std::fs::write(&manifest,serde_json::to_vec(&json!({"manifestVersion":1,"routes":[{
+        "id":"explore_observer","provider":"anthropic","transport":"native_runtime","runtime":"claude_code",
+        "authentication":"account_subscription","billingMode":"subscription_quota","command":{"program":"node","args":[model]},
+        "profiles":["software_execution"],"enabled":true,"timeoutSeconds":10}]})).unwrap()).unwrap();
+    let base = fixture.app.base.clone();
+    let explore = |project: &Path, allow: &[&str]| {
+        let mut command = cli();
+        command
+            .args(["journey", "explore", "--id", "account", "--base"])
+            .arg(format!("{base}/account"))
+            .args(["--goal", "Delete the account", "--project"])
+            .arg(project)
+            .arg("--manifest")
+            .arg(&manifest)
+            .args(["--route", "explore_observer"]);
+        for expression in allow {
+            command.args(["--allow-act", expression]);
+        }
+        reply(&mut command)
+    };
+
+    let denied = observed_project(root.path(), "denied", &toolchain);
+    let (code, value) = explore(&denied, &[]);
+    assert_eq!(code, 1, "{value}");
+    assert_eq!(value["diagnostics"][0]["code"], "explore.action_denied", "{value}");
+    assert_eq!(value["data"]["acts"], 0, "{value}");
+    assert_eq!(fixture.deletes(), 0, "a denied act reached the app");
+    assert!(!denied.join(".graphhelm/journeys/account.journey.yaml").exists());
+
+    let allowed = observed_project(root.path(), "allowed", &toolchain);
+    let (code, value) = explore(&allowed, &["Delete account"]);
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["data"]["acts"], 1, "{value}");
+    assert_eq!(fixture.deletes(), 1, "the positive control did not reach the app");
+}

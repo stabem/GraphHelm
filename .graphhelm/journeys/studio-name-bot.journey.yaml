@@ -2,7 +2,7 @@ schema: graphhelm.journey-flow/1
 id: studio-name-bot
 title: Owner gives a bot a display name
 status: approved
-approved: {revision: 5cd12371c55a8720faa74cda3a96cf8104c7e158, digest: sha256:8fabef17c50a47e757392d19f6c712cc592d7714c117fb7105721cdfa1cfc496}
+approved: {revision: c8f1e0dec666d1a6cb7d6818f08f2605eda3ebca, digest: sha256:67a22865410db7520d5a5f7779859f31138417d7a103ac9dc8b0bc8b021f80b8}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -24,7 +24,7 @@ screens:
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: heading, name: planner asks}]
+    expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: button, name: Move planner}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
 edges:
   - id: naming.save

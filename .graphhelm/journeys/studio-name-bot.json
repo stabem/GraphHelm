@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Team\", button \"Name this bot\", heading \"planner asks\"",
+      "statement": "shows region \"Team\", button \"Name this bot\", button \"Move planner\"",
       "statesToObserve": [
         "stable"
       ],

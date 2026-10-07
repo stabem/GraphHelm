@@ -417,11 +417,13 @@ impl Driver {
         }) {
             return Err(failure("driver.redaction_failed", path, 1));
         }
+        // Each malformed-frame check names itself under the call's pointer, so a refused
+        // frame says which check refused it without echoing driver-controlled text.
         let reply: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| failure("replay.driver_frame_invalid", path, 1))?;
+            .map_err(|_| failure("replay.driver_frame_invalid", format!("{path}/json"), 1))?;
         let success = reply["ok"]
             .as_bool()
-            .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
+            .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/ok"), 1))?;
         let keys = if success {
             &["protocol", "requestId", "ok", "result"][..]
         } else {
@@ -433,7 +435,11 @@ impl Driver {
                 v.len() == keys.len() && v.keys().all(|k| keys.contains(&k.as_str()))
             })
         {
-            return Err(failure("replay.driver_frame_invalid", path, 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                format!("{path}/envelope"),
+                1,
+            ));
         }
         if !success {
             let code = match reply["code"].as_str().unwrap_or("") {
@@ -450,7 +456,13 @@ impl Driver {
                 "driver.redaction_failed" => "driver.redaction_failed",
                 "driver.capture_refused" => "driver.capture_refused",
                 "driver.action_failed" => "driver.action_failed",
-                _ => "replay.driver_frame_invalid",
+                _ => {
+                    return Err(failure(
+                        "replay.driver_frame_invalid",
+                        format!("{path}/code"),
+                        1,
+                    ));
+                }
             };
             return Err(failure(
                 code,
@@ -538,7 +550,11 @@ impl Driver {
                 _ => false,
             };
         if !valid {
-            return Err(failure("replay.driver_frame_invalid", path, 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                format!("{path}/result"),
+                1,
+            ));
         }
         Ok(result.clone())
     }

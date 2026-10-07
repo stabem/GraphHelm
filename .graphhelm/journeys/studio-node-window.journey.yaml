@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-node-window
+title: Owner opens a graph step's window from the team canvas
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: node
+    title: "Node window (demo step: deploy)"
+    url: /
+    state: stable
+    expect: [{role: region, name: Node deploy}, {role: heading, name: Deploy}, {role: button, name: Close this node}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/keel-chain.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx]
+edges:
+  - id: run.step
+    from: run
+    to: node
+    acts:
+      - {kind: activate, role: button, name: Deploy · ready}
+paths:
+  main: [run.step]
+drift: []

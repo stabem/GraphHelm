@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-handover
+title: Owner reads While you were away and dismisses it
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: handover
+    title: The handover card over the canvas (needs 20+ events over 15+ min since last seen)
+    url: /
+    state: stable
+    expect: [{role: dialog, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: region, name: Canvas}, {role: tab, name: Team (live)}, {role: region, name: Team}, {role: complementary, name: Run side panel}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: handover.dismiss
+    from: handover
+    to: run
+    acts:
+      - {kind: activate, role: button, name: Got it}
+paths:
+  main: [handover.dismiss]
+drift: []

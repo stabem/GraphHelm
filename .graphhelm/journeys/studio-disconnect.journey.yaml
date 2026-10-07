@@ -1,0 +1,42 @@
+schema: graphhelm.journey-flow/1
+id: studio-disconnect
+title: "Owner disconnects: two separate clicks, then the connect gate"
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [irreversible_effect, authentication]
+screens:
+  - id: armed
+    title: Disconnect is armed for five seconds
+    url: /
+    state: stable
+    expect: [{role: button, name: Click again to disconnect and clear the boards}]
+    scope: [apps/studio/src/App.tsx]
+  - id: gate
+    title: Connect gate
+    url: /
+    state: empty
+    expect: [{role: heading, name: Your agents are one token away}, {role: button, name: Connect}]
+    scope: [apps/studio/src/components/Connect.tsx, apps/studio/src/App.tsx]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: button, name: Disconnect}, {role: navigation, name: Projects}]
+    scope: [apps/studio/src/App.tsx]
+edges:
+  - id: armed.confirm
+    from: armed
+    to: gate
+    acts:
+      - {kind: activate, role: button, name: Click again to disconnect and clear the boards}
+  - id: run.disconnect
+    from: run
+    to: armed
+    acts:
+      - {kind: activate, role: button, name: Disconnect}
+paths:
+  main: [run.disconnect, armed.confirm]
+drift: []

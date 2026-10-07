@@ -60,7 +60,7 @@ const ACTION_VERB: Record<string, string> = {
 
 /** One plain sentence for a step's action: `Clicks “Checkout”`, `Opens /cart`. */
 export function actionText(action: StepAction): string {
-  if (action.kind === "navigate" && action.strategy === "url") return `Opens ${action.target}`;
+  if (action.kind === "navigate" && (action.strategy === "url" || /^(\/|https?:)/.test(action.target))) return `Opens ${action.target}`;
   const verb = ACTION_VERB[action.kind] ?? action.kind.replace(/_/g, " ");
   return `${verb} “${action.target}”`;
 }

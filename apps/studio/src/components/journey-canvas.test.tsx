@@ -45,7 +45,7 @@ describe("JourneyCanvas", () => {
   it("says in plain words what the user does and sees, and what each arrow does", () => {
     const steps = view.journeys[0].steps;
     const plain: JourneysView = { ...view, journeys: [{ ...view.journeys[0], steps: [
-      { ...steps[0], action: { kind: "navigate", target: "/cart", strategy: "url" }, expectedStates: ["stable"] },
+      { ...steps[0], action: { kind: "navigate", target: "/cart", strategy: "stable_product_id" }, expectedStates: ["stable"] },
       { ...steps[1], action: { kind: "activate", target: "Checkout", strategy: "accessible_name" }, expectedStates: ["stable"] },
       { ...steps[2], action: null, expectedStates: [] },
       { ...steps[3], action: { kind: "enter_text", target: "Card number", strategy: "label" }, expectedStates: ["success"] },

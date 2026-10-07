@@ -574,9 +574,22 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     let mut invalid: Option<Failure> = None;
     let mut done = false;
     let mut failed = None;
+    // Every refusal inside the loop ends it through `failed`, so the driver still closes
+    // and an observed valid prefix can still be published.
+    macro_rules! attempt {
+        ($result:expr) => {
+            match $result {
+                Ok(value) => value,
+                Err(error) => {
+                    failed = Some(error);
+                    break;
+                }
+            }
+        };
+    }
     for turn in 0..args.max_steps {
         data["turns"] = (turn + 1).into();
-        let question = prompt(&args.goal, &flow, &snapshot, &recent, &private, None)?;
+        let question = attempt!(prompt(&args.goal, &flow, &snapshot, &recent, &private, None));
         use sha2::Digest;
         data["promptSha256s"]
             .as_array_mut()
@@ -632,16 +645,16 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 failed = Some(refused("explore.graph_limit", "/screens", 1));
                 break;
             }
-            let id = screen_id(screen["id"].as_str().unwrap(), &visited)?;
-            let expectations = snapshot["expectations"]
+            let id = attempt!(screen_id(screen["id"].as_str().unwrap(), &visited));
+            let expectations = attempt!(snapshot["expectations"]
                 .as_array()
                 .filter(|v| !v.is_empty())
-                .ok_or_else(|| refused("explore.expectation_missing", "/screens/expect", 1))?;
-            driver.call(
+                .ok_or_else(|| refused("explore.expectation_missing", "/screens/expect", 1)));
+            attempt!(driver.call(
                 "snapshot",
                 json!({"expect":expectations}),
                 "/screens/expect",
-            )?;
+            ));
             flow["screens"].as_array_mut().unwrap().push(json!({"id":id,"title":screen["title"],"url":pattern,"state":"stable","expect":expectations,"scope":"unknown"}));
             cache["screens"][&id] =
                 json!({"fingerprint":snapshot["fingerprint"],"controls":snapshot["controls"]});
@@ -671,11 +684,11 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
             }
             if args.events.is_some() {
                 let name = format!("{id}.png");
-                driver.call(
+                attempt!(driver.call(
                     "capture",
                     json!({"path":name,"maskSecrets":true}),
                     "/recording/capture",
-                )?;
+                ));
                 images.insert(id, temporary.path().join(name));
             }
         } else if let Some(act) = proposal.get("act") {
@@ -687,23 +700,23 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 failed = Some(refused("explore.edge_budget", "/edges/acts", 1));
                 break;
             }
-            permitted(act, &allow)?;
+            attempt!(permitted(act, &allow));
             let mut request = act.clone();
             if let Some(secret) = request.as_object_mut().unwrap().remove("secret") {
                 request["secretEnv"] =
                     format!("GRAPHHELM_SECRET_{}", secret.as_str().unwrap()).into();
             }
-            let observed = driver.call("act", request, "/proposal/act")?;
+            let observed = attempt!(driver.call("act", request, "/proposal/act"));
             pending.push(act.clone());
             locators.push(observed["locator"].clone());
             recent.push(act.clone());
             data["acts"] = data["acts"].as_u64().unwrap().saturating_add(1).into();
-            let next = driver.call(
+            let next = attempt!(driver.call(
                 "snapshot",
                 json!({"expect":[],"discover":true}),
                 "/browser/snapshot",
-            )?;
-            let next_pattern = screen_pattern(&next, Some(&snapshot))?;
+            ));
+            let next_pattern = attempt!(screen_pattern(&next, Some(&snapshot)));
             let mut candidates: Vec<_> = flow["screens"]
                 .as_array()
                 .unwrap()

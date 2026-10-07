@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
 import { startFixture } from './fixture-server.mjs';
 
 const project=process.env.GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT;
@@ -86,6 +87,44 @@ test('secret fill is observed, text is redacted and independently decoded pixels
   const page=await browser.newPage();
   const pixels=await page.evaluate(async data=>{const image=new Image();image.src='data:image/png;base64,'+data;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return [[60,100],[60,145]].map(([x,y])=>Array.from(ctx.getImageData(x,y,1,1).data));},bytes.toString('base64'));
   assert.deepEqual(pixels,[[255,0,255,255],[255,0,255,255]]);
+  assert.equal((await c.send('close')).ok,true);
+});
+
+// Contract: persisted screenshots must conceal secrets echoed inside rendered frames.
+// Regression/gap: main-document text masks miss both same-origin and opaque-origin frames.
+// No production seam; real driver protocol plus an independent Chromium PNG decoder.
+// Cost: ~4 seconds, two local browser sessions and one loopback HTTP server.
+test('capture conceals same-origin and opaque-origin iframe secret echoes',async t=>{
+  const secret='frame_privacy_canary_348';
+  const server=createServer((req,res)=>{
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    res.end(req.url==='/frame' ? `<body style="margin:0;background:#00ff00"><p style="font:24px monospace">empty</p><script>onmessage=e=>{document.querySelector('p').textContent=e.data;parent.postMessage('echoed','*')}</script>` : `<body style="margin:0"><input aria-label="Password" oninput="document.querySelectorAll('iframe').forEach(f=>f.contentWindow.postMessage(this.value,'*'))"><button hidden>Echo ready</button><iframe src="/frame" style="position:absolute;left:0;top:80px;border:0;width:400px;height:180px"></iframe><iframe sandbox="allow-scripts" src="/frame" style="position:absolute;left:440px;top:80px;border:0;width:400px;height:180px"></iframe><script>let echoed=0;onmessage=e=>{if(e.data==='echoed'&&++echoed===2)document.querySelector('button').hidden=false}</script>`);
+  });
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>server.close(done)));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const {chromium}=createRequire(join(project,'package.json'))('@playwright/test');
+  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage({viewport});await page.goto(base);
+  await page.getByRole('textbox',{name:'Password',exact:true}).fill(secret);
+  await page.getByRole('button',{name:'Echo ready',exact:true}).waitFor();
+  assert.equal(await page.frameLocator('iframe').nth(0).getByText(secret,{exact:true}).count(),1);
+  assert.equal(await page.frameLocator('iframe').nth(1).getByText(secret,{exact:true}).count(),1);
+  assert.equal(await page.frames()[2].evaluate(()=>{try{void parent.document;return false}catch{return true}}),true,'sandbox frame really has an isolated origin');
+  const before=await page.screenshot();
+  const decode=async bytes=>page.evaluate(async data=>{
+    const image=new Image();image.src='data:image/png;base64,'+data;await image.decode();
+    const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+    const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);
+    return [0,440].map(left=>{const pixels=ctx.getImageData(left,100,400,80).data;let ink=0,masked=0;
+      for(let i=0;i<pixels.length;i+=4){if(pixels[i]<100&&pixels[i+1]<100&&pixels[i+2]<100)ink++;if(pixels[i]===255&&pixels[i+1]===0&&pixels[i+2]===255&&pixels[i+3]===255)masked++;}
+      return {ink,masked};});
+  },bytes.toString('base64'));
+  for(const region of await decode(before)){assert.ok(region.ink>100,'positive control visibly renders the secret');assert.equal(region.masked,0);}
+  const c=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(c,base);
+  assert.equal((await act(c,'enter_text','textbox','Password',{secretEnv:'GRAPHHELM_SECRET_PASSWORD'})).ok,true);
+  assert.equal((await act(c,'wait_for','button','Echo ready')).ok,true);
+  const capture=await c.send('capture',{path:'frames.png',maskSecrets:true});assert.equal(capture.ok,true);assert.equal(capture.result.masked,true);
+  assert.deepEqual(await decode(await readFile(join(c.output,'frames.png'))),[{ink:0,masked:32000},{ink:0,masked:32000}]);
   assert.equal((await c.send('close')).ok,true);
 });
 

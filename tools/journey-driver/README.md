@@ -72,7 +72,9 @@ supervisor filters inherited environment; browser requests never receive event/p
 Missing/empty named secrets and literals equal to supplied secrets fail before action.
 Known values are redacted from URLs/ARIA/cache before serialization, and outputs are rescanned.
 Capture masks all editable inputs, filled controls, and visible secret echoes with opaque
-magenta before PNG creation. Images are temporary inputs to sealing, not a public screenshot
+magenta before PNG creation. Entire rendered iframe/frame elements are also covered, including
+isolated/cross-origin frames and nested content; their contents are intentionally unobserved in
+the image. Main-document locators cannot establish privacy inside a frame. Images are temporary inputs to sealing, not a public screenshot
 output. Output directories/targets reject symlinks and existing files.
 
 ARIA is limited to 6 KiB without truncation. Fingerprints hash compact JSON

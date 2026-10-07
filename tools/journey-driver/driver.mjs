@@ -237,7 +237,10 @@ async function run(r) {
       if (cursor===dirname(cursor)) fail('driver.capture_refused');
     }
     try { await lstat(target); fail('driver.capture_refused'); } catch(err) {if(err.code!=='ENOENT') throw err;}
-    const mask=[...secretInputs,page.locator('input,textarea,[contenteditable="true"]')];
+    // Page text locators do not cross frame boundaries, but screenshots do.
+    // Cover entire frame elements: same-origin, isolated/cross-origin and their
+    // nested content are opaque without trusting frame DOM or echo rendering.
+    const mask=[...secretInputs,page.locator('input,textarea,[contenteditable="true"],iframe,frame')];
     for (const [,value] of secrets) if (value) mask.push(page.getByText(value,{exact:false}));
     await page.screenshot({path:target,fullPage:false,mask,maskColor:'#FF00FF',timeout:TIMEOUT});
     checkHost();

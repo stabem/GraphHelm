@@ -494,56 +494,79 @@ mod tests {
     use super::*;
     use std::process::Stdio;
     use std::thread;
-    use std::time::Instant;
 
     #[test]
     fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
-        let scratch = tempfile::tempdir().unwrap();
-        let pid_path = scratch.path().join("descendant.pid");
-        let mut command = if cfg!(windows) {
-            let mut command = Command::new("powershell");
-            command.args([
-                "-NoProfile",
-                "-Command",
-                "$i=New-Object Diagnostics.ProcessStartInfo; $i.FileName='ping'; $i.Arguments='-n 30 127.0.0.1'; $i.UseShellExecute=$false; $p=[Diagnostics.Process]::Start($i); Set-Content -LiteralPath $env:GRAPHHELM_TEST_PID_FILE -Value $p.Id",
-            ]);
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args([
-                "-c",
-                "sleep 30 & echo $! > \"$GRAPHHELM_TEST_PID_FILE\"; exit 0",
-            ]);
-            command
-        };
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        const TEST: &str =
+            "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";
+        if let Ok(address) = std::env::var("GRAPHHELM_TEST_HOLDER_ADDRESS") {
+            if std::env::var_os("GRAPHHELM_TEST_PIPE_HOLDER").is_some() {
+                let mut connection = TcpStream::connect(address).unwrap();
+                connection.write_all(&[1]).unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(30)))
+                    .unwrap();
+                // Keep this descendant and its inherited stdout alive until tree cleanup.
+                let _ = connection.read(&mut [0]);
+            } else {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", TEST, "--nocapture"])
+                    .env("GRAPHHELM_TEST_PIPE_HOLDER", "1");
+                // The wrapper must exit first; the outer observer owns descendant cleanup.
+                #[allow(clippy::zombie_processes)]
+                let _descendant = command.spawn().unwrap();
+            }
+            return;
+        }
+
+        // Native wrappers avoid cold PowerShell startup inside the execution bound. The socket
+        // retains readiness followed by EOF even when this observer is scheduled after cleanup;
+        // sampling a PID file before the kill lost that evidence under competing suite load.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (observed, observation) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut ready = [0];
+            let result = connection
+                .read_exact(&mut ready)
+                .and_then(|()| {
+                    connection.read(&mut [0]).or_else(|error| {
+                        // TerminateProcess closes a Windows socket with a reset rather than EOF.
+                        if error.kind() == std::io::ErrorKind::ConnectionReset {
+                            Ok(0)
+                        } else {
+                            Err(error)
+                        }
+                    })
+                })
+                .map(|bytes| (ready, bytes));
+            let _ = observed.send(result);
+        });
+        let mut command = Command::new(std::env::current_exe().unwrap());
         command
-            .env("GRAPHHELM_TEST_PID_FILE", &pid_path)
+            .args(["--exact", TEST, "--nocapture"])
+            .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-
-        let worker = thread::spawn(move || {
-            graphhelm_process_tree::run_bounded(command, Duration::from_secs(2))
-        });
-        let observation_deadline = Instant::now() + Duration::from_secs(5);
-        let mut identity = None;
-        while identity.is_none() && !worker.is_finished() && Instant::now() < observation_deadline {
-            identity = std::fs::read_to_string(&pid_path)
-                .ok()
-                .and_then(|contents| contents.trim().parse().ok())
-                .and_then(|pid| graphhelm_process_tree::ProcessIdentity::capture(pid).ok());
-            if identity.is_none() {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        let result = worker.join().unwrap().unwrap();
+        let result = graphhelm_process_tree::run_bounded(command, Duration::from_secs(2)).unwrap();
 
         assert!(result.is_none(), "inherited pipe bypassed the deadline");
-        let identity =
-            identity.expect("descendant identity was not observed before bounded cleanup");
-        assert!(
-            identity.wait_until_gone(Duration::from_secs(1)).unwrap(),
-            "timed out process tree still has a live descendant"
+        assert_eq!(
+            observation
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the descendant must report readiness and disconnect after cleanup")
+                .expect("the descendant connection must close after process-tree cleanup"),
+            ([1], 0),
+            "the real pipe holder must start and then exit during bounded cleanup"
         );
     }
 }

@@ -385,6 +385,46 @@ export interface JourneyView {
   arrows: ArrowView[];
 }
 
+/** `GET /v1/journey-flows` (#353): `graphhelm journey flows`, one entry per `.journey.yaml`. */
+export type JourneyFlowStatus = "draft" | "approved" | "approval_stale" | "unreadable";
+
+export interface JourneyFlowFinding {
+  code: string;
+  pointer: string;
+  message: string;
+  severity: "error" | "warning";
+}
+
+export interface JourneyFlowScreen {
+  id: string;
+  url: string;
+  state: string;
+}
+
+export interface JourneyFlowEdge {
+  id: string;
+  from: string;
+  to: string;
+}
+
+export interface JourneyFlowView {
+  id: string;
+  title: string | null;
+  status: JourneyFlowStatus;
+  approved: { revision: string; digest: string } | null;
+  drift: unknown[];
+  findings: JourneyFlowFinding[];
+  /** `journey approve` would accept it and change something (not an already-settled approval). */
+  approvable: boolean;
+  screens: JourneyFlowScreen[];
+  edges: JourneyFlowEdge[];
+  paths: Record<string, string[]>;
+}
+
+export interface JourneyFlowsView {
+  flows: JourneyFlowView[];
+}
+
 export interface JourneysView {
   head: string | null;
   journeys: JourneyView[];

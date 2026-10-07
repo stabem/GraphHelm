@@ -13,8 +13,7 @@
     "type": "skill-package",
     "capabilities": [
       "skill.journey-contract",
-      "skill.journey-map",
-      "skill.journey-prove"
+      "skill.journey-map"
     ],
     "permissions": {
       "filesystem": {
@@ -1014,7 +1013,7 @@
           "id": "skill/journey-contract",
           "kind": "skill",
           "path": "skills/journey-contract/SKILL.md",
-          "sha256": "sha256:98d1f6ae7cb1a9d21aaa81ac0279e087db3e7c1ea9ef22cacc3178c4a219cf08",
+          "sha256": "sha256:b65352b9bd63416c6f811df8f9c98ecac4404a6362f400e3dc927ca7d2a9f6c2",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1067,17 +1066,6 @@
             "cli:journey validate"
           ],
           "family": "journey-map"
-        },
-        {
-          "id": "skill/journey-prove",
-          "kind": "skill",
-          "path": "skills/journey-prove/SKILL.md",
-          "sha256": "sha256:821ec8ab290a912c2b871e89f5033c4d856e63752bb50ffa49403b3fcd24ccc6",
-          "effects": ["artifact.local.write", "artifact.propose", "runtime.connect", "runtime.read"],
-          "permissions": ["network.loopback", "package.read", "runtime.read", "workspace.artifact.write"],
-          "requires": {"capabilities": ["graphhelm.public-api"], "observers": []},
-          "surfaces": ["cli:journey validate", "tool:events", "tool:status"],
-          "family": "journey-verifier"
         }
       ]
     },

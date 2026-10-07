@@ -27,7 +27,7 @@ adds what to do around them.
 3. Follow `keel`: stay inside the paths, extend before adding, keep callers working.
 4. Tests: when the plan's proof is `tests` or `both`, write the test first, see it fail on the
    parent, then fix. Run the `test-audit` gate on every new or changed test. When the proof is
-   `journey`, do not add unit tests for what the journey observes; `journey-prove` proves it.
+   `journey`, do not add unit tests for what the journey observes; `journey-prove` (#381) proves it.
 5. Run the tests the change reaches, plus the repository's lints for touched code. List each
    command and its result in the PR body (passed, failed, skipped, unobserved, separately).
 6. Open the PR: summary, `Closes #N` (only issues you mean to close), the card, tests run, and

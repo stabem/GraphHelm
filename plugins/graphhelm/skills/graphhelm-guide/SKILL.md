@@ -19,7 +19,7 @@ Every task runs the same steps after its issue, in any agent host, each a skill 
 
 1. `task-plan`: paths, promise, proof kind (`journey`, `tests`, `both`, `none`), review count and skills, as one `keel.plan` record.
 2. `implement`: the change inside the card under `keel`, with cited context; `test-audit` gates any test.
-3. `journey-prove`: replay the touched journeys at the head, keep the first failure of every retry.
+3. `journey-prove` (arrives with #381): replay the touched journeys at the head, keep the first failure of every retry.
 4. `blind-review`: one assigned reviewer runs the reached tests and `keel check` on the pinned head and posts the verdict.
 5. `merge`: the approving reviewer merges the pinned head, reads back what landed, and releases the workspace.
 

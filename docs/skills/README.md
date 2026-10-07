@@ -33,7 +33,7 @@ flowchart LR
 
 `keel` carries the binding rules that `implement` follows; `test-audit` gates every new, changed or
 removed test; `journey-map` and `journey-contract` create the journeys that `journey-prove`
-replays. `keel plan` and the `task.*` records are being built (design phases B and F); until they
+replays (`journey-prove` itself ships with #381). `keel plan` and the `task.*` records are being built (design phases B and F); until they
 land, each skill says how to do its step by hand. The [current delivery process](../process/DELIVERY.md)
 sets the repository's issue, evidence, review, and merge rules.
 
@@ -47,7 +47,6 @@ sets the repository's issue, evidence, review, and merge rules.
 | [Test audit](../../extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md) | Before adding or changing tests, when a suite is slow or noisy, or when pruning tests | An authoring gate, suite audit, or deletion record naming the covering observer; guidance without enforcement |
 | [Journey map](../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md) | A project has screens but no journeys | Draft journey flows and a first capture baseline |
 | [Journey contract](../../extensions/builtin/graphhelm-jpd/skills/journey-contract/SKILL.md) | One new user-visible behavior needs a journey | A proposed journey flow and contract |
-| [Journey prove](../../extensions/builtin/graphhelm-jpd/skills/journey-prove/SKILL.md) | The plan's proof is `journey` or `both` | Fresh captures and walked transitions at the head, first failures kept, or `OBSERVER_MISSING` |
 | [Blind review](../../extensions/builtin/graphhelm-development-contracts/skills/blind-review/SKILL.md) | You are a PR's one assigned reviewer | One verdict on a pinned head with commands and results |
 | [Merge](../../extensions/builtin/graphhelm-development-contracts/skills/merge/SKILL.md) | You approved the PR | A pinned squash merge, read back, workspace released |
 | [Memory curator](../../extensions/builtin/graphhelm-development-contracts/skills/memory-curator/SKILL.md) | Landed work produced a durable lesson | An advisory memory candidate, never a direct memory write |

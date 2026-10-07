@@ -7,8 +7,8 @@ discoverable entry skills.
 For the left-to-right view of how these skills fit with Keel and the development-contracts package,
 see the [skills README](../../../docs/skills/README.md).
 
-The three skills are entry points, not the entire capability inventory and not a fixed
-pipeline. Version 0.1.0 contains 50 atomic contributions: 3 skills, 7 agents, 20 schemas,
+The two skills are entry points, not the entire capability inventory and not a fixed
+pipeline. Version 0.1.0 contains 49 atomic contributions: 2 skills, 7 agents, 20 schemas,
 3 policies, 3 evaluators, 9 fixtures, 3 host adapters, 1 observer catalog, and 1 dogfood graph. GraphHelm should select only the smallest set required by the journey, risk, and available
 evidence.
 
@@ -43,13 +43,10 @@ route suspected instruction injection through the existing policy and typed-sign
 - `journey-contract`: specify the observable user journey and its failure contract.
 - `journey-map`: map journeys into an existing project from zero (screens, contracts, Playwright
   tests, first capture baseline).
-- `journey-prove`: replay the approved journey at the head, record sealed captures and walked
-  transitions, read their freshness, keep the first failure of every retry, and report
-  `OBSERVER_MISSING` when no observer can see a promise.
 
 The schemas, policies, evaluators and fixtures of the earlier skills (council, defect, capsule,
 retry and verification contracts) stay in this package as contracts; their skills were folded into
-`journey-prove` and the development-contracts `task-plan`, `implement` and `blind-review` skills
+the `journey-prove` skill (#381) and the development-contracts `task-plan`, `implement` and `blind-review` skills
 (#385).
 
 ## Public-surface rule

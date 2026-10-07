@@ -120,8 +120,8 @@ explicit waiver path (D-019, recorded).
 
 ### 4.9 Journey-Proven Development bundle
 
-The optional built-in `graphhelm-jpd` data extension adds three entry skills: `journey-map`,
-`journey-contract` and `journey-prove` (#385 folded the earlier eight-skill set into them and into
+The optional built-in `graphhelm-jpd` data extension adds two entry skills: `journey-map` and
+`journey-contract`, with `journey-prove` arriving in #381 (#385 folded the earlier eight-skill set into them and into
 the development-contracts per-task skills).
 
 Runtime reads, mutations, and privileged capabilities obey the same deletion and parity rule as the

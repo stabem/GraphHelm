@@ -271,8 +271,8 @@ family it targets is `docs/models/UNIVERSAL_MODEL_GATEWAY.md` §2.6.
 
 ### 10.6 Journey-Proven Development entry families
 
-The built-in `graphhelm-jpd` extension exposes three entry skills: journey map, journey contract,
-and journey prove (#385 folded observation compilation, plan council, defect bounty, skill
+The built-in `graphhelm-jpd` extension exposes two entry skills, journey map and journey contract,
+with journey prove arriving in #381 (#385 folded observation compilation, plan council, defect bounty, skill
 synthesis and evaluation, retry provenance and journey verification into them and into the
 development-contracts per-task skills; their schemas and policies stay). They are discoverable
 entry points, not a fixed sequence. A future activated

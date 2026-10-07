@@ -3,7 +3,7 @@ id: studio-mobile
 title: "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs"
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [accessibility, critical_ux]

@@ -3,7 +3,7 @@ id: studio-edit-delivery-document
 title: Owner opens a delivered document from a node window and saves an edit to the project
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [irreversible_effect, external_delivery]

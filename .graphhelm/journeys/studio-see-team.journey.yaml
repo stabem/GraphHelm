@@ -3,7 +3,7 @@ id: studio-see-team
 title: Owner sees the live team and opens a bot's window
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]

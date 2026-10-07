@@ -3,7 +3,7 @@ id: studio-connect-existing-chat
 title: Owner connects an existing native chat as the team's coordinator
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [security, multiple_components]

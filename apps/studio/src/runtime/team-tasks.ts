@@ -143,3 +143,154 @@ export async function readClaudeTasks({ executionId, events, readEvidence }: Rea
   }
   return { executionId, tasks: [...tasks.values()].sort((a, b) => (a.createdSequence ?? a.completedSequence ?? 0) - (b.createdSequence ?? b.completedSequence ?? 0)), rejected };
 }
+
+/* #386 (journey-first spec §7): the `task.*` records a lane writes at each delivery step, one
+ * `graphhelm-task-event-v1` document in the signal's description. The per-task graph is folded
+ * from these alone; GitHub is linked, never polled. */
+const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
+const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
+type Verdict = typeof VERDICTS[number];
+
+export type TaskEventKind = "task.claimed" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged";
+
+export interface TaskEventRecord {
+  kind: TaskEventKind;
+  actorId: string;
+  sequence: number;
+  taskId: string;
+  issue?: number;
+  pr?: number;
+  lane?: string;
+  branch?: string;
+  headSha?: string;
+  journeys?: string[];
+  reviewer?: string;
+  verdict?: Verdict;
+  commentUrl?: string;
+  mergeSha?: string;
+  closes?: number[];
+}
+
+function count(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function sha(value: unknown): string | null {
+  return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value) ? value : null;
+}
+
+/** One record, or `null` when it is not a well-formed `task.*` document or names another actor
+ * than the one that recorded it (the Runtime refuses those too; this keeps an old log honest). */
+export function parseTaskEvent(kind: string, actorId: string, description: string): Omit<TaskEventRecord, "sequence"> | null {
+  if (description.length > MAX_ENVELOPE_BYTES) return null;
+  let document: Record<string, unknown> | null;
+  try { document = record(JSON.parse(description)); } catch { return null; }
+  const taskId = taskIdentity(document?.taskId);
+  if (document === null || document.schema !== TASK_EVENT_SCHEMA || taskId === null || count(document.revision) === null) return null;
+  const base = { actorId, taskId };
+  switch (kind) {
+    case "task.claimed": {
+      const issue = count(document.issue);
+      const lane = text(document.lane, 128);
+      const branch = text(document.branch, 256);
+      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch } : null;
+    }
+    case "task.pr_opened": {
+      const pr = count(document.pr);
+      const headSha = sha(document.headSha);
+      const lane = text(document.lane, 128);
+      const journeys = Array.isArray(document.journeys) && document.journeys.every((id) => taskIdentity(id) !== null) ? document.journeys as string[] : null;
+      return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys } : null;
+    }
+    case "task.review_assigned": {
+      const pr = count(document.pr);
+      const headSha = sha(document.headSha);
+      const reviewer = text(document.reviewer, 128);
+      return pr !== null && headSha !== null && reviewer !== null ? { ...base, kind, pr, headSha, reviewer } : null;
+    }
+    case "task.review_verdict": {
+      const pr = count(document.pr);
+      const headSha = sha(document.headSha);
+      const verdict = VERDICTS.find((value) => value === document?.verdict);
+      const commentUrl = text(document.commentUrl, 512);
+      return pr !== null && headSha !== null && document.reviewer === actorId && verdict !== undefined && commentUrl !== null
+        ? { ...base, kind, pr, headSha, reviewer: actorId, verdict, commentUrl } : null;
+    }
+    case "task.merged": {
+      const pr = count(document.pr);
+      const mergeSha = sha(document.mergeSha);
+      const closes = Array.isArray(document.closes) && document.closes.every((n) => count(n) !== null) ? document.closes as number[] : null;
+      return pr !== null && mergeSha !== null && closes !== null && document.merger === actorId ? { ...base, kind, pr, mergeSha, closes } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export type TaskStep = "implement" | "review" | "merge" | "merged";
+
+export interface TaskState {
+  taskId: string;
+  issue: number | null;
+  pr: number | null;
+  lane: string | null;
+  headSha: string | null;
+  journeys: string[];
+  /** The step that is lit. */
+  step: TaskStep;
+  /** A BLOCK that no verdict on a newer head has answered: the red edge into the next step. */
+  blockedBy: { reviewer: string; headSha: string; commentUrl: string } | null;
+  reviewers: string[];
+  mergeSha: string | null;
+  lastSequence: number;
+}
+
+/** Folds records in sequence order into one state per task (spec §7): a new head re-arms review
+ * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
+export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
+  const tasks = new Map<string, TaskState>();
+  for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    const state = tasks.get(event.taskId) ?? {
+      taskId: event.taskId, issue: null, pr: null, lane: null, headSha: null, journeys: [],
+      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, lastSequence: 0,
+    };
+    if (state.step === "merged") continue;
+    state.lastSequence = event.sequence;
+    switch (event.kind) {
+      case "task.claimed":
+        state.issue = event.issue ?? state.issue;
+        state.lane = event.lane ?? state.lane;
+        break;
+      case "task.pr_opened":
+        state.pr = event.pr ?? state.pr;
+        state.lane = event.lane ?? state.lane;
+        state.headSha = event.headSha ?? state.headSha;
+        state.journeys = event.journeys ?? state.journeys;
+        state.step = "review";
+        break;
+      case "task.review_assigned":
+        if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+        break;
+      case "task.review_verdict":
+        // A verdict on a head other than the current one says nothing about the current one.
+        if (event.headSha !== state.headSha) break;
+        if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+        if (event.verdict === "BLOCK") {
+          state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
+          state.step = "review";
+        } else {
+          state.blockedBy = null;
+          state.step = "merge";
+        }
+        break;
+      case "task.merged":
+        state.pr = event.pr ?? state.pr;
+        state.mergeSha = event.mergeSha ?? null;
+        state.blockedBy = null;
+        state.step = "merged";
+        break;
+    }
+    tasks.set(event.taskId, state);
+  }
+  return [...tasks.values()].sort((a, b) => a.lastSequence - b.lastSequence);
+}

@@ -32,6 +32,12 @@ Record the card and the proof where the hooks and the Studio can see them: insid
 execution, as `keel.card` and `keel.proof` signals threaded by `replyTo`; outside one, the card at
 `.graphhelm/keel-card.json`. Shape: `docs/keel/RECORDS.md` in the GraphHelm repository.
 
+When lanes coordinate through an execution, the step that writes an identity line also records its
+`task.*` signal (`task.claimed`, `task.pr_opened`, `task.review_assigned`, `task.review_verdict`,
+`task.merged`), with your own actor (`GRAPHHELM_ACTOR`) as `source.id`. The document shape is
+`schemas/task-event.schema.json` in this package; the steps are in `docs/process/DELIVERY.md`,
+"Task records". The Runtime refuses a task record signed by another actor.
+
 When the change touches a screen of a journey (a path listed in a step's `screen.scopePaths` in
 `.graphhelm/journeys/<contractId>.json`), name the journey in the card (`journeys: [contractId]`,
 or a `Journeys:` line in the PR body). With `--events`, `--execution`, `--keyring` and `--key-id`,

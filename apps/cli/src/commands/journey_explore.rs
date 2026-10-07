@@ -594,7 +594,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
         data["promptSha256s"]
             .as_array_mut()
             .unwrap()
-            .push(format!("{:x}", sha2::Sha256::digest(question.as_bytes())).into());
+            .push(hex::encode(sha2::Sha256::digest(question.as_bytes())).into());
         data["modelCalls"] = data["modelCalls"]
             .as_u64()
             .unwrap()

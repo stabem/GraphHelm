@@ -110,6 +110,29 @@
         "block"
       ],
       "description": "Whether surface budgets and the per-file cap refuse the diff (block) or only report findings (signal). Objective contracts block in either mode."
+    },
+    "journeyFirst": {
+      "type": "boolean",
+      "description": "1.4.0 (#382): a diff path touching a compiled journey's screen is user-visible; keel check reports the journey signals."
+    },
+    "invariants": {
+      "type": "object",
+      "description": "1.4.0 (#382): invisible-invariant classes and their repository paths; keel check reports keel.invariant.<class>.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^/\\][^\\]*$"
+        }
+      }
     }
   },
   "$defs": {

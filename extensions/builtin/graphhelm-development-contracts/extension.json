@@ -916,7 +916,7 @@
           "id": "schema/keel-policy",
           "kind": "schema",
           "path": "schemas/keel-policy.schema.json",
-          "sha256": "sha256:3a591ff5c2b4fb1e3ab38c401b53133396a7bdc97203e95879e2c612e12a1e94",
+          "sha256": "sha256:94064e64c39ed93ef7e500b7450856c58bd39d1a49da84fa55d50c4f8a48545e",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1008,7 +1008,7 @@
           "id": "fixture/keel-valid-policy-shipped-shape",
           "kind": "fixture",
           "path": "fixtures/keel/valid/policy-shipped-shape.json",
-          "sha256": "sha256:208c5f9396777acc8c141906d30cc1c8963763f17e427598a8d9219bca954289",
+          "sha256": "sha256:9b97e1f3e826b2d9ff4258efc653981ff512d0e4a39e45d517a48c46f0780eec",
           "effects": [],
           "permissions": [],
           "requires": {

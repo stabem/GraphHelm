@@ -594,7 +594,13 @@ fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
 fn a_diff_under_an_invariant_path_reports_its_class() {
     let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
     let scratch = tempfile::tempdir().unwrap();
-    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src", "core/events/src/journal.rs"])));
+    let (code, reply) = run(
+        repo.path(),
+        Some(&card(
+            scratch.path(),
+            &["src", "core/events/src/journal.rs"],
+        )),
+    );
     assert_eq!(code, 0, "warnings never refuse: {reply}");
     let found: Vec<&Value> = reply["diagnostics"]
         .as_array()

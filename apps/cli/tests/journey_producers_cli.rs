@@ -620,24 +620,41 @@ fn keel_check_names_a_touched_journey_the_card_omits_and_a_replay_missing_at_the
     )
     .unwrap();
     let output = graphhelm()
-        .args(["--json", "keel", "check", "--diff", "HEAD~1..HEAD", "--repo"])
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--repo",
+        ])
         .arg(&harness.project)
         .arg("--card")
         .arg(&card)
         .output()
         .unwrap();
     let reply = envelope(&output);
-    assert_eq!(output.status.code(), Some(0), "a signal, not a gate: {reply}");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a signal, not a gate: {reply}"
+    );
     let missing = diagnostics_with(&reply, "keel.journey.card_missing_journey");
     assert_eq!(missing.len(), 1, "{reply}");
     assert!(missing[0].contains("cart/open-cart"), "{reply}");
 
     let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
     assert_eq!(code, 0, "{reply}");
-    assert!(diagnostics_with(&reply, "keel.journey.card_missing_journey").is_empty(), "{reply}");
+    assert!(
+        diagnostics_with(&reply, "keel.journey.card_missing_journey").is_empty(),
+        "{reply}"
+    );
     let not_green = diagnostics_with(&reply, "keel.journey.replay_not_green");
     assert_eq!(not_green.len(), 1, "{reply}");
-    assert!(not_green[0].contains("no clean capture taken at the head"), "{reply}");
+    assert!(
+        not_green[0].contains("no clean capture taken at the head"),
+        "{reply}"
+    );
 
     harness.capture("open-cart", &[]);
     let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);

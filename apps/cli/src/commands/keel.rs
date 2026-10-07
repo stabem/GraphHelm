@@ -328,9 +328,12 @@ fn drifted_steps(repo: &Path, id: &str) -> Vec<(String, String)> {
             let edge_id = drift["edge"].as_str()?;
             let edge = edges.iter().find(|edge| edge["id"] == edge_id)?;
             let code = drift["code"].as_str().unwrap_or("drift");
-            Some([edge["from"].as_str(), edge["to"].as_str()].into_iter().flatten().map(
-                move |step| (step.to_owned(), format!("{code} on edge {edge_id}")),
-            ))
+            Some(
+                [edge["from"].as_str(), edge["to"].as_str()]
+                    .into_iter()
+                    .flatten()
+                    .map(move |step| (step.to_owned(), format!("{code} on edge {edge_id}"))),
+            )
         })
         .flatten()
         .collect()
@@ -404,7 +407,7 @@ fn journey_findings(
     };
     let history = AtHead {
         git: GitHistory::new(repo),
-        head: head_sha,
+        head: head_sha.clone(),
     };
     let view = fold_journeys(&contracts, &captures, &transitions, &history);
     let mut screens = Vec::new();

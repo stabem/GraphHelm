@@ -1785,7 +1785,26 @@ impl LocalEventRepository {
                 "load_state:journal-tail-unterminated",
             ));
         }
-        self.verify_lines(&bytes, &mut ctx)?;
+        let mut consumed = 0_u64;
+        match self.verify_lines(&bytes, &mut ctx, &mut consumed) {
+            Ok(()) => {}
+            // #363: the budget is checked at a batch boundary, BEFORE that batch touches `ctx`,
+            // so `ctx` is exactly the proof of `offset + consumed` bytes. Dropping it made every
+            // later read restart from genesis and die at the same point once one genesis walk
+            // outlived the budget: serve never recovered. Kept, the next read resumes as a
+            // suffix. Every other error still discards the context, as the comment above says.
+            Err(error @ EventRepositoryError::ReadBudgetExceeded { .. }) => {
+                if consumed > 0 {
+                    *verified = Some(ctx.into_prefix(
+                        self.journal_identity,
+                        offset + consumed,
+                        full_verified_at,
+                    ));
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
         let state = ctx.state.clone();
         *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at));
         Ok(state)
@@ -1810,7 +1829,14 @@ impl LocalEventRepository {
     /// can resume it mid-journal. Chain heads, sequence heads, budgets and uniqueness
     /// sets all come from `ctx`, so a suffix is judged against the cached prefix with
     /// the same blades a full load judges it against genesis.
-    fn verify_lines(&self, bytes: &[u8], ctx: &mut VerifyCtx) -> Result<(), EventRepositoryError> {
+    /// `consumed` ends at the byte length of the lines fully verified into `ctx`, so a caller
+    /// stopped by the read budget knows where the proof ends (#363).
+    fn verify_lines(
+        &self,
+        bytes: &[u8],
+        ctx: &mut VerifyCtx,
+        consumed: &mut u64,
+    ) -> Result<(), EventRepositoryError> {
         let VerifyCtx {
             state: shared_state,
             budget: load_budget,
@@ -2147,6 +2173,8 @@ impl LocalEventRepository {
                 }
             }
             state.batches.push(batch);
+            // The line plus its newline: `bytes` holds whole lines, each ending on one.
+            *consumed = (line.as_ptr() as usize - bytes.as_ptr() as usize + line.len() + 1) as u64;
         }
         Ok(())
     }
@@ -8118,6 +8146,49 @@ mod limit_tests {
             (1, 0),
             "an expired prefix is never reused"
         );
+    }
+
+    #[test]
+    fn a_budget_cut_verification_keeps_its_progress_for_the_next_read() {
+        // #363: serve livelocked on a large journal. A genesis walk cut by the read budget
+        // dropped everything it had verified, so the next read walked from genesis again and
+        // died at the same place. The next read must resume where the cut one stopped.
+        // Cost: ~300 single-event appends in a tempdir, well under a second.
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        for sequence in 2..=301 {
+            build
+                .append_atomic(&wake_append(sequence, &format!("wake-cut-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        // A deadline already behind the clock: the walk is cut at its first interval check,
+        // after READ_BUDGET_CHECK_INTERVAL events, never before any work.
+        let spent = crate::ReadBudget::starting_now(
+            Arc::new(FixedClock),
+            chrono::Duration::milliseconds(-1),
+        );
+        let cut = LocalEventRepository::open_with_prefix_cache(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+            spent,
+            &cache,
+        );
+        assert!(
+            matches!(cut, Err(EventRepositoryError::ReadBudgetExceeded { .. })),
+            "the spent budget must cut the walk: {:?}",
+            cut.err()
+        );
+        let next = shared_repository(directory.path(), &cache);
+        assert_eq!(
+            counters(&next),
+            (0, 1),
+            "the read after a budget cut resumes as a suffix, not from genesis"
+        );
+        assert_eq!(next.next_sequence(&wake_scope(), "stream-1").unwrap(), 302);
     }
 
     fn counters(repository: &LocalEventRepository) -> (u64, u64) {

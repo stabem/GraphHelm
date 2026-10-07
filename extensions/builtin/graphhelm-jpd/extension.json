@@ -1125,7 +1125,7 @@
           "id": "skill/journey-prove",
           "kind": "skill",
           "path": "skills/journey-prove/SKILL.md",
-          "sha256": "sha256:03fdef95bfa05530e8463723bc1fa886484cbe8839605fef65ac7a0ae5a8b2e6",
+          "sha256": "sha256:a64dd3d17b2c2c20a5347353f00be262270238e831ffce8e4c1753fe1985c14d",
           "effects": [
             "artifact.local.write",
             "artifact.propose"
@@ -1141,7 +1141,6 @@
             "observers": []
           },
           "surfaces": [
-            "cli:journey approve",
             "cli:journey compile",
             "cli:journey replay",
             "cli:journey validate",

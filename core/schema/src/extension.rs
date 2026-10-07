@@ -177,7 +177,6 @@ const CLI_COMMANDS: &[&str] = &[
     "extension validate",
     "journey validate",
     "journey compile",
-    "journey approve",
     "journey replay",
     "journeys",
     "mcp",

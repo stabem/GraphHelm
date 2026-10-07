@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-disconnect
 title: "Owner disconnects: two separate clicks, then the connect gate"
-status: approved
-approved: {revision: 7b09242430064c3cd3dd4b89ed61d75981326e0c, digest: sha256:981e015a35b7f0a4c461cc7a8107cc58db7dd9287f32db3893a626f4aa00ec4d}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

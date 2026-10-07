@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-conversation-panel
 title: Owner opens the run's Conversation panel and says something into the run
-status: approved
-approved: {revision: 7b09242430064c3cd3dd4b89ed61d75981326e0c, digest: sha256:5e30dabb132b4a8c374a1a7af3c4687f9cc1f51431fba5ca9ec02373f567c960}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

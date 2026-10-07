@@ -1,6 +1,6 @@
 ---
 name: journey-prove
-description: "Prove mapped journeys: start the app as a reproducible fixture, approve the flows, install the deterministic browser observer, replay every flow with graphhelm journey replay, fix drift until green, read the map, and deliver the proof. Use when a project has .graphhelm/journeys/*.journey.yaml and the question is whether the journeys work now, at this revision."
+description: "Prove mapped journeys: start the app as a reproducible fixture, ask the owner to approve the flows, install the deterministic browser observer, replay every approved flow with graphhelm journey replay, fix drift until green, read the map, and deliver the proof. Agents never approve a flow. Use when a project has .graphhelm/journeys/*.journey.yaml and the question is whether the journeys work now, at this revision."
 ---
 
 # Journey prove
@@ -22,14 +22,12 @@ writing flows (that is `journey-map`) and not for exploring an unknown app (`jou
 ## Reads
 
 - `.graphhelm/journeys/*.journey.yaml` and the compiled `*.json` contracts.
-- `cli:journey validate`, `cli:journey compile`, `cli:journey approve`, `cli:journey replay`,
-  `cli:journeys`.
+- `cli:journey validate`, `cli:journey compile`, `cli:journey replay`, `cli:journeys`.
 - The app's launch procedure (`package.json` scripts, a dev-server port, seed data).
 
 ## Mutations and effects
 
-Approving a flow writes `status: approved` and `approved: {revision, digest}` into the YAML and
-its contract JSON. Replay opens a real browser against a local host, records sealed captures
+Replay opens a real browser against a local host, records sealed captures
 (`jpd.screen_captured`) and walked arrows (`jpd.transition_walked`) into the run you name, and
 writes `.graphhelm/journey-cache/<id>.json`. The fixture script starts processes and seeds data.
 Nothing here touches production, remote hosts or the owner's own Runtime unless you point it
@@ -56,14 +54,16 @@ Names the flows use (`planner`, `demo`, `New task in demo`) are the fixture's; t
 fixture are one artifact and change together. A flow that only passes against someone's live
 data is not a journey, it is a screenshot.
 
-### (b) Approve the flows you intend to prove
+### (b) The owner approves the flows you intend to prove
 
-`graphhelm journey replay` refuses drafts. Approval is the owner's act; an agent approves only on
-a recorded owner order, says so in the PR, and never approves a flow it is itself reviewing. For
-each flow: `graphhelm journey approve <id> --project <root>`, then
-`graphhelm --json journey validate --all --project <root>` must report zero findings. Version the
-generated contracts with the flows: an approved flow whose contract is missing is
-`flow.contract_stale`.
+`graphhelm journey replay` refuses drafts, and **an agent never approves a flow**: not on an
+order relayed in chat, not for a flow it wrote, not for one it reviews. Approval is the owner's
+own act, in the Studio Journey tab or with `graphhelm journey approve` at their keyboard; it
+writes `status: approved` and `approved: {revision, digest}` into the YAML and generates the
+contract. Hand the owner the list of flow ids and the fixture to look at, then wait. Until they
+approve, ship the flows as drafts; `graphhelm --json journey validate --all --project <root>`
+must report zero findings either way. A flow the owner approved travels with its generated
+contract: an approved flow whose contract is missing is `flow.contract_stale`.
 
 ### (c) Install the observer where the project root is
 
@@ -102,7 +102,7 @@ survives it. Write the order into the runner, not into your memory.
 | `driver.locator_missing` / `locator_ambiguous` at an act | the control's exact name is gone or doubled | same probe; a doubled name is often two components rendering the same label |
 | `replay.observer_missing` | driver bytes or Playwright not where (c) put them | (c) |
 | `replay.recording_incomplete` | one of the four record flags missing | pass all four |
-| `drift.*` (cache present) | the app changed since the last green replay | fix the flow (set `status: draft`, edit, re-approve) or report the app regression; never edit the cache |
+| `drift.*` (cache present) | the app changed since the last green replay | fix the flow (set `status: draft`, edit, hand it back to the owner to re-approve) or report the app regression; never edit the cache |
 
 A red is reported as red with its pointer. Fixing the flow to match a broken screen is hiding a
 defect; the PR says which it was.
@@ -120,6 +120,8 @@ replay JSON per flow, the Journey tab screenshot, and the list of flows left red
 ### (g) Keep it honest
 
 - One flow per owner intent; paths for alternatives (`main`, `refuse`, `cancel`).
+- The owner approves; you prove. A replay run under an approval you made yourself is not proof
+  the owner asked for.
 - Secrets by name only, values from the environment of the replay process.
 - A screen name that depends on a count or a time (`2 decisions need you`, `Last event …`) is not
   an `expect` pair; pick the region, heading or control that does not change.

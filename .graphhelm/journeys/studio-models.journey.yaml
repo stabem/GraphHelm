@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-models
 title: Owner opens the Models panel
-status: approved
-approved: {revision: 5cd12371c55a8720faa74cda3a96cf8104c7e158, digest: sha256:87d9715333059b68faddcb20369fe74f2199ca35346ed28f7ac8965afa687dd1}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

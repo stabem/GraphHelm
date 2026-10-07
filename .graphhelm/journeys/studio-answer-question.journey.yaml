@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-question
 title: "Owner answers, or refuses, a question an agent asked"
-status: approved
-approved: {revision: 5cd12371c55a8720faa74cda3a96cf8104c7e158, digest: sha256:d4b5bff340078c408ea0cc69b72807935f8724a37189bdb97d3150725b5c27fe}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

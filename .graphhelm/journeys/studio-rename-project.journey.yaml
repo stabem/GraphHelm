@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-rename-project
 title: Owner renames the project's display label in this browser
-status: approved
-approved: {revision: 7b09242430064c3cd3dd4b89ed61d75981326e0c, digest: sha256:7d269c9f2b1552ad781e2e71430147f42dabb6dd46b263df4f1d89fd9afeeb61}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

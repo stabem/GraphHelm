@@ -18,9 +18,6 @@ target/
 !/.graphhelm/journeys/
 /.graphhelm/journeys/*
 !/.graphhelm/journeys/*.journey.yaml
-# ...and the contracts `journey approve` generates from them: an approved flow whose contract is
-# missing on disk is `flow.contract_stale`, so the projection travels with its source (#381).
-!/.graphhelm/journeys/*.json
 # The optional full check (ci/gate.ps1) writes its run manifests under .factory/gate-runs/. The
 # receipt store and the runners that committed it were retired on 2026-09-24; a local run's
 # manifest is scratch and never committed.

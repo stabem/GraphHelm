@@ -1,0 +1,160 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner pauses a run, or cancels it behind a confirmation",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-run-actions",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Canvas\", region \"Team\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "actions.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"pause · finish in-flight\", button \"pause now · interrupt\", button \"resume\", button \"sweep\", button \"Cancel execution\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "actions"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "paused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"resume\", button \"sweep\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "paused"
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect",
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen actions not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "actions",
+        "title": "Run actions open in the dock"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "summary",
+          "strategy": "accessible_name",
+          "value": "Run actions"
+        }
+      },
+      "stepId": "actions"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen paused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "paused",
+        "title": "The pause is read back from the log"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "pause · finish in-flight"
+        }
+      },
+      "stepId": "paused"
+    }
+  ],
+  "taskScope": "journey-flow studio-run-actions path main",
+  "title": "Owner pauses a run, or cancels it behind a confirmation",
+  "version": 1
+}

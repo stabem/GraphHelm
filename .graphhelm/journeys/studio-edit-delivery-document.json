@@ -1,0 +1,160 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner opens a delivered document from a node window and saves an edit to the project",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-edit-delivery-document",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "node.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Deliveries\", heading \"Deliveries\", button \"Close this node\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "node"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "editor.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows complementary \"Project document editor\", textbox \"File content\", textbox \"Why are you changing this?\", button \"Save project file\", button \"Close document editor\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "editor"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "saved.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Saved to main project folder\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "saved"
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect",
+    "external_delivery"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen node not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/panel.tsx",
+          "apps/studio/src/components/deliveries.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "node",
+        "title": "Node window with recorded deliveries"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "node"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen editor not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/document-editor.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "editor",
+        "title": "Project document editor"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Release notes docs/RELEASE_NOTES.md"
+        }
+      },
+      "stepId": "editor"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen saved not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/components/document-editor.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "saved",
+        "title": "The file is saved to the main project folder and the change notice is recorded"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Save project file"
+        }
+      },
+      "stepId": "saved"
+    }
+  ],
+  "taskScope": "journey-flow studio-edit-delivery-document path main",
+  "title": "Owner opens a delivered document from a node window and saves an edit to the project",
+  "version": 1
+}

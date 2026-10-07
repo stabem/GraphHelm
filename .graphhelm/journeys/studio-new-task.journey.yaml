@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-new-task
 title: Owner starts a new task in the project
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:c6e5e996af8561c72f832b9560da9effcd3e31e5f34c9db0113fd5fafd49a7c0}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

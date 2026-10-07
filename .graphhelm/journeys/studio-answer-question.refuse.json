@@ -1,0 +1,120 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner answers, or refuses, a question an agent asked",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-answer-question.refuse",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "asked.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Needs you\", heading \"planner asks\", button \"Answer\", button \"Refuse\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "asked"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Team\", article \"implementation is blocked.\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "refused"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "ambiguous_behavior"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen asked not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts",
+          "apps/studio/src/graph/ledger.ts",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "asked",
+        "title": "A question card waits in Needs you (demo asker: planner)"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "asked"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts",
+          "apps/studio/src/graph/ledger.ts",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "refused",
+        "title": "The refusal is recorded; the card leaves Needs you"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Refuse"
+        }
+      },
+      "stepId": "refused"
+    }
+  ],
+  "taskScope": "journey-flow studio-answer-question path refuse",
+  "title": "Owner answers, or refuses, a question an agent asked",
+  "version": 1
+}

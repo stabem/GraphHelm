@@ -1,0 +1,160 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner answers a node that waits for input, with or without evidence",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-answer-node",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Needs you\", button \"Answer in chat\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "node.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"This node is waiting for you\", textbox \"Kind of proof\", button \"Answer with no evidence\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "node"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "released.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows alert \"Answered. The node is released.\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "released"
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect",
+    "ambiguous_behavior"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen node not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/panel.tsx",
+          "apps/studio/src/components/answer.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "node",
+        "title": "Node window of the waiting step with the Answer block (graph file path set)"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Deploy · waiting input"
+        }
+      },
+      "stepId": "node"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen released not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/components/answer.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "released",
+        "title": "The claim is countersigned and the node is released"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Answer with no evidence"
+        }
+      },
+      "stepId": "released"
+    }
+  ],
+  "taskScope": "journey-flow studio-answer-node path main",
+  "title": "Owner answers a node that waits for input, with or without evidence",
+  "version": 1
+}

@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-name-bot
 title: Owner gives a bot a display name
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:81c50247afd63c5515e6281436c2987184bd611e5c078c8afce5dc8468636cc3}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

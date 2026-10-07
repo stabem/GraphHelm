@@ -1,0 +1,155 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner disconnects: two separate clicks, then the connect gate",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-disconnect",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Disconnect\", navigation \"Projects\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "armed.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Click again to disconnect and clear the boards\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "armed"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "gate.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Your agents are one token away\", button \"Connect\"",
+      "statesToObserve": [
+        "empty"
+      ],
+      "stepId": "gate"
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect",
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen armed not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx"
+        ],
+        "screenId": "armed",
+        "title": "Disconnect is armed for five seconds"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Disconnect"
+        }
+      },
+      "stepId": "armed"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "empty"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen gate not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/components/Connect.tsx",
+          "apps/studio/src/App.tsx"
+        ],
+        "screenId": "gate",
+        "title": "Connect gate"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Click again to disconnect and clear the boards"
+        }
+      },
+      "stepId": "gate"
+    }
+  ],
+  "taskScope": "journey-flow studio-disconnect path main",
+  "title": "Owner disconnects: two separate clicks, then the connect gate",
+  "version": 1
+}

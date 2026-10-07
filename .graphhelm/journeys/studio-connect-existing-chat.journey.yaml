@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-connect-existing-chat
 title: Owner connects an existing native chat as the team's coordinator
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:a24ffadbbe47190a7109764a333eb6966cc31abce20a89c320921e537eaa8b20}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

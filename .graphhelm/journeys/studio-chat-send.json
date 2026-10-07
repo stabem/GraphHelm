@@ -1,0 +1,117 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner reads the room thread and sends a message to everyone",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-chat-send",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "chat.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows complementary \"Chat\", tablist \"Threads\", tab \"Everyone\", textbox \"Message\", button \"Send\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "chat"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "chat.sent.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows complementary \"Chat\", tabpanel \"Everyone\", textbox \"Message\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "chat.sent"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen chat not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/threads.ts",
+          "apps/studio/src/runtime/client.ts",
+          "apps/studio/src/graph/ledger.ts"
+        ],
+        "screenId": "chat",
+        "title": "Chat column on the Everyone thread"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "chat"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen chat.sent not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/threads.ts",
+          "apps/studio/src/runtime/client.ts",
+          "apps/studio/src/graph/ledger.ts"
+        ],
+        "screenId": "chat.sent",
+        "title": "The message is recorded in the Everyone thread"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Send"
+        }
+      },
+      "stepId": "chat.sent"
+    }
+  ],
+  "taskScope": "journey-flow studio-chat-send path main",
+  "title": "Owner reads the room thread and sends a message to everyone",
+  "version": 1
+}

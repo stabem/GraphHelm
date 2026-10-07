@@ -1,0 +1,157 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner opens the run's Conversation panel and says something into the run",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-conversation-panel",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Toggle conversation\", region \"Canvas\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "conversation.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Run demo\", heading \"Conversation\", button \"Close this panel\", region \"Shared conversation\", textbox \"Say something into this run\", button \"send\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "conversation"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "said.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Shared conversation\", textbox \"Say something into this run\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "said"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen conversation not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/panel.tsx",
+          "apps/studio/src/runtime/work-conversation.ts"
+        ],
+        "screenId": "conversation",
+        "title": "Conversation panel with the say box"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Toggle conversation"
+        }
+      },
+      "stepId": "conversation"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen said not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/panel.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "said",
+        "title": "The line is recorded in the shared conversation"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "send"
+        }
+      },
+      "stepId": "said"
+    }
+  ],
+  "taskScope": "journey-flow studio-conversation-panel path main",
+  "title": "Owner opens the run's Conversation panel and says something into the run",
+  "version": 1
+}

@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-run-actions
 title: "Owner pauses a run, or cancels it behind a confirmation"
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:bc3e51941603eb10dba54287e5b39e2c8c24638eea1765e35b9798a343cf319b}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

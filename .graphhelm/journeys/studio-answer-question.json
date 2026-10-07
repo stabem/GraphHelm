@@ -1,0 +1,166 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner answers, or refuses, a question an agent asked",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-answer-question",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "asked.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Needs you\", heading \"planner asks\", button \"Answer\", button \"Refuse\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "asked"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "answering.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Clear\", textbox \"Message\", button \"Send\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "answering"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "answered.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows tabpanel \"planner\", textbox \"Message\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "answered"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "ambiguous_behavior"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen asked not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts",
+          "apps/studio/src/graph/ledger.ts",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "asked",
+        "title": "A question card waits in Needs you (demo asker: planner)"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "asked"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen answering not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/threads.ts"
+        ],
+        "screenId": "answering",
+        "title": "Direct thread with the asker, composer marked Answering"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Answer"
+        }
+      },
+      "stepId": "answering"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen answered not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/beacon.tsx",
+          "apps/studio/src/runtime/needs-you.ts",
+          "apps/studio/src/graph/ledger.ts",
+          "apps/studio/src/components/chat-column.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "answered",
+        "title": "The answer is recorded and the question card is settled"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Send"
+        }
+      },
+      "stepId": "answered"
+    }
+  ],
+  "taskScope": "journey-flow studio-answer-question path main",
+  "title": "Owner answers, or refuses, a question an agent asked",
+  "version": 1
+}

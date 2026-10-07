@@ -1,0 +1,115 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner reads While you were away and dismisses it",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-handover",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "handover.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows dialog \"While you were away\", heading \"Shipped\", heading \"Went quiet\", heading \"Nobody touched\", button \"Got it\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "handover"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows navigation \"Projects\", region \"Canvas\", tab \"Team (live)\", region \"Team\", complementary \"Run side panel\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen handover not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/handover-card.tsx",
+          "apps/studio/src/runtime/handover.ts"
+        ],
+        "screenId": "handover",
+        "title": "The handover card over the canvas (needs 20+ events over 15+ min since last seen)"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "handover"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/rail.tsx",
+          "apps/studio/src/components/team-canvas.tsx",
+          "apps/studio/src/components/right-panel.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Got it"
+        }
+      },
+      "stepId": "run"
+    }
+  ],
+  "taskScope": "journey-flow studio-handover path main",
+  "title": "Owner reads While you were away and dismisses it",
+  "version": 1
+}

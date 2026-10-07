@@ -1,0 +1,114 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner connects an existing native chat as the team's coordinator",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-connect-existing-chat",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Main chat\", heading \"Main chat\", button \"Connect existing chat\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "native.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Connect existing chat\", heading \"Connect existing chat\", textbox \"Search chats\", list \"Existing native chats\", button \"Add persona to activity\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "native"
+    }
+  ],
+  "riskSignals": [
+    "security",
+    "multiple_components"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/main-chat.tsx"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen native not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/panel.tsx",
+          "apps/studio/src/components/native-chats.tsx",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "native",
+        "title": "Node window with the Connect existing chat block open"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Connect existing chat"
+        }
+      },
+      "stepId": "native"
+    }
+  ],
+  "taskScope": "journey-flow studio-connect-existing-chat path main",
+  "title": "Owner connects an existing native chat as the team's coordinator",
+  "version": 1
+}

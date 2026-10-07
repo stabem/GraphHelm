@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-mobile
 title: "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs"
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:2b3f6a717276add65f3396e7571e1b4655c43d069e7f0a46363db676bb477901}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

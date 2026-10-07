@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
 title: Owner opens the Journey tab of a run
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:527666d06f329acaaba8441c6c45e78ff6f903e222182c717ac5057ab113ebda}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

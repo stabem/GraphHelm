@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-edit-delivery-document
 title: Owner opens a delivered document from a node window and saves an edit to the project
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:f7b4258e5b7b9c4ff33f2e4dacda69e440e17132457b4d5b3d8b2b1e9e8e25fe}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

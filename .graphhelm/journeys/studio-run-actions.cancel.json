@@ -1,0 +1,206 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Owner pauses a run, or cancels it behind a confirmation",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio-run-actions.cancel",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "run.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Canvas\", region \"Team\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "run"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "actions.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"pause · finish in-flight\", button \"pause now · interrupt\", button \"resume\", button \"sweep\", button \"Cancel execution\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "actions"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "cancel-confirm.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"yes, cancel it\", button \"keep running\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "cancel-confirm"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "cancelled.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"sweep\", region \"Team\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "cancelled"
+    }
+  ],
+  "riskSignals": [
+    "irreversible_effect",
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen run not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "run",
+        "title": "A run is open: rail, chat, team canvas, side panel"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "run"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen actions not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "actions",
+        "title": "Run actions open in the dock"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "summary",
+          "strategy": "accessible_name",
+          "value": "Run actions"
+        }
+      },
+      "stepId": "actions"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen cancel-confirm not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "cancel-confirm",
+        "title": "Cancel asks for confirmation in place"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Cancel execution"
+        }
+      },
+      "stepId": "cancel-confirm"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen cancelled not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/components/legality.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "cancelled",
+        "title": "The run is cancelled; nothing is left to pause, resume or cancel"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "yes, cancel it"
+        }
+      },
+      "stepId": "cancelled"
+    }
+  ],
+  "taskScope": "journey-flow studio-run-actions path cancel",
+  "title": "Owner pauses a run, or cancels it behind a confirmation",
+  "version": 1
+}

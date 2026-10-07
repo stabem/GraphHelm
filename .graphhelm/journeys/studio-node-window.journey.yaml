@@ -1,8 +1,8 @@
 schema: graphhelm.journey-flow/1
 id: studio-node-window
 title: Owner opens a graph step's window from the team canvas
-status: draft
-approved: null
+status: approved
+approved: {revision: 74f100918b370b441beaa7b0e9f2d90d8ce7ce48, digest: sha256:3e28087a5be18119e3e144b3e45ac267098c011b8a39ae1a0e1fc2d911b1545b}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

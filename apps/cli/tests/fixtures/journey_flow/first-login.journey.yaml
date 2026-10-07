@@ -1,0 +1,39 @@
+schema: graphhelm.journey-flow/1
+id: first-login
+title: First login to a configured store
+status: draft
+approved: null
+base: http://localhost:3000
+actors: [seller]
+secrets: []
+risks: [authentication]
+screens:
+  - id: dashboard
+    url: /dashboard
+    state: success
+    expect: [{role: heading, name: Dashboard}]
+    scope: [apps/web/app/dashboard/page.tsx]
+  - id: entrar
+    url: /entrar
+    state: stable
+    expect: [{role: button, name: Entrar com Mercado Livre}]
+    scope: [apps/web/app/entrar/page.tsx, apps/web/src/screens/entrar-screen.tsx]
+  - id: onboarding
+    url: /onboarding
+    state: stable
+    expect: [{role: heading, name: Configure your store}, {role: button, name: Finish}]
+    scope: [apps/web/app/onboarding/page.tsx]
+edges:
+  - id: entrar.sign-in
+    from: entrar
+    to: onboarding
+    acts:
+      - {kind: activate, role: button, name: Entrar com Mercado Livre}
+  - id: onboarding.finish
+    from: onboarding
+    to: dashboard
+    acts:
+      - {kind: submit, role: button, name: Finish}
+paths:
+  main: [entrar.sign-in, onboarding.finish]
+drift: []

@@ -21,6 +21,9 @@ only when an existing, current journey contract already covers the exact promise
   They check graphs, not journey contracts.
 - `cli:journey validate` to check a contract file: the schema, the journey id rule, step, actor,
   promise and screen consistency, and that every `scopePaths` entry exists in the repository.
+- `cli:journey compile`, when the journey comes from a flow: a project's
+  `.graphhelm/journeys/<id>.journey.yaml` (schema `graphhelm.journey-flow/1`) is the source
+  agents write, and `.graphhelm/journeys/<contractId>.json` is generated from it.
 
 ## Mutations and effects
 
@@ -54,11 +57,20 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
 8. Use ids that satisfy the journey id rule, `^[a-z0-9][a-z0-9._-]{0,127}$` with no `..`, for the
    contract, every step and every screen; the schema alone also allows `:` and `/`, which journey
    records refuse. A step id is also the exact title of the Playwright test that captures it.
-9. Save the contract as `.graphhelm/journeys/<contractId>.json` in the project, then run
-   `cli:journey validate` on it and fix every finding.
+9. Where the journey lives decides how it is saved. If `.graphhelm/journeys/` already holds a
+   flow (`<id>.journey.yaml`) for this journey, change the flow (its screens, edges and paths, as
+   the `journey-map` skill describes), run `cli:journey validate` with `--all` and
+   `cli:journey compile` with `--include-draft`, and never edit the generated
+   `<contractId>.json`: `validate` reports a hand edit as `flow.contract_stale`. A changed flow
+   goes back to the owner for approval (`flow.approval_stale` until then); never approve it
+   yourself. Only a journey with no flow is saved as a hand-written
+   `.graphhelm/journeys/<contractId>.json`; then run `cli:journey validate` on it and fix every
+   finding. The prose fields this method asks for (failure contracts, recovery, out of scope)
+   stay in the request record when the contract is generated, because the compiler fills them
+   from fixed defaults.
 
-For a project with no contracts yet, start with `journey-map`, which discovers the screens and
-drafts the first few contracts.
+For a project with no journeys yet, start with `journey-map`, which discovers the screens and
+drafts the first few flows.
 
 When a Runtime is attached, MCP remains the read surface. CLI is a local/offline choice made before
 any later mutation. Never switch surfaces to retry an uncertain mutation.

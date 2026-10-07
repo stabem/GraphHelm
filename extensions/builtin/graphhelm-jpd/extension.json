@@ -12,15 +12,9 @@
   "spec": {
     "type": "skill-package",
     "capabilities": [
-      "skill.defect-bounty",
       "skill.journey-contract",
       "skill.journey-map",
-      "skill.journey-verifier",
-      "skill.observation-compiler",
-      "skill.plan-council",
-      "skill.retry-provenance",
-      "skill.skill-evaluator",
-      "skill.skill-synthesizer"
+      "skill.journey-prove"
     ],
     "permissions": {
       "filesystem": {
@@ -1017,45 +1011,10 @@
           "family": "journey-verifier"
         },
         {
-          "id": "skill/defect-bounty",
-          "kind": "skill",
-          "path": "skills/defect-bounty/SKILL.md",
-          "sha256": "sha256:15d805fdcac52bf6396f72d6018a64921efaecb33f53d2ff46cee817260774d4",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.mutate",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "owner.decision.request",
-            "package.read",
-            "runtime.read",
-            "runtime.write",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:graph replay",
-            "cli:graph simulate",
-            "tool:events",
-            "tool:signal",
-            "tool:status"
-          ],
-          "family": "defect-bounty"
-        },
-        {
           "id": "skill/journey-contract",
           "kind": "skill",
           "path": "skills/journey-contract/SKILL.md",
-          "sha256": "sha256:3d154b69fc7abda0d1feb61262dbbb6caacf5f45061bcf5ea97781640b25d1f0",
+          "sha256": "sha256:98d1f6ae7cb1a9d21aaa81ac0279e087db3e7c1ea9ef22cacc3178c4a219cf08",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1110,228 +1069,15 @@
           "family": "journey-map"
         },
         {
-          "id": "skill/journey-verifier",
+          "id": "skill/journey-prove",
           "kind": "skill",
-          "path": "skills/journey-verifier/SKILL.md",
-          "sha256": "sha256:dfa7b598bc519914097b8215d1b7106beab0eac096cf2bae5c28d898599f5fc8",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.mutate",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "owner.decision.request",
-            "package.read",
-            "runtime.read",
-            "runtime.write",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:execution amend-budget",
-            "cli:execution approve",
-            "cli:execution cancel",
-            "cli:execution pause",
-            "cli:execution resume",
-            "cli:execution signal",
-            "cli:execution start",
-            "cli:execution status",
-            "cli:graph hash",
-            "cli:graph lint",
-            "cli:graph replay",
-            "cli:graph simulate",
-            "cli:graph validate",
-            "cli:quality certify",
-            "tool:amend_budget",
-            "tool:approve",
-            "tool:cancel",
-            "tool:events",
-            "tool:pause",
-            "tool:probe",
-            "tool:resume",
-            "tool:routes",
-            "tool:signal",
-            "tool:start",
-            "tool:status",
-            "tool:wake_arm",
-            "tool:wake_status",
-            "tool:wake_wait"
-          ],
+          "path": "skills/journey-prove/SKILL.md",
+          "sha256": "sha256:821ec8ab290a912c2b871e89f5033c4d856e63752bb50ffa49403b3fcd24ccc6",
+          "effects": ["artifact.local.write", "artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read", "workspace.artifact.write"],
+          "requires": {"capabilities": ["graphhelm.public-api"], "observers": []},
+          "surfaces": ["cli:journey validate", "tool:events", "tool:status"],
           "family": "journey-verifier"
-        },
-        {
-          "id": "skill/observation-compiler",
-          "kind": "skill",
-          "path": "skills/observation-compiler/SKILL.md",
-          "sha256": "sha256:be6db2c9743a8a4cc402839efa7e9467b470697952609a4275a34c2254ad9f40",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:graph lint",
-            "cli:graph simulate",
-            "cli:graph validate",
-            "cli:schema conformance",
-            "cli:schema view",
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "observation-compiler"
-        },
-        {
-          "id": "skill/plan-council",
-          "kind": "skill",
-          "path": "skills/plan-council/SKILL.md",
-          "sha256": "sha256:17d7a78ea8ec66ce2e36b0580eaa46106750ff8c05f3a6f0e088b204998e74fd",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.mutate",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "owner.decision.request",
-            "package.read",
-            "runtime.read",
-            "runtime.write",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:graph lint",
-            "cli:graph simulate",
-            "cli:graph validate",
-            "tool:events",
-            "tool:signal",
-            "tool:start",
-            "tool:status"
-          ],
-          "family": "plan-council"
-        },
-        {
-          "id": "skill/retry-provenance",
-          "kind": "skill",
-          "path": "skills/retry-provenance/SKILL.md",
-          "sha256": "sha256:294e2d2da878bb9f0e773c7b41a198a1453719db0a9955e94d3ca42e2e4d0ad6",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:graph replay",
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "retry-provenance"
-        },
-        {
-          "id": "skill/skill-evaluator",
-          "kind": "skill",
-          "path": "skills/skill-evaluator/SKILL.md",
-          "sha256": "sha256:c10eea4ce33923bf6fb7ae12490192958ba8ab06217aa10ce20b414547554118",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:graph replay",
-            "cli:graph simulate",
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "skill-evaluator"
-        },
-        {
-          "id": "skill/skill-synthesizer",
-          "kind": "skill",
-      "path": "skills/skill-synthesizer/SKILL.md",
-      "sha256": "sha256:2e1b190609aae1fdd0582dc2a7d9119d19fc6b6b586bdd1e65d12d9197fa11f5",
-          "effects": [
-            "artifact.local.write",
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read",
-            "workspace.artifact.write"
-          ],
-          "requires": {
-            "capabilities": [
-              "graphhelm.public-api"
-            ],
-            "observers": []
-          },
-          "surfaces": [
-            "cli:extension validate",
-            "cli:schema catalog",
-            "cli:schema conformance",
-            "cli:schema digest",
-            "cli:schema view",
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "skill-synthesizer"
         }
       ]
     },

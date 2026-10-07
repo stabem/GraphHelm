@@ -116,9 +116,9 @@ fn skill_index(manifest: &serde_json::Value) -> usize {
         .unwrap_or_else(|| {
             panic!(
                 "no `skill` contribution is declared, so there is nothing for this hostile case to \
-                 mutate. This is the RED that #224's bundle closes: three entry skills -- \
-                 code-contract, context-retrieval and memory-curator -- declared in extension.json \
-                 with their SKILL.md paths and digests."
+                 mutate. This is the RED that #224's bundle closes: entry skills (task-plan, \
+                 implement, blind-review, merge, keel, test-audit and memory-curator since #385) \
+                 declared in extension.json with their SKILL.md paths and digests."
             )
         })
 }
@@ -156,8 +156,12 @@ fn the_shipped_bundle_validates_and_declares_what_the_issue_promises() {
         .collect();
 
     for expected in [
-        "skills/code-contract/SKILL.md",
-        "skills/context-retrieval/SKILL.md",
+        "skills/task-plan/SKILL.md",
+        "skills/implement/SKILL.md",
+        "skills/blind-review/SKILL.md",
+        "skills/merge/SKILL.md",
+        "skills/keel/SKILL.md",
+        "skills/test-audit/SKILL.md",
         "skills/memory-curator/SKILL.md",
     ] {
         assert!(

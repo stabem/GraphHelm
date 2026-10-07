@@ -11,7 +11,7 @@ use graphhelm_tool_broker::mcp_capability::{
 fn token() -> McpCapabilityToken {
     McpCapabilityToken {
         package_digest: "sha256:aaaa".to_owned(),
-        contribution_id: "skill/code-contract".to_owned(),
+        contribution_id: "skill/keel".to_owned(),
         actor: "agent-builder".to_owned(),
         allowed_tools: ["approve", "signal"]
             .map(str::to_owned)
@@ -31,7 +31,7 @@ fn mint_carries_the_contributions_effects_for_audit_but_never_for_gating() {
     // effects_alone_never_grants_a_tool_not_named_in_surfaces) never reads this field.
     let minted = mint(
         "sha256:aaaa".to_owned(),
-        "skill/code-contract".to_owned(),
+        "skill/keel".to_owned(),
         "agent-builder".to_owned(),
         &["tool:signal".to_owned()],
         &["runtime.connect".to_owned(), "runtime.mutate".to_owned()],
@@ -116,7 +116,7 @@ fn a_token_minted_for_one_contribution_is_refused_against_a_different_contributi
  {
     // #213 blueprint T1 (confused deputy), same-package half: a memory-curator token (frozen
     // allowed_tools intersecting NONE of the execution-control tools) cannot reach `approve`
-    // just because it presents the same package_digest a code-contract token would. This is a
+    // just because it presents the same package_digest a keel token would. This is a
     // composition of the digest check (which agrees) and the allowlist check (which does not) --
     // named here under the attack's own story, not a new code path.
     let curator = McpCapabilityToken {
@@ -172,7 +172,7 @@ fn a_widened_surfaces_declaration_after_mint_does_not_widen_an_already_minted_to
     let narrow = vec!["tool:signal".to_owned()];
     let minted = mint(
         "sha256:aaaa".to_owned(),
-        "skill/code-contract".to_owned(),
+        "skill/keel".to_owned(),
         "agent-builder".to_owned(),
         &narrow,
         &[],
@@ -204,7 +204,7 @@ fn refusal_records_never_carry_call_arguments_or_token_bytes() {
     // added to the struct is caught here rather than discovered in a live audit log.
     let record = record_call(
         "agent-builder",
-        "skill/code-contract",
+        "skill/keel",
         "sha256:aaaa",
         "cancel",
         &Err(McpCapabilityRefusal::ToolNotAllowlisted),
@@ -237,7 +237,7 @@ fn refusal_records_never_carry_call_arguments_or_token_bytes() {
 fn an_allowed_call_records_the_allowed_decision() {
     let record = record_call(
         "agent-builder",
-        "skill/code-contract",
+        "skill/keel",
         "sha256:aaaa",
         "signal",
         &Ok(()),

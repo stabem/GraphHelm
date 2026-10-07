@@ -12,53 +12,45 @@ controls retain those jobs.
 
 ## How they fit together
 
-The diagram reads **left to right**. It shows a typical route. Select
-only the skills needed for the promise and its risk. A small, reversible change can use the direct
-route; unclear proof or higher-risk work can use the expanded Journey-Proven Development (JPD)
-route. An unavailable observer stops the proof claim.
+Every task runs the same five steps after its issue, in any agent host. Each step is one skill and
+names the record it emits ([journey-first Keel design](../specs/2026-10-07-journey-first-keel-design.md)
+§§6–7). Use only as much of each step as the change needs: a docs or one-line change plans `proof:
+none` and needs no journey.
 
 ```mermaid
 flowchart LR
-  A["User promise"] --> B{"Risk and proof clear?"}
-  B -->|"small, clear"| D["Direct route<br/>Keel card when needed"]
-  B -->|"unclear or higher risk"| J["JPD: journey-contract"]
-  J --> O["observation-compiler"]
-  O --> Q{"Adequate observer?"}
-  Q -->|"no"| M["OBSERVER_MISSING<br/>resolve the gap"]
-  Q -->|"yes"| C["Select supporting skills<br/>only as needed"]
-  D --> K["Scoped context and change<br/>Keel + code-contract when needed"]
-  C --> K
-  K --> P["Run reached proof<br/>journey-verifier for JPD"]
-  P --> E{"Evidence supports<br/>the promise?"}
-  E -->|"no"| F["Record defect and retry<br/>without erasing first failure"]
-  F --> K
-  E -->|"yes"| R["Independent review"]
-  R --> G["Head-pinned merge"]
+  I["Issue"] --> P["task-plan<br/>keel.plan"]
+  P --> M["implement<br/>keel.card, task.pr_opened"]
+  M --> J{"proof"}
+  J -->|"journey / both"| V["journey-prove<br/>jpd.screen_captured,<br/>jpd.transition_walked"]
+  J -->|"tests / none"| R
+  V -->|"no observer"| X["OBSERVER_MISSING"]
+  V --> R["blind-review<br/>task.review_verdict"]
+  R -->|"BLOCK"| M
+  R -->|"APPROVE"| G["merge<br/>task.merged"]
   G -.-> L["memory-curator<br/>advisory lesson, if useful"]
 ```
 
-`plan-council`, `defect-bounty`, `skill-synthesizer`, `skill-evaluator`, and `retry-provenance` are
-supporting skills, not a fixed pipeline. The [current delivery process](../process/DELIVERY.md)
-sets the repository's issue, evidence, review, and merge rules. A full `ci/gate.ps1` run is optional;
-the author and reviewer run the checks reached by the change.
+`keel` carries the binding rules that `implement` follows; `test-audit` gates every new, changed or
+removed test; `journey-map` and `journey-contract` create the journeys that `journey-prove`
+replays. `keel plan` and the `task.*` records are being built (design phases B and F); until they
+land, each skill says how to do its step by hand. The [current delivery process](../process/DELIVERY.md)
+sets the repository's issue, evidence, review, and merge rules.
 
 ## Built-in skill catalog
 
 | Skill | Use it when | Output or boundary |
 |---|---|---|
-| [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | An agent is planning or writing a code change | A scoped card, declared write surface, and named proof; guidance and measurement, with no automatic penalty ladder |
+| [Task plan](../../extensions/builtin/graphhelm-development-contracts/skills/task-plan/SKILL.md) | An issue is about to become code | The task's `keel.plan`: paths, promise, proof kind, reviews, skills |
+| [Implement](../../extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md) | The plan exists and code is next | The change inside the card, cited context, reached tests run, PR opened |
+| [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | Any code change (implement's core) | A scoped card, declared write surface, and named proof; guidance and measurement, with no automatic penalty ladder |
 | [Test audit](../../extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md) | Before adding or changing tests, when a suite is slow or noisy, or when pruning tests | An authoring gate, suite audit, or deletion record naming the covering observer; guidance without enforcement |
-| [Code contract](../../extensions/builtin/graphhelm-development-contracts/skills/code-contract/SKILL.md) | Scope or acceptance criteria are still implicit | A proposed development contract, not enforcement |
-| [Context retrieval](../../extensions/builtin/graphhelm-development-contracts/skills/context-retrieval/SKILL.md) | The answer needs repository or execution evidence that has not been gathered | A cited context result with declared gaps, not a truth decision |
+| [Journey map](../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md) | A project has screens but no journeys | Draft journey flows and a first capture baseline |
+| [Journey contract](../../extensions/builtin/graphhelm-jpd/skills/journey-contract/SKILL.md) | One new user-visible behavior needs a journey | A proposed journey flow and contract |
+| [Journey prove](../../extensions/builtin/graphhelm-jpd/skills/journey-prove/SKILL.md) | The plan's proof is `journey` or `both` | Fresh captures and walked transitions at the head, first failures kept, or `OBSERVER_MISSING` |
+| [Blind review](../../extensions/builtin/graphhelm-development-contracts/skills/blind-review/SKILL.md) | You are a PR's one assigned reviewer | One verdict on a pinned head with commands and results |
+| [Merge](../../extensions/builtin/graphhelm-development-contracts/skills/merge/SKILL.md) | You approved the PR | A pinned squash merge, read back, workspace released |
 | [Memory curator](../../extensions/builtin/graphhelm-development-contracts/skills/memory-curator/SKILL.md) | Landed work produced a durable lesson | An advisory memory candidate, never a direct memory write |
-| [Journey contract](../../extensions/builtin/graphhelm-jpd/skills/journey-contract/SKILL.md) | The user-visible journey and failure contract need definition | A proposed journey contract |
-| [Observation compiler](../../extensions/builtin/graphhelm-jpd/skills/observation-compiler/SKILL.md) | A promise needs a named proof instrument | Typed evidence obligations or `OBSERVER_MISSING` |
-| [Plan council](../../extensions/builtin/graphhelm-jpd/skills/plan-council/SKILL.md) | Risk warrants multiple perspectives | Arguments and dissent for a risk-specific decision |
-| [Defect bounty](../../extensions/builtin/graphhelm-jpd/skills/defect-bounty/SKILL.md) | A journey defect claim needs challenge | A minimized, replayable claim or a falsification attempt |
-| [Skill synthesizer](../../extensions/builtin/graphhelm-jpd/skills/skill-synthesizer/SKILL.md) | Installed capabilities need task-local composition | An advisory Skill Capsule draft, not installation or promotion |
-| [Skill evaluator](../../extensions/builtin/graphhelm-jpd/skills/skill-evaluator/SKILL.md) | A task-local capsule needs assessment | An advisory evaluation candidate, not an automatic promotion |
-| [Retry provenance](../../extensions/builtin/graphhelm-jpd/skills/retry-provenance/SKILL.md) | Work is retried after a failure | A linked attempt chain that preserves the first failure |
-| [Journey verifier](../../extensions/builtin/graphhelm-jpd/skills/journey-verifier/SKILL.md) | The JPD obligations have adequate observers | The strongest result supported by observed evidence; missing proof stays unresolved |
 
 The installable `graphhelm` plugin adds [GraphHelm guide](../../plugins/graphhelm/skills/graphhelm-guide/SKILL.md)
 for an overview of the method, [GraphHelm setup](../../plugins/graphhelm/skills/graphhelm-setup/SKILL.md)

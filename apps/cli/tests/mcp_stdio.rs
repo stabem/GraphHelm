@@ -597,13 +597,15 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 33] = [
+const MCP_TOOL_NAMES: [&str; 35] = [
     "start",
     "list",
     "topology",
     "status",
     "briefing",
     "journeys",
+    "journey_flows",
+    "journey_approve",
     "events",
     "evidence",
     "signal",

@@ -61,7 +61,7 @@ fall back; ambiguity and a mismatched test-ID hit fail. `exact` must be true and
 There is no first-match selection or generic JavaScript-evaluation request.
 
 `activate`, `submit`, and edge `navigate` click the named control. `enter_text` fills its
-explicit text or named secret. `wait_for` and `inspect` observe the named control. `select`,
+explicit text or named secret. `wait_for` waits for its exact control to become visible; `inspect` observes it immediately. `select`,
 `upload`, `download`, `recover`, and `approve` require later resource/value/recovery policy
 and are refused. Viewports are bounded to 16,384 per dimension and 16,777,216 total pixels.
 

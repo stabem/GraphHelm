@@ -607,7 +607,6 @@ const MCP_TOOL_NAMES: [&str; 37] = [
     // #360: the agent-workspace read and the owner-only sweep, beside the project reads.
     "workspace_list",
     "workspace_sweep",
-    // #353 (#364): journey-flow review and the owner-only approve.
     "journey_flows",
     "journey_approve",
     "events",

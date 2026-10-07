@@ -37,7 +37,7 @@ pub use key::{
     RepositoryFuture, RevocationReceipt, RevokeKeyRequest, VerifyAuthenticationRequest,
     WrapKeyRequest, WrappedKey,
 };
-pub use limits::STATUS_READ_BUDGET_MILLIS;
+pub use limits::{MAX_READ_ALL, MAX_READ_PAGE, STATUS_READ_BUDGET_MILLIS};
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, PrefixCache, ReadLockHeld,
     journal_line_roundtrips, with_repository_read_lock,

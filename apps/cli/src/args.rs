@@ -120,6 +120,9 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// List every flow source for review: status, drift, validate findings, whether Approve
+    /// would be accepted, and its screens, edges and paths.
+    Flows(JourneyFlowsArgs),
     /// Replay every approved path with the explicitly installed browser observer, without a model.
     Replay(JourneyReplayArgs),
 }
@@ -143,6 +146,12 @@ pub struct JourneyReplayArgs {
     /// Internal contained worker; the ordinary supervisor supplies its start handshake.
     #[arg(long, hide = true)]
     pub replay_worker: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyFlowsArgs {
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

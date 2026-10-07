@@ -83,7 +83,8 @@ import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneysView } from "./runtime/types";
+import type { JourneyFlowsView, JourneysView } from "./runtime/types";
+import { JourneyFlows } from "./components/journey-flows";
 import { ChatColumn } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
@@ -1996,6 +1997,30 @@ export default function App({
   }, [eventList]);
   // Journeys are a project property (#332): one map folded from every run, read from
   // `GET /v1/journeys` and kept across run switches. A run switch or a new jpd record re-reads it.
+  // Journey-flow review (#353): the flow sources and the owner's Approve. An approval bumps
+  // `flowsRevision`, which re-reads the flows and the journey map its compiled contracts feed.
+  const [flowsRevision, setFlowsRevision] = useState(0);
+  const [flowsRead, setFlowsRead] = useState<{ view: JourneyFlowsView | null; failure: string | null }>({ view: null, failure: null });
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => client.journeyFlows()).then((view) => {
+      if (!cancelled) setFlowsRead({ view, failure: null });
+    }, (reason: unknown) => {
+      if (!cancelled) setFlowsRead((prior) => ({ view: prior.view, failure: prior.view === null ? messageOf(reason, "") : null }));
+    });
+    return () => { cancelled = true; };
+  }, [selected, lastJpdSequence, flowsRevision]);
+  const approveFlow = useCallback(async (flowId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected to the Runtime.");
+    try {
+      await client.approveJourneyFlow(flowId);
+    } finally {
+      setFlowsRevision((revision) => revision + 1);
+    }
+  }, []);
   const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
@@ -2008,7 +2033,7 @@ export default function App({
       if (!cancelled) setJourneysRead((prior) => prior !== null ? { ...prior, failed: prior.view === null, failure } : { view: null, failed: true, failure });
     });
     return () => { cancelled = true; };
-  }, [selected, lastJpdSequence]);
+  }, [selected, lastJpdSequence, flowsRevision]);
   const journeysView = journeysRead?.view ?? null;
   const journeysFailure = journeysRead?.failure ?? null;
   const journeysFailed = journeysRead?.failed ?? false;
@@ -2850,6 +2875,7 @@ export default function App({
             )}
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
+            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} />}
             {canvasTab === "journey" && (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}

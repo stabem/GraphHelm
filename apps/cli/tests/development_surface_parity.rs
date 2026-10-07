@@ -149,7 +149,7 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 27] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 29] = [
     // #360. Agent workspaces are host filesystem housekeeping for lanes: a read and an
     // owner-only sweep, beside the Runtime verbs, not development-contract operations.
     "workspace_list",
@@ -162,6 +162,10 @@ const NON_DEVELOPMENT_TOOLS: [&str; 27] = [
     "briefing",
     // #315. The proven-journey map is a READ over an execution, beside briefing.
     "journeys",
+    // #353. Journey-flow review and approval: a READ and an owner verb over the Runtime's
+    // project, beside journeys -- the Studio's Approve button.
+    "journey_flows",
+    "journey_approve",
     "events",
     "evidence",
     "signal",

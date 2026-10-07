@@ -36,6 +36,26 @@ describe("RuntimeClient.journeys", () => {
   });
 });
 
+// #353: the Journey tab's flow review reads and approves through the public routes only.
+describe("RuntimeClient journey flows", () => {
+  it("lists flows from GET /v1/journey-flows", async () => {
+    const view = { flows: [] };
+    const { seen, runtime } = client(() => json(view));
+    await expect(runtime.journeyFlows()).resolves.toEqual(view);
+    expect(seen[0].url).toBe("/v1/journey-flows");
+  });
+  it("approves through POST /v1/journey-flows/{id}/approve and surfaces a refusal", async () => {
+    const { seen, runtime } = client(() => json({ id: "a b", status: "approved" }));
+    await expect(runtime.approveJourneyFlow("a b")).resolves.toEqual({ id: "a b", status: "approved" });
+    expect(seen[0].url).toBe("/v1/journey-flows/a%20b/approve");
+    const refused = client(() => new Response(JSON.stringify({ ok: false, data: { files: [] },
+      diagnostics: [{ code: "GHCLI034_JOURNEY_FLOW_INVALID", message: "scope does not exist", path: "/screens/0/scope/0", severity: "error" }] }),
+      { status: 400, headers: { "content-type": "application/json" } }));
+    await expect(refused.runtime.approveJourneyFlow("broken")).rejects.toBeInstanceOf(RuntimeError);
+    await expect(client(() => json({})).runtime.approveJourneyFlow("")).rejects.toBeInstanceOf(RuntimeError);
+  });
+});
+
 describe("RuntimeClient.readImage", () => {
   it.each(["image/png", "image/jpeg", "image/webp"])("returns a blob for %s", async (type) => {
     const { seen, runtime } = client(() => bytes(type));

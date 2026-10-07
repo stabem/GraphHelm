@@ -1810,6 +1810,18 @@ pub(super) async fn sweep_workspaces(State(state): State<ServeState>) -> Respons
     .await
 }
 
+/// `GET /v1/journey-flows` (#353): `graphhelm journey flows`'s own envelope for the Runtime's
+/// `--project`; nothing from the request names a path. Owner credentials only
+/// (`agent_route_allowed` admits no `/v1/journey-flows`).
+pub(super) async fn journey_flows(State(state): State<ServeState>) -> Response {
+    flow_command(state, "journey.flows", |project| {
+        crate::commands::journey_flow::run_flows(&crate::args::JourneyFlowsArgs {
+            project: Some(project),
+        })
+    })
+    .await
+}
+
 async fn workspace_command(
     state: ServeState,
     command: &'static str,
@@ -1829,6 +1841,45 @@ async fn workspace_command(
         None => respond(
             StatusCode::INTERNAL_SERVER_ERROR,
             Outcome::internal(command, "the workspace task failed").output,
+        ),
+    }
+}
+
+/// `POST /v1/journey-flows/{id}/approve` (#353): exactly `graphhelm journey approve <id>` on the
+/// Runtime's `--project` - the Studio's Approve button. The id is checked by the command itself
+/// before it reaches a path; findings refuse with 400 and write nothing. Owner credentials only.
+pub(super) async fn approve_journey_flow(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+) -> Response {
+    flow_command(state, "journey.approve", move |project| {
+        crate::commands::journey_flow::run_approve(&crate::args::JourneyApproveArgs {
+            id,
+            project: Some(project),
+        })
+    })
+    .await
+}
+
+async fn flow_command(
+    state: ServeState,
+    command: &'static str,
+    run: impl FnOnce(PathBuf) -> Outcome + Send + 'static,
+) -> Response {
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            command,
+            execution::execution_state(
+                "journey flows require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    match off_reactor(move || run(project)).await {
+        Some(outcome) => respond_outcome(outcome),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(command, "the journey-flow task failed").output,
         ),
     }
 }

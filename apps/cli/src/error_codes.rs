@@ -61,6 +61,8 @@ pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
 /// A workspace claim or release was refused: the workspace exists, is not claimed, or git failed
 /// (#360).
 pub const GHCLI037_WORKSPACE_REFUSED: &str = "GHCLI037_WORKSPACE_REFUSED";
+/// An agent-typed MCP session asked to approve a journey flow; only the owner approves (#353).
+pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -105,6 +107,7 @@ pub const ALL: &[&str] = &[
     GHCLI033_JOURNEY_CONTRACT_INVALID,
     GHCLI034_JOURNEY_FLOW_INVALID,
     GHCLI037_WORKSPACE_REFUSED,
+    GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

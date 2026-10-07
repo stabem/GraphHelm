@@ -32,6 +32,7 @@ mod tool;
 mod topology;
 mod validate;
 mod wake_wait;
+mod workspace;
 
 use std::sync::Arc;
 
@@ -574,6 +575,7 @@ pub fn run(command: TopLevel) -> Outcome {
             )
         }
         TopLevel::Journey(args) => journey::run(&args),
+        TopLevel::Workspace(args) => workspace::run(&args),
         TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),

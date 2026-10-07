@@ -1789,6 +1789,27 @@ pub(super) async fn project_journeys(State(state): State<ServeState>) -> Respons
     journeys_over(state, None).await
 }
 
+/// `GET /v1/workspaces` (#360): `graphhelm workspace list` over the Runtime's
+/// `--workspace-root`; nothing from the request names a path. Owner credentials only
+/// (`agent_route_allowed` admits no `/v1/workspaces`).
+pub(super) async fn workspaces(State(state): State<ServeState>) -> Response {
+    workspace_command(
+        state,
+        "workspace.list",
+        crate::commands::workspace::run_list,
+    )
+    .await
+}
+
+/// `POST /v1/workspaces/sweep` (#360): exactly `graphhelm workspace sweep --apply` over the
+/// Runtime's `--workspace-root`. Owner credentials only; the MCP tool refuses agent sessions.
+pub(super) async fn sweep_workspaces(State(state): State<ServeState>) -> Response {
+    workspace_command(state, "workspace.sweep", |root| {
+        crate::commands::workspace::run_sweep(root, true)
+    })
+    .await
+}
+
 /// `GET /v1/journey-flows` (#353): `graphhelm journey flows`'s own envelope for the Runtime's
 /// `--project`; nothing from the request names a path. Owner credentials only
 /// (`agent_route_allowed` admits no `/v1/journey-flows`).
@@ -1799,6 +1820,29 @@ pub(super) async fn journey_flows(State(state): State<ServeState>) -> Response {
         })
     })
     .await
+}
+
+async fn workspace_command(
+    state: ServeState,
+    command: &'static str,
+    run: impl FnOnce(&Path) -> Outcome + Send + 'static,
+) -> Response {
+    let Some(root) = state.workspace_root.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            command,
+            execution::execution_state(
+                "workspaces require an explicit --workspace-root on this Runtime",
+                "/workspaceRoot",
+            ),
+        );
+    };
+    match off_reactor(move || run(&root)).await {
+        Some(outcome) => respond_outcome(outcome),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(command, "the workspace task failed").output,
+        ),
+    }
 }
 
 /// `POST /v1/journey-flows/{id}/approve` (#353): exactly `graphhelm journey approve <id>` on the
@@ -5449,6 +5493,7 @@ mod off_reactor_tests {
             instance: Arc::from("test-instance"),
             project_id: None,
             project: None,
+            workspace_root: None,
             events,
             runtime: None,
             sealing: None,

@@ -122,6 +122,8 @@ struct ServeState {
     project_id: Option<Arc<str>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
+    /// The agent workspace root (#360), from `--workspace-root`.
+    workspace_root: Option<Arc<Path>>,
     /// The events directory. Every handler opens a fresh `LocalEventRepository` against it via
     /// `commands::event_store` (which, under `serve`, reuses the journal verification an earlier
     /// request proved, for up to `SHARED_PREFIX_MAX_AGE`; no lock is shared) — exactly the call every CLI command makes — does its one command's
@@ -209,6 +211,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         instance: Arc::from(instance),
         project_id: project_id.map(Arc::from),
         project: args.project.as_deref().map(Arc::from),
+        workspace_root: args.workspace_root.as_deref().map(Arc::from),
         events: Arc::from(args.events.as_path()),
         runtime: runtime_wiring.map(Arc::new),
         sealing: sealing.map(Arc::new),
@@ -628,6 +631,8 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
         .route("/v1/journeys", get(routes::project_journeys))
+        .route("/v1/workspaces", get(routes::workspaces))
+        .route("/v1/workspaces/sweep", post(routes::sweep_workspaces))
         .route("/v1/journey-flows", get(routes::journey_flows))
         .route(
             "/v1/journey-flows/{id}/approve",

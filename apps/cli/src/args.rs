@@ -73,6 +73,10 @@ pub enum TopLevel {
     /// project's current git revision, or `walked` one transition between two captured,
     /// consecutive steps.
     Journey(JourneyArgs),
+    /// Agent workspaces (#360): `claim` a worktree with its own cargo target, temp and log
+    /// directories under one root, `release` it when the task is done, `list` them, and `sweep`
+    /// (the owner's) removes released workspaces that are still clean at the released commit.
+    Workspace(WorkspaceArgs),
     /// The Studio: `graphhelm studio start` brings the GraphHelm clone up to date and opens the
     /// Studio for the project in the current directory, starting its Runtime when none answers.
     Studio(StudioArgs),
@@ -840,6 +844,11 @@ pub struct ServeArgs {
     /// consults it there); given without it, it is accepted but silently unused.
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// The agent workspace root (#360) that `GET /v1/workspaces` lists and the owner's
+    /// `POST /v1/workspaces/sweep` sweeps. Nothing in a request names a path; without this flag
+    /// both routes refuse naming it.
+    #[arg(long)]
+    pub workspace_root: Option<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
     /// `SweepCaller::Tick`.
     ///
@@ -1764,4 +1773,69 @@ pub enum DraftCommand {
         #[arg(long)]
         events: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceArgs {
+    #[command(subcommand)]
+    pub command: WorkspaceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkspaceCommand {
+    /// Create `<root>/<lane>/<task>/` with a git worktree (`wt`) and `target`, `tmp` and `logs`
+    /// directories, record the claim, and print the environment to use.
+    Claim(WorkspaceClaimArgs),
+    /// Declare the task done: records the worktree's HEAD. Deletes nothing.
+    Release(WorkspaceTaskArgs),
+    /// Every recorded workspace with its state, size and live git facts. Read-only.
+    List(WorkspaceRootArgs),
+    /// Remove released workspaces that are clean and still at the released commit, ignored files
+    /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
+    /// never follows a link, and keeps any workspace whose worktree contains one.
+    Sweep(WorkspaceSweepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceClaimArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    #[arg(long)]
+    pub lane: String,
+    #[arg(long)]
+    pub task: String,
+    /// The git repository the worktree is added to.
+    #[arg(long)]
+    pub repo: PathBuf,
+    /// The commit-ish the new branch starts from. Defaults to `origin/main`.
+    #[arg(long)]
+    pub base: Option<String>,
+    /// The branch to create. Defaults to `issue-<task>-<lane>`.
+    #[arg(long)]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceTaskArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    #[arg(long)]
+    pub lane: String,
+    #[arg(long)]
+    pub task: String,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceRootArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceSweepArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    /// Remove what the dry run lists. Without it nothing is changed.
+    #[arg(long)]
+    pub apply: bool,
 }

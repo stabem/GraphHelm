@@ -1478,3 +1478,62 @@ git grep -n 'is_loopback' origin/main -- apps/cli/src/commands/serve   one site,
 **Consequences:** freshness is only as good as the Runtime's checkout; a capture taken on a commit the project does not have reports `unknown`. Studio rendering is phase 5; the Playwright observer `--journey`, DELIVERY guidance and the Keel card `journeys` field are phase 6.
 
 **Relationship:** builds on ADR-043; implements §5.4, §6.1–§6.4 and §7 of the Studio live-team spec.
+
+## 50. ADR-045 — Agent workspaces: a ledger under one root, claimant release, owner-only sweep
+
+**Context:** Agent lanes create git worktrees, cargo target directories (5–15 GB each), temp
+directories and logs, and leave them behind. Disks filled twice in one day (issue #360). Cleanup
+depended on each agent remembering, and a host's own safety checks often refuse an agent's
+recursive deletes, so leftovers waited for the owner.
+
+**Decision:**
+
+1. **Layout.** `graphhelm workspace claim --root R --lane L --task T --repo G` creates
+   `R/L/T/` holding `wt/` (a `git worktree add` on a new branch, `issue-T-L` by default, from
+   `--base`, default `origin/main`), `target/`, `tmp/` and `logs/`. It prints the environment to
+   use (`CARGO_TARGET_DIR`, `TEMP`, `TMP`). Lane and task ids match `^[a-z0-9][a-z0-9._-]{0,63}$`
+   and contain neither `..` nor `--`. A second claim for the same lane and task is refused
+   (`GHCLI037_WORKSPACE_REFUSED`).
+2. **Ledger, not the event store.** Every signal belongs to an execution, and one root serves many
+   repositories and runs. So the record is one JSON file per workspace,
+   `R/.graphhelm-workspaces/L--T.json` (`schema: graphhelm.workspace/1`), written by rename. The
+   workspace directory is always derived from the ids and never read back from a record.
+3. **Done means released, clean and unmoved.** `release` records the worktree's `HEAD` and deletes
+   nothing. Git ancestry cannot say "merged" under squash merge, so the sweep never infers it. A
+   workspace is removed only when it is `released`, its worktree is clean, and `HEAD` still equals
+   the released sha. Otherwise it is kept with a reason: `not_released`, `dirty`,
+   `moved_after_release`, `worktree_unreadable`, `linked_path`, `scan_failed` or `contains_link`. "Clean" is
+   git's: tracked and untracked files. **Releasing a workspace consents to deleting its ignored
+   files** (`.env`, local databases, build output) along with the rest.
+4. **Removal never leaves the workspace.** Before git runs, `wt/` is walked without following
+   links. A symlink, junction or other reparse point anywhere in it, at a tracked or an ignored
+   path, keeps the workspace as `contains_link` and names the first one found. The scan fails
+   closed: a folder or entry it cannot read keeps the workspace as `scan_failed`, naming the path
+   and the error, because
+   `git worktree remove` recurses through a junction and deletes what it points at (found in the
+   #374 review). Only a link-free worktree goes to `git worktree remove` without `--force` (a
+   second cleanliness check at the act). Then `target/`, `tmp/` and `logs/` are deleted by a walk that
+   removes a symlink or a Windows reparse point (junction) as the link itself, never through it. A
+   lane, task or worktree directory that is itself a link is reported, never removed. A directory
+   under the root that no claim created is never visited.
+5. **Who deletes.** `sweep` is a dry run unless `--apply`. The Runtime serves `GET /v1/workspaces`
+   and `POST /v1/workspaces/sweep` over its `--workspace-root` (no request names a path), with
+   owner credentials only (`agent_route_allowed` admits neither). MCP `workspace_list` reads;
+   `workspace_sweep` refuses an agent-typed session before any request, whatever credential the
+   session holds. Claim and release stay CLI-local: an agent creates and releases only its own
+   directories.
+
+**Accepted risks:** a link created between the scan and `git worktree remove` is not caught (the
+sweep acts on released workspaces nothing should still write to); ignored files of a released
+workspace are deleted (§3).
+
+**Deferred:** a disk budget and free-space floor, a Runtime timer, idle and PR-closed triggers, a
+Studio usage panel, and a shared build cache per root.
+
+**Proof:** `apps/cli/tests/workspace_cli.rs`: the claim layout and environment, a second claim
+refused, invalid ids refused; a sweep that keeps unreleased, dirty and moved workspaces, removes the
+released clean one, survives a junction or symlink planted in `target/`, and leaves an unclaimed
+directory alone; a junction at an ignored path inside `wt/` keeps the workspace as `contains_link`
+and its target survives; HTTP and MCP lists equal to the CLI's; agent-session sweep refused and owner-session
+sweep applied; a Runtime without `--workspace-root` refusing and naming it. Plus `mcp_stdio.rs`
+(tool list) and `development_surface_parity.rs`.

@@ -60,6 +60,9 @@ pub const GHCLI033_JOURNEY_CONTRACT_INVALID: &str = "GHCLI033_JOURNEY_CONTRACT_I
 pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
 /// `graphhelm skills sync` could not read the bundle, the host home or its manifest (#355).
 pub const GHCLI035_SKILLS_SYNC_REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
+/// A workspace claim or release was refused: the workspace exists, is not claimed, or git failed
+/// (#360).
+pub const GHCLI037_WORKSPACE_REFUSED: &str = "GHCLI037_WORKSPACE_REFUSED";
 /// An agent-typed MCP session asked to approve a journey flow; only the owner approves (#353).
 pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY";
 
@@ -106,6 +109,7 @@ pub const ALL: &[&str] = &[
     GHCLI033_JOURNEY_CONTRACT_INVALID,
     GHCLI034_JOURNEY_FLOW_INVALID,
     GHCLI035_SKILLS_SYNC_REFUSED,
+    GHCLI037_WORKSPACE_REFUSED,
     GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
 ];
 

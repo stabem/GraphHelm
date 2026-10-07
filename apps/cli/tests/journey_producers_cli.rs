@@ -403,6 +403,107 @@ fn walked_cites_the_newest_captures_and_the_fold_reports_it_walked() {
     assert_eq!(arrow["transitionSignalId"], transition.as_str());
 }
 
+/// #347: explicit citations must survive a newer unrelated observation. The existing
+/// newest-pair test misses that race. Public producers + fresh reader, no new seam;
+/// cost: ~2 seconds, offline Git/event-store processes.
+#[test]
+fn walked_pins_the_selected_pair_and_refuses_partial_foreign_or_wrong_step_ids() {
+    assert!(git_available(), "Git is required by this observer");
+    let harness = prepared();
+    // Real capture with the same contract/step but a different execution, not an unknown id.
+    let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/graphs/manual-override-deploy.yaml");
+    let started = graphhelm()
+        .args(["execution", "start", "--events"])
+        .arg(&harness.events)
+        .args(["--execution", "foreign-producer-run", "--file"])
+        .arg(&graph)
+        .arg("--fixtures")
+        .arg(harness.scratch.path().join("fixtures.json"))
+        .args(["--mode", "manual", "--held"])
+        .output()
+        .unwrap();
+    assert!(started.status.success(), "{}", envelope(&started));
+    let foreign = graphhelm()
+        .args(["journey", "capture", "--events"])
+        .arg(&harness.events)
+        .args(["--execution", "foreign-producer-run", "--keyring"])
+        .arg(&harness.keyring)
+        .args(["--key-id", KEY_ID, "--project"])
+        .arg(&harness.project)
+        .args(["--contract", "cart", "--step", "open-cart", "--image"])
+        .arg(&harness.image)
+        .output()
+        .unwrap();
+    let foreign_reply = envelope(&foreign);
+    assert!(foreign.status.success(), "{foreign_reply}");
+    assert_eq!(foreign_reply["data"]["outcome"], "recorded");
+    let foreign_id = foreign_reply["data"]["signalId"].as_str().unwrap();
+    let source = harness.project.join("web/cart/Line.tsx");
+    std::fs::write(&source, "dirty observation").unwrap();
+    let selected = harness.capture("open-cart", &[]);
+    std::fs::write(&source, "line").unwrap();
+    let newest = harness.capture("open-cart", &[]);
+    let review = harness.capture("review", &[]);
+    let before = snapshot(&harness.events);
+    for (from, to) in [
+        (Some(selected.as_str()), None),
+        (None, Some(review.as_str())),
+        (Some("unknown-capture-id"), Some(review.as_str())),
+        (Some(foreign_id), Some(review.as_str())),
+        (Some(review.as_str()), Some(newest.as_str())),
+    ] {
+        let mut command = harness.record("walked");
+        command.args([
+            "--contract",
+            "cart",
+            "--from",
+            "open-cart",
+            "--to",
+            "review",
+        ]);
+        if let Some(id) = from {
+            command.args(["--from-capture", id]);
+        }
+        if let Some(id) = to {
+            command.args(["--to-capture", id]);
+        }
+        let out = command.output().unwrap();
+        let reply = harness.refuse_unchanged(&out, &before);
+        assert_eq!(reply["command"], "journey.walked", "{reply}");
+    }
+    let out = harness
+        .record("walked")
+        .args([
+            "--contract",
+            "cart",
+            "--from",
+            "open-cart",
+            "--to",
+            "review",
+            "--from-capture",
+            &selected,
+            "--to-capture",
+            &review,
+        ])
+        .output()
+        .unwrap();
+    let reply = envelope(&out);
+    assert!(out.status.success(), "{reply}");
+    assert_eq!(reply["data"]["outcome"], "recorded");
+    // The newest capture is fresh, while the explicitly cited dirty capture is not.
+    // If the producer substitutes newest, the independent reader reports walked.
+    let reader = harness.journeys();
+    assert_eq!(
+        harness.step_view("open-cart")["capture"]["signalId"],
+        newest
+    );
+    assert_eq!(
+        reader["journeys"][0]["arrows"][0]["state"], "stale",
+        "{reader}"
+    );
+}
+
 #[test]
 fn walked_refuses_a_missing_capture_and_non_consecutive_steps() {
     if !git_available() {

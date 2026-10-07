@@ -361,7 +361,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings
 }
 
-fn approval_digest(flow: &Value) -> String {
+pub(crate) fn approval_digest(flow: &Value) -> String {
     format!(
         "sha256:{}",
         hex::encode(Sha256::digest(canonical(flow, true).as_bytes()))
@@ -370,43 +370,62 @@ fn approval_digest(flow: &Value) -> String {
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     match read(file) {
-        Ok((text, value)) => {
-            let mut findings = semantic(file, &value, project);
-            if text != canonical(&value, false) {
-                findings.push(Finding::new(
-                    "flow.not_canonical",
-                    "",
-                    "flow bytes differ from canonical YAML",
-                ));
-            }
-            if findings.iter().all(Finding::is_warning) {
-                let contracts = match compile(&value) {
-                    Ok(contracts) => contracts,
-                    Err(finding) => {
-                        findings.push(finding);
-                        return findings;
-                    }
-                };
-                for (id, contract) in contracts {
-                    let path = project
-                        .join(".graphhelm/journeys")
-                        .join(format!("{id}.json"));
-                    if (value["status"] == "approved" || path.exists())
-                        && output_bytes(&path).ok().as_deref()
-                            != Some(contract_bytes(&contract).as_slice())
-                    {
-                        findings.push(Finding::new(
-                            "flow.contract_stale",
-                            format!("/journeys/{id}.json"),
-                            "generated contract differs or is missing",
-                        ));
-                    }
-                }
-            }
-            findings
-        }
+        Ok((text, value)) => check_snapshot(file, &text, &value, project),
         Err(findings) => findings,
     }
+}
+
+/// Replay consumes exactly the validated source snapshot, never a second unchecked read.
+pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
+    let (text, value) = read(file)?;
+    let mut findings = check_snapshot(file, &text, &value, project);
+    if value["status"] != "approved" {
+        findings.push(Finding::new(
+            "flow.not_approved",
+            "/status",
+            "replay requires an approved flow",
+        ));
+    }
+    if findings.iter().any(|f| !f.is_warning()) {
+        Err(findings)
+    } else {
+        Ok(value)
+    }
+}
+
+fn check_snapshot(file: &Path, text: &str, value: &Value, project: &Path) -> Vec<Finding> {
+    let mut findings = semantic(file, value, project);
+    if text != canonical(value, false) {
+        findings.push(Finding::new(
+            "flow.not_canonical",
+            "",
+            "flow bytes differ from canonical YAML",
+        ));
+    }
+    if findings.iter().all(Finding::is_warning) {
+        let contracts = match compile(value) {
+            Ok(contracts) => contracts,
+            Err(finding) => {
+                findings.push(finding);
+                return findings;
+            }
+        };
+        for (id, contract) in contracts {
+            let path = project
+                .join(".graphhelm/journeys")
+                .join(format!("{id}.json"));
+            if (value["status"] == "approved" || path.exists())
+                && output_bytes(&path).ok().as_deref() != Some(contract_bytes(&contract).as_slice())
+            {
+                findings.push(Finding::new(
+                    "flow.contract_stale",
+                    format!("/journeys/{id}.json"),
+                    "generated contract differs or is missing",
+                ));
+            }
+        }
+    }
+    findings
 }
 
 fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
@@ -596,7 +615,7 @@ fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
     Some(files)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(std::io::Error::other("output symlink refused"));

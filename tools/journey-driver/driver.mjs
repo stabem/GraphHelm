@@ -93,11 +93,16 @@ async function unique(locator, missing = 'driver.locator_missing') {
   return locator;
 }
 async function locate(r) {
-  const global = page.getByRole(r.role,{ name:r.name,exact:true });
+  const waiting=r.kind==='wait_for';
+  const global = page.getByRole(r.role,{ name:r.name,exact:true,includeHidden:waiting });
+  const select=async target=>{
+    if(waiting) await target.waitFor({state:'visible',timeout:TIMEOUT});
+    return unique(target);
+  };
   if (r.locator?.testId !== null && r.locator?.testId !== undefined) {
     const byId = page.getByTestId(r.locator.testId), count = await byId.count();
     if (count > 1) fail('driver.locator_ambiguous');
-    if (count === 1) return unique(byId.and(global));
+    if (count === 1) return select(byId.and(global));
   }
   if (r.locator?.context) {
     const match = /^([a-z]+) ("(?:[^"\\]|\\.)*")$/.exec(r.locator.context);
@@ -106,12 +111,12 @@ async function locate(r) {
     const landmark = page.getByRole(match[1],{name,exact:true}), count = await landmark.count();
     if (count > 1) fail('driver.locator_ambiguous');
     if (count === 1) {
-      const within = landmark.getByRole(r.role,{name:r.name,exact:true}), hits = await within.count();
+      const within = landmark.getByRole(r.role,{name:r.name,exact:true,includeHidden:waiting}), hits = await within.count();
       if (hits > 1) fail('driver.locator_ambiguous');
-      if (hits === 1) return unique(within);
+      if (hits === 1) return select(within);
     }
   }
-  return unique(global);
+  return select(global);
 }
 async function observedLocator(target,r) {
   const testId = await target.getAttribute('data-testid');

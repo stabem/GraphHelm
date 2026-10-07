@@ -23,6 +23,8 @@ struct Spec {
 
 /// Where `--install-observer` writes the observer scripts, relative to the project.
 const SCRIPT_DIR: &str = ".graphhelm/observers";
+const DRIVER_NAME: &str = "journey_driver.mjs";
+const DRIVER: &[u8] = include_bytes!("../../../../tools/journey-driver/driver.mjs");
 
 const PLAYWRIGHT: Spec = Spec {
     id: "playwright",
@@ -32,7 +34,7 @@ const PLAYWRIGHT: Spec = Spec {
         "npx playwright install chromium",
     ],
     runner: "python .graphhelm/observers/playwright_observe.py --project <project>",
-    note: "default: deterministic browser tests, no model key",
+    note: "default: deterministic browser tests, no model key; preview checks files/PATH only, replay observes browser launch",
     script_name: "playwright_observe.py",
     script: include_str!("../../../../tools/playwright-observer/playwright_observe.py"),
 };
@@ -120,6 +122,19 @@ fn check(spec: &Spec, project: &Path, roots: &[PathBuf], node: bool) -> serde_js
             spec.script_name
         ));
     }
+    if spec.id == "playwright" {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        let matches = std::fs::File::open(project.join(SCRIPT_DIR).join(DRIVER_NAME))
+            .and_then(|file| file.take(DRIVER.len() as u64 + 1).read_to_end(&mut bytes))
+            .is_ok()
+            && bytes == DRIVER;
+        if !matches {
+            missing.push(format!(
+                "{SCRIPT_DIR}/{DRIVER_NAME} (graphhelm-journey-driver/1, this GraphHelm version)"
+            ));
+        }
+    }
     serde_json::json!({
         "id": spec.id,
         "status": if missing.is_empty() { "ready" } else { "missing" },
@@ -156,7 +171,11 @@ fn script_path(spec: &Spec, project: &Path) -> PathBuf {
 fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
     let path = script_path(spec, project);
     std::fs::create_dir_all(project.join(SCRIPT_DIR))?;
-    std::fs::write(path, spec.script)
+    std::fs::write(path, spec.script)?;
+    if spec.id == "playwright" {
+        std::fs::write(project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER)?;
+    }
+    Ok(())
 }
 
 fn run_step(command: &str, project: &Path) -> std::io::Result<std::process::ExitStatus> {
@@ -246,7 +265,12 @@ mod tests {
         let browser = check(&PLAYWRIGHT, &project, &[home.join("cache")], false);
         assert_eq!(browser["status"], "missing");
         let missing = browser["missing"].as_array().expect("missing");
-        assert_eq!(missing.len(), 4, "{missing:?}");
+        assert_eq!(missing.len(), 5, "{missing:?}");
+        assert!(missing.iter().any(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|s| s.contains("journey_driver.mjs"))
+        }));
         assert_eq!(browser["install"][1], "npx playwright install chromium");
         assert_eq!(browser["installFlag"], "--install-observer playwright");
     }
@@ -275,6 +299,29 @@ mod tests {
                 .expect("written");
         assert!(written.contains("def observe("));
         assert_eq!(written, PLAYWRIGHT.script);
+        // Actual installed artifact, not source spelling: the companion must
+        // match this binary and a stale companion must change read-only preview.
+        let driver_path = project.join(SCRIPT_DIR).join("journey_driver.mjs");
+        assert_eq!(
+            std::fs::read(&driver_path).unwrap(),
+            include_bytes!("../../../../tools/journey-driver/driver.mjs")
+        );
+        std::fs::write(&driver_path, "old driver").unwrap();
+        let stale_driver = check(&PLAYWRIGHT, &project, &[], true);
+        assert!(
+            stale_driver["missing"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry
+                    .as_str()
+                    .is_some_and(|s| s.contains("journey_driver.mjs")))
+        );
+        assert_eq!(
+            std::fs::read_to_string(&driver_path).unwrap(),
+            "old driver",
+            "preview modified the observer"
+        );
         std::fs::write(script_path(&PLAYWRIGHT, &project), "old").expect("stale");
         let browser = check(&PLAYWRIGHT, &project, &[], true);
         assert!(

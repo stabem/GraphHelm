@@ -46,6 +46,9 @@ test('exact names, ambiguity, contextual cache and actual supported actions',asy
   const locator={role:'button',name:'Save duplicate',exact:true,testId:'missing-id',context:'region "Billing"',nth:null};
   const found=await act(c,'inspect','button','Save duplicate',{locator});assert.equal(found.ok,true);assert.equal(found.result.locator.testId,'billing-save');
   assert.equal((await act(c,'wait_for','button','Save duplicate',{locator})).ok,true);
+  // A wait must observe a subsequently visible control, not fail before waiting.
+  assert.equal((await act(c,'activate','button','Reveal delayed')).ok,true);
+  assert.equal((await act(c,'wait_for','button','Delayed')).ok,true);
   assert.equal((await act(c,'activate','button','Save duplicate')).code,'driver.locator_ambiguous');
   const missing=await client(t);await open(missing,f.base+'/controls');
   assert.equal((await missing.send('snapshot',{expect:[{role:'button',name:'Hidden'}]})).code,'driver.expectation_failed');

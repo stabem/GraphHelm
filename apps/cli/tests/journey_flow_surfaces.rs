@@ -319,7 +319,10 @@ fn flows_list_status_drift_findings_and_graph_identically_on_cli_http_and_mcp() 
     assert_eq!(checkout["drift"], json!([]));
     assert_eq!(checkout["findings"], json!([]));
     assert_eq!(checkout["approvable"], true);
-    assert_eq!(checkout["paths"]["main"], json!(["cart.checkout", "pay.submit"]));
+    assert_eq!(
+        checkout["paths"]["main"],
+        json!(["cart.checkout", "pay.submit"])
+    );
     assert_eq!(checkout["screens"].as_array().unwrap().len(), 3, "{cli}");
     assert_eq!(checkout["edges"][0]["from"], "cart");
     assert_eq!(checkout["edges"][0]["to"], "pay");

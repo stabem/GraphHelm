@@ -31,10 +31,15 @@ fn json(bytes: &[u8]) -> Value {
     })
 }
 
-/// A project directory that git would call a work tree: `.git` exists.
+/// A real, offline Git work tree, so ignore protection is observed by Git itself.
 fn git_project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    let git = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(git.status.success(), "{git:?}");
     dir
 }
 
@@ -367,22 +372,152 @@ fn a_non_loopback_bind_is_refused_before_anything_is_written() {
 }
 
 #[test]
-fn outside_a_git_work_tree_no_gitignore_is_written() {
+fn outside_a_git_work_tree_protection_is_ready_for_later_git_init() {
     let project = tempfile::tempdir().unwrap();
     let (data, _, _) = init(project.path());
-    assert_eq!(data["data"]["gitignore"]["state"], "not_a_git_work_tree");
-    assert!(!project.path().join(".gitignore").exists());
+    assert_eq!(data["data"]["gitignore"]["state"], "created");
+    let before = std::fs::read(project.path().join(".gitignore")).unwrap();
+    let (data, _, _) = init(project.path());
+    assert_eq!(data["data"]["gitignore"]["state"], "existing");
+    assert_eq!(
+        std::fs::read(project.path().join(".gitignore")).unwrap(),
+        before
+    );
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    for generated in [
+        ".mcp.json",
+        ".graphhelm/serve.key",
+        ".graphhelm/events.token",
+    ] {
+        assert!(
+            Command::new("git")
+                .args(["check-ignore", "-q", "--no-index", "--", generated])
+                .current_dir(project.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+}
+
+/// Runtime-generated harness configuration must stay untracked even in projects provisioned
+/// by an older init; Git interprets literal, wildcard, escaped and directory negations.
+/// Cost: local Git/CLI subprocesses and temporary files; no network or credentials.
+#[test]
+fn init_ignores_mcp_configuration_and_repairs_older_ignore_blocks() {
+    for existing in [
+        "",
+        ".graphhelm/\n",
+        ".graphhelm/\n.mcp.json\n!.mcp.json\n",
+        ".graphhelm/\n/.mcp.json\n!*.json\n",
+        ".graphhelm/\n/.mcp.json\n!\\.mcp.json\n",
+        "/.mcp.json\n.graphhelm/**\n!.graphhelm/serve.key\n",
+        "/.mcp.json\n.graphhelm/\n!.graphhelm/\n",
+        "/.mcp.json\n.graphhelm/\n!.graphhelm/serve.key\n!.graphhelm/\n",
+        "/.mcp.json\n  .graphhelm/\n",
+        "/.mcp.json\n.graphhelm-other/\n",
+        "/.mcp.json\n.graphhelm/\n!other/.graphhelm/x\n",
+        "/.mcp.json\n.graphhelm/\n!.graphhelm-other/x\n",
+        "/.mcp.json\n/.graphhelm\n",
+        "/.mcp.json\n.graphhelm  \n",
+        "/.mcp.json\n.graphhelm/\t\n",
+    ] {
+        let project = git_project();
+        std::fs::write(project.path().join(".gitignore"), existing).unwrap();
+        init(project.path());
+        for generated in [
+            ".mcp.json",
+            ".graphhelm/serve.key",
+            ".graphhelm/events.token",
+            ".graphhelm/keyring/keyring.v1.json",
+            ".graphhelm/keyring/revocations.v1.jsonl",
+            ".graphhelm/keyring/.sealed-key-provider.lock",
+        ] {
+            let ignored = Command::new("git")
+                .args(["check-ignore", "--quiet", "--no-index", "--", generated])
+                .current_dir(project.path())
+                .output()
+                .unwrap();
+            assert!(
+                ignored.status.success(),
+                "{existing:?}: {generated} is stageable"
+            );
+            let status = Command::new("git")
+                .args(["status", "--short", "--", generated])
+                .current_dir(project.path())
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{status:?}");
+            assert!(status.stdout.is_empty(), "{status:?}");
+        }
+        let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
+        let before = text;
+        let (data, _, _) = init(project.path());
+        assert_eq!(data["data"]["gitignore"]["state"], "existing");
+        assert_eq!(
+            std::fs::read_to_string(project.path().join(".gitignore")).unwrap(),
+            before
+        );
+    }
+    // An unavailable Git is not permission to trust syntax. The fallback appends its block
+    // last once, and actual Git independently observes protection when it becomes available.
+    let project = git_project();
+    let path = project.path().join(".gitignore");
+    std::fs::write(&path, ".graphhelm/\n/.mcp.json\n!\\.mcp.json\n").unwrap();
+    let mut before = None;
+    for expected_state in ["appended", "existing"] {
+        let output = command()
+            .args(["init", "--project"])
+            .arg(project.path())
+            .args(["--harness", "claude-code", "--harness", "codex"])
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        let value = json(&output.stdout);
+        assert_eq!(value["ok"], true, "{value}");
+        assert_eq!(value["data"]["gitignore"]["state"], expected_state);
+        let text = std::fs::read(&path).unwrap();
+        if let Some(before) = &before {
+            assert_eq!(&text, before);
+        }
+        before = Some(text);
+    }
+    for generated in [
+        ".mcp.json",
+        ".graphhelm/serve.key",
+        ".graphhelm/events.token",
+    ] {
+        assert!(
+            Command::new("git")
+                .args(["check-ignore", "-q", "--no-index", "--", generated])
+                .current_dir(project.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
 }
 
 #[test]
 fn a_gitignore_that_already_ignores_the_directory_is_left_alone() {
     let project = git_project();
-    std::fs::write(project.path().join(".gitignore"), "target/\n/.graphhelm\n").unwrap();
+    std::fs::write(
+        project.path().join(".gitignore"),
+        "target/\n/.graphhelm\n/.mcp.json\n",
+    )
+    .unwrap();
     let (data, _, _) = init(project.path());
     assert_eq!(data["data"]["gitignore"]["state"], "existing");
     assert_eq!(
         std::fs::read_to_string(project.path().join(".gitignore")).unwrap(),
-        "target/\n/.graphhelm\n"
+        "target/\n/.graphhelm\n/.mcp.json\n"
     );
 }
 
@@ -677,7 +812,12 @@ fn a_negated_ignore_line_is_not_taken_as_ignored() {
     let (data, _, _) = init(project.path());
     assert_eq!(data["data"]["gitignore"]["state"], "appended");
     let text = std::fs::read_to_string(project.path().join(".gitignore")).unwrap();
-    assert!(text.ends_with(".graphhelm/\n"), "{text:?}");
+    assert_eq!(
+        text.lines()
+            .rfind(|line| line.trim_start_matches('!') == ".graphhelm/"),
+        Some(".graphhelm/"),
+        "{text:?}"
+    );
     assert!(
         text.lines().filter(|line| *line == ".graphhelm/").count() == 2,
         "{text:?}"

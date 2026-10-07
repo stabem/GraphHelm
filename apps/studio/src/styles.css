@@ -2793,3 +2793,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 
 .journey-failure { margin: 0.5rem 0 0; font-size: 0.85rem; opacity: 0.85; overflow-wrap: anywhere; }
+
+/* Tab panels preserve the canvas height without changing the column layout. */
+.scene > [role="tabpanel"] { height: 100%; min-height: 0; }
+.cited-records { z-index: 20; }
+
+.chat-tabpanel { display: contents; }

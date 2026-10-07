@@ -98,8 +98,22 @@ export function TeamCanvas(props: TeamCanvasProps) {
   // The camera shares board.ts's Camera shape. fitCamera frames a rectangle and this row layout
   // has no fit action, so the pan and the ctrl-wheel zoom stay local and minimal.
   const [view, setView] = useState<Camera>(HOME);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ kind: "bot" | "pan"; id: string; start: Point; origin: Point } | null>(null);
   useEffect(() => { setPositions(readPositions(props.storageKey)); }, [props.storageKey]);
+
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (sheet === null) return;
+    // React delegates wheel events passively; a native listener can consume browser zoom.
+    const zoom = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      setView((current) => ({ ...current, zoom: Math.min(2, Math.max(0.4, current.zoom * (1 - event.deltaY * 0.0015))) }));
+    };
+    sheet.addEventListener("wheel", zoom, { passive: false });
+    return () => sheet.removeEventListener("wheel", zoom);
+  }, []);
 
   const placeOf = (key: string, index: number): Point => positions[key] ?? defaultBotPosition(index);
   const centre = (key: string): Point | null => {
@@ -141,11 +155,7 @@ export function TeamCanvas(props: TeamCanvasProps) {
         </button>
         {props.graphFileOpen && props.graphFileRow}
       </div>
-      <div className="team-sheet" aria-label="Team sheet" onPointerDown={onSheetDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}
-        onWheel={(event) => {
-          if (!event.ctrlKey) return;
-          setView((current) => ({ ...current, zoom: Math.min(2, Math.max(0.4, current.zoom * (1 - event.deltaY * 0.0015))) }));
-        }}>
+      <div ref={sheetRef} className="team-sheet" aria-label="Team sheet" onPointerDown={onSheetDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onLostPointerCapture={onUp}>
         <div className="team-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
           <svg className="team-links" aria-hidden="true" width={stepsX + BOT_W} height={640}>
             {links.map((link) => {
@@ -163,7 +173,18 @@ export function TeamCanvas(props: TeamCanvasProps) {
             return (
               <article key={bot.key} data-testid={`team-bot-${bot.key}`} className={`team-bot team-bot-${bot.state} ${props.selectedBot === bot.key ? "team-bot-selected" : ""}`}
                 style={{ left: `${at.x}px`, top: `${at.y}px`, "--bot-hue": String(bot.hue) } as CSSProperties}>
-                <button type="button" className="team-bot-grip" aria-label={`Move ${bot.name}`}
+                <button type="button" className="team-bot-grip" aria-label={`Move ${bot.name}`} title="Use arrow keys to move this bot"
+                  onKeyDown={(event) => {
+                    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+                    event.preventDefault();
+                    const current = positionsRef.current[bot.key] ?? defaultBotPosition(index);
+                    const next = { ...positionsRef.current, [bot.key]: {
+                      x: current.x + (event.key === "ArrowRight" ? 10 : event.key === "ArrowLeft" ? -10 : 0),
+                      y: current.y + (event.key === "ArrowDown" ? 10 : event.key === "ArrowUp" ? -10 : 0),
+                    } };
+                    setPositions(next);
+                    writePositions(props.storageKey, next);
+                  }}
                   onPointerDown={(event) => { event.stopPropagation(); capture(event); drag.current = { kind: "bot", id: bot.key, start: { x: event.clientX, y: event.clientY }, origin: at }; }}>⋮⋮</button>
                 <button type="button" className="team-bot-face" aria-label={`${bot.name}, ${botStateLabel(bot)}`} onClick={() => props.onSelectBot(bot.key)}>
                   <span className="team-bot-avatar" aria-hidden="true">{bot.name.slice(0, 1).toUpperCase()}</span>

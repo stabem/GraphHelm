@@ -1472,7 +1472,7 @@ pub(crate) fn call(
         // runs as one) is refused before any request, whatever credential the session holds.
         "journey_approve" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
             code: INVALID_PARAMS,
-            message: "journey_approve is owner-only: only the owner approves a journey flow                       (Studio Journey tab or `graphhelm journey approve`)"
+            message: "journey_approve is owner-only: only the owner approves a journey flow (Studio Journey tab or `graphhelm journey approve`)"
                 .to_owned(),
             data: Some(serde_json::json!({
                 "code": crate::error_codes::GHCLI036_JOURNEY_APPROVE_OWNER_ONLY

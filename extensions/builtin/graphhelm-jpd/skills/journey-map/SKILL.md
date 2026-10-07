@@ -5,6 +5,10 @@ description: "Map user journeys into an existing project from zero: discover its
 
 # Journey map
 
+Command-by-command walkthrough with real output (flow YAML, validate, compile, approve, replay,
+capture, walked, freshness, Keel journey warnings): `docs/guides/journeys.md` in the GraphHelm
+repository.
+
 ## Applicability
 
 Use this skill when a project already exists and has no journey contracts, or has screens the

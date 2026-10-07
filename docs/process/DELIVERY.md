@@ -24,8 +24,9 @@ Keel is proportional. Use only as much of it as the change needs.
 |---|---|
 | Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary when the change has a known observer and no expanded-route risk; a test removal also carries its deletion record (the `test-audit` skill), naming the observer that still covers its obligation. Runtime- or security-affecting config needs a full card and behavioral evidence. |
 | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
+| User-visible: the scope touches a screen's `scopePaths` of a compiled journey | The three-line card with `journeys:` naming every journey touched, and those journeys replayed green at the head. No new unit test is required; one may be added for a defect the journey cannot observe. |
 | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
-| Persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
+| Persistence, permissions, compatibility, security, external effects, runtime-affecting config, concurrency, destructive operations | The full card, the JPD flow (`AGENTS.md`, Journey-Proven Development), and a test that names the defect (Law 3) even when a journey also covers the change. |
 
 A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
 touches, not from how big it is: a one-line change can remove a permission check. A display-only
@@ -47,6 +48,12 @@ verdict into the PR body. Rules that say to post records through the Runtime HTT
 there; say so in the PR body with `OBSERVER_MISSING: Runtime records (no Runtime in this session)`
 rather than skipping silently. Studio, the Stop and edit locks and the Runtime signals are not
 observed in such a session, and the PR body must not claim they were.
+
+**Journey proof for screens (1.4.0, #382; a signal, not yet a gate).** A PR whose scope touches a
+journey screen runs `graphhelm journey replay <id>` at the head for each journey its card names and
+pastes the JSON summary (paths observed, captured signal ids). `keel check` reports
+`keel.journey.card_missing_journey` and `keel.journey.replay_not_green` until that is true; both are
+warnings until the first end-to-end replay on this repository has run.
 
 **Before/after captures for screens (guidance, not a gate).** When the card's scope touches a
 journey screen's `scopePaths` (`.graphhelm/journeys/<contractId>.json`), record, for each touched
@@ -84,6 +91,11 @@ merged like any other, and the review says what was not observed.
   review, the review names that BLOCK and says whether it still holds and why; an APPROVE that does
   not answer an open BLOCK on the same head is not a pass, and the merge (§5) waits for that answer.
   Reading the PR's own comments is part of the review, not a finding handed over in a brief.
+- **One review for every kind of change** (owner decision, 2026-10-07), including security,
+  persistence, concurrency and destructive changes, until the owner raises it. A change that touches
+  a `keel.yaml` invariant class still needs its Law 3 test; the review checks it is there.
+  For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
+  card names, on the head, and pastes its summary.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
   result in the review. A review that does not run them is not a review.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the

@@ -121,6 +121,14 @@ pub struct KeelPolicy {
     pub body: BodyLimits,
     pub surface_enforcement: Enforcement,
     pub ladder: Ladder,
+    /// 1.4.0 (#382): a diff path touching a compiled journey's screen is user-visible, and its
+    /// proof is the journey replayed green at the head. Read by `keel check`'s journey signals.
+    #[serde(default)]
+    pub journey_first: bool,
+    /// 1.4.0 (#382): invisible-invariant classes and their paths. A diff path that equals, is
+    /// under or contains one reports `keel.invariant.<class>`: Law 3 applies in full there.
+    #[serde(default)]
+    pub invariants: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// What a diff spends.
@@ -676,6 +684,7 @@ pub fn check(diff: &str, card: Option<(&Card, u64)>, policy: &KeelPolicy) -> Kee
         findings.extend(check_scope(&changed, &card.scope_paths));
     }
     findings.extend(classification.findings.iter().cloned());
+    findings.extend(check_invariants(&changed, &policy.invariants));
     let count = |debit: Debit| classification.totals.get(&debit).copied().unwrap_or(0);
     let as_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let undeclared_public_symbols = card.map_or_else(Vec::new, |(card, _)| {
@@ -1035,6 +1044,44 @@ fn first_string_literal(text: &str) -> String {
     String::new()
 }
 
+/// Keel's prefix meaning (#328, #382): `a` and `b` touch when either equals, is under or contains
+/// the other, compared on `/`-separated repository paths.
+#[must_use]
+pub fn paths_touch(a: &str, b: &str) -> bool {
+    fn under(path: &str, root: &str) -> bool {
+        let root = root.trim_end_matches('/');
+        path == root || path.trim_end_matches('/') == root || path.starts_with(&format!("{root}/"))
+    }
+    under(a, b) || under(b, a)
+}
+
+/// Spec #382 §4, advisory: one `keel.invariant.<class>` warning per invariant class a changed
+/// path touches, naming the first such path. For these classes a journey never replaces a test
+/// that names the defect.
+#[must_use]
+pub fn check_invariants(
+    changed: &[ChangedPath],
+    invariants: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Vec<Finding> {
+    invariants
+        .iter()
+        .filter_map(|(class, roots)| {
+            let entry = changed
+                .iter()
+                .find(|entry| roots.iter().any(|root| paths_touch(&entry.path, root)))?;
+            Some(Finding {
+                rule: format!("keel.invariant.{class}"),
+                path: Some(entry.path.clone()),
+                detail: format!(
+                    "invariant class `{class}`: a journey cannot observe this; the change needs a \
+                     test that names the defect and fails on the parent (Law 3)"
+                ),
+                blocking: false,
+            })
+        })
+        .collect()
+}
+
 /// One screen of a journey a card names, with whether its newest capture is fresh at the head.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JourneyScreen {
@@ -1050,13 +1097,7 @@ pub struct JourneyScreen {
 /// and whose newest capture is not fresh. Never blocking.
 #[must_use]
 pub fn check_journeys(card_scope: &[String], screens: &[JourneyScreen]) -> Vec<Finding> {
-    fn under(path: &str, root: &str) -> bool {
-        let root = root.trim_end_matches('/');
-        path == root || path.trim_end_matches('/') == root || path.starts_with(&format!("{root}/"))
-    }
-    fn touches(a: &str, b: &str) -> bool {
-        under(a, b) || under(b, a)
-    }
+    let touches = paths_touch;
     screens
         .iter()
         .filter_map(|screen| {

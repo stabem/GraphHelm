@@ -175,8 +175,20 @@ pub(super) fn check(
         &policy,
     );
     let mut report = report;
+    let changed: Vec<String> = report
+        .changed_paths
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    if policy.journey_first {
+        report.findings.extend(missing_journeys(
+            repo,
+            card.as_ref().map(|(card, _)| card),
+            &changed,
+        ));
+    }
     if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
-        match journey_findings(repo, head, card, records.as_ref()) {
+        match journey_findings(repo, head, card, records.as_ref(), &changed) {
             Ok(findings) => report.findings.extend(findings),
             Err(outcome) => return *outcome,
         }
@@ -261,13 +273,79 @@ impl ScopeHistory for AtHead {
     }
 }
 
+/// Spec #382 §3, advisory: every compiled journey whose screen a changed path touches must be
+/// named in the card's `journeys`; one `keel.journey.card_missing_journey` per journey that is not
+/// (or per touched journey when there is no card), naming the touching path and step.
+fn missing_journeys(repo: &Path, card: Option<&Card>, changed: &[String]) -> Vec<Finding> {
+    let (contracts, _) = super::journeys::contracts(repo);
+    contracts
+        .iter()
+        .filter(|contract| card.is_none_or(|card| !card.journeys.contains(&contract.contract_id)))
+        .filter_map(|contract| {
+            contract.steps.iter().find_map(|step| {
+                let screen = step.screen.as_ref()?;
+                let path = changed.iter().find(|path| {
+                    screen
+                        .scope_paths
+                        .iter()
+                        .any(|scope| policy_keel::paths_touch(path, scope))
+                })?;
+                Some(Finding {
+                    rule: "keel.journey.card_missing_journey".to_owned(),
+                    path: Some(path.clone()),
+                    detail: format!(
+                        "{}/{}: this change touches the screen; name `{}` in the card's journeys \
+                         and replay it at the head",
+                        contract.contract_id, step.step_id, contract.contract_id
+                    ),
+                    blocking: false,
+                })
+            })
+        })
+        .collect()
+}
+
+/// The steps of flow `<id>.journey.yaml` that a recorded drift touches: the `from` and `to`
+/// screens of every edge a `drift` entry names. Empty when there is no flow or it does not parse.
+fn drifted_steps(repo: &Path, id: &str) -> Vec<(String, String)> {
+    let file = repo
+        .join(".graphhelm")
+        .join("journeys")
+        .join(format!("{id}.journey.yaml"));
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    let Ok(flow) = serde_yaml_ng::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let empty = Vec::new();
+    let edges = flow["edges"].as_array().unwrap_or(&empty);
+    flow["drift"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|drift| {
+            let edge_id = drift["edge"].as_str()?;
+            let edge = edges.iter().find(|edge| edge["id"] == edge_id)?;
+            let code = drift["code"].as_str().unwrap_or("drift");
+            Some([edge["from"].as_str(), edge["to"].as_str()].into_iter().flatten().map(
+                move |step| (step.to_owned(), format!("{code} on edge {edge_id}")),
+            ))
+        })
+        .flatten()
+        .collect()
+}
+
 /// Spec §6.3, advisory: the card's journeys folded at the range head; one warning per touched
 /// screen whose newest capture is not fresh there, and one per contract that cannot be read.
+/// Since 1.4.0 (#382) also one `keel.journey.replay_not_green` per step a changed path touches
+/// that has no capture taken at the head, or that a recorded drift of its flow touches.
 fn journey_findings(
     repo: &Path,
     head: &str,
     card: &Card,
     records: Option<&JourneyRecords>,
+    changed: &[String],
 ) -> Result<Vec<Finding>, Box<Outcome>> {
     let object = format!("{head}^{{commit}}");
     let head_sha = match Command::new("git")
@@ -331,10 +409,44 @@ fn journey_findings(
     let view = fold_journeys(&contracts, &captures, &transitions, &history);
     let mut screens = Vec::new();
     for journey in view.journeys {
+        let drifted = drifted_steps(repo, &journey.contract_id);
         for step in journey.steps {
             let Some(screen) = step.screen else {
                 continue;
             };
+            let touching = changed.iter().find(|path| {
+                screen
+                    .scope_paths
+                    .iter()
+                    .any(|scope| policy_keel::paths_touch(path, scope))
+            });
+            if let Some(path) = touching {
+                let at_head = step
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.revision == head_sha && !capture.dirty);
+                let mut reasons: Vec<String> = drifted
+                    .iter()
+                    .filter(|(drifted_step, _)| *drifted_step == step.step_id)
+                    .map(|(_, reason)| reason.clone())
+                    .collect();
+                if !at_head {
+                    reasons.insert(0, "no clean capture taken at the head".to_owned());
+                }
+                if !reasons.is_empty() {
+                    findings.push(Finding {
+                        rule: "keel.journey.replay_not_green".to_owned(),
+                        path: Some(path.clone()),
+                        detail: format!(
+                            "{}/{}: {}; run `graphhelm journey replay` at the head",
+                            journey.contract_id,
+                            step.step_id,
+                            reasons.join("; ")
+                        ),
+                        blocking: false,
+                    });
+                }
+            }
             let not_fresh = match step.capture {
                 None => Some(if records.is_some() {
                     "no capture of this step was read".to_owned()

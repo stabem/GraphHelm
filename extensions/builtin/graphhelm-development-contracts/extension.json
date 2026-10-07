@@ -929,7 +929,7 @@
           "id": "policy/keel",
           "kind": "policy",
           "path": "policies/keel.yaml",
-          "sha256": "sha256:b767522e86b5ffc1378f230e369dddbc08075eac0d878692726a73c027f46f4a",
+          "sha256": "sha256:c8db46c519425cb2f8907e297dad893f79830a1a0b406c84996180352f8c3a3e",
           "effects": [],
           "permissions": [],
           "requires": {

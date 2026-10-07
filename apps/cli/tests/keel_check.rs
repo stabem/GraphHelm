@@ -100,7 +100,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["command"], "keel");
-    assert_eq!(reply["data"]["policyVersion"], "1.3.0");
+    assert_eq!(reply["data"]["policyVersion"], "1.4.0");
     assert_eq!(reply["data"]["cardDeclared"], true);
     assert_eq!(reply["data"]["surface"]["changedFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newPublicSymbols"], 1);
@@ -583,5 +583,31 @@ fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
             |c| c == "keel.journey.no_fresh_capture" || c == "keel.journey.contract_unreadable"
         ),
         "{reply}"
+    );
+}
+
+/// #382 phase A: a change under an invariant class of `keel.yaml` 1.4.0 is reported by class, so a
+/// reviewer sees that a journey cannot be its proof. Credible regression: the class lists or the
+/// prefix comparison stop matching and persistence changes ship with journey-only proof. Cost: one
+/// temp git repository and one CLI run.
+#[test]
+fn a_diff_under_an_invariant_path_reports_its_class() {
+    let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src", "core/events/src/journal.rs"])));
+    assert_eq!(code, 0, "warnings never refuse: {reply}");
+    let found: Vec<&Value> = reply["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "keel.invariant.persistence")
+        .collect();
+    assert_eq!(found.len(), 1, "{reply}");
+    assert_eq!(found[0]["path"], "core/events/src/journal.rs");
+    assert_eq!(found[0]["severity"], "warning");
+    let (_, plain) = run(repo.path(), None);
+    assert!(
+        !codes(&plain).iter().any(|c| c == "keel.invariant.security"),
+        "an untouched class is silent: {plain}"
     );
 }

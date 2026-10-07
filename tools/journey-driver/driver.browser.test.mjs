@@ -98,13 +98,14 @@ test('capture conceals same-origin and opaque-origin iframe secret echoes',async
   const secret='frame_privacy_canary_348';
   const server=createServer((req,res)=>{
     res.setHeader('Content-Type','text/html; charset=utf-8');
-    res.end(req.url==='/frame' ? `<body style="margin:0;background:#00ff00"><p style="font:24px monospace">empty</p><script>onmessage=e=>{document.querySelector('p').textContent=e.data;parent.postMessage('echoed','*')}</script>` : `<body style="margin:0"><input aria-label="Password" oninput="document.querySelectorAll('iframe').forEach(f=>f.contentWindow.postMessage(this.value,'*'))"><button hidden>Echo ready</button><iframe src="/frame" style="position:absolute;left:0;top:80px;border:0;width:400px;height:180px"></iframe><iframe sandbox="allow-scripts" src="/frame" style="position:absolute;left:440px;top:80px;border:0;width:400px;height:180px"></iframe><script>let echoed=0;onmessage=e=>{if(e.data==='echoed'&&++echoed===2)document.querySelector('button').hidden=false}</script>`);
+    const closed=req.url.includes('?shadow');
+    res.end(req.url==='/frame' ? `<body style="margin:0;background:#00ff00"><p style="font:24px monospace">empty</p><script>onmessage=e=>{document.querySelector('p').textContent=e.data;parent.postMessage('echoed','*')}</script>` : `<body style="margin:0"><input aria-label="Password"><button hidden>Echo ready</button><iframe src="/frame" style="position:absolute;left:0;top:80px;border:0;width:400px;height:180px"></iframe><iframe sandbox="allow-scripts" src="/frame" style="position:absolute;left:440px;top:80px;border:0;width:400px;height:180px"></iframe><div id="host"></div><script>if(${closed}){const shadow=document.querySelector('#host').attachShadow({mode:'closed'});shadow.innerHTML='<iframe src="/frame" style="position:absolute;left:0;top:300px;border:0;width:400px;height:180px"></iframe>';window.extraFrame=shadow.querySelector('iframe')};const frames=[...document.querySelectorAll('iframe'),...(window.extraFrame?[window.extraFrame]:[])];document.querySelector('input').oninput=e=>frames.forEach(f=>f.contentWindow.postMessage(e.target.value,'*'));let echoed=0;onmessage=e=>{if(e.data==='echoed'&&++echoed===frames.length)document.querySelector('button').hidden=false}</script>`);
   });
   await new Promise(done=>server.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>server.close(done)));
   const base=`http://127.0.0.1:${server.address().port}`;
   const {chromium}=createRequire(join(project,'package.json'))('@playwright/test');
   const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
-  const page=await browser.newPage({viewport});await page.goto(base);
+  const page=await browser.newPage({viewport});await page.goto(base+'?shadow');
   await page.getByRole('textbox',{name:'Password',exact:true}).fill(secret);
   await page.getByRole('button',{name:'Echo ready',exact:true}).waitFor();
   assert.equal(await page.frameLocator('iframe').nth(0).getByText(secret,{exact:true}).count(),1);
@@ -115,7 +116,7 @@ test('capture conceals same-origin and opaque-origin iframe secret echoes',async
     const image=new Image();image.src='data:image/png;base64,'+data;await image.decode();
     const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
     const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);
-    return [0,440].map(left=>{const pixels=ctx.getImageData(left,100,400,80).data;let ink=0,masked=0;
+    return [[0,100],[440,100],[0,320]].map(([left,top])=>{const pixels=ctx.getImageData(left,top,400,80).data;let ink=0,masked=0;
       for(let i=0;i<pixels.length;i+=4){if(pixels[i]<100&&pixels[i+1]<100&&pixels[i+2]<100)ink++;if(pixels[i]===255&&pixels[i+1]===0&&pixels[i+2]===255&&pixels[i+3]===255)masked++;}
       return {ink,masked};});
   },bytes.toString('base64'));
@@ -124,7 +125,12 @@ test('capture conceals same-origin and opaque-origin iframe secret echoes',async
   assert.equal((await act(c,'enter_text','textbox','Password',{secretEnv:'GRAPHHELM_SECRET_PASSWORD'})).ok,true);
   assert.equal((await act(c,'wait_for','button','Echo ready')).ok,true);
   const capture=await c.send('capture',{path:'frames.png',maskSecrets:true});assert.equal(capture.ok,true);assert.equal(capture.result.masked,true);
-  assert.deepEqual(await decode(await readFile(join(c.output,'frames.png'))),[{ink:0,masked:32000},{ink:0,masked:32000}]);
+  assert.deepEqual((await decode(await readFile(join(c.output,'frames.png')))).slice(0,2),[{ink:0,masked:32000},{ink:0,masked:32000}]);
+  const hidden=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(hidden,base+'?shadow');
+  assert.equal((await act(hidden,'enter_text','textbox','Password',{secretEnv:'GRAPHHELM_SECRET_PASSWORD'})).ok,true);
+  assert.equal((await act(hidden,'wait_for','button','Echo ready')).ok,true);
+  assert.equal((await hidden.send('capture',{path:'hidden.png',maskSecrets:true})).code,'driver.capture_refused');
+  await assert.rejects(readFile(join(hidden.output,'hidden.png')),{code:'ENOENT'});
   assert.equal((await c.send('close')).ok,true);
 });
 

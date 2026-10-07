@@ -241,8 +241,12 @@ async function run(r) {
     // Cover entire frame elements: same-origin, isolated/cross-origin and their
     // nested content are opaque without trusting frame DOM or echo rendering.
     const mask=[...secretInputs,page.locator('input,textarea,[contenteditable="true"],iframe,frame')];
+    // Closed shadow roots and nested documents may hide frame hosts from page
+    // selectors. Refuse rather than claim their entire rendered area is covered.
+    if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     for (const [,value] of secrets) if (value) mask.push(page.getByText(value,{exact:false}));
     await page.screenshot({path:target,fullPage:false,mask,maskColor:'#FF00FF',timeout:TIMEOUT});
+    if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     checkHost();
     return {path:r.path,width:page.viewportSize().width,height:page.viewportSize().height,masked:true};
   }

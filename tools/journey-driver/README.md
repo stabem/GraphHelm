@@ -73,9 +73,12 @@ Missing/empty named secrets and literals equal to supplied secrets fail before a
 Known values are redacted from URLs/ARIA/cache before serialization, and outputs are rescanned.
 Capture masks all editable inputs, filled controls, and visible secret echoes with opaque
 magenta before PNG creation. Entire rendered iframe/frame elements are also covered, including
-isolated/cross-origin frames and nested content; their contents are intentionally unobserved in
+isolated/cross-origin frames; their contents are intentionally unobserved in
 the image. Main-document locators cannot establish privacy inside a frame. Images are temporary inputs to sealing, not a public screenshot
 output. Output directories/targets reject symlinks and existing files.
+If the enumerated browser frames do not match the frame hosts reachable by page selectors
+(for example, nested documents or closed shadow roots), capture refuses with
+`driver.capture_refused` rather than claiming `masked: true`.
 
 ARIA is limited to 6 KiB without truncation. Fingerprints hash compact JSON
 `{"controls":[...],"lists":[...]}`: sorted unique landmark/heading/interactive role/name

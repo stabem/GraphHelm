@@ -25,9 +25,8 @@ export async function startFixture() {
     if (u.pathname==='/checkout' && fault?.kind==='missing-checkout') {
       res.end(shell('<main><h1>Checkout</h1></main>'));return;
     }
-    if(u.pathname==='/account/delete' && req.method==='POST') {deleteCount++;res.writeHead(303,{Location:'/account/deleted'});res.end();return;}
+    if(u.pathname==='/account/delete' && req.method==='POST') {deleteCount++;res.end(shell('<main><h1>Account deleted</h1></main>'));return;}
     if(u.pathname==='/account') res.end(shell('<main><h1>Account</h1><form method="post" action="/account/delete"><button>Delete account</button></form></main>'));
-    else if(u.pathname==='/account/deleted') res.end(shell('<main><h1>Account deleted</h1></main>'));
     else if(u.pathname==='/cart') res.end(shell('<main><h1>Cart</h1><button data-testid="checkout" onclick="location.href=\'/checkout\'">Checkout</button><a href="/guest">Guest checkout</a></main>'));
     else if(u.pathname==='/checkout') res.end(shell('<main><h1>Checkout</h1><label>Password<input aria-label="Password" type="password" oninput="document.getElementById(\'echo\').textContent=this.value"></label><div id="echo"></div><button style="display:block;margin-top:160px" onclick="location.href=\'/orders/42\'">Submit order</button></main>'));
     else if(u.pathname==='/guest') res.end(shell('<main><h1>Guest checkout</h1><button onclick="location.href=\'/orders/42\'">Place guest order</button></main>'));

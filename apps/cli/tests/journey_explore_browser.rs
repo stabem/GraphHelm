@@ -193,7 +193,7 @@ process.stdin.on('end',()=>{
   if(!match)process.exit(1);
   const d=JSON.parse(match[1]), current=d.current, visited=d.visited;
   let proposal;
-  if(current.includes('heading "Account deleted"')) proposal=visited.includes('deleted /account/deleted')?
+  if(current.includes('heading "Account deleted"')) proposal=visited.includes('deleted /account/delete')?
     {done:true}:{newScreen:{id:'deleted',title:'Deleted'}};
   else if(current.includes('heading "Account"')) proposal=visited.includes('account /account')?
     {act:{kind:'activate',role:'button',name:'Delete account'}}:{newScreen:{id:'account',title:'Account'}};

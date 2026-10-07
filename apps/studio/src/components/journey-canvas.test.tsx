@@ -39,6 +39,31 @@ function props(overrides: Partial<JourneyCanvasProps> = {}): JourneyCanvasProps 
 }
 
 describe("JourneyCanvas", () => {
+  // #379: the owner could not follow a journey from screenshots and titles alone. Each card must
+  // say what the user does and what they must see, and each arrow the action that leads on.
+  // Credible regression: a card that drops the action or the promise. Cost: jsdom, one render.
+  it("says in plain words what the user does and sees, and what each arrow does", () => {
+    const steps = view.journeys[0].steps;
+    const plain: JourneysView = { ...view, journeys: [{ ...view.journeys[0], steps: [
+      { ...steps[0], action: { kind: "navigate", target: "/cart", strategy: "stable_product_id" }, expectedStates: ["stable"] },
+      { ...steps[1], action: { kind: "activate", target: "Checkout", strategy: "accessible_name" }, expectedStates: ["stable"] },
+      { ...steps[2], action: null, expectedStates: [] },
+      { ...steps[3], action: { kind: "enter_text", target: "Card number", strategy: "label" }, expectedStates: ["success"] },
+    ] }] };
+    render(<JourneyCanvas {...props({ view: plain })} />);
+    const cart = screen.getByRole("button", { name: "Cart, open detail" });
+    expect(within(cart).getByText("Does").parentElement).toHaveTextContent("Does Opens /cart");
+    expect(within(cart).getByText("Sees").parentElement).toHaveTextContent("Sees The cart shows the total");
+    const pay = screen.getByRole("button", { name: "Pay, open detail" });
+    expect(pay).toHaveTextContent("Does Clicks “Checkout”");
+    expect(pay).toHaveTextContent("Reaches stable");
+    expect(screen.getByRole("button", { name: "confirm, open detail" })).not.toHaveTextContent("Does");
+    expect(screen.getByRole("button", { name: "Receipt, open detail" })).toHaveTextContent("Does Types into “Card number”");
+    expect(screen.getByLabelText("Arrow: walked")).toHaveTextContent("Clicks “Checkout”");
+    expect(screen.getByLabelText("Arrow: stale")).toHaveTextContent("Types into “Card number”");
+    expect(screen.getByLabelText("Arrow: stale")).toHaveTextContent("stale");
+  });
+
   it("draws each step's state and each arrow's state", async () => {
     const p = props();
     render(<JourneyCanvas {...p} />);

@@ -999,10 +999,13 @@ pub(super) async fn reply_suggestions(
     let question_sequence = question.sequence;
     let original_signal_id = question.signal_id.clone();
     let recipient = question.asker.clone();
-    let Some((result, judged)) = off_reactor(move || {
+    let Some((result, judged, failure)) = off_reactor(move || {
         let mut selected = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         let mut judged = false;
+        // #369: the last reason an attempt was dropped. Without it a dead chat route, unparseable
+        // candidates and a failing judge all read as one generic sentence.
+        let mut failure: Option<String> = None;
         // Each route call has its own configured timeout; three attempts also bound model spend.
         for attempt in 0..3 {
             let attempt_prompt = if attempt == 0 {
@@ -1010,12 +1013,21 @@ pub(super) async fn reply_suggestions(
             } else {
                 format!("{prompt} Generate six fresh alternatives with different next actions from the prior attempt.")
             };
-            let Ok(chat) = tokio::runtime::Handle::current().block_on(chat_port.call(
+            let chat = match tokio::runtime::Handle::current().block_on(chat_port.call(
                 chat_route.id(),
                 &ModelCall { stable_prefix: None, prompt: attempt_prompt, max_tokens: 1800, max_output_tokens: None, history: Vec::new() },
-            )) else { continue };
+            )) {
+                Ok(chat) => chat,
+                Err(error) => {
+                    failure = Some(format!("the chat route `{}` failed: {error}", chat_route.id()));
+                    continue;
+                }
+            };
             if chat.is_incomplete() { break; }
-            let Some(candidates) = parse_reply_candidates(&chat.text) else { continue };
+            let Some(candidates) = parse_reply_candidates(&chat.text) else {
+                failure = Some(format!("the chat route `{}` returned no usable candidates", chat_route.id()));
+                continue;
+            };
             let mut questions = BTreeMap::new();
             for (index, _) in candidates.iter().enumerate() {
                 questions.insert(
@@ -1027,7 +1039,13 @@ pub(super) async fn reply_suggestions(
                 );
             }
             let state = serde_json::json!({"executionId": execution_id_for_model, "status": status, "question": question, "candidates": candidates});
-            let Ok(reply) = judge.judge(&JudgeRequest { state, model: JEV_LATEST.to_owned(), questions }) else { continue };
+            let reply = match judge.judge(&JudgeRequest { state, model: JEV_LATEST.to_owned(), questions }) {
+                Ok(reply) => reply,
+                Err(error) => {
+                    failure = Some(format!("Jev failed: {error}"));
+                    continue;
+                }
+            };
             judged = true;
             for suggestion in rank_reply_candidates(
                 candidates,
@@ -1039,21 +1057,21 @@ pub(super) async fn reply_suggestions(
                 if seen.insert(draft.to_owned()) {
                     selected.push(suggestion);
                     if selected.len() == 2 {
-                        return (selected, judged);
+                        return (selected, judged, failure);
                     }
                 }
             }
         }
-        (selected, judged)
+        (selected, judged, failure)
     }).await else {
         return reply_suggestions_unavailable(&execution_id, head, "model or Jev could not produce valid suggestions");
     };
     if !judged {
-        return reply_suggestions_unavailable(
-            &execution_id,
-            head,
-            "model or Jev could not produce valid suggestions",
-        );
+        let reason = match failure {
+            Some(failure) => format!("model or Jev could not produce valid suggestions: {failure}"),
+            None => "model or Jev could not produce valid suggestions".to_owned(),
+        };
+        return reply_suggestions_unavailable(&execution_id, head, &reason);
     }
     // #327: the suggestions were generated from the snapshot at `head`. A busy run appends events
     // continuously, so comparing heads discarded every result on exactly the runs that needed one.

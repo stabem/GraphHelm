@@ -724,11 +724,16 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
             "flow output could not be written; batch rollback attempted",
         );
     }
+    let written = if !args.check && findings.iter().all(Finding::is_warning) {
+        writes.len()
+    } else {
+        0
+    };
     report(
         COMMAND,
         reports,
         findings,
-        json!({"skipped":skipped,"written":if args.check {0}else{writes.len()}}),
+        json!({"skipped":skipped,"written":written}),
     )
 }
 

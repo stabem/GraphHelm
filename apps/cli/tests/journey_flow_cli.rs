@@ -215,6 +215,7 @@ fn compile_formats_drafts_and_preserves_handwritten_contracts() {
     let dir = project(&EXAMPLE.replace('\n', "\r\n"));
     let (out, reply) = run(dir.path(), &["compile", "--fmt", "--include-draft"]);
     assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["written"], 2, "{reply}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".graphhelm/journeys/checkout.journey.yaml"))
             .unwrap(),
@@ -545,6 +546,9 @@ fn unrepresentable_expectations_are_refused_without_weakening_promises() {
         let (out, reply) = run(dir.path(), &args);
         assert_eq!(out.status.code(), Some(2), "{reply}");
         assert!(finding(&reply, "flow.promise_too_long"), "{reply}");
+        if args[0] == "compile" {
+            assert_eq!(reply["data"]["written"], 0, "{reply}");
+        }
         assert_eq!(
             reply["data"]["files"][0]["findings"][0]["pointer"],
             "/screens/0/expect"

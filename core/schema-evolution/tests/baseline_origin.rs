@@ -529,6 +529,7 @@ fn the_frozen_baseline_admits_only_declared_compatible_evolution() {
             "execution-accounting-receipt",
             "graph-signal",
             "journey-flow",
+            "journey-replay-cache",
             "node",
             "restore-plan"
         ],

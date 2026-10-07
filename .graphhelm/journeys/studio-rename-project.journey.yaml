@@ -1,0 +1,43 @@
+schema: graphhelm.journey-flow/1
+id: studio-rename-project
+title: Owner renames the project's display label in this browser
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: renamed
+    title: The rail shows the new label
+    url: /
+    state: success
+    expect: [{role: navigation, name: Projects}, {role: button, name: Rename Demo Studio}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
+  - id: renaming
+    title: Inline rename form in the rail
+    url: /
+    state: stable
+    expect: [{role: textbox, name: Project name}, {role: button, name: Save project name}, {role: button, name: Cancel rename}]
+    scope: [apps/studio/src/components/rail.tsx]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: button, name: Rename demo}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
+edges:
+  - id: renaming.save
+    from: renaming
+    to: renamed
+    acts:
+      - {kind: enter_text, role: textbox, name: Project name, text: Demo Studio}
+      - {kind: activate, role: button, name: Save project name}
+  - id: run.rename
+    from: run
+    to: renaming
+    acts:
+      - {kind: activate, role: button, name: Rename demo}
+paths:
+  main: [run.rename, renaming.save]
+drift: []

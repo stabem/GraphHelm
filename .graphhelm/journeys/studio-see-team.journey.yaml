@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-see-team
+title: Owner sees the live team and opens a bot's window
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: bot
+    title: "Agent window for one bot (demo bot: planner)"
+    url: /
+    state: stable
+    expect: [{role: region, name: Agent planner}, {role: heading, name: planner}, {role: button, name: Close planner}, {role: textbox, name: Say something into this run}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: region, name: Team}, {role: button, name: Reset layout}, {role: button, name: Graph file}, {role: heading, name: Steps without a bot}, {role: button, name: Details}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: run.details
+    from: run
+    to: bot
+    acts:
+      - {kind: activate, role: button, name: Details}
+paths:
+  main: [run.details]
+drift: []

@@ -36,6 +36,8 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
+        JourneyCommand::Replay(replay) => super::journey_replay::run(replay),
+        JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
 }
 
@@ -245,6 +247,12 @@ fn run_walked(args: &JourneyWalkedArgs) -> Result<serde_json::Value, Failure> {
     id(&record.contract, "/contract")?;
     id(&args.from, "/from")?;
     id(&args.to, "/to")?;
+    if args.from_capture.is_some() != args.to_capture.is_some() {
+        return Err(argument(
+            "--from-capture and --to-capture must be supplied together",
+            "/fromCaptureId",
+        ));
+    }
     let project = project(record);
     let contract = load_contract(&project, &record.contract)?;
     let from = step_index(&contract, &args.from, "/from")?;
@@ -266,8 +274,27 @@ fn run_walked(args: &JourneyWalkedArgs) -> Result<serde_json::Value, Failure> {
             .map(|capture| capture.signal_id.clone())
             .ok_or_else(|| argument("this step has no capture in this run", pointer))
     };
-    let from_capture = newest(&args.from, "/from")?;
-    let to_capture = newest(&args.to, "/to")?;
+    let selected = |given: &Option<String>, step: &str, pointer: &str| match given {
+        None => newest(step, pointer),
+        Some(signal_id) => found
+            .captures
+            .iter()
+            .find(|capture| {
+                capture.signal_id == *signal_id
+                    && capture.execution_id == record.execution
+                    && capture.contract_id == record.contract
+                    && capture.step_id == step
+            })
+            .map(|capture| capture.signal_id.clone())
+            .ok_or_else(|| {
+                argument(
+                    "the supplied capture does not identify this contract step in this run",
+                    pointer,
+                )
+            }),
+    };
+    let from_capture = selected(&args.from_capture, &args.from, "/fromCaptureId")?;
+    let to_capture = selected(&args.to_capture, &args.to, "/toCaptureId")?;
     let revision = head(&project)?;
     let actor = owner_actor();
     let description = serde_json::json!({

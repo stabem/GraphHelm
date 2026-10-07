@@ -361,7 +361,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings
 }
 
-fn approval_digest(flow: &Value) -> String {
+pub(crate) fn approval_digest(flow: &Value) -> String {
     format!(
         "sha256:{}",
         hex::encode(Sha256::digest(canonical(flow, true).as_bytes()))
@@ -370,43 +370,62 @@ fn approval_digest(flow: &Value) -> String {
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     match read(file) {
-        Ok((text, value)) => {
-            let mut findings = semantic(file, &value, project);
-            if text != canonical(&value, false) {
-                findings.push(Finding::new(
-                    "flow.not_canonical",
-                    "",
-                    "flow bytes differ from canonical YAML",
-                ));
-            }
-            if findings.iter().all(Finding::is_warning) {
-                let contracts = match compile(&value) {
-                    Ok(contracts) => contracts,
-                    Err(finding) => {
-                        findings.push(finding);
-                        return findings;
-                    }
-                };
-                for (id, contract) in contracts {
-                    let path = project
-                        .join(".graphhelm/journeys")
-                        .join(format!("{id}.json"));
-                    if (value["status"] == "approved" || path.exists())
-                        && output_bytes(&path).ok().as_deref()
-                            != Some(contract_bytes(&contract).as_slice())
-                    {
-                        findings.push(Finding::new(
-                            "flow.contract_stale",
-                            format!("/journeys/{id}.json"),
-                            "generated contract differs or is missing",
-                        ));
-                    }
-                }
-            }
-            findings
-        }
+        Ok((text, value)) => check_snapshot(file, &text, &value, project),
         Err(findings) => findings,
     }
+}
+
+/// Replay consumes exactly the validated source snapshot, never a second unchecked read.
+pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
+    let (text, value) = read(file)?;
+    let mut findings = check_snapshot(file, &text, &value, project);
+    if value["status"] != "approved" {
+        findings.push(Finding::new(
+            "flow.not_approved",
+            "/status",
+            "replay requires an approved flow",
+        ));
+    }
+    if findings.iter().any(|f| !f.is_warning()) {
+        Err(findings)
+    } else {
+        Ok(value)
+    }
+}
+
+fn check_snapshot(file: &Path, text: &str, value: &Value, project: &Path) -> Vec<Finding> {
+    let mut findings = semantic(file, value, project);
+    if text != canonical(value, false) {
+        findings.push(Finding::new(
+            "flow.not_canonical",
+            "",
+            "flow bytes differ from canonical YAML",
+        ));
+    }
+    if findings.iter().all(Finding::is_warning) {
+        let contracts = match compile(value) {
+            Ok(contracts) => contracts,
+            Err(finding) => {
+                findings.push(finding);
+                return findings;
+            }
+        };
+        for (id, contract) in contracts {
+            let path = project
+                .join(".graphhelm/journeys")
+                .join(format!("{id}.json"));
+            if (value["status"] == "approved" || path.exists())
+                && output_bytes(&path).ok().as_deref() != Some(contract_bytes(&contract).as_slice())
+            {
+                findings.push(Finding::new(
+                    "flow.contract_stale",
+                    format!("/journeys/{id}.json"),
+                    "generated contract differs or is missing",
+                ));
+            }
+        }
+    }
+    findings
 }
 
 fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
@@ -596,7 +615,7 @@ fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
     Some(files)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(std::io::Error::other("output symlink refused"));
@@ -799,6 +818,72 @@ fn write_batch(writes: &BTreeMap<std::path::PathBuf, Vec<u8>>) -> std::io::Resul
     Ok(())
 }
 
+/// The findings `run_approve` refuses on: everything `semantic` reports except what approval
+/// itself clears (a stale binding, drift), plus non-canonical bytes.
+fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> Vec<Finding> {
+    let mut findings = semantic(file, flow, project);
+    findings.retain(|f| !matches!(f.code, "flow.approval_stale" | "flow.approved_with_drift"));
+    if text != canonical(flow, false) {
+        findings.push(Finding::new(
+            "flow.not_canonical",
+            "",
+            "approve requires a canonical flow",
+        ));
+    }
+    findings
+}
+
+/// `graphhelm journey flows` (#353): every flow source with what the owner needs to review it -
+/// its status (`approval_stale` when an approved flow no longer matches its binding), drift, the
+/// `validate` findings, whether an Approve would be accepted and change something, and its
+/// screens, edges and paths.
+pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
+    const COMMAND: &str = "journey.flows";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if !project.join(".graphhelm/journeys").exists() {
+        return Outcome::success(COMMAND, json!({"flows": []}));
+    }
+    let Some(files) = files(&project, &[]) else {
+        return input_error(COMMAND, "unsafe or unreadable journeys directory");
+    };
+    let flows: Vec<Value> = files
+        .iter()
+        .map(|file| {
+            let name = file.file_name().unwrap_or_default().to_string_lossy();
+            let id = name.trim_end_matches(".journey.yaml");
+            let findings = check(file, &project);
+            let listed: Vec<Value> = findings
+                .iter()
+                .map(|f| {
+                    json!({"code": f.code, "pointer": f.pointer, "message": f.message,
+                        "severity": if f.is_warning() { "warning" } else { "error" }})
+                })
+                .collect();
+            let Ok((text, flow)) = read(file) else {
+                return json!({"id": id, "title": null, "status": "unreadable",
+                    "approved": null, "drift": [], "findings": listed, "approvable": false,
+                    "screens": [], "edges": [], "paths": {}});
+            };
+            let accepted = approval_findings(file, &text, &flow, &project)
+                .iter()
+                .all(Finding::is_warning);
+            let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
+            let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
+            let settled = flow["status"] == "approved" && !stale && !drifted;
+            let status = if stale {
+                json!("approval_stale")
+            } else {
+                flow["status"].clone()
+            };
+            json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
+                "status": status, "approved": flow["approved"], "drift": flow["drift"],
+                "findings": listed, "approvable": accepted && !settled,
+                "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
+        })
+        .collect();
+    Outcome::success(COMMAND, json!({"flows": flows}))
+}
+
 pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let project = args.project.clone().unwrap_or_else(|| ".".into());
@@ -813,15 +898,7 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
         Ok(value) => value,
         Err(findings) => return report(COMMAND, vec![], findings, json!({})),
     };
-    let mut findings = semantic(file, &flow, &project);
-    findings.retain(|f| !matches!(f.code, "flow.approval_stale" | "flow.approved_with_drift"));
-    if text != canonical(&flow, false) {
-        findings.push(Finding::new(
-            "flow.not_canonical",
-            "",
-            "approve requires a canonical flow",
-        ));
-    }
+    let findings = approval_findings(file, &text, &flow, &project);
     if !findings.iter().all(Finding::is_warning) {
         return report(
             COMMAND,

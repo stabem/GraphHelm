@@ -456,15 +456,21 @@ export function MainChat({ client, executionId, personas, refreshSequence = 0, o
       </div>
     </details>
   </>);
+  // #366: on a phone the composer took ~55% of the height. Below App's own 901px breakpoint the
+  // recipient picker and counter start collapsed behind a summary naming the recipient.
+  const wide = typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches;
   return <section className="main-chat" aria-label="Main chat">
     {historySlot ? createPortal(history, historySlot) : history}
-    <label htmlFor="main-chat-recipient">Main recipient</label>
-    <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending} onChange={(event) => setSelectedId(event.target.value)}>
-      {personas.map((persona) => <option key={persona.chat.id} value={persona.chat.id}>{persona.chat.title} · {persona.chat.id}</option>)}
-    </select>
+    <details className="main-chat-options" open={wide}>
+      <summary>To: {selected?.chat.title ?? "no recipient"}</summary>
+      <label htmlFor="main-chat-recipient">Main recipient</label>
+      <select id="main-chat-recipient" value={selected?.chat.id ?? ""} disabled={sending} onChange={(event) => setSelectedId(event.target.value)}>
+        {personas.map((persona) => <option key={persona.chat.id} value={persona.chat.id}>{persona.chat.title} · {persona.chat.id}</option>)}
+      </select>
+      <p>{message.length}/{messageLimit} characters</p>
+    </details>
     <label htmlFor="main-chat-message">Instruction</label>
-    <textarea ref={textareaRef} id="main-chat-message" aria-describedby="main-chat-request-status" value={message} maxLength={messageLimit} rows={4} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
-    <p>{message.length}/{messageLimit} characters</p>
+    <textarea ref={textareaRef} id="main-chat-message" aria-describedby="main-chat-request-status" value={message} maxLength={messageLimit} rows={wide ? 4 : 2} onChange={(event) => setMessage(event.target.value)} placeholder="Tell the coordinator what to do" />
     <div className="main-chat-actions" aria-describedby="main-chat-request-status"><button type="button" disabled={!canSend} onClick={() => void send(false)}>Send to main chat</button><button type="button" disabled={!canSendTeam} onClick={() => void send(true)}>Send to team ({teamTargets.length} other{teamTargets.length === 1 ? "" : "s"})</button></div>
     {readError && <p role="alert">{readError}</p>}{notice && <p role={notice.tone === "bad" ? "alert" : "status"}>{notice.text}</p>}
   </section>;

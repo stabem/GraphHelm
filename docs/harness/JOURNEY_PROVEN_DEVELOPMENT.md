@@ -320,9 +320,64 @@ Git revision and SHA-256 of canonical YAML with `status`, `approved` and `drift`
 clears drift and generates contracts. Editing that projection invalidates approval.
 This is file approval, not proof that a browser journey ran.
 
+The owner reviews and approves flows in the Studio Journey tab (#353). The tab reads
+`GET /v1/journey-flows` (CLI `graphhelm journey flows`, MCP `journey_flows`): each flow's status
+(`draft`, `approved`, or `approval_stale` when an approved flow was edited), drift, validate
+findings, whether Approve would be accepted, and its screens and edges. Approve calls
+`POST /v1/journey-flows/<id>/approve` (MCP `journey_approve`, refused with `GHCLI036_JOURNEY_APPROVE_OWNER_ONLY` for an agent-typed session: only the owner approves), which runs exactly
+`graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
+nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
+
 Writers take a nonblocking project lock, preflight all destinations, replace each file
 through a synced temporary file and restore earlier files when a later write fails.
 The batch is not crash-atomic across files: a process or host failure can require
 recompilation. No browser, model or operational graph mutation is performed.
 Stable finding codes are listed in the
 [design specification](../specs/2026-10-06-journey-explore-design.md#7-diagnostic-codes-stable-new-codes-may-be-added-none-renamed).
+
+### Deterministic replay and optional sealed recording
+
+Install the observer explicitly in the project being observed:
+
+```powershell
+graphhelm --json setup --project . --install-observer playwright
+graphhelm --json journey replay checkout --project .
+# Recording is a complete bundle; omit all four flags for assertions/cache only.
+graphhelm --json journey replay checkout --project . --events <store> --execution <run> --keyring <file> --key-id <id>
+```
+
+Setup ships both the Python capture observer and Node replay companion. Read-only preview reports
+missing/stale files and PATH tools; it does not prove browser startup. Replay requires the installed
+companion, project Playwright package and Chromium, and reports `OBSERVER_MISSING` rather than
+silently installing or falling back to a model. Node 24.13.1 / Playwright 1.63.0 / Chromium
+153.0.8010.12 were observed on Windows; other host platforms remain unobserved by that receipt.
+
+Replay validates canonical approved YAML and generated projections, executes every act and exact
+visible expectation, and opens a fresh context for main and each sorted named path. Supported acts
+are activate, submit, navigate, enter_text, wait_for and inspect. Resource selection, upload,
+download, recovery, approval, fuzzy selection and healing remain unsupported. Secret values come
+only from named environment entries and are redacted from text and masked before PNG creation.
+
+The closed digest-bound cache lives under `.graphhelm/journey-cache/`. Invalid/unreadable/link
+artifacts refuse without replacement; valid stale digests are re-derived. Cooperating writers take
+a nonblocking per-flow lock and recheck source/cache before synced atomic replacement. Top-level
+navigation stays on the local origin; explicit additional origins allow subresources only. Local
+aliases are pinned to loopback; HTTP redirects, including local chains, are refused in driver v1.
+
+The contained worker bounds parent waiting over filesystem/Git/recording calls to 180 seconds;
+individual frame write/read operations have 30 seconds and cleanup has a separate one-second
+observer. Unknown cleanup is reported uncertain. A timeout or later failure can retain sealed
+captures and masked temporary inputs. Cache publication and event append are not one transaction;
+reconcile partial effects before retrying any uncertain mutation.
+
+Optional recording emits existing public sealed captures and walked transitions pinned to this
+run's observed capture ids. The walked producer accepts paired `--from-capture` / `--to-capture`
+ids and validates their execution, contract and step; omitting both preserves its prior default.
+`graphhelm journeys` reads existing history: older clean evidence may remain fresh after a newer
+dirty/failed run, while this replay result names its own unresolved steps separately.
+
+These browser observations do not certify a generic JPD journey. The missing deterministic matcher
+remains `EVIDENCE_MATCH_EVALUATOR_MISSING` advisory. Do not treat model-call counters, HTTP success,
+a skipped browser test, or `quality certify` as a substitute for replay's actual rendering evidence.
+The [design](../specs/2026-10-06-journey-explore-design.md#15-phase-2-replay-operational-boundary)
+and [driver wire contract](../../tools/journey-driver/README.md) describe limits and diagnostics.

@@ -176,6 +176,7 @@ const CLI_COMMANDS: &[&str] = &[
     "quality certify",
     "extension validate",
     "journey validate",
+    "journey compile",
     "mcp",
 ];
 

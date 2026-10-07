@@ -58,6 +58,8 @@ pub const GHCLI032_STUDIO_REFUSED: &str = "GHCLI032_STUDIO_REFUSED";
 /// `graphhelm journey validate` found a contract that journeys cannot use as written (#328).
 pub const GHCLI033_JOURNEY_CONTRACT_INVALID: &str = "GHCLI033_JOURNEY_CONTRACT_INVALID";
 pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
+/// `graphhelm skills sync` could not read the bundle, the host home or its manifest (#355).
+pub const GHCLI035_SKILLS_SYNC_REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
 /// An agent-typed MCP session asked to approve a journey flow; only the owner approves (#353).
 pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY";
 
@@ -103,6 +105,7 @@ pub const ALL: &[&str] = &[
     GHCLI032_STUDIO_REFUSED,
     GHCLI033_JOURNEY_CONTRACT_INVALID,
     GHCLI034_JOURNEY_FLOW_INVALID,
+    GHCLI035_SKILLS_SYNC_REFUSED,
     GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
 ];
 

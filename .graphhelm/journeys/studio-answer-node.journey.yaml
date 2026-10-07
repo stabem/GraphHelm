@@ -1,0 +1,43 @@
+schema: graphhelm.journey-flow/1
+id: studio-answer-node
+title: "Owner answers a node that waits for input, with or without evidence"
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [irreversible_effect, ambiguous_behavior]
+screens:
+  - id: node
+    title: Node window of the waiting step with the Answer block (graph file path set)
+    url: /
+    state: stable
+    expect: [{role: heading, name: This node is waiting for you}, {role: textbox, name: Kind of proof}, {role: button, name: Answer with no evidence}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
+  - id: released
+    title: The claim is countersigned and the node is released
+    url: /
+    state: success
+    expect: [{role: alert, name: Answered. The node is released.}]
+    scope: [apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: region, name: Needs you}, {role: button, name: Answer in chat}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+edges:
+  - id: node.answer
+    from: node
+    to: released
+    acts:
+      - {kind: enter_text, role: textbox, name: Kind of proof, text: test_report}
+      - {kind: activate, role: button, name: Answer with no evidence}
+  - id: run.waiting-step
+    from: run
+    to: node
+    acts:
+      - {kind: activate, role: button, name: Deploy · waiting input}
+paths:
+  main: [run.waiting-step, node.answer]
+drift: []

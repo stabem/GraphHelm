@@ -1,0 +1,42 @@
+schema: graphhelm.journey-flow/1
+id: studio-mobile
+title: "Owner on a phone (width under 768 px) moves between the Chat, Team and Journeys tabs"
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [accessibility, critical_ux]
+screens:
+  - id: chat
+    title: "Mobile: Chat tab"
+    url: /
+    state: stable
+    expect: [{role: tablist, name: Studio columns}, {role: complementary, name: Chat}, {role: textbox, name: Message}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/chat-column.tsx]
+  - id: journeys
+    title: "Mobile: Journeys tab"
+    url: /
+    state: empty
+    expect: [{role: tablist, name: Studio columns}, {role: region, name: Journey}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/journey-canvas.tsx]
+  - id: team
+    title: "Mobile: Team tab (default)"
+    url: /
+    state: stable
+    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Chat}, {role: tab, name: Team}, {role: tab, name: Journeys}, {role: region, name: Team}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/styles.css, apps/studio/src/dock-reserve.ts, apps/studio/src/components/team-canvas.tsx]
+edges:
+  - id: chat.journeys
+    from: chat
+    to: journeys
+    acts:
+      - {kind: activate, role: tab, name: Journeys}
+  - id: team.chat
+    from: team
+    to: chat
+    acts:
+      - {kind: activate, role: tab, name: Chat}
+paths:
+  main: [team.chat, chat.journeys]
+drift: []

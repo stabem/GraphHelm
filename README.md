@@ -95,6 +95,7 @@ Explore [`core/`](https://github.com/stabem/GraphHelm/tree/main/core), [`adapter
 GraphHelm includes two complementary development methods:
 
 - [Journey-Proven Development](https://github.com/stabem/GraphHelm/blob/main/docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) defines what an observer must verify about the user's actual journey. Missing proof remains `OBSERVER_MISSING`.
+  Start with the [user journeys guide](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md): author a flow, validate, approve, replay, and read capture freshness.
 - [Keel](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md) keeps scope, context, and new code proportional to the change, with quality first and the total cost of a proven delivery in view.
 
 The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).

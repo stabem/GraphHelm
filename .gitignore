@@ -12,7 +12,12 @@ target/
 # .graphhelm/broker/credentials.json, .graphhelm/serve.key and both event-store tokens.
 # Caught before any push (#1184), which is luck rather than a safeguard: untracked is not a
 # guard, an ignore rule is.
-/.graphhelm/
+/.graphhelm/*
+# ...except the journey-flow sources, which are the project's own user-journey map (#368) and
+# carry no secret: names only, never a token or a key value (journey-explore design, section 11).
+!/.graphhelm/journeys/
+/.graphhelm/journeys/*
+!/.graphhelm/journeys/*.journey.yaml
 # The optional full check (ci/gate.ps1) writes its run manifests under .factory/gate-runs/. The
 # receipt store and the runners that committed it were retired on 2026-09-24; a local run's
 # manifest is scratch and never committed.

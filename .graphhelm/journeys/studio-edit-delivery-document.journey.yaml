@@ -1,0 +1,44 @@
+schema: graphhelm.journey-flow/1
+id: studio-edit-delivery-document
+title: Owner opens a delivered document from a node window and saves an edit to the project
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [irreversible_effect, external_delivery]
+screens:
+  - id: editor
+    title: Project document editor
+    url: /
+    state: stable
+    expect: [{role: complementary, name: Project document editor}, {role: textbox, name: File content}, {role: textbox, name: Why are you changing this?}, {role: button, name: Save project file}, {role: button, name: Close document editor}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/document-editor.tsx, apps/studio/src/runtime/client.ts]
+  - id: node
+    title: Node window with recorded deliveries
+    url: /
+    state: stable
+    expect: [{role: region, name: Deliveries}, {role: heading, name: Deliveries}, {role: button, name: Close this node}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/client.ts]
+  - id: saved
+    title: The file is saved to the main project folder and the change notice is recorded
+    url: /
+    state: success
+    expect: [{role: status, name: Saved to main project folder}]
+    scope: [apps/studio/src/components/document-editor.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: editor.save
+    from: editor
+    to: saved
+    acts:
+      - {kind: enter_text, role: textbox, name: File content, text: "# Release notes: version 0.2"}
+      - {kind: enter_text, role: textbox, name: Why are you changing this?, text: Fix the version header.}
+      - {kind: activate, role: button, name: Save project file}
+  - id: node.open-document
+    from: node
+    to: editor
+    acts:
+      - {kind: activate, role: button, name: Release notes docs/RELEASE_NOTES.md}
+paths:
+  main: [node.open-document, editor.save]
+drift: []

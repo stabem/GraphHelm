@@ -1,0 +1,55 @@
+schema: graphhelm.journey-flow/1
+id: studio-answer-question
+title: "Owner answers, or refuses, a question an agent asked"
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux, ambiguous_behavior]
+screens:
+  - id: answered
+    title: The answer is recorded and the question card is settled
+    url: /
+    state: success
+    expect: [{role: tabpanel, name: planner}, {role: textbox, name: Message}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+  - id: answering
+    title: "Direct thread with the asker, composer marked Answering"
+    url: /
+    state: stable
+    expect: [{role: button, name: Clear}, {role: textbox, name: Message}, {role: button, name: Send}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts]
+  - id: asked
+    title: "A question card waits in Needs you (demo asker: planner)"
+    url: /
+    state: stable
+    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+  - id: refused
+    title: The refusal is recorded; the card leaves Needs you
+    url: /
+    state: success
+    expect: [{role: region, name: Team}, {role: article, name: implementation is blocked.}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: answering.send
+    from: answering
+    to: answered
+    acts:
+      - {kind: enter_text, role: textbox, name: Message, text: "Staging first, then production."}
+      - {kind: activate, role: button, name: Send}
+  - id: asked.answer
+    from: asked
+    to: answering
+    acts:
+      - {kind: activate, role: button, name: Answer}
+  - id: asked.refuse
+    from: asked
+    to: refused
+    acts:
+      - {kind: activate, role: button, name: Refuse}
+paths:
+  main: [asked.answer, answering.send]
+  refuse: [asked.refuse]
+drift: []

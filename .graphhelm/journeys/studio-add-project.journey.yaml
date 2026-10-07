@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-add-project
+title: Owner reads how to add another project folder
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: add-project
+    title: Add project folder panel
+    url: /
+    state: stable
+    expect: [{role: region, name: Add project folder}, {role: heading, name: Add project folder}, {role: textbox, name: Folder}, {role: button, name: copy PowerShell command}, {role: button, name: copy POSIX command}, {role: button, name: Close}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/addproject.tsx]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: button, name: add project folder}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx]
+edges:
+  - id: run.add-project
+    from: run
+    to: add-project
+    acts:
+      - {kind: activate, role: button, name: add project folder}
+paths:
+  main: [run.add-project]
+drift: []

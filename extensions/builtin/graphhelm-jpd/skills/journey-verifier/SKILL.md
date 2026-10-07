@@ -67,8 +67,12 @@ logical action.
 3. Execute semantic actions in order. Browser observers target role, label, accessible name,
    visible text, or stable product identity. Coordinates are allowed only for geometry behavior.
 4. Capture transitions and settled states, including loading, disabled, error, timeout, retry,
-   partial success, success, and recovery when reachable and required. For a contract saved as
-   `.graphhelm/journeys/<contractId>.json`, record screen captures and walked transitions with the
+   partial success, success, and recovery when reachable and required. A contract generated from
+   a flow (`.graphhelm/journeys/<id>.journey.yaml`) is verified only after
+   `graphhelm journey validate --all` is clean; a flow still `draft`, or reported
+   `flow.approval_stale`, is not owner-approved, and the result says so rather than treating it
+   as accepted. For a contract saved as `.graphhelm/journeys/<contractId>.json`, compiled or
+   hand-written, record screen captures and walked transitions with the
    Playwright observer's `--journey <contractId>` mode, or one at a time with
    `graphhelm journey capture` and `graphhelm journey walked`. `graphhelm journeys` (and the
    Studio's Journey tab) shows each step's newest capture as fresh, stale or unknown against the

@@ -1,0 +1,43 @@
+schema: graphhelm.journey-flow/1
+id: studio-conversation-panel
+title: Owner opens the run's Conversation panel and says something into the run
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: conversation
+    title: Conversation panel with the say box
+    url: /
+    state: stable
+    expect: [{role: region, name: Run demo}, {role: heading, name: Conversation}, {role: button, name: Close this panel}, {role: region, name: Shared conversation}, {role: textbox, name: Say something into this run}, {role: button, name: send}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/runtime/work-conversation.ts]
+  - id: run
+    title: "A run is open: rail, chat, team canvas, side panel"
+    url: /
+    state: stable
+    expect: [{role: button, name: Toggle conversation}, {role: region, name: Canvas}]
+    scope: [apps/studio/src/App.tsx]
+  - id: said
+    title: The line is recorded in the shared conversation
+    url: /
+    state: success
+    expect: [{role: region, name: Shared conversation}, {role: textbox, name: Say something into this run}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: conversation.say
+    from: conversation
+    to: said
+    acts:
+      - {kind: enter_text, role: textbox, name: Say something into this run, text: "Keep going, I am watching."}
+      - {kind: activate, role: button, name: send}
+  - id: run.conversation
+    from: run
+    to: conversation
+    acts:
+      - {kind: activate, role: button, name: Toggle conversation}
+paths:
+  main: [run.conversation, conversation.say]
+drift: []

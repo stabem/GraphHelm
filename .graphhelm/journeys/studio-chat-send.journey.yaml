@@ -1,0 +1,32 @@
+schema: graphhelm.journey-flow/1
+id: studio-chat-send
+title: Owner reads the room thread and sends a message to everyone
+status: draft
+approved: null
+base: http://127.0.0.1:5183
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: chat
+    title: Chat column on the Everyone thread
+    url: /
+    state: stable
+    expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: tab, name: Everyone}, {role: textbox, name: Message}, {role: button, name: Send}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
+  - id: chat.sent
+    title: The message is recorded in the Everyone thread
+    url: /
+    state: success
+    expect: [{role: complementary, name: Chat}, {role: tabpanel, name: Everyone}, {role: textbox, name: Message}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
+edges:
+  - id: chat.send
+    from: chat
+    to: chat.sent
+    acts:
+      - {kind: enter_text, role: textbox, name: Message, text: "Hello team, please report your status."}
+      - {kind: activate, role: button, name: Send}
+paths:
+  main: [chat.send]
+drift: []

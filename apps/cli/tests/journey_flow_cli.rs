@@ -565,3 +565,49 @@ fn unrepresentable_expectations_are_refused_without_weakening_promises() {
         );
     }
 }
+
+/// #354: the journey-map skill teaches agents to write this flow. Credible regression: the skill's
+/// worked example drifts from the format (or from its fixture) and every agent copying it starts
+/// from a file `validate` refuses. Cost: three subprocesses in one tempdir, seconds after the build.
+#[test]
+fn journey_map_worked_example_validates_and_compiles() {
+    let fixture =
+        include_str!("fixtures/journey_flow/first-login.journey.yaml").replace("\r\n", "\n");
+    let skill =
+        include_str!("../../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md")
+            .replace("\r\n", "\n");
+    let start = skill
+        .find("```yaml\nschema: graphhelm.journey-flow/1\n")
+        .expect("journey-map carries a worked flow example")
+        + "```yaml\n".len();
+    let end = start + skill[start..].find("```").unwrap();
+    assert_eq!(
+        &skill[start..end],
+        fixture,
+        "skill example and fixture differ"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    for file in [
+        "apps/web/app/dashboard/page.tsx",
+        "apps/web/app/entrar/page.tsx",
+        "apps/web/app/onboarding/page.tsx",
+        "apps/web/src/screens/entrar-screen.tsx",
+    ] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "export {}").unwrap();
+    }
+    let journeys = dir.path().join(".graphhelm/journeys");
+    std::fs::create_dir_all(&journeys).unwrap();
+    std::fs::write(journeys.join("first-login.journey.yaml"), &fixture).unwrap();
+
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let (out, reply) = run(dir.path(), &["compile", "--include-draft"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert!(journeys.join("first-login.json").exists(), "{reply}");
+    let (out, reply) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["checked"], 2, "{reply}");
+}

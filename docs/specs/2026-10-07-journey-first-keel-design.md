@@ -1,7 +1,7 @@
 # Journey-first Keel: journeys prove user-visible change, small tests guard invisible invariants, a step opens live, a planner decides the route
 
 Status: design, owner-approved direction relayed by the coordinator on 2026-10-07, issue #382.
-Docs only; no mechanism reads this file until the update proposal in §9 lands.
+Docs only; no mechanism reads this file until the update proposal in §10 lands.
 
 ## 1. Promise
 
@@ -18,6 +18,8 @@ Docs only; no mechanism reads this file until the update proposal in §9 lands.
 5. The Studio **Team tab shows each task as its own small live graph** (issue → plan → implement →
    proof → review → merge) with the agent on each node and the current step lit, from structured
    records the lanes emit under their own names.
+6. The **chat is organised by task**: one thread per task graph, Everyone, Needs you; pair tabs
+   go; quiet threads collapse; a Runtime without Jev shows one hint, not a retry card.
 
 ## 2. What exists (the ground)
 
@@ -78,7 +80,7 @@ Both start as signals under `surfaceEnforcement: signal`, like every Keel count 
 ## 4. Rule 2: small tests stay mandatory for invisible invariants
 
 A change is *invariant-bearing* when it touches one of these classes. The classes are path sets in
-`keel.yaml` (§9.3), compared the same way as scope paths, so the classification is deterministic
+`keel.yaml` (§10.3), compared the same way as scope paths, so the classification is deterministic
 and reviewable in a diff of the policy file.
 
 | Class | Why a journey cannot prove it | Example from this repository, 2026-10-07 |
@@ -266,23 +268,63 @@ session closes. `actor_alias` stays the owner's way to rename a lane for display
 `task.review_verdict` and `task.pr_opened`; the `keel` and review skills record the signal in the
 same step that writes the line, so the view costs the lane one call per step it already performs.
 
-## 8. Phases and proof
+## 8. Rule 6: the chat is organised by task
+
+**Today.** `apps/studio/src/runtime/threads.ts` derives one tab per actor pair from the signal
+envelopes' `to` / `replyTo` (`everyone`, `pair`, `direct`). On `gh-team` that is twenty-plus tabs
+such as "claude-coordinator ↔ codex-gh" and "agent-chat ↔ gh-claude-3", several of them between
+shared actors that are not one agent. The owner cannot find the thread of one PR.
+
+**Promise.** Threads follow the tasks of Rule 5: every task graph has one thread (its orders,
+verdicts and questions), plus **Everyone** for broadcasts and one **Needs you** thread that holds
+every open question card (the `needsYou` items of `runtime/needs-you.ts`, which today render
+above the thread). Agent-to-agent pair tabs go away; an **agent filter** on any thread shows only
+one agent's lines. A task thread with no record for `N` hours (`8` by default, a Studio
+preference) collapses under **older**, expanded on click.
+
+**Mechanism.**
+
+- The signal envelope (`schemas/graph-signal.schema.json`, additive `1.2.0`) gains an optional
+  `task` string: the `taskId` of Rule 5 (`issue-382`, `pr-384`). A message with `task` lands in
+  that task's thread; a message without one lands in Everyone, exactly as a message without `to`
+  is "said to the room" today. The lanes' skills set `task` from the branch they are on
+  (`issue-<N>-…`) and the `task.*` records carry it, so the thread exists before its first line.
+- `threads.ts` folds `task` threads from envelopes plus the Rule 5 records (a thread is created by
+  the `task.claimed` record, titled by the issue, relabelled by `task.pr_opened` with the PR
+  number, and closed into **older** by `task.merged`); `pair` is removed; `direct` stays only for
+  the owner's own line with one agent (the say box in the agent window). Unread counts and the
+  `New messages ↓` control are unchanged.
+- The Studio composer tags what it sends: speaking inside a task thread sets `task`; the
+  question cards' **Answer** keeps `replyTo` and adds the question's `task` when it had one.
+- **Jev absent is a state, not an error.** When the Runtime has no judge route, the "Jev suggests"
+  region renders nothing; a single line in the run details, "No Jev model: suggested replies are
+  off (Models → Add model)", replaces the per-question card with its Retry button. The card and
+  Retry return only for a real failure of a configured route (`App.tsx` issue strings today mix
+  the two).
+
+**Proof.** vitest on `threads.ts`: envelopes tagged `pr-384` fold into one thread labelled by the
+PR, untagged ones into Everyone, no pair thread exists for two agents addressing each other; a
+thread whose last record is older than the threshold is in `older`; the Jev-absent case renders no
+region (RED first on each, against the fold as it is today).
+
+## 9. Phases and proof
 
 | Phase | Delivers | Observer |
 |---|---|---|
-| A | §9 text changes: `AGENTS.md` table, `KEEL_SPEC.md` Law 3 and Law 6 notes, `DELIVERY.md` §2–§4, `keel.yaml` 1.4.0 (`invariants`, `journeyFirst`), card `journeys` required when a screen is touched; `keel check` signals `card_missing_journey`, `replay_not_green` | CLI tests: a diff touching a screen's scope path with a card that omits `journeys` reports the signal; the same diff with a green replay cache reports nothing; a diff under `core/events/` reports `invariant: persistence` |
+| A | §10 text changes: `AGENTS.md` table, `KEEL_SPEC.md` Law 3 and Law 6 notes, `DELIVERY.md` §2–§4, `keel.yaml` 1.4.0 (`invariants`, `journeyFirst`), card `journeys` required when a screen is touched; `keel check` signals `card_missing_journey`, `replay_not_green` | CLI tests: a diff touching a screen's scope path with a card that omits `journeys` reports the signal; the same diff with a green replay cache reports nothing; a diff under `core/events/` reports `invariant: persistence` |
 | B | `keel plan` (CLI, MCP), `keel.plan` record and schema, briefing `plan` | CLI test: fixed paths give a byte-identical record across two runs; a path under two classes takes the higher; with a recorded Jev the record cites the judgment sequence |
 | C | `journey open`, `journey act`, `journey close`; driver `headed`; `phase: live` captures; Runtime routes and MCP twins; owner credential (#380) | Fixture app from phase 2: open at step 2 of `checkout` replays one cached edge headed, prints `pass`; rename the button → `drift.locator_missing` at `cart.checkout/0` and the browser stays open on `cart` |
 | D | Studio **Open live** chip and acts list | vitest for the card and chip states; the chip reads records, not the click |
 | E | First end-to-end run on this repository: the `studio-*` flows replay green, captures fresh in the Studio (#381) | `graphhelm journeys` shows every touched step `fresh`; a Journey tab screenshot |
 | F | `graphhelm-task-event-v1` schema, the five `task.*` kinds, `GRAPHHELM_ACTOR` per lane and the actor-mismatch refusal, skills record the events | CLI test: a signal whose `source.id` is not the authenticated actor is refused; the five kinds validate; `team-tasks.ts` folds a PR from `pr_opened` → `review_verdict: BLOCK` → `pr_opened` (new head) → `review_verdict: APPROVE` → `merged` into the expected step sequence |
 | G | Studio per-task graphs in the Team tab, links to PR and journeys | vitest: the fold of F renders the lit step, the agent per node and the red edge; a screenshot with two lanes on two PRs |
+| H | Envelope `task` (signal schema 1.2.0), task threads, agent filter, `older`, Jev-absent state | the vitest cells of §8; a screenshot of `gh-team` with task threads instead of pair tabs |
 
 Phase E is the proof that Rule 1 is usable at all; A does not ship as a gate before E has run once.
 
-## 9. Update proposal (the exact changes)
+## 10. Update proposal (the exact changes)
 
-### 9.1 `AGENTS.md`, "Keel: how code is written here", the proportionality table
+### 10.1 `AGENTS.md`, "Keel: how code is written here", the proportionality table
 
 Add one row after "A bounded code change on the direct route":
 
@@ -294,7 +336,7 @@ Amend the expanded-route row: "persistence, permissions, compatibility, security
 effects, runtime-affecting config, concurrency, destructive operations: the full card, the JPD flow,
 **and a test that names the defect (Law 3), whether or not a journey also covers the change**".
 
-### 9.2 `docs/keel/KEEL_SPEC.md`
+### 10.2 `docs/keel/KEEL_SPEC.md`
 
 - Law 3, add: "For a user-visible change (a screen's scope path in the diff) the journey is the
   proof instrument: its replay at the head kills the defect 'the user cannot complete this
@@ -304,7 +346,7 @@ effects, runtime-affecting config, concurrency, destructive operations: the full
   PR; the planner's record (`keel.plan`) is the reach decision, and a review that disagrees raises
   it."
 
-### 9.3 `keel.yaml` → version `1.4.0`
+### 10.3 `keel.yaml` → version `1.4.0`
 
 ```yaml
 # JOURNEY-FIRST PROOF (1.4.0, #382). A diff path that equals, is under or contains a compiled
@@ -330,7 +372,7 @@ plan:
 (The security list above is illustrative: the PR that lands 8.3 names the real files of the auth
 seam, `agent_route_allowed` in `apps/cli/src/commands/serve/mod.rs` today.)
 
-### 9.4 `docs/process/DELIVERY.md`
+### 10.4 `docs/process/DELIVERY.md`
 
 - §2 table: the new row of 8.1; §3: "Before/after captures" becomes "Journey proof": a PR whose
   scope touches a screen runs `journey replay` for each journey it names and pastes the JSON
@@ -340,7 +382,7 @@ seam, `agent_route_allowed` in `apps/cli/src/commands/serve/mod.rs` today.)
   the review count is the plan's (0 for docs-only is still one reader before merge: the merger
   reads what lands, as §5.4 already says).
 
-### 9.5 Schemas and records
+### 10.5 Schemas and records
 
 - `schemas/keel-card.schema.json`: `journeys` stays optional in the schema (a card without screens
   has none); `keel check` enforces presence when a screen is touched.
@@ -348,14 +390,15 @@ seam, `agent_route_allowed` in `apps/cli/src/commands/serve/mod.rs` today.)
   (`extensions/releases/adoption-0.1.1.json`, the guard test from #323).
 - `graphhelm-screen-capture-v1`: `phase` enum gains `live`.
 - New `task-event.schema.json` (§7) in the development-contracts package.
+- `schemas/graph-signal.schema.json` 1.2.0: optional `task` (§8); catalog entry re-pinned; a 1.1.0 consumer ignores the field.
 
-### 9.6 Lane identity and records
+### 10.6 Lane identity and records
 
 - `.mcp.json` (project): remove `--actor agent-chat`; `AGENTS.md` multi-agent section: "every session exports `GRAPHHELM_ACTOR=<ListAgents name>` before starting the MCP server".
 - `docs/process/DELIVERY.md` §3–§5: each step that writes an identity line also records the matching `task.*` signal; the merge step records `task.merged` after reading what landed.
 - The `keel` skill and the review brief name the commands (`graphhelm execution signal --signal <file>` or the MCP `signal` tool with the `task.*` document).
 
-## 10. Out of scope and risks
+## 11. Out of scope and risks
 
 - `journey explore` (#356) and the Studio Approve button (#353) are separate; this spec reads
   their artefacts and adds none.

@@ -39,8 +39,8 @@ pub use dispatch::{DispatchError, dispatch_plan, parallel_limit};
 pub use graphhelm_protocols::{NodeOutcome, SignalSeverity, SignalSourceKind};
 pub use journeys::{
     ArrowState, ArrowView, CaptureRecord, CaptureView, ChangedSince, ContractInput, Freshness,
-    GitHistory, JourneyView, JourneysView, ScopeHistory, ScreenInput, ScreenView, StepInput,
-    StepAction, StepView, TransitionRecord, UnknownCause, Viewport, fold_journeys, valid_journey_id,
+    GitHistory, JourneyView, JourneysView, ScopeHistory, ScreenInput, ScreenView, StepAction,
+    StepInput, StepView, TransitionRecord, UnknownCause, Viewport, fold_journeys, valid_journey_id,
     valid_revision,
 };
 pub use progress::{Progress, classify_progress};

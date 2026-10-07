@@ -12,8 +12,8 @@ use std::sync::OnceLock;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::{
-    CaptureRecord, ContractInput, GitHistory, ScreenInput, StepAction, StepInput, TransitionRecord, Viewport,
-    fold_journeys, valid_journey_id, valid_revision,
+    CaptureRecord, ContractInput, GitHistory, ScreenInput, StepAction, StepInput, TransitionRecord,
+    Viewport, fold_journeys, valid_journey_id, valid_revision,
 };
 use graphhelm_protocols::{EventKind, EvidenceId};
 use serde::Deserialize;

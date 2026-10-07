@@ -61,9 +61,11 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
    flow (`<id>.journey.yaml`) for this journey, change the flow (its screens, edges and paths, as
    the `journey-map` skill describes), run `cli:journey validate` with `--all` and
    `cli:journey compile` with `--include-draft`, and never edit the generated
-   `<contractId>.json`: `validate` reports a hand edit as `flow.contract_stale`. A changed flow
-   goes back to the owner for approval (`flow.approval_stale` until then); never approve it
-   yourself. Only a journey with no flow is saved as a hand-written
+   `<contractId>.json`: `validate` reports a hand edit as `flow.contract_stale`. Before editing a
+   flow that is `status: approved`, set `status: draft` and `approved: null` (keep its `drift`
+   entries); otherwise `validate` reports `flow.approval_stale` and `compile` refuses to run.
+   After the edit, `flow.contract_stale` is expected until you compile.
+   The changed flow then goes back to the owner for approval; never approve it yourself. Only a journey with no flow is saved as a hand-written
    `.graphhelm/journeys/<contractId>.json`; then run `cli:journey validate` on it and fix every
    finding. The prose fields this method asks for (failure contracts, recovery, out of scope)
    stay in the request record when the contract is generated, because the compiler fills them

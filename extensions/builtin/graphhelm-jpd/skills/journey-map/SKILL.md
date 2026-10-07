@@ -102,9 +102,13 @@ finding, then run `cli:journey compile` with `--include-draft` to write the cont
 
 Tell the owner which flows are ready and ask them to approve each one in the Studio's Journey tab
 or with `graphhelm journey approve <id>`. Approval records the project's revision and a digest of the
-flow, sets `status: approved`, clears `drift` and compiles. Editing an approved flow afterwards
-makes `validate` report `flow.approval_stale` until the owner approves again. Until then the flow
-stays `draft`; that is the correct state, not a failure.
+flow, sets `status: approved`, clears `drift` and compiles. Until then the flow stays `draft`;
+that is the correct state, not a failure. To change an approved flow, first set `status: draft`
+and `approved: null` (keep its `drift` entries), then edit, validate and compile as in (c), and
+ask the owner to approve again. Until you compile, `validate` also reports `flow.contract_stale`
+for the contract the old approval generated; `cli:journey compile` with `--include-draft` clears
+it. Editing it while it still says `status: approved` makes
+`validate` report `flow.approval_stale` and `compile` refuse.
 
 ### (d) Bootstrap Playwright
 

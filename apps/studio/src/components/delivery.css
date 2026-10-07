@@ -137,6 +137,9 @@
 .main-chat select, .main-chat textarea { width: 100%; min-width: 0; box-sizing: border-box; background: #242329; color: #eeeaf8; border: 1px solid #55515f; border-radius: 10px; padding: 10px; font: inherit; }
 .main-chat select { min-height: 44px; }
 .main-chat textarea { flex-shrink: 0; min-height: 72px; resize: vertical; }
+.main-chat-options { display: grid; gap: 8px; }
+.main-chat-options summary { cursor: pointer; color: #b8b6c6; font-weight: 600; }
+@media (max-width: 900px) { .main-chat textarea { min-height: 48px; } }
 .main-chat button { min-height: 44px; border: 1px solid #60566f; border-radius: 10px; padding: 9px 12px; cursor: pointer; }
 .main-chat button:disabled { cursor: default; opacity: .5; }
 .main-chat-conversation { display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }

@@ -242,6 +242,8 @@ export interface TaskState {
   blockedBy: { reviewer: string; headSha: string; commentUrl: string } | null;
   reviewers: string[];
   mergeSha: string | null;
+  /** `https://github.com/<owner>/<repo>`, read off a verdict's comment URL; links need it. */
+  repoUrl: string | null;
   lastSequence: number;
 }
 
@@ -252,7 +254,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     const state = tasks.get(event.taskId) ?? {
       taskId: event.taskId, issue: null, pr: null, lane: null, headSha: null, journeys: [],
-      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, lastSequence: 0,
+      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, lastSequence: 0,
     };
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
@@ -275,6 +277,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         // A verdict on a head other than the current one says nothing about the current one.
         if (event.headSha !== state.headSha) break;
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+        state.repoUrl = /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
         if (event.verdict === "BLOCK") {
           state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
           state.step = "review";
@@ -293,4 +296,36 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     tasks.set(event.taskId, state);
   }
   return [...tasks.values()].sort((a, b) => a.lastSequence - b.lastSequence);
+}
+
+export function isTaskEventSignal(event: RuntimeEvent): boolean {
+  if (event.kind !== "signal_recorded") return false;
+  const kind = record(event.payload)?.kind;
+  return typeof kind === "string" && kind.startsWith("task.");
+}
+
+/** Reads the sealed `task.*` envelopes of a run and folds them (#391). An envelope whose hash does
+ * not match its record, whose type is not the recorded kind, or whose signer is not the actor
+ * that recorded it is skipped: the Runtime refuses those, and an old log must not draw them. */
+export async function readTaskEvents({ executionId, events, readEvidence }: ReadClaudeTasksOptions): Promise<TaskState[]> {
+  const records: TaskEventRecord[] = [];
+  for (const event of [...events].sort((a, b) => a.sequence - b.sequence)) {
+    if (!isTaskEventSignal(event)) continue;
+    const payload = record(event.payload);
+    const kind = payload?.kind as string;
+    const seq = sequence(event.sequence);
+    const evidenceId = event.evidenceRefs.length === 1 ? event.evidenceRefs[0] : null;
+    const envelopeHash = text(payload?.envelopeSha256, 128);
+    if (seq === null || evidenceId === null || envelopeHash === null || typeof event.actorId !== "string") continue;
+    let evidence: EvidenceContent;
+    try { evidence = await readEvidence(executionId, evidenceId); } catch { continue; }
+    if (evidence.evidenceId !== evidenceId) continue;
+    const computed = rawHash(await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle));
+    if (rawHash(envelopeHash) !== computed || rawHash(evidence.contentSha256) !== computed) continue;
+    const envelope = json(evidence);
+    if (envelope?.type !== kind || record(envelope?.source)?.id !== event.actorId || typeof envelope?.description !== "string") continue;
+    const parsed = parseTaskEvent(kind, event.actorId, envelope.description);
+    if (parsed !== null) records.push({ ...parsed, sequence: seq });
+  }
+  return foldTaskEvents(records);
 }

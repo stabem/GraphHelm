@@ -172,6 +172,15 @@ fn spawn_owned(mut command: Command, deadline: Instant) -> Result<OwnedChild> {
         .map_err(|_| failure("replay.timeout", "/startup", 1))?
 }
 
+/// Reads a child's stderr to the end and discards it. A receiver nobody reads lets the
+/// pipe either fill (the child blocks) or close early (the child's next write fails), so
+/// diagnostics output must be drained for the whole life of the child, never echoed.
+fn drain(pipe: impl Read + Send + 'static) {
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut BufReader::new(pipe), &mut std::io::sink());
+    });
+}
+
 fn frames(pipe: impl Read + Send + 'static, limit: usize) -> Receiver<Result<Option<Vec<u8>>>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -225,7 +234,7 @@ pub(super) fn child_output(
     let mut owned = spawn_owned(command, deadline)?;
     let child = owned.child.as_mut().unwrap();
     let replies = frames(child.stdout.take().unwrap(), limit);
-    let _stderr = frames(child.stderr.take().unwrap(), 8192);
+    drain(child.stderr.take().unwrap());
     supervise_owned(owned, input, deadline, replies)
 }
 
@@ -346,7 +355,7 @@ impl Driver {
         let mut owned = spawn_owned(command, Instant::now() + OP_BUDGET)?;
         let child = owned.child.as_mut().unwrap();
         let replies = frames(child.stdout.take().unwrap(), FRAME);
-        let _stderr = frames(child.stderr.take().unwrap(), 8192);
+        drain(child.stderr.take().unwrap());
         let mut stdin = child.stdin.take().unwrap();
         let (tx, rx) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
         std::thread::spawn(move || {
@@ -407,7 +416,7 @@ impl Driver {
             .replies
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .map_err(|_| failure("replay.timeout", format!("{path}/read"), 1))??
-            .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
+            .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/eof"), 1))?;
         if self.secrets.iter().any(|secret| {
             !secret.is_empty() && {
                 let encoded = serde_json::to_vec(secret).unwrap();

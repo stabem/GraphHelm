@@ -1,0 +1,40 @@
+{
+  "schema": "graphhelm.journey-replay-cache/1",
+  "id": "checkout",
+  "flowDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "screens": {
+    "cart": {
+      "fingerprint": "sha256:6c865d15566c625c2585dc764fada1e32197f66829f328b5b8f0ef18f0a32100",
+      "controls": [
+        {
+          "role": "button",
+          "name": "Checkout"
+        },
+        {
+          "role": "heading",
+          "name": "Cart"
+        },
+        {
+          "role": "main",
+          "name": ""
+        }
+      ]
+    }
+  },
+  "edges": {
+    "cart.checkout": [
+      {
+        "role": "button",
+        "name": "Checkout",
+        "exact": true,
+        "testId": null,
+        "context": "main \"\"",
+        "nth": null
+      }
+    ]
+  }
+}

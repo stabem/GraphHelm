@@ -405,7 +405,7 @@ const RELEASE_1_0_0_SCHEMA_NAMES: [&str; 15] = [
     "sensitivity",
 ];
 
-const CURRENT_SCHEMA_NAMES: [&str; 23] = [
+const CURRENT_SCHEMA_NAMES: [&str; 24] = [
     "activation-receipt",
     "adoption-journal",
     "adoption-plan",
@@ -423,6 +423,7 @@ const CURRENT_SCHEMA_NAMES: [&str; 23] = [
     "graph",
     "graph-signal",
     "journey-flow",
+    "journey-replay-cache",
     "node",
     "persisted-graph-version",
     "policy-waiver",
@@ -1406,5 +1407,40 @@ fn adoption_contracts_are_catalogued_without_rewriting_the_frozen_release() {
             serde_json::from_slice(&fs::read(root.join(&entry.path)).unwrap()).unwrap();
         assert_eq!(entry.sha256, schema_digest(&schema).unwrap());
         assert!(!release.schemas.contains_key(name));
+    }
+}
+
+/// Closed replay artifacts cannot weaken exact matching or carry extra secret/action payloads.
+/// Cost: bounded in-memory schema validation and repository fixture reads; offline, no seams.
+#[test]
+fn replay_cache_is_closed_and_preserves_exact_locator_policy() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let document: Value = serde_json::from_slice(
+        &fs::read(root.join("schemas/journey-replay-cache.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let id = "https://p50.dev/schemas/journey-replay-cache.schema.json";
+    let schemas = OfflineSchemaSet::compile(BTreeMap::from([(id.to_owned(), document)])).unwrap();
+    let valid: Value = serde_json::from_slice(
+        &fs::read(root.join("apps/cli/tests/fixtures/journey_replay/checkout-cache.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(schemas.validate(id, &valid, "cache").is_empty());
+    for (pointer, replacement) in [
+        ("/secret", json!("canary-not-a-cache-field")),
+        ("/screens/cart/text", json!("raw page text")),
+        ("/screens/cart/controls/0/text", json!("raw control text")),
+        ("/edges/cart.checkout/0/exact", json!(false)),
+        ("/edges/cart.checkout/0/nth", json!(0)),
+        ("/edges/cart.checkout/0/secret", json!("password")),
+    ] {
+        let mut bad = valid.clone();
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        bad.pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), replacement);
+        assert!(!schemas.validate(id, &bad, "cache").is_empty(), "{pointer}");
     }
 }

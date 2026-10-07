@@ -139,6 +139,12 @@
       "documentVersion": "1.0.0",
       "path": "schemas/journey-flow.schema.json",
       "sha256": "sha256:06e34ec2cf521ed373d380a8807ab4f7ff974ae44cac6bf1729cec3e750680d9"
+    },
+    "journey-replay-cache": {
+      "id": "https://p50.dev/schemas/journey-replay-cache.schema.json",
+      "documentVersion": "1.0.0",
+      "path": "schemas/journey-replay-cache.schema.json",
+      "sha256": "sha256:bc27b425794481921f8f7a6863831a14b473f121db8782293b6dabb27eefee0b"
     }
   }
 }

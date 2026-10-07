@@ -589,7 +589,9 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     }
     for turn in 0..args.max_steps {
         data["turns"] = (turn + 1).into();
-        let question = attempt!(prompt(&args.goal, &flow, &snapshot, &recent, &private, None));
+        let question = attempt!(prompt(
+            &args.goal, &flow, &snapshot, &recent, &private, None
+        ));
         use sha2::Digest;
         data["promptSha256s"]
             .as_array_mut()
@@ -646,10 +648,12 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 break;
             }
             let id = attempt!(screen_id(screen["id"].as_str().unwrap(), &visited));
-            let expectations = attempt!(snapshot["expectations"]
-                .as_array()
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| refused("explore.expectation_missing", "/screens/expect", 1)));
+            let expectations = attempt!(
+                snapshot["expectations"]
+                    .as_array()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| refused("explore.expectation_missing", "/screens/expect", 1))
+            );
             attempt!(driver.call(
                 "snapshot",
                 json!({"expect":expectations}),

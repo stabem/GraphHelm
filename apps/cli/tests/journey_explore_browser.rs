@@ -314,14 +314,25 @@ fn a_denied_act_never_reaches_the_app_and_an_allowed_one_does() {
     let denied = observed_project(root.path(), "denied", &toolchain);
     let (code, value) = explore(&denied, &[]);
     assert_eq!(code, 1, "{value}");
-    assert_eq!(value["diagnostics"][0]["code"], "explore.action_denied", "{value}");
+    assert_eq!(
+        value["diagnostics"][0]["code"], "explore.action_denied",
+        "{value}"
+    );
     assert_eq!(value["data"]["acts"], 0, "{value}");
     assert_eq!(fixture.deletes(), 0, "a denied act reached the app");
-    assert!(!denied.join(".graphhelm/journeys/account.journey.yaml").exists());
+    assert!(
+        !denied
+            .join(".graphhelm/journeys/account.journey.yaml")
+            .exists()
+    );
 
     let allowed = observed_project(root.path(), "allowed", &toolchain);
     let (code, value) = explore(&allowed, &["Delete account"]);
     assert_eq!(code, 0, "{value}");
     assert_eq!(value["data"]["acts"], 1, "{value}");
-    assert_eq!(fixture.deletes(), 1, "the positive control did not reach the app");
+    assert_eq!(
+        fixture.deletes(),
+        1,
+        "the positive control did not reach the app"
+    );
 }

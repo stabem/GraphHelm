@@ -254,7 +254,7 @@ pub(crate) fn read_within(
     // `cancel.rs` and `pause.rs`, outside this task's file set, and changing its return shape would
     // have forced edits there.
     let (scope, stream, history) = resolve_stream(&store, execution)?;
-    let projection = graphhelm_events::replay_within(&scope, &stream, &history, &budget)
+    let projection = fold_within(events, &scope, &stream, &history, &budget)
         .map_err(|error| replay_failure(&error))?;
     // DO NOT INLINE THIS BACK to `Some(history.last().map_or(0, …))`. The guard for it lives in
     // `mod.rs`'s tests and calls the helper directly, so it CANNOT SEE THIS LINE: inlining the old
@@ -280,6 +280,159 @@ pub(crate) fn read_within(
         inputs,
         at_sequence,
     })
+}
+
+type FoldKey = (std::path::PathBuf, String);
+
+/// #371: serve keeps one projection generation per stream, so a read folds only the events
+/// appended since the last read. Before this, every status, briefing and reply-suggestions read
+/// refolded a ~9k-event stream from sequence 1 inside a 5 s budget, and about one read in five ran
+/// out. Off for one-shot commands, which fold once and exit.
+static SHARED_FOLDS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<FoldKey, graphhelm_events::ProjectionGeneration>>,
+> = std::sync::OnceLock::new();
+/// Streams a background fold is already finishing, so a burst of refused reads starts one.
+static WARMING: std::sync::Mutex<std::collections::BTreeSet<FoldKey>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+pub(crate) fn enable_shared_fold_cache() {
+    let _ = SHARED_FOLDS.set(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+}
+
+/// [`graphhelm_events::replay_within`], resumed from serve's cached generation when one exists.
+///
+/// The cached generation is reused only when the history still holds the event it stopped at, by
+/// sequence AND hash; anything else (a different journal, a rewrite) folds from genesis. The fold
+/// is `ProjectionGeneration::apply_page`, which runs the same per-event checks and the same
+/// `apply_projection_event` as `replay_within` (`a_discarded_generation_rebuilds_to_identical_state`
+/// holds them equal), so a corrupt event still refuses and nothing corrupt is cached. When the
+/// budget runs out, the pages already folded are kept, and a background thread finishes the fold:
+/// the next read answers instead of starting over. That is the cold-start path too.
+fn fold_within(
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<graphhelm_events::ExecutionProjection, graphhelm_events::ReplayError> {
+    let Some(cache) = SHARED_FOLDS.get() else {
+        return graphhelm_events::replay_within(scope, stream, history, budget);
+    };
+    if history.len() > graphhelm_events::MAX_READ_ALL {
+        return Err(graphhelm_events::ReplayError::LimitExceeded);
+    }
+    let key: FoldKey = (
+        events.to_path_buf(),
+        format!(
+            "{}\u{0}{stream}",
+            serde_json::to_string(scope).map_err(|_| graphhelm_events::ReplayError::Corrupt)?
+        ),
+    );
+    let cached = cache
+        .lock()
+        .map_err(|_| graphhelm_events::ReplayError::Corrupt)?
+        .get(&key)
+        .cloned();
+    let mut generation = match cached.filter(|generation| resumable(generation, history)) {
+        Some(generation) => generation,
+        None => graphhelm_events::ProjectionGeneration::new(
+            scope.clone(),
+            stream.to_owned(),
+            "serve-status".to_owned(),
+            1,
+            1,
+        )?,
+    };
+    let start = usize::try_from(generation.watermark().last_sequence())
+        .map_err(|_| graphhelm_events::ReplayError::Corrupt)?;
+    let mut walked = 0_u64;
+    let remaining = history.get(start..).unwrap_or_default();
+    for page in remaining.chunks(graphhelm_events::MAX_READ_PAGE) {
+        generation.apply_page(page)?;
+        let before = walked;
+        walked += page.len() as u64;
+        // Checked between pages, never after the last: a finished fold is not refused for the
+        // time it already spent (the caller's post-render `check_now` still bounds the read).
+        if walked as usize == remaining.len() {
+            break;
+        }
+        if let Err(exceeded) = budget.check_progress(before, walked) {
+            store_fold(cache, &key, generation.clone());
+            warm_in_background(key, generation, history.to_vec());
+            return Err(graphhelm_events::ReplayError::BudgetExceeded {
+                walked: exceeded.walked,
+                limit_millis: exceeded.limit_millis,
+            });
+        }
+    }
+    let projection = generation.projection().clone();
+    store_fold(cache, &key, generation);
+    Ok(projection)
+}
+
+/// Whether `generation` stopped at an event `history` still holds, unchanged.
+fn resumable(
+    generation: &graphhelm_events::ProjectionGeneration,
+    history: &[graphhelm_protocols::EventEnvelope],
+) -> bool {
+    let watermark = generation.watermark();
+    let Ok(at) = usize::try_from(watermark.last_sequence()) else {
+        return false;
+    };
+    match at.checked_sub(1) {
+        None => true,
+        Some(index) => history
+            .get(index)
+            .is_some_and(|event| Some(&event.event_hash) == watermark.last_event_hash()),
+    }
+}
+
+/// Keeps the furthest generation: a slower concurrent read must not rewind a faster one.
+fn store_fold(
+    cache: &std::sync::Mutex<
+        std::collections::BTreeMap<FoldKey, graphhelm_events::ProjectionGeneration>,
+    >,
+    key: &FoldKey,
+    generation: graphhelm_events::ProjectionGeneration,
+) {
+    let Ok(mut folds) = cache.lock() else { return };
+    let further = folds.get(key).is_none_or(|current| {
+        current.watermark().last_sequence() <= generation.watermark().last_sequence()
+    });
+    if further {
+        folds.insert(key.clone(), generation);
+    }
+}
+
+fn warm_in_background(
+    key: FoldKey,
+    mut generation: graphhelm_events::ProjectionGeneration,
+    history: Vec<graphhelm_protocols::EventEnvelope>,
+) {
+    let Some(cache) = SHARED_FOLDS.get() else {
+        return;
+    };
+    let Ok(mut warming) = WARMING.lock() else {
+        return;
+    };
+    if !warming.insert(key.clone()) {
+        return;
+    }
+    drop(warming);
+    std::thread::spawn(move || {
+        let start = usize::try_from(generation.watermark().last_sequence()).unwrap_or(usize::MAX);
+        let folded = history
+            .get(start..)
+            .unwrap_or_default()
+            .chunks(graphhelm_events::MAX_READ_PAGE)
+            .try_for_each(|page| generation.apply_page(page));
+        if folded.is_ok() {
+            store_fold(cache, &key, generation);
+        }
+        if let Ok(mut warming) = WARMING.lock() {
+            warming.remove(&key);
+        }
+    });
 }
 
 pub fn run(
@@ -608,6 +761,48 @@ mod tests {
         assert!(
             html.exists(),
             "control: without this the refusal arm proves nothing about the budget"
+        );
+    }
+
+    /// #371: on ml-saas every read refolded a ~9k-event stream from sequence 1, so a read whose
+    /// budget ran out left nothing behind and the next one started over. Each read here gets a
+    /// budget that lapses at its first check; with serve's fold cache the folded pages survive the
+    /// refusal, so a later read answers, and answers exactly what a full replay answers. Without
+    /// the cache every read refuses. Cost: 2,500 events in a tempdir, a few seconds in debug.
+    #[test]
+    fn a_lapsed_read_keeps_its_folded_pages_so_a_later_read_answers() {
+        super::enable_shared_fold_cache();
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 2_500);
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let Ok((scope, stream, history)) =
+            super::super::resolve_stream(&store, Some("execution-budget"))
+        else {
+            panic!("the seeded stream resolves");
+        };
+        let direct = graphhelm_events::replay(&scope, &stream, &history).unwrap();
+
+        let mut answered = None;
+        for _ in 0..3 {
+            let lapsed = ReadBudget::starting_now(
+                Arc::new(LapsingClock(AtomicU64::new(0))),
+                chrono::Duration::seconds(5),
+            );
+            match super::fold_within(directory.path(), &scope, &stream, &history, &lapsed) {
+                Ok(projection) => {
+                    answered = Some(projection);
+                    break;
+                }
+                Err(graphhelm_events::ReplayError::BudgetExceeded { .. }) => {}
+                Err(other) => panic!("only the budget may refuse: {other}"),
+            }
+        }
+        let projection =
+            answered.expect("three lapsed reads of three pages must not all start over");
+        assert_eq!(
+            serde_json::to_value(&projection).unwrap(),
+            serde_json::to_value(&direct).unwrap(),
+            "the resumed fold must equal a full replay"
         );
     }
 }

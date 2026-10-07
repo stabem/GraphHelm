@@ -173,6 +173,8 @@ struct ServeState {
 pub fn run(args: &ServeArgs) -> Outcome {
     // Requests still open and drop their own store; only the journal proof is shared.
     super::enable_shared_prefix_cache();
+    // #371: and the folded projection, so a read folds only what was appended since the last one.
+    super::execution::status::enable_shared_fold_cache();
     match execute(args) {
         Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
         Err(failure) => failure.into_outcome(COMMAND),

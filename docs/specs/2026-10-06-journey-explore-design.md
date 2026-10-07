@@ -160,12 +160,19 @@ dependency. (4) The decision register requires that model credentials not live i
 runs untrusted code: the driver process executes app JavaScript and **never** holds a model
 credential or a secret it was not told to type; the CLI holds the gateway lease.
 
-Driver protocol (`graphhelm-journey-driver/1`), one JSON object per line. Requests: `open {base,
-viewport, allowOrigins}`, `snapshot {}`, `act {kind, role, name, text?, secretEnv?}`, `capture
-{path, maskSecrets}`, `close {}`. Responses: `{ok, url, ariaYaml, fingerprint}` or `{ok:false,
-code}` with codes `driver.locator_missing`, `driver.locator_ambiguous`, `driver.host_refused`,
-`driver.timeout`. The CLI shipped copy is written to `<project>/.graphhelm/observers/` like the
-existing observers.
+Phase-2 driver protocol (`graphhelm-journey-driver/1`) is closed JSON Lines over stdio.
+Every request has `protocol`, consecutive `requestId` starting at 1, and `op`. Operations:
+`open {base, viewport, allowOrigins}`, `snapshot {expect}`, `act {kind, role, name,
+text?, secretEnv?, locator?}`, `capture {path, maskSecrets:true}`, and `close {}`.
+Success is `{protocol,requestId,ok:true,result}`; failure is
+`{protocol,requestId,ok:false,code,path:"/"}`. Request/reply frames are at most 64 KiB;
+ARIA is at most 6 KiB, never silently truncated. Unknown fields, mismatched sequence,
+partial EOF, and invalid UTF-8 fail. Result fields and locator/privacy limits are described
+in the [driver contract](../../tools/journey-driver/README.md).
+The installed companion is `<project>/.graphhelm/observers/journey_driver.mjs`.
+
+Phase 2 implements deterministic replay only. Explore, dedupe thresholds, drift persistence,
+healing, route flags and Studio flow editing below remain later-phase design.
 
 Commands:
 
@@ -177,7 +184,7 @@ Commands:
 | `journey compile [--check] [--fmt] [--include-draft]` | Flow → contracts; canonical rewrite. | no |
 | `journey approve <id>` | Sets `status: approved`, `approved {revision, digest}`, clears `drift`, compiles. Studio's Approve button calls the same Runtime/CLI path (every Studio action must exist on the public API/CLI). | no |
 
-### 5.1 Screen identity and dedupe
+### 5.1 Screen identity and dedupe (phase-3 design)
 
 A screen is `(url pattern, fingerprint)`. The fingerprint is sha256 over a normalised accessibility
 skeleton from `ariaSnapshot`: landmarks, headings, and interactive controls as `role "name"`, text
@@ -196,10 +203,10 @@ context. Per edge and act: `{role, name, exact: true, testId|null, context: <nea
 "role name">|null, nth|null}`; per screen: `{fingerprint, controls: [...]}`; plus `flowDigest`
 (`approval_digest` of §3; the cache is void when it changes) and `viewport`. Matching order on
 replay: test id, then role + exact name inside `context`, then role + exact name globally; a
-locator that resolves to 0 or >1 elements is drift, never a guess ("Save" never matches "Save as
+missing cached tiers may fall back only to exact matches; ambiguity is refused, never a guess ("Save" never matches "Save as
 draft").
 
-## 6. Drift and hand-off
+## 6. Drift and hand-off (phase-4 design)
 
 Replay checks after every act and after every edge:
 
@@ -309,3 +316,52 @@ files (the replay cache *is* the test); editing the frozen contract schema.
 - Heal can mask a real regression by "finding another way"; mitigated by returning to `draft`.
 - Node + Playwright is a runtime dependency of the project under test, not of GraphHelm; absent →
   `OBSERVER_MISSING`, never a red journey.
+
+## 15. Phase-2 replay operational boundary
+
+Explicit `setup --install-observer playwright` installs the Python observer and exact shipped Node
+companion. Preview checks files/PATH and reports missing/stale artifacts without writing; only
+replay actually observes Node/package/browser startup. Missing capability exits 3 with
+`OBSERVER_MISSING`; replay never installs anything or acquires model credentials.
+
+Supported acts: `activate`, `submit`, `navigate` click the exact control; `enter_text` requires an
+explicit literal or named secret; `wait_for` waits for the unique visible control; `inspect`
+observes it. Selection, upload/download, recovery and approval acts are refused. Entry URL patterns
+must be concrete; destination dynamic path/query segments match their declared pattern. Every
+expectation is an exact unique visible role/name match. No similarity threshold or heal runs here.
+
+Context HTTP/WebSocket guards precede pages; service workers are blocked. Top-level navigation
+stays on the local base origin, while explicit extra origins permit only subresources/WebSockets.
+Local aliases are pinned to loopback in Chromium and HTTP transport. **All HTTP redirect responses
+are refused in v1**, including local chains: releasing an intermediate redirect could evade
+Playwright's first-request routing. Links and JavaScript navigation remain supported.
+
+The cache is a closed, at-most-2-MiB document outside `journeys/`, binding flow id/digest, viewport,
+all selected screens, edges and per-act exact locators. Malformed, oversized, linked or otherwise
+unreadable existing data is refused and preserved. A valid old digest retains custody but supplies
+no reused locators. A per-flow nonblocking lock serializes cooperating writers; source/cache are
+rechecked before replacement using a synced same-directory temporary file. Failure preserves the
+previous cache; captures already appended are retained. This is not a cross-store transaction or
+an OS sandbox, and hostile filesystem mutation between checks is outside that custody guarantee.
+
+A separate contained worker owns blocking filesystem/Git/recording calls. Parent waiting, including
+startup, has a 180-second run budget; driver frames have a 30-second operation budget covering
+write and read. Cleanup has a separate one-second observer. Windows job ownership is established
+before releasing the worker start handshake. Late startup owns cleanup; an inconclusive kill/reap
+or OS scheduling failure remains uncertain. The existing process-tree observer checks the leader and the job members enumerated before termination; its documented child-spawn window is not proof of an empty job. No unbounded reader join is used. Timeout can leave
+masked temporary inputs or previously committed records; reconcile before retrying mutations.
+
+Recording supplies all four bundle flags or none. Each captured signal is recorded in the result
+before trying its walked link. `journey walked --from-capture <signal-id> --to-capture <signal-id>`
+accepts both ids together, validates execution/contract/step ownership, and preserves the existing
+newest-capture default when omitted. No unobserved pair is fabricated. Existing reader history
+continues to prefer a clean older capture over a later dirty one; a dirty-only history is unknown.
+
+Author observation used Windows, Node 24.13.1, Playwright 1.63.0 and Chromium 153.0.8010.12.
+Two isolated complete paths replayed twice, checked an independently specified cache and decoded
+masked sealed PNG pixels through the public Runtime reader. The installed copy also ran outside
+this source checkout. A live model tripwire positive control followed by zero replay calls is
+combined with credential-free operation and inspection of the model-free boundary, rather than
+claimed as exhaustive network proof. Linux replay/containment remains unobserved on this host.
+Captures and walked arrows are ordinary browser observations. Generic JPD acceptance remains
+`EVIDENCE_MATCH_EVALUATOR_MISSING` advisory; replay does not invoke `quality certify`.

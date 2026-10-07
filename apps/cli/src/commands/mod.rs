@@ -11,6 +11,7 @@ mod hash;
 mod init;
 mod journey;
 mod journey_flow;
+mod journey_replay;
 mod journey_validate;
 mod journeys;
 mod keel;

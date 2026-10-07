@@ -1,0 +1,137 @@
+{
+  "edges": {
+    "cart.checkout": [
+      {
+        "context": "main \"\"",
+        "exact": true,
+        "name": "Checkout",
+        "nth": null,
+        "role": "button",
+        "testId": "checkout"
+      }
+    ],
+    "cart.guest": [
+      {
+        "context": "main \"\"",
+        "exact": true,
+        "name": "Guest checkout",
+        "nth": null,
+        "role": "link",
+        "testId": null
+      }
+    ],
+    "guest.submit": [
+      {
+        "context": "main \"\"",
+        "exact": true,
+        "name": "Place guest order",
+        "nth": null,
+        "role": "button",
+        "testId": null
+      }
+    ],
+    "pay.submit": [
+      {
+        "context": "main \"\"",
+        "exact": true,
+        "name": "Password",
+        "nth": null,
+        "role": "textbox",
+        "testId": null
+      },
+      {
+        "context": "main \"\"",
+        "exact": true,
+        "name": "Submit order",
+        "nth": null,
+        "role": "button",
+        "testId": null
+      }
+    ]
+  },
+  "flowDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "id": "checkout",
+  "schema": "graphhelm.journey-replay-cache/1",
+  "screens": {
+    "cart": {
+      "controls": [
+        {
+          "name": "Checkout",
+          "role": "button"
+        },
+        {
+          "name": "Cart",
+          "role": "heading"
+        },
+        {
+          "name": "Guest checkout",
+          "role": "link"
+        },
+        {
+          "name": "",
+          "role": "main"
+        }
+      ],
+      "fingerprint": "sha256:b2a695506412ec3b6ff5209a60c68f1ae6176343b77be7aee5a41fe2cc9886f6"
+    },
+    "done": {
+      "controls": [
+        {
+          "name": "Continue",
+          "role": "button"
+        },
+        {
+          "name": "Order #",
+          "role": "heading"
+        },
+        {
+          "name": "",
+          "role": "main"
+        }
+      ],
+      "fingerprint": "sha256:63b9656d92479c433c7551fbbae6223d585b8d81d5d4225281e62a68efe2630f"
+    },
+    "guest": {
+      "controls": [
+        {
+          "name": "Place guest order",
+          "role": "button"
+        },
+        {
+          "name": "Guest checkout",
+          "role": "heading"
+        },
+        {
+          "name": "",
+          "role": "main"
+        }
+      ],
+      "fingerprint": "sha256:4a447b98a0aeffdac47e3fba7a03ffe4ff73b1733950ca736d81374e8bd0c24c"
+    },
+    "pay": {
+      "controls": [
+        {
+          "name": "Submit order",
+          "role": "button"
+        },
+        {
+          "name": "Checkout",
+          "role": "heading"
+        },
+        {
+          "name": "",
+          "role": "main"
+        },
+        {
+          "name": "Password",
+          "role": "textbox"
+        }
+      ],
+      "fingerprint": "sha256:ee4359c8c2832f7ad56ede99e2a805ee07b9964f5c2991fc26a6a9c47435d875"
+    }
+  },
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}

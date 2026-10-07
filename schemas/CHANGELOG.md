@@ -1,5 +1,9 @@
 # Schema Changelog
 
+## journey-replay-cache 1.0.0 (#347)
+
+Add the bounded, closed deterministic browser-replay cache wire contract. Exact semantic locators, nullable test-ID/context fields, canonical flow digest and viewport are separate from the unchanged journey-flow and frozen journey-contract. Runtime validation also binds screen/edge IDs and act counts to one approved flow; schema shape alone is not browser or privacy proof. Catalog hashing uses canonical JSON.
+
 ## journey-flow 1.0.0 (#339)
 
 New bounded, closed journey-flow YAML source contract. It compiles to the unchanged JPD contract schema. Catalog digest uses canonical JSON, as required by the existing schema-evolution contract.

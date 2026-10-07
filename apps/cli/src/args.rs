@@ -120,6 +120,29 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// Replay every approved path with the explicitly installed browser observer, without a model.
+    Replay(JourneyReplayArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct JourneyReplayArgs {
+    pub id: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub events: Option<PathBuf>,
+    #[arg(long)]
+    pub execution: Option<String>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long)]
+    pub key_id: Option<String>,
+    /// Exact extra subresource origin; never permits navigation away from the local base.
+    #[arg(long)]
+    pub allow_origin: Vec<String>,
+    /// Internal contained worker; the ordinary supervisor supplies its start handshake.
+    #[arg(long, hide = true)]
+    pub replay_worker: bool,
 }
 
 #[derive(Debug, Args)]
@@ -204,6 +227,12 @@ pub struct JourneyWalkedArgs {
     pub from: String,
     #[arg(long)]
     pub to: String,
+    /// Pin the actual observation instead of choosing the newest capture. Requires --to-capture.
+    #[arg(long)]
+    pub from_capture: Option<String>,
+    /// Pin the destination observation. Requires --from-capture.
+    #[arg(long)]
+    pub to_capture: Option<String>,
 }
 
 #[derive(Debug, Args)]

@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/journey-replay-cache.schema.json",
+  "x-graphhelm-schema-version": "1.0.0",
+  "title": "GraphHelm Journey Replay Cache",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "graphhelm.journey-replay-cache/1"
+    },
+    "id": {
+      "$ref": "#/$defs/id"
+    },
+    "flowDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "viewport": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
+    },
+    "screens": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/id"
+      },
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9._-]{0,127}$": {
+          "$ref": "#/$defs/screen"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 64
+    },
+    "edges": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/id"
+      },
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9._-]{0,127}$": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/locator"
+          },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 128
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "flowDigest",
+    "viewport",
+    "screens",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+      "not": {
+        "pattern": "\\.\\."
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "control": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "role",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "locator": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "exact": {
+          "const": true
+        },
+        "testId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "context": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "nth": {
+          "const": null
+        }
+      },
+      "required": [
+        "role",
+        "name",
+        "exact",
+        "testId",
+        "context",
+        "nth"
+      ],
+      "additionalProperties": false
+    },
+    "screen": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "$ref": "#/$defs/digest"
+        },
+        "controls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/control"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "fingerprint",
+        "controls"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

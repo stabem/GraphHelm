@@ -764,7 +764,14 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     if !done && failed.is_none() {
         failed = Some(refused("explore.step_budget", "/maxSteps", 1));
     }
-    driver.close()?;
+    // The first failure is the finding. A driver that already refused a request has exited,
+    // so its close then fails too; that later error must not replace the earlier one.
+    // A close failure with nothing failed before still stops before any publication.
+    if let Err(error) = driver.close() {
+        if failed.is_none() {
+            return Err(error);
+        }
+    }
     data["screens"] = flow["screens"].as_array().unwrap().len().into();
     data["edges"] = flow["edges"].as_array().unwrap().len().into();
     if flow["edges"].as_array().unwrap().is_empty() {

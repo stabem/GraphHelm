@@ -511,7 +511,8 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
             .as_array()
             .unwrap()
             .iter()
-            .any(|d| d["code"] == "driver.expectation_failed")
+            .any(|d| d["code"] == "driver.expectation_failed"),
+        "{result}"
     );
     assert_eq!(
         result["data"]["paths"][0]["capturedSignalIds"]

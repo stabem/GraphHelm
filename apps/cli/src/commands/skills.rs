@@ -1,7 +1,8 @@
 //! `graphhelm skills sync --host codex` (#355): installs the bundled GraphHelm skills into a
 //! Codex home and keeps them current. The bundle is located through the same pinned release file
-//! `setup` installs packages from (`release_packages`), so the skills synced are the skills of the
-//! packages that release pins, plus the two plugin skill roots shipped beside it.
+//! `setup` installs packages from (`release_packages`): each pinned package is installed whole as
+//! `skills/<package-id>/` (Codex finds the nested `skills/*/SKILL.md`), and each skill of the two
+//! plugin skill roots shipped beside it as `skills/<name>/`.
 //!
 //! Ownership is a manifest at `<home>/skills/.graphhelm-skills.json` naming every skill this
 //! command wrote and the digest of the bytes it wrote. A directory the manifest does not name is
@@ -56,29 +57,60 @@ fn codex_home(home: Option<&Path>) -> Result<PathBuf, String> {
     Ok(PathBuf::from(user).join(".codex"))
 }
 
-/// Every bundled skill by name: a directory holding `SKILL.md` under a pinned package's
-/// `skills/` or under one of the plugin skill roots. Two skills with one name are refused: Codex
-/// reads one directory per name, so a silent winner would hide the other.
+/// One directory name directly under `skills/`: no separator, no `.`/`..`, not hidden. Applied to
+/// bundled names and to every name read back from the manifest, because a manifest name becomes
+/// a write and removal target.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\', ':'])
+        && Path::new(name).components().count() == 1
+}
+
+/// Every bundled entry by its directory name under `skills/`. A pinned package is installed whole
+/// as `skills/<package-id>/` (its skills cite `../../schemas/...` and other package siblings, so
+/// a skill copied alone would dangle), after `validate_extension_package` confirms the source
+/// still carries the digest its release pin names. A plugin skill is installed as
+/// `skills/<name>/`. Two entries with one name are refused: a silent winner would hide the other.
 fn bundled() -> Result<BTreeMap<String, PathBuf>, String> {
     let packages = graphhelm_host_adoption::hosts::release_packages()
         .map_err(|_| "the pinned release bundle could not be read".to_owned())?;
-    let mut roots = Vec::new();
+    let mut entries = BTreeMap::new();
     let mut bundle_root = None;
+    let mut add = |name: String, path: PathBuf| -> Result<(), String> {
+        if !plain_name(&name) {
+            return Err(format!("bundled entry name {name:?} is not a plain directory name"));
+        }
+        if let Some(other) = entries.insert(name.clone(), path.clone()) {
+            return Err(format!(
+                "{name} is bundled twice: {} and {}",
+                other.display(),
+                path.display()
+            ));
+        }
+        Ok(())
+    };
     for package in packages {
         let path = std::fs::canonicalize(&package.path)
             .map_err(|e| format!("pinned package {} is not readable: {e}", package.id))?;
+        let current = graphhelm_schema::validate_extension_package(&path)
+            .map_err(|_| format!("pinned package {} does not validate", package.id))?;
+        if current.id != package.id || current.package_digest != package.digest {
+            return Err(format!(
+                "package {} no longer matches its release pin {}",
+                package.id, package.digest
+            ));
+        }
         // <root>/extensions/builtin/<package>
         bundle_root = path.ancestors().nth(3).map(Path::to_path_buf);
-        roots.push(path.join("skills"));
+        add(package.id, path)?;
     }
     let bundle_root = bundle_root.ok_or("the release bundle pins no package")?;
-    roots.extend(PLUGIN_ROOTS.iter().map(|r| bundle_root.join(r)));
-    let mut skills = BTreeMap::new();
-    for root in roots {
-        let Ok(entries) = std::fs::read_dir(&root) else {
+    for root in PLUGIN_ROOTS.iter().map(|r| bundle_root.join(r)) {
+        let Ok(dir) = std::fs::read_dir(&root) else {
             continue;
         };
-        for entry in entries {
+        for entry in dir {
             let path = entry.map_err(|e| e.to_string())?.path();
             if !path.join("SKILL.md").is_file() {
                 continue;
@@ -88,16 +120,10 @@ fn bundled() -> Result<BTreeMap<String, PathBuf>, String> {
                 .and_then(|n| n.to_str())
                 .ok_or("a skill directory name is not UTF-8")?
                 .to_owned();
-            if let Some(other) = skills.insert(name.clone(), path.clone()) {
-                return Err(format!(
-                    "skill {name} is bundled twice: {} and {}",
-                    other.display(),
-                    path.display()
-                ));
-            }
+            add(name, path)?;
         }
     }
-    Ok(skills)
+    Ok(entries)
 }
 
 /// The relative paths (forward slashes) and bytes of every file under `dir`, sorted.
@@ -145,8 +171,13 @@ fn digest(files: &[(String, Vec<u8>)]) -> String {
 }
 
 fn on_disk_digest(dir: &Path) -> Result<Option<String>, String> {
-    if !dir.exists() {
-        return Ok(None);
+    match std::fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+        Ok(meta) if !meta.is_dir() => {
+            return Err(format!("{} is not a plain directory", dir.display()));
+        }
+        Ok(_) => {}
     }
     Ok(Some(digest(&files(dir)?)))
 }
@@ -154,8 +185,12 @@ fn on_disk_digest(dir: &Path) -> Result<Option<String>, String> {
 /// Writes the skill to a sibling temporary directory, then swaps it into place.
 fn install(skills: &Path, name: &str, files: &[(String, Vec<u8>)]) -> Result<(), String> {
     let staging = skills.join(format!(".{name}.graphhelm-staging"));
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging).map_err(|e| e.to_string())?;
+    // A staging directory left by an interrupted run is not provably ours: refuse, never delete.
+    if std::fs::symlink_metadata(&staging).is_ok() {
+        return Err(format!(
+            "{} already exists (an interrupted sync?); inspect and remove it, then run again",
+            staging.display()
+        ));
     }
     for (relative, bytes) in files {
         let path = staging.join(relative);
@@ -185,6 +220,11 @@ fn run(home: Option<&Path>, dry_run: bool) -> Result<Value, String> {
                 .ok_or("the manifest has no skills object")?
                 .iter()
                 .map(|(name, entry)| {
+                    if !plain_name(name) {
+                        return Err(format!(
+                            "manifest entry {name:?} is not a plain directory name"
+                        ));
+                    }
                     entry["digest"]
                         .as_str()
                         .map(|d| (name.clone(), d.to_owned()))
@@ -211,6 +251,16 @@ fn run(home: Option<&Path>, dry_run: bool) -> Result<Value, String> {
     let mut push = |key: &'static str, name: &str| report.get_mut(key).unwrap().push(name.into());
 
     let bundle = bundled()?;
+    // Refuse before the first write, so a refusal leaves the home exactly as it was.
+    for name in bundle.keys() {
+        let staging = skills.join(format!(".{name}.graphhelm-staging"));
+        if std::fs::symlink_metadata(&staging).is_ok() {
+            return Err(format!(
+                "{} already exists (an interrupted sync?); inspect and remove it, then run again",
+                staging.display()
+            ));
+        }
+    }
     if !dry_run {
         std::fs::create_dir_all(&skills).map_err(|e| format!("{}: {e}", skills.display()))?;
     }

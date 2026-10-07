@@ -573,16 +573,19 @@ fn unrepresentable_expectations_are_refused_without_weakening_promises() {
 fn journey_map_worked_example_validates_and_compiles() {
     let fixture =
         include_str!("fixtures/journey_flow/first-login.journey.yaml").replace("\r\n", "\n");
-    let skill = include_str!(
-        "../../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md"
-    )
-    .replace("\r\n", "\n");
+    let skill =
+        include_str!("../../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md")
+            .replace("\r\n", "\n");
     let start = skill
         .find("```yaml\nschema: graphhelm.journey-flow/1\n")
         .expect("journey-map carries a worked flow example")
         + "```yaml\n".len();
     let end = start + skill[start..].find("```").unwrap();
-    assert_eq!(&skill[start..end], fixture, "skill example and fixture differ");
+    assert_eq!(
+        &skill[start..end],
+        fixture,
+        "skill example and fixture differ"
+    );
 
     let dir = tempfile::tempdir().unwrap();
     for file in [

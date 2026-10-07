@@ -121,7 +121,8 @@ pub(super) fn permissions(expressions: &[String]) -> Result<Vec<Regex>> {
             if expression.is_empty() || expression.len() > 256 {
                 return Err(refused("explore.permission_invalid", "/allowAct", 3));
             }
-            RegexBuilder::new(expression)
+            // Anchored: an operator's `Pay` permits exactly "Pay", never "Pay and delete all".
+            RegexBuilder::new(&format!("^(?:{expression})$"))
                 .size_limit(256 * 1024)
                 .dfa_size_limit(256 * 1024)
                 .build()
@@ -570,7 +571,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     let mut recent = Vec::<Value>::new();
     let mut visited = BTreeSet::new();
     let mut images = BTreeMap::<String, PathBuf>::new();
-    let mut invalid = false;
+    let mut invalid: Option<Failure> = None;
     let mut done = false;
     let mut failed = None;
     for turn in 0..args.max_steps {
@@ -602,15 +603,19 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
         }
         let proposal = match proposal(&reply.text, &args.secret, &private) {
             Ok(proposal) => {
-                invalid = false;
+                invalid = None;
                 proposal
             }
-            Err(error) if error.0 == "explore.proposal_invalid" && !invalid => {
-                invalid = true;
+            Err(error) if error.0 == "explore.proposal_invalid" && invalid.is_none() => {
+                invalid = Some(error);
                 continue;
             }
             Err(error) => {
-                failed = Some(error);
+                // A second invalid reply reports the first one; any other refusal stands.
+                failed = Some(match invalid.take() {
+                    Some(first) if error.0 == "explore.proposal_invalid" => first,
+                    _ => error,
+                });
                 break;
             }
         };

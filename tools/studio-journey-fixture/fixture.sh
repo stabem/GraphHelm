@@ -26,6 +26,7 @@ up)
     printf '# demo\n' > "$dir/README.md"
     git -C "$dir" add -A && git -C "$dir" -c user.email=demo@example.com -c user.name=demo commit -qm init
   fi
+  mkdir -p "$dir/.graphhelm"
   "$bin" --json init --project "$dir" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
   nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$dir" \

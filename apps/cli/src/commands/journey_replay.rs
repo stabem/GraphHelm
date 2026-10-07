@@ -25,8 +25,8 @@ const OP_BUDGET: Duration = Duration::from_secs(30);
 // blocking storage/Git/record calls. Kill/reap gets a separate one-second observer.
 // OS scheduler failure and an inconclusive cleanup are reported uncertain, not success.
 const RUN_BUDGET: Duration = Duration::from_secs(180);
-type Failure = (&'static str, String, i32);
-type Result<T> = std::result::Result<T, Failure>;
+pub(super) type Failure = (&'static str, String, i32);
+pub(super) type Result<T> = std::result::Result<T, Failure>;
 
 fn failure(code: &'static str, path: impl Into<String>, exit: i32) -> Failure {
     (code, path.into(), exit)
@@ -65,7 +65,7 @@ fn report(data: Value, failed: Option<Failure>) -> Outcome {
     }
 }
 
-fn safe_environment(command: &mut Command, recording: bool) {
+pub(super) fn safe_environment(command: &mut Command, recording: bool) {
     command.env_clear();
     for key in [
         "PATH",
@@ -215,7 +215,7 @@ fn write_frame(
     }
 }
 
-fn child_output(
+pub(super) fn child_output(
     command: Command,
     input: Vec<u8>,
     budget: Duration,
@@ -271,7 +271,7 @@ fn supervise_owned(
     result.map(|bytes| (status, bytes))
 }
 
-struct Driver {
+pub(super) struct Driver {
     owned: Option<OwnedChild>,
     writer: mpsc::SyncSender<(Vec<u8>, mpsc::SyncSender<bool>)>,
     replies: Receiver<Result<Option<Vec<u8>>>>,
@@ -279,10 +279,10 @@ struct Driver {
     secrets: Vec<String>,
 }
 
-struct TemporaryOutput(PathBuf);
+pub(super) struct TemporaryOutput(PathBuf);
 
 impl TemporaryOutput {
-    fn create() -> Result<Self> {
+    pub(super) fn create() -> Result<Self> {
         let root = std::env::temp_dir()
             .canonicalize()
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
@@ -291,7 +291,7 @@ impl TemporaryOutput {
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
         Ok(Self(path))
     }
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -307,7 +307,11 @@ impl Drop for TemporaryOutput {
 }
 
 impl Driver {
-    fn start(project: &Path, output: &Path, secrets: &BTreeMap<String, String>) -> Result<Self> {
+    pub(super) fn start(
+        project: &Path,
+        output: &Path,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         // Node's main-module resolver rejects Windows canonical drive prefixes.
         // Change only the external spelling, and verify it still identifies the
         // same directory before sending it to an observer.
@@ -363,7 +367,7 @@ impl Driver {
         })
     }
 
-    fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
+    pub(super) fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
         let result = self.call_inner(op, request, path);
         if result.is_err()
             && let Some(owned) = self.owned.take()
@@ -461,6 +465,9 @@ impl Driver {
         let result = &reply["result"];
         let fields: &[&str] = match op {
             "open" => &["url"],
+            "snapshot" if request["discover"] == true => {
+                &["url", "ariaYaml", "controls", "fingerprint", "expectations"]
+            }
             "snapshot" => &["url", "ariaYaml", "controls", "fingerprint"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
@@ -477,7 +484,16 @@ impl Driver {
             && match op {
                 "open" => text(&result["url"], 4096),
                 "snapshot" => {
-                    text(&result["url"], 4096)
+                    (request["discover"] != true
+                        || result["expectations"].as_array().is_some_and(|pairs| {
+                            pairs.len() <= 8
+                                && pairs.iter().all(|pair| {
+                                    closed(pair, &["role", "name"])
+                                        && text(&pair["role"], 64)
+                                        && text(&pair["name"], 256)
+                                })
+                        }))
+                        && text(&result["url"], 4096)
                         && text(&result["ariaYaml"], 6144)
                         && result["fingerprint"].as_str().is_some_and(|value| {
                             value.strip_prefix("sha256:").is_some_and(|hash| {
@@ -527,7 +543,7 @@ impl Driver {
         Ok(result.clone())
     }
 
-    fn close(mut self) -> Result<()> {
+    pub(super) fn close(mut self) -> Result<()> {
         self.call("close", json!({}), "/observer/close")?;
         let trailing = self
             .replies
@@ -546,7 +562,7 @@ impl Driver {
     }
 }
 
-fn safe_node(path: &Path) -> bool {
+pub(super) fn safe_node(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| {
         #[cfg(windows)]
         {
@@ -559,7 +575,7 @@ fn safe_node(path: &Path) -> bool {
     })
 }
 
-fn safe_directory(path: &Path, create: bool) -> Result<()> {
+pub(super) fn safe_directory(path: &Path, create: bool) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && safe_node(path) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => {
@@ -569,7 +585,7 @@ fn safe_directory(path: &Path, create: bool) -> Result<()> {
     }
 }
 
-fn cache_valid(cache: &Value, flow: &Value) -> bool {
+pub(super) fn cache_valid(cache: &Value, flow: &Value) -> bool {
     let schema = serde_json::from_str(include_str!(
         "../../../../schemas/journey-replay-cache.schema.json"
     ))
@@ -733,7 +749,7 @@ fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
     Ok(secrets)
 }
 
-fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
+pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
     let Ok(expected_url) =
         format!("{}{}", base.trim_end_matches('/'), pattern).parse::<axum::http::Uri>()
     else {
@@ -787,7 +803,12 @@ fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
         })
 }
 
-fn observe(driver: &mut Driver, screen: &Value, base: &str, path: &str) -> Result<Value> {
+pub(super) fn observe(
+    driver: &mut Driver,
+    screen: &Value,
+    base: &str,
+    path: &str,
+) -> Result<Value> {
     let snapshot = driver.call("snapshot", json!({"expect":screen["expect"]}), path)?;
     let url = snapshot["url"]
         .as_str()
@@ -824,7 +845,12 @@ fn record_command(args: &JourneyReplayArgs, kind: &str, contract: &str) -> Resul
     Ok(command)
 }
 
-fn record(args: &JourneyReplayArgs, contract: &str, step: &str, image: &Path) -> Result<String> {
+pub(super) fn record(
+    args: &JourneyReplayArgs,
+    contract: &str,
+    step: &str,
+    image: &Path,
+) -> Result<String> {
     let mut capture = record_command(args, "capture", contract)?;
     capture.args(["--step", step, "--image"]).arg(image);
     // Blocking store/record calls are inside the independently supervised worker.
@@ -843,7 +869,7 @@ fn record(args: &JourneyReplayArgs, contract: &str, step: &str, image: &Path) ->
     Ok(signal)
 }
 
-fn walked(
+pub(super) fn walked(
     args: &JourneyReplayArgs,
     contract: &str,
     from: &str,

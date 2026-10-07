@@ -8,7 +8,7 @@ import { lstat, mkdir } from 'node:fs/promises';
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, SNAPSHOT = 6144, TIMEOUT = 30000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins'], snapshot: ['expect'],
+  open: ['base', 'viewport', 'allowOrigins'], snapshot: ['expect','discover'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
 };
@@ -18,6 +18,7 @@ const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
 let requestId = 0, opened = false, closed = false;
 const secretInputs = [];
+const filledValues = new Set();
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
 const output = project ? resolve(args[3]) : null;
@@ -29,6 +30,7 @@ function exactKeys(value, required, optional = []) {
 function string(v, max = 256, empty = false) { return typeof v === 'string' && (empty || v.length > 0) && Buffer.byteLength(v) <= max; }
 function redacted(text) {
   for (const [name,value] of secrets.toSorted((a,b) => b[1].length-a[1].length)) if (value) text = text.replaceAll(value, `«secret:${name.slice(17)}»`);
+  for (const value of [...filledValues].sort((a,b)=>b.length-a.length)) if (value) text=text.replaceAll(value,'«input»');
   return text;
 }
 function clean(value) {
@@ -54,6 +56,7 @@ function validate(r) {
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
   } else if (r.op === 'snapshot') {
     if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => pair(v))) fail('driver.protocol_invalid');
+    if (Object.hasOwn(r,'discover') && typeof r.discover !== 'boolean') fail('driver.protocol_invalid');
   } else if (r.op === 'act') {
     if (!string(r.kind,64) || !string(r.role,64) || !string(r.name,256)) fail('driver.protocol_invalid');
     if (!['activate','submit','enter_text','navigate','wait_for','inspect'].includes(r.kind)) fail('driver.unsupported_act');
@@ -209,10 +212,35 @@ async function run(r) {
   checkHost();
   if (r.op === 'snapshot') {
     for (const expected of r.expect) await unique(page.getByRole(expected.role,{name:expected.name,exact:true}),'driver.expectation_failed');
-    const ariaYaml=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
+    const mainAria=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
+    let ariaYaml=mainAria;
+    const expectations=[];
+    if (r.discover) {
+      const frames=page.frames();
+      if (frames.length>65) fail('driver.snapshot_too_large');
+      // Browser frame handles reach isolated/nested documents, unlike page text
+      // locators. Redact their text before any model-capable caller can receive it.
+      for(const frame of frames) if(frame!==page.mainFrame()) {
+        try { ariaYaml+='\n'+redacted(await frame.locator('body').ariaSnapshot({timeout:TIMEOUT})); }
+        catch { fail('driver.redaction_failed'); }
+        if(Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
+      }
+      const candidates=new Map();
+      for(const match of mainAria.matchAll(/^\s*- ([a-z]+) ("(?:[^"\\]|\\.)*")/gm)) {
+        let name;try{name=JSON.parse(match[2])}catch{fail('driver.protocol_invalid')}
+        if(roles.has(match[1])&&string(name,256)&&!name.includes('«secret:')&&!name.includes('«input»')) candidates.set(JSON.stringify([match[1],name]),{role:match[1],name});
+      }
+      const rank=role=>role==='heading'?0:role==='button'?1:role==='link'?2:3;
+      const ordered=[...candidates.values()].sort((a,b)=>rank(a.role)-rank(b.role)||(a.role<b.role?-1:a.role>b.role?1:0)||(a.name<b.name?-1:a.name>b.name?1:0));
+      for(const candidate of ordered) {
+        const locator=page.getByRole(candidate.role,{name:candidate.name,exact:true});
+        if(await locator.count()===1 && await locator.isVisible()) expectations.push(candidate);
+        if(expectations.length===8) break;
+      }
+    }
     if (Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
     checkHost();
-    return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml)});
+    return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
   }
   if (r.op === 'act') {
     const target=await locate(r), locator=await observedLocator(target,r);
@@ -221,6 +249,7 @@ async function run(r) {
       await target.fill(value,{timeout:TIMEOUT});
       // Values of all filled inputs are masked, including approved literals.
       secretInputs.push(target);
+      if(value && !r.secretEnv) filledValues.add(value);
     } else if (['activate','submit','navigate'].includes(r.kind)) await target.click({timeout:TIMEOUT});
     else await target.waitFor({state:'visible',timeout:TIMEOUT});
     checkHost();

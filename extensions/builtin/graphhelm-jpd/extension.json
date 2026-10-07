@@ -1055,7 +1055,7 @@
           "id": "skill/journey-contract",
           "kind": "skill",
           "path": "skills/journey-contract/SKILL.md",
-          "sha256": "sha256:28f5f7e8fa89ea71865d8268af1e148a09f40404f045b191c171a3c0b884bb41",
+          "sha256": "sha256:3d154b69fc7abda0d1feb61262dbbb6caacf5f45061bcf5ea97781640b25d1f0",
           "effects": [
             "artifact.local.write",
             "artifact.propose",
@@ -1077,6 +1077,7 @@
           "surfaces": [
             "cli:graph lint",
             "cli:graph validate",
+            "cli:journey compile",
             "cli:journey validate",
             "tool:events",
             "tool:status"
@@ -1087,7 +1088,7 @@
           "id": "skill/journey-map",
           "kind": "skill",
           "path": "skills/journey-map/SKILL.md",
-          "sha256": "sha256:be4ed6e92de1297b4697b5105c1145f2711379b59323afdcbfafac8fcd69722d",
+          "sha256": "sha256:0ffbc80e3d848a8efac6c4ddba5af378cb845c4f9a22488d368e062c84e6fc1e",
           "effects": [
             "artifact.local.write",
             "artifact.propose"
@@ -1103,6 +1104,7 @@
             "observers": []
           },
           "surfaces": [
+            "cli:journey compile",
             "cli:journey validate"
           ],
           "family": "journey-map"
@@ -1111,7 +1113,7 @@
           "id": "skill/journey-verifier",
           "kind": "skill",
           "path": "skills/journey-verifier/SKILL.md",
-          "sha256": "sha256:3e0025082d8fa4cf5bba0f68ed17d12fa8c36f48f1459bd1851cb84111dffeba",
+          "sha256": "sha256:dfa7b598bc519914097b8215d1b7106beab0eac096cf2bae5c28d898599f5fc8",
           "effects": [
             "artifact.local.write",
             "artifact.propose",

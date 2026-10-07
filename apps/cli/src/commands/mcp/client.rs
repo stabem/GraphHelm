@@ -313,9 +313,12 @@ impl ApiClient {
                 "the Runtime on port {port} is not the one that published its discovery record (the record is stale, or that Runtime was started by an older build); restart `graphhelm serve --bind 127.0.0.1:{port}`"
             )));
         }
-        let token =
-            crate::commands::secret_file::read_existing(&record.token_file, "discovered token")
-                .map_err(|e| fail(e.message()))?;
+        // #380: discovery hands out the agent session token, never the owner token.
+        let token = crate::commands::secret_file::read_existing(
+            &crate::commands::secret_file::agent_token_beside(&record.token_file),
+            "discovered agent session token",
+        )
+        .map_err(|e| fail(e.message()))?;
         Ok(Zeroizing::new(token))
     }
 
@@ -366,9 +369,10 @@ impl ApiClient {
             }));
         }
         let record = live.pop().expect("one live record was checked");
+        // #380: discovery hands out the agent session token, never the owner token.
         let token = crate::commands::secret_file::read_existing(
-            &record.token_file,
-            "discovered project token",
+            &crate::commands::secret_file::agent_token_beside(&record.token_file),
+            "discovered agent session token",
         )
         .map_err(|error| fail(error.message()))?;
         Ok(DiscoveredEndpoint {

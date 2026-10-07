@@ -111,6 +111,10 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     token: Arc<[u8]>,
+    /// #380: the agent session token (`events.agent.token`), minted beside the owner token. It
+    /// authenticates an agent session project-wide, forces the request's actor type to `agent`,
+    /// and is refused on every owner-only route (`owner_only_route`), whatever type is declared.
+    agent_session_token: Arc<[u8]>,
     /// Optional scoped agent credentials. They are separate from the owner bearer token and are
     /// only accepted for agent authored proposal/evidence mutations.
     agent_credentials: Arc<BTreeMap<String, ScopedAgentCredential>>,
@@ -190,6 +194,8 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     // One implementation with `init` (#1062): the token `init` minted is the one `serve` reads.
     let (_, token) = secret_file::ensure_token(&args.events)
         .map_err(|error| serve_invalid(error.message(), "/token"))?;
+    let (_, agent_session_token) = secret_file::ensure_agent_token(&args.events)
+        .map_err(|error| serve_invalid(error.message(), "/agentToken"))?;
     let (runtime_wiring, sealing, startup_warnings) = build_wiring(args)?;
     let agent_credentials = load_agent_credentials()?;
     let project_id = args
@@ -207,6 +213,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         super::runtime_record::new_instance().map_err(|message| serve_invalid(&message, "/"))?;
     let state = ServeState {
         token: Arc::from(token.into_bytes()),
+        agent_session_token: Arc::from(agent_session_token.into_bytes()),
         agent_credentials: Arc::new(agent_credentials),
         instance: Arc::from(instance),
         project_id: project_id.map(Arc::from),
@@ -805,6 +812,19 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
     if constant_time_eq(presented.as_bytes(), &state.token) {
         return next.run(request).await;
     }
+    // #380: the agent session token. The declared actor type is a claim, not a credential, so
+    // the type is forced to `agent` here and owner-only routes are refused before any handler.
+    if constant_time_eq(presented.as_bytes(), &state.agent_session_token) {
+        if owner_only_route(&request) {
+            return owner_required_response();
+        }
+        let mut request = request;
+        request
+            .headers_mut()
+            .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+        request.headers_mut().remove("x-graphhelm-agent-credential");
+        return next.run(request).await;
+    }
     // Agent credentials are bearer principals in their own right. They are never accepted as
     // owner credentials, and the authenticated actor is copied into the request before any
     // handler sees caller-controlled actor headers. This keeps legacy handlers safe until they
@@ -829,6 +849,42 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         HeaderValue::from_str(&presented).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     next.run(request).await
+}
+
+/// Routes only the owner credential reaches (#380). An agent session token is refused here
+/// whatever actor type it declares. Listed are the owner actions whose handlers take no actor
+/// type at all (journey approve, workspace sweep, gateway credential set) and the two whose
+/// handlers check the declared type (assign, document save), so the refusal never depends on a
+/// header. Agent tools read and signal; none of them needs these.
+fn owner_only_route(request: &Request) -> bool {
+    let segments: Vec<_> = request.uri().path().split('/').collect();
+    let method = request.method();
+    let post = method == axum::http::Method::POST;
+    match segments.as_slice() {
+        ["", "v1", "journey-flows", _, "approve"] => post,
+        ["", "v1", "workspaces", "sweep"] => post,
+        ["", "v1", "gateway", "credentials", _] => method == axum::http::Method::PUT,
+        ["", "v1", "executions", _, "assign"] => post,
+        ["", "v1", "executions", _, "documents", "save"] => post,
+        _ => false,
+    }
+}
+
+fn owner_required_response() -> Response {
+    respond(
+        StatusCode::FORBIDDEN,
+        Outcome::domain(
+            UNAUTHORIZED_COMMAND,
+            vec![Diagnostic::error(
+                UNAUTHORIZED_CODE,
+                "this action needs the owner credential; an agent session token cannot perform \
+                 it whatever actor type it declares",
+                "/authorization",
+                SOURCE,
+            )],
+        )
+        .output,
+    )
 }
 
 fn agent_route_allowed(request: &Request) -> bool {

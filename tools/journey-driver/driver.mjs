@@ -18,7 +18,6 @@ const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
 let requestId = 0, opened = false, closed = false;
 const secretInputs = [];
-const filledValues = new Set();
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
 const output = project ? resolve(args[3]) : null;
@@ -30,7 +29,6 @@ function exactKeys(value, required, optional = []) {
 function string(v, max = 256, empty = false) { return typeof v === 'string' && (empty || v.length > 0) && Buffer.byteLength(v) <= max; }
 function redacted(text) {
   for (const [name,value] of secrets.toSorted((a,b) => b[1].length-a[1].length)) if (value) text = text.replaceAll(value, `«secret:${name.slice(17)}»`);
-  for (const value of [...filledValues].sort((a,b)=>b.length-a.length)) if (value) text=text.replaceAll(value,'«input»');
   return text;
 }
 function clean(value) {
@@ -228,7 +226,7 @@ async function run(r) {
       const candidates=new Map();
       for(const match of mainAria.matchAll(/^\s*- ([a-z]+) ("(?:[^"\\]|\\.)*")/gm)) {
         let name;try{name=JSON.parse(match[2])}catch{fail('driver.protocol_invalid')}
-        if(roles.has(match[1])&&string(name,256)&&!name.includes('«secret:')&&!name.includes('«input»')) candidates.set(JSON.stringify([match[1],name]),{role:match[1],name});
+        if(roles.has(match[1])&&string(name,256)&&!name.includes('«secret:')) candidates.set(JSON.stringify([match[1],name]),{role:match[1],name});
       }
       const rank=role=>role==='heading'?0:role==='button'?1:role==='link'?2:3;
       const ordered=[...candidates.values()].sort((a,b)=>rank(a.role)-rank(b.role)||(a.role<b.role?-1:a.role>b.role?1:0)||(a.name<b.name?-1:a.name>b.name?1:0));
@@ -249,7 +247,6 @@ async function run(r) {
       await target.fill(value,{timeout:TIMEOUT});
       // Values of all filled inputs are masked, including approved literals.
       secretInputs.push(target);
-      if(value && !r.secretEnv) filledValues.add(value);
     } else if (['activate','submit','navigate'].includes(r.kind)) await target.click({timeout:TIMEOUT});
     else await target.waitFor({state:'visible',timeout:TIMEOUT});
     checkHost();

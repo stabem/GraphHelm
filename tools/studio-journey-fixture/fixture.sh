@@ -29,7 +29,10 @@ up)
   mkdir -p "$dir/.graphhelm"
   "$bin" --json init --project "$dir" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
-  nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$dir" \
+  # `--project` is the repository: the Runtime's GET /v1/journeys and /v1/journeys/flows read
+  # <project>/.graphhelm/journeys, where the studio-* flows and contracts live. Events, token,
+  # key and keyring stay under the fixture directory.
+  nohup "$bin" serve --events "$dir/.graphhelm/events" --bind "127.0.0.1:$rport" --project "$repo" \
     --keyring "$dir/.graphhelm/keyring" --key-id studio > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "ports $rport $sport" > "$pids"
   echo "serve $!" >> "$pids"

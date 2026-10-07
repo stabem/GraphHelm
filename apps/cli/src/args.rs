@@ -1751,8 +1751,9 @@ pub enum WorkspaceCommand {
     Release(WorkspaceTaskArgs),
     /// Every recorded workspace with its state, size and live git facts. Read-only.
     List(WorkspaceRootArgs),
-    /// Remove released workspaces that are clean and still at the released commit. A dry run
-    /// unless `--apply`. Never touches a path the ledger did not create, never follows a link.
+    /// Remove released workspaces that are clean and still at the released commit, ignored files
+    /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
+    /// never follows a link, and keeps any workspace whose worktree contains one.
     Sweep(WorkspaceSweepArgs),
 }
 

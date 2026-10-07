@@ -169,6 +169,9 @@ fn run_claim(
         );
     }
     let branch = branch.map_or_else(|| format!("issue-{task}-{lane}"), str::to_owned);
+    if base.starts_with('-') || branch.starts_with('-') {
+        return input(COMMAND, "base and branch may not start with `-`", "/base");
+    }
     if std::fs::create_dir_all(&dir).is_err() {
         return input(
             COMMAND,
@@ -291,6 +294,28 @@ fn is_link(metadata: &std::fs::Metadata) -> bool {
     }
 }
 
+/// The first link (symlink, junction or other reparse point) under `path`, relative to it, found
+/// without following any link. `git worktree remove` recurses through a junction at an ignored
+/// path and deletes what it points at, so a worktree holding one is never handed to git (#374).
+fn first_link(path: &Path, base: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(path).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let child = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&child) else {
+            continue;
+        };
+        if is_link(&metadata) {
+            return Some(child.strip_prefix(base).unwrap_or(&child).to_path_buf());
+        }
+        if metadata.is_dir()
+            && let Some(found) = first_link(&child, base)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn size_of(path: &Path) -> u64 {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return 0;
@@ -344,8 +369,13 @@ fn live(root: &Path, record: &Value) -> Value {
     let linked = [root.join(lane), dir.clone(), worktree.clone()]
         .iter()
         .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| is_link(&m)));
+    let link_in_worktree = if linked {
+        None
+    } else {
+        first_link(&worktree, &worktree).map(|p| p.to_string_lossy().replace('\\', "/"))
+    };
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
-        "linked": linked,
+        "linked": linked, "linkInWorktree": link_in_worktree,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
         "releasedHead": record["releasedHead"], "sizeBytes": size_of(&dir)})
 }
@@ -369,6 +399,9 @@ fn keep_reason(view: &Value) -> Option<&'static str> {
     }
     if view["linked"] == json!(true) {
         return Some("linked_path");
+    }
+    if !view["linkInWorktree"].is_null() {
+        return Some("contains_link");
     }
     if view["head"].is_null() {
         return Some("worktree_unreadable");
@@ -394,7 +427,8 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         );
         if let Some(reason) = keep_reason(&view) {
             if reason != "already_swept" {
-                kept.push(json!({"lane": lane, "task": task, "reason": reason}));
+                kept.push(json!({"lane": lane, "task": task, "reason": reason,
+                    "link": view["linkInWorktree"]}));
             }
             continue;
         }

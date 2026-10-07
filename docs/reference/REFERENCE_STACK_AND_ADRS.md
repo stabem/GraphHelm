@@ -1502,9 +1502,15 @@ recursive deletes, so leftovers waited for the owner.
    nothing. Git ancestry cannot say "merged" under squash merge, so the sweep never infers it. A
    workspace is removed only when it is `released`, its worktree is clean, and `HEAD` still equals
    the released sha. Otherwise it is kept with a reason: `not_released`, `dirty`,
-   `moved_after_release`, `worktree_unreadable` or `linked_path`.
-4. **Removal never leaves the workspace.** `git worktree remove` without `--force` (a second
-   cleanliness check at the act), then `target/`, `tmp/` and `logs/` are deleted by a walk that
+   `moved_after_release`, `worktree_unreadable`, `linked_path` or `contains_link`. "Clean" is
+   git's: tracked and untracked files. **Releasing a workspace consents to deleting its ignored
+   files** (`.env`, local databases, build output) along with the rest.
+4. **Removal never leaves the workspace.** Before git runs, `wt/` is walked without following
+   links. A symlink, junction or other reparse point anywhere in it, at a tracked or an ignored
+   path, keeps the workspace as `contains_link` and names the first one found, because
+   `git worktree remove` recurses through a junction and deletes what it points at (found in the
+   #374 review). Only a link-free worktree goes to `git worktree remove` without `--force` (a
+   second cleanliness check at the act). Then `target/`, `tmp/` and `logs/` are deleted by a walk that
    removes a symlink or a Windows reparse point (junction) as the link itself, never through it. A
    lane, task or worktree directory that is itself a link is reported, never removed. A directory
    under the root that no claim created is never visited.
@@ -1521,6 +1527,7 @@ Studio usage panel, and a shared build cache per root.
 **Proof:** `apps/cli/tests/workspace_cli.rs`: the claim layout and environment, a second claim
 refused, invalid ids refused; a sweep that keeps unreleased, dirty and moved workspaces, removes the
 released clean one, survives a junction or symlink planted in `target/`, and leaves an unclaimed
-directory alone; HTTP and MCP lists equal to the CLI's; agent-session sweep refused and owner-session
+directory alone; a junction at an ignored path inside `wt/` keeps the workspace as `contains_link`
+and its target survives; HTTP and MCP lists equal to the CLI's; agent-session sweep refused and owner-session
 sweep applied; a Runtime without `--workspace-root` refusing and naming it. Plus `mcp_stdio.rs`
 (tool list) and `development_surface_parity.rs`.

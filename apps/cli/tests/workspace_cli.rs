@@ -32,6 +32,7 @@ fn repo(dir: &Path) -> std::path::PathBuf {
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "--object-format=sha1"]);
     std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    std::fs::write(repo.join(".gitignore"), "ignored/\n").unwrap();
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     repo
@@ -216,6 +217,42 @@ fn sweep_removes_only_released_clean_unmoved_workspaces_and_never_follows_links(
         .find(|w| w["task"] == "done")
         .map(|w| w["state"].clone());
     assert_eq!(state, Some(Value::from("swept")), "{listed}");
+}
+
+/// #374 BLOCK: `git worktree remove` recursed through a junction at an IGNORED path inside a clean,
+/// released worktree and deleted its target outside the root. The worktree stays clean (git does
+/// not report ignored paths), so only a link scan of `wt/` before git runs can stop it.
+#[test]
+fn a_link_anywhere_in_the_worktree_keeps_the_workspace_and_its_target_survives() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "trap");
+    let wt = root.join("lane").join("trap").join("wt");
+    let victim = dir.path().join("victim");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("keep.txt"), "precious").unwrap();
+    std::fs::create_dir_all(wt.join("ignored")).unwrap();
+    link_dir(&wt.join("ignored").join("link"), &victim);
+    release(root_s, "lane", "trap");
+
+    let (code, swept) = run(&["sweep", "--root", root_s, "--apply"]);
+    assert_eq!(code, 0, "{swept}");
+    assert_eq!(swept["data"]["removed"], serde_json::json!([]), "{swept}");
+    assert_eq!(swept["data"]["kept"][0]["reason"], "contains_link", "{swept}");
+    assert_eq!(swept["data"]["kept"][0]["link"], "ignored/link", "{swept}");
+    assert_eq!(
+        std::fs::read_to_string(victim.join("keep.txt")).unwrap(),
+        "precious",
+        "the sweep deleted through a link inside the worktree"
+    );
+    assert!(wt.is_dir());
+    let (code, refused) = run(&[
+        "claim", "--root", root_s, "--lane", "lane", "--task", "opt", "--repo",
+        repo.to_str().unwrap(), "--base=--orphan",
+    ]);
+    assert_eq!(code, 3, "{refused}");
 }
 
 mod support;

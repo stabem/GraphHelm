@@ -380,7 +380,14 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
                 ));
             }
             if findings.iter().all(Finding::is_warning) {
-                for (id, contract) in compile(&value) {
+                let contracts = match compile(&value) {
+                    Ok(contracts) => contracts,
+                    Err(finding) => {
+                        findings.push(finding);
+                        return findings;
+                    }
+                };
+                for (id, contract) in contracts {
                     let path = project
                         .join(".graphhelm/journeys")
                         .join(format!("{id}.json"));
@@ -402,7 +409,7 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     }
 }
 
-fn compile(flow: &Value) -> Vec<(String, Value)> {
+fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
     let id = flow["id"].as_str().unwrap();
     let title = flow["title"].as_str().unwrap_or(id);
     let actors = flow["actors"].as_array().unwrap();
@@ -455,12 +462,21 @@ fn compile(flow: &Value) -> Vec<(String, Value)> {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-            // Bound at a character boundary; slicing 1024 raw bytes could panic on Unicode.
-            let mut end = statement.len().min(1024);
-            while !statement.is_char_boundary(end) {
-                end -= 1;
+            // The frozen schema bounds characters. Refuse rather than drop any expectation.
+            if statement.chars().count() > 1024 {
+                let screen_index = flow["screens"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .position(|screen| screen["id"] == sid)
+                    .unwrap();
+                return Err(Finding::new(
+                    "flow.promise_too_long",
+                    format!("/screens/{screen_index}/expect"),
+                    "all expectations must fit the contract's 1024-character promise limit",
+                ));
             }
-            promises.push(json!({"promiseId":format!("{sid}.visible"),"stepId":sid,"statement":&statement[..end],"requiredFact":"content_rendered","requiredEvidenceKinds":["visual_capture"],"requiredObserverCapability":"browser","statesToObserve":[screen["state"]],"maxEvidenceAgeSeconds":604800}));
+            promises.push(json!({"promiseId":format!("{sid}.visible"),"stepId":sid,"statement":statement,"requiredFact":"content_rendered","requiredEvidenceKinds":["visual_capture"],"requiredObserverCapability":"browser","statesToObserve":[screen["state"]],"maxEvidenceAgeSeconds":604800}));
             steps.push(step);
         }
         let contract_id = if name == "main" {
@@ -470,7 +486,7 @@ fn compile(flow: &Value) -> Vec<(String, Value)> {
         };
         contracts.push((contract_id.clone(),json!({"contractId":contract_id,"version":1,"title":title,"taskScope":format!("journey-flow {id} path {name}"),"actors":actors.iter().map(|a|json!({"actorId":a,"name":a.as_str().unwrap().chars().take(120).collect::<String>(),"goal":title})).collect::<Vec<_>>(),"preconditions":[],"steps":steps,"promises":promises,"riskSignals":flow["risks"],"outOfScope":[]})));
     }
-    contracts
+    Ok(contracts)
 }
 
 fn contract_bytes(value: &Value) -> Vec<u8> {
@@ -639,7 +655,14 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                     if flow["status"] == "draft" && !args.include_draft {
                         skipped.push(json!({"id":flow["id"],"reason":"draft"}));
                     } else {
-                        for (id, contract) in compile(&flow) {
+                        let contracts = match compile(&flow) {
+                            Ok(contracts) => contracts,
+                            Err(finding) => {
+                                errors.push(finding);
+                                Vec::new()
+                            }
+                        };
+                        for (id, contract) in contracts {
                             if !super::journeys::contract_schemas().is_some_and(|s| {
                                 s.validate(
                                     super::journeys::CONTRACT_SCHEMA_ID,
@@ -657,7 +680,16 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                             }
                             let target = file.parent().unwrap().join(format!("{id}.json"));
                             let expected = contract_bytes(&contract);
-                            if let Ok(existing) = output_bytes(&target)
+                            let existing = output_bytes(&target);
+                            if args.check && existing.is_err() {
+                                errors.push(Finding::new(
+                                    "flow.contract_stale",
+                                    format!("/journeys/{id}.json"),
+                                    "generated contract is missing, unreadable or unsafe",
+                                ));
+                                continue;
+                            }
+                            if let Ok(existing) = existing
                                 && existing != expected
                             {
                                 let generated = serde_json::from_slice::<Value>(&existing)
@@ -670,13 +702,6 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                                     ));
                                     continue;
                                 }
-                            } else if args.check && !target.exists() {
-                                errors.push(Finding::new(
-                                    "flow.contract_stale",
-                                    format!("/journeys/{id}.json"),
-                                    "generated contract is missing",
-                                ));
-                                continue;
                             }
                             if writes.insert(target, expected).is_some() {
                                 errors.push(Finding::new(
@@ -815,7 +840,13 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
     flow["drift"] = json!([]);
     flow["approved"] = json!({"revision":revision,"digest":approval_digest(&flow)});
     let mut writes = BTreeMap::new();
-    for (id, contract) in compile(&flow) {
+    let contracts = match compile(&flow) {
+        Ok(contracts) => contracts,
+        Err(finding) => {
+            return report(COMMAND, vec![], vec![finding], json!({}));
+        }
+    };
+    for (id, contract) in contracts {
         if !super::journeys::contract_schemas().is_some_and(|s| {
             s.validate(
                 super::journeys::CONTRACT_SCHEMA_ID,

@@ -485,6 +485,19 @@ fn missing_screen_coverage_warns_and_composed_ids_stay_bounded() {
 
 #[test]
 fn branches_compile_and_output_conflicts_never_partially_publish() {
+    let check_dir = project(EXAMPLE);
+    let check_output = check_dir.path().join(".graphhelm/journeys/checkout.json");
+    std::fs::create_dir(&check_output).unwrap();
+    let (out, reply) = run(check_dir.path(), &["compile", "--check", "--include-draft"]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.contract_stale"), "{reply}");
+    assert!(check_output.is_dir());
+    let flow_file = check_dir
+        .path()
+        .join(".graphhelm/journeys/checkout.journey.yaml");
+    let (out, reply) = run(check_dir.path(), &["validate", flow_file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2), "{reply}");
+    assert!(finding(&reply, "flow.contract_stale"), "{reply}");
     let flow = EXAMPLE.replace(
         "  main: [cart.checkout, pay.submit]",
         "  main: [cart.checkout, pay.submit]\n  guest: [cart.checkout]",
@@ -509,4 +522,42 @@ fn branches_compile_and_output_conflicts_never_partially_publish() {
     .unwrap();
     assert_eq!(branch["contractId"], "checkout.guest");
     assert_eq!(branch["steps"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn unrepresentable_expectations_are_refused_without_weakening_promises() {
+    let expectations = (0..7)
+        .map(|_| format!("{{role: heading, name: {}}}", "a".repeat(230)))
+        .chain(std::iter::once(
+            "{role: button, name: LAST_OBLIGATION}".to_owned(),
+        ))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let flow = EXAMPLE.replace(
+        "[{role: heading, name: Cart}, {role: button, name: Checkout}]",
+        &format!("[{expectations}]"),
+    );
+    let dir = project(&flow);
+    for args in [
+        vec!["compile", "--fmt", "--include-draft"],
+        vec!["validate", "--all"],
+    ] {
+        let (out, reply) = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(2), "{reply}");
+        assert!(finding(&reply, "flow.promise_too_long"), "{reply}");
+        assert_eq!(
+            reply["data"]["files"][0]["findings"][0]["pointer"],
+            "/screens/0/expect"
+        );
+        assert!(
+            !dir.path()
+                .join(".graphhelm/journeys/checkout.json")
+                .exists()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".graphhelm/journeys/checkout.journey.yaml"))
+                .unwrap(),
+            flow
+        );
+    }
 }

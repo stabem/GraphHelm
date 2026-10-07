@@ -1,7 +1,8 @@
 //! Black-box cells for `graphhelm mcp`'s own flags, refused before any protocol byte:
 //!
-//! - `--actor` becomes optional, falls back to `GRAPHHELM_ACTOR`, and a session with neither is
-//!   refused rather than defaulted (#1058);
+//! - the actor comes from `GRAPHHELM_ACTOR`, then `--actor` (#389: the environment wins, so a lane
+//!   can sign as itself under the shared registration), and a session with neither is refused
+//!   rather than defaulted (#1058);
 //! - `--model`/`--effort` exist and a malformed one is refused (#1054 Task 1).
 //!
 //! Mirrors `mcp_url.rs`/`mcp_capability.rs`'s own convention: `apps/cli` is bin-only (no
@@ -85,7 +86,7 @@ fn mcp_cmd_env(args: &[&str], env: &[(&str, Option<&str>)]) -> CliOutput {
         .unwrap_or_else(|err| panic!("expected a GHCLI envelope, got {envelope}: {err}"))
 }
 
-// ---- #1058: the actor comes from the flag, then the environment, never a default ------------
+// ---- #1058, #389: the actor comes from the environment, then the flag, never a default --------
 
 #[test]
 fn neither_flag_nor_environment_is_refused_and_names_both_doors() {
@@ -116,25 +117,36 @@ fn the_environment_supplies_the_actor_when_the_flag_is_absent() {
     );
 }
 
-/// `chosen_actor_was` in the brief is a placeholder: the process refuses inside `build_client`
-/// before the stdio loop starts, and (with `--url` pointing at a closed port and no stdin
-/// input) never makes an HTTP call that would carry the resolved actor anywhere this harness
-/// can observe it directly. What IS honestly observable without a live server is precedence
-/// itself: give the flag a VALID id and the environment a MALFORMED one. If the flag wins (the
-/// required behaviour), the malformed environment value is never consulted and the run is not
-/// refused at `/actor`. If the environment wins instead, the malformed value reaches
-/// `ActorId::parse` and the run IS refused at `/actor`. The two are told apart by the presence
-/// of that diagnostic, which this harness can see.
+/// #389: the environment wins over the flag. The installers register one shared
+/// `--actor agent-chat` for every session, so a lane that exports its own name must not be
+/// overridden by that literal (it could not sign its own `task.*` records, #388). Observed by
+/// precedence alone, without a live server: give the flag a VALID id and the environment a
+/// MALFORMED one. If the environment wins, the malformed value reaches `ActorId::parse` and the
+/// run is refused at `/actor`; if the flag won, the run would not be refused there.
 #[test]
-fn the_explicit_flag_wins_over_the_environment() {
+fn the_environment_wins_over_the_flag() {
     let out = mcp_cmd_env(
-        &["--url", "http://127.0.0.1:1", "--actor", "from-flag"],
+        &["--url", "http://127.0.0.1:1", "--actor", "agent-chat"],
         &[("GRAPHHELM_ACTOR", Some("not a wire safe id"))],
     );
     assert!(
+        out.diagnostics.iter().any(|d| d.path == "/actor"),
+        "the environment's actor must be the one consulted even when the flag is present: {:?}",
+        out.diagnostics
+    );
+}
+
+/// The shared registration still works for every session that sets nothing: an empty or unset
+/// `GRAPHHELM_ACTOR` falls back to the flag.
+#[test]
+fn an_empty_environment_actor_falls_back_to_the_flag() {
+    let out = mcp_cmd_env(
+        &["--url", "http://127.0.0.1:1", "--actor", "agent-chat"],
+        &[("GRAPHHELM_ACTOR", Some(""))],
+    );
+    assert!(
         out.diagnostics.iter().all(|d| d.path != "/actor"),
-        "a valid flag must win over a malformed environment value -- if the environment had won \
-         instead, the malformed value would have been refused at /actor: {:?}",
+        "an empty variable is not a choice of identity: {:?}",
         out.diagnostics
     );
 }
@@ -142,7 +154,10 @@ fn the_explicit_flag_wins_over_the_environment() {
 #[test]
 fn a_malformed_environment_actor_is_refused_exactly_as_a_malformed_flag_is() {
     let bad = "not a wire safe id";
-    let by_flag = mcp_cmd(&["--url", "http://127.0.0.1:1", "--actor", bad]);
+    let by_flag = mcp_cmd_env(
+        &["--url", "http://127.0.0.1:1", "--actor", bad],
+        &[("GRAPHHELM_ACTOR", None)],
+    );
     let by_env = mcp_cmd_env(
         &["--url", "http://127.0.0.1:1"],
         &[("GRAPHHELM_ACTOR", Some(bad))],

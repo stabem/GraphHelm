@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 33] = [
+const TOOLS: [ToolSpec; 35] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -94,6 +94,22 @@ const TOOLS: [ToolSpec; 33] = [
                       fresh, stale (naming the changed files) or unknown (naming the cause), and \
                       the walked arrows between steps. Identical on CLI, HTTP and MCP. Read-only.",
         schema: optional_execution_schema,
+    },
+    ToolSpec {
+        name: "workspace_list",
+        description: "List the agent workspaces under the Runtime's --workspace-root \
+                      (GET /v1/workspaces; `graphhelm workspace list`): lane, task, branch, \
+                      state (claimed, released, swept), size on disk, and live git facts (head, \
+                      dirty). Identical on CLI, HTTP and MCP. Read-only.",
+        schema: no_arguments_schema,
+    },
+    ToolSpec {
+        name: "workspace_sweep",
+        description: "Remove released agent workspaces that are clean and still at the released \
+                      commit (POST /v1/workspaces/sweep; `graphhelm workspace sweep --apply`). \
+                      Never touches a path the ledger did not create and never follows a link. \
+                      Owner sessions only: an agent-typed MCP session is refused.",
+        schema: no_arguments_schema,
     },
     ToolSpec {
         name: "events",
@@ -407,6 +423,10 @@ fn topology_schema() -> serde_json::Value {
         }),
         &["file"],
     )
+}
+
+fn no_arguments_schema() -> serde_json::Value {
+    object_schema(serde_json::json!({}), &[])
 }
 
 fn optional_execution_schema() -> serde_json::Value {
@@ -1428,6 +1448,31 @@ pub(crate) fn call(
                 None,
             )
         }),
+        "workspace_list" => Ok(api.request(
+            "GET",
+            &url::segment_path(&["v1", "workspaces"]),
+            None,
+            None,
+            None,
+        )),
+        // #360: deleting workspaces is the owner's act. An agent-typed session (every lane runs
+        // as one) is refused before any request, whatever credential the session holds.
+        "workspace_sweep" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
+            code: INVALID_PARAMS,
+            message: "workspace_sweep is owner-only: only the owner removes agent workspaces \
+                      (`graphhelm workspace sweep --apply` or the Runtime route)"
+                .to_owned(),
+            data: Some(serde_json::json!({
+                "code": crate::error_codes::GHCLI037_WORKSPACE_REFUSED
+            })),
+        }),
+        "workspace_sweep" => Ok(api.request(
+            "POST",
+            &url::segment_path(&["v1", "workspaces", "sweep"]),
+            None,
+            None,
+            None,
+        )),
         "journeys" => {
             let path = match str_arg(arguments, "executionId") {
                 Some(id) => url::segment_path(&["v1", "executions", id, "journeys"]),

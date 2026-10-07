@@ -61,6 +61,12 @@ project settings, which would add another handler.
    live Runtime read, cached context not refreshed, and acknowledged end-signal delivery. Session
    end never proves task completion. Do not trigger a paid model turn merely to check installation.
 
+For Codex hosts that read skills from their skills directory rather than through the plugin
+marketplace, keep the bundled skills current with `graphhelm skills sync --host codex` (preview
+with `--dry-run`; `--home` defaults to `CODEX_HOME`, then `~/.codex`). Report its `foreign` and
+`modified` lists to the owner: those directories are not GraphHelm's to overwrite, and the command
+left them as they were.
+
 Prefer the GraphHelm MCP tools (`mcp__graphhelm__*`, or `mcp__plugin_graphhelm_graphhelm__*` from this plugin) for Runtime reads once they are connected; the adoption commands above stay CLI-only.
 
 If the CLI is absent, point to the [CLI install path](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md)

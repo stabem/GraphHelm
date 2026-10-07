@@ -58,6 +58,8 @@ pub const GHCLI032_STUDIO_REFUSED: &str = "GHCLI032_STUDIO_REFUSED";
 /// `graphhelm journey validate` found a contract that journeys cannot use as written (#328).
 pub const GHCLI033_JOURNEY_CONTRACT_INVALID: &str = "GHCLI033_JOURNEY_CONTRACT_INVALID";
 pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
+/// `graphhelm skills sync` could not read the bundle, the host home or its manifest (#355).
+pub const GHCLI035_SKILLS_SYNC_REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -101,6 +103,7 @@ pub const ALL: &[&str] = &[
     GHCLI032_STUDIO_REFUSED,
     GHCLI033_JOURNEY_CONTRACT_INVALID,
     GHCLI034_JOURNEY_FLOW_INVALID,
+    GHCLI035_SKILLS_SYNC_REFUSED,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

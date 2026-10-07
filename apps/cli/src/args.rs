@@ -79,6 +79,36 @@ pub enum TopLevel {
     /// Update GraphHelm itself: fast-forward the clone this binary comes from to `origin/main`
     /// (only a clean `main`), then reinstall the CLI from it with `cargo install`.
     Update(UpdateArgs),
+    /// Install and keep current the bundled GraphHelm skills in a host's own skills directory.
+    Skills(SkillsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsArgs {
+    #[command(subcommand)]
+    pub command: SkillsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillsCommand {
+    /// Install or update the bundled skills under `<home>/skills/` (#355). Idempotent; records
+    /// what it wrote in `<home>/skills/.graphhelm-skills.json` and never writes a skill directory
+    /// it did not install, nor one edited by hand since.
+    Sync {
+        #[arg(long, value_enum)]
+        host: SkillsHost,
+        /// The host home. Defaults to `CODEX_HOME`, then `~/.codex`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// Report what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SkillsHost {
+    Codex,
 }
 
 #[derive(Debug, Args)]

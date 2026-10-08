@@ -1809,11 +1809,43 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
         #[serde(default, rename = "judgeRoute")]
         judge_route: Option<String>,
     }
-    let Ok(request) = serde_json::from_slice::<PlanRequest>(&body) else {
-        return respond_failure(
-            COMMAND,
-            execution::execution_state("the body must be {task, paths, promise?}", "/body"),
-        );
+    // #427: a malformed body is an argument error (400) at the field that broke it.
+    const SHAPE: &str = "the body must be {task, paths, promise?, judgeRoute?}";
+    let Ok(serde_json::Value::Object(fields)) = serde_json::from_slice(&body) else {
+        return bad_request(COMMAND, SHAPE, "/body");
+    };
+    if let Some(unknown) = fields
+        .keys()
+        .find(|key| !matches!(key.as_str(), "task" | "paths" | "promise" | "judgeRoute"))
+    {
+        return bad_request(COMMAND, SHAPE, &format!("/body/{unknown}"));
+    }
+    let wrong = |field: &str, ok: fn(&serde_json::Value) -> bool| {
+        fields.get(field).is_some_and(|value| !ok(value))
+    };
+    let field = if !fields.contains_key("task") || wrong("task", serde_json::Value::is_string) {
+        Some("task")
+    } else if !fields.contains_key("paths")
+        || wrong("paths", |value| {
+            value
+                .as_array()
+                .is_some_and(|paths| paths.iter().all(serde_json::Value::is_string))
+        })
+    {
+        Some("paths")
+    } else if wrong("promise", serde_json::Value::is_string) {
+        Some("promise")
+    } else if wrong("judgeRoute", |value| value.is_string() || value.is_null()) {
+        Some("judgeRoute")
+    } else {
+        None
+    };
+    if let Some(field) = field {
+        return bad_request(COMMAND, SHAPE, &format!("/body/{field}"));
+    }
+    let Ok(request) = serde_json::from_value::<PlanRequest>(serde_json::Value::Object(fields))
+    else {
+        return bad_request(COMMAND, SHAPE, "/body");
     };
     let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
         return respond_failure(

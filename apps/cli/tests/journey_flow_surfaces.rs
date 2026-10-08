@@ -251,14 +251,29 @@ impl Harness {
 }
 
 fn http(base: &str, method: &str, path: &str, bearer: Option<&str>) -> (u16, Value) {
+    http_body(base, method, path, bearer, "")
+}
+
+fn http_body(
+    base: &str,
+    method: &str,
+    path: &str,
+    bearer: Option<&str>,
+    body: &str,
+) -> (u16, Value) {
     let address = base.strip_prefix("http://").unwrap();
     let mut head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: 0\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
     );
+    if !body.is_empty() {
+        head.push_str("Content-Type: application/json\r\n");
+    }
     if let Some(bearer) = bearer {
         head.push_str(&format!("Authorization: Bearer {bearer}\r\n"));
     }
     head.push_str("\r\n");
+    head.push_str(body);
     let Ok(mut stream) = TcpStream::connect(address) else {
         return (0, Value::Null);
     };
@@ -537,5 +552,29 @@ fn the_flow_routes_without_a_project_refuse_naming_project() {
         let (status, body) = http(&base, method, path, Some(&token));
         assert_eq!(status, 409, "{method} {path}: {body}");
         assert_eq!(body["diagnostics"][0]["path"], "/project", "{body}");
+    }
+}
+
+/// #427: a malformed `POST /v1/keel/plan` body is an argument error (400 `GHCLI001`) at the field
+/// that broke it, like every other route, not a 409 execution-state refusal. Credible regression:
+/// the route goes back to one catch-all 409. Cost: one server, five requests.
+#[test]
+fn a_malformed_keel_plan_body_is_a_400_naming_the_field() {
+    let harness = prepared();
+    let (_server, base, token) = harness.serve(true);
+    let post = |body: &str| http_body(&base, "POST", "/v1/keel/plan", Some(&token), body);
+    let (status, reply) = post(r#"{"task":"t-1","paths":["app/cart/page.tsx"]}"#);
+    assert_eq!(status, 200, "{reply}");
+    for (body, pointer) in [
+        (r#"{"task":"t-1","paths":["a"],"repo":"C:/"}"#, "/body/repo"),
+        (r#"{"paths":["a"]}"#, "/body/task"),
+        (r#"{"task":"t-1","paths":"a"}"#, "/body/paths"),
+        ("not json", "/body"),
+    ] {
+        let (status, reply) = post(body);
+        assert_eq!(status, 400, "{body}: {reply}");
+        let diagnostic = &reply["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "GHCLI001_ARGUMENT_INVALID", "{reply}");
+        assert_eq!(diagnostic["path"], pointer, "{body}: {reply}");
     }
 }

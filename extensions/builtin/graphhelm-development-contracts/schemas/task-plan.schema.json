@@ -155,6 +155,34 @@
         "object",
         "null"
       ]
+    },
+    "critic": {
+      "description": "#467: whether the task's design is graded by a blind critic before implementation, and its bounds. Absent on records made before the critic existed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "passScore",
+        "maxRounds"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "design"
+          ]
+        },
+        "passScore": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "maxRounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
     }
   }
 }

@@ -142,7 +142,7 @@
         "delegation",
         "jevThresholdPercent"
       ],
-      "description": "1.5.0 (#382 phase B): the task planner's per-class review count, delegation tier/effort and Jev threshold.",
+      "description": "1.5.0 (#382 phase B): the task planner's per-class review count, delegation tier/effort and Jev threshold. 1.6.0 (#467): which classes get a graded design critic, and its pass score and round budget.",
       "properties": {
         "reviews": {
           "type": "object",
@@ -280,6 +280,62 @@
           "type": "integer",
           "minimum": 50,
           "maximum": 100
+        },
+        "critic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "docs",
+            "code",
+            "user_visible",
+            "invariant"
+          ],
+          "properties": {
+            "docs": {
+              "enum": [
+                "none",
+                "design"
+              ]
+            },
+            "code": {
+              "enum": [
+                "none",
+                "design"
+              ]
+            },
+            "user_visible": {
+              "enum": [
+                "none",
+                "design"
+              ]
+            },
+            "invariant": {
+              "enum": [
+                "none",
+                "design"
+              ]
+            }
+          }
+        },
+        "criticLoop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "passScore",
+            "maxRounds"
+          ],
+          "properties": {
+            "passScore": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "maxRounds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
+          }
         }
       }
     }

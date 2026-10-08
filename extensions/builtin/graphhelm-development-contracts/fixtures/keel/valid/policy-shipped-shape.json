@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
+  "version": "1.6.0",
   "card": {
     "maxScopePaths": 12,
     "maxExportedSymbols": 8,
@@ -77,6 +77,16 @@
         "high"
       ]
     },
-    "jevThresholdPercent": 80
+    "jevThresholdPercent": 80,
+    "critic": {
+      "docs": "none",
+      "code": "none",
+      "user_visible": "design",
+      "invariant": "design"
+    },
+    "criticLoop": {
+      "passScore": 8,
+      "maxRounds": 3
+    }
   }
 }

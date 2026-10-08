@@ -4,7 +4,7 @@
 # `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
 # rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
 # Bump `version` in the same commit as any change below.
-version: "1.5.0"
+version: "1.6.0"
 
 # READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
 # is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
@@ -96,3 +96,9 @@ plan:
   reviews: {docs: 1, code: 1, user_visible: 1, invariant: 1}
   delegation: {docs: [small, low], code: [standard, medium], user_visible: [standard, medium], invariant: [large, high]}
   jevThresholdPercent: 80
+  # DESIGN CRITIC (1.6.0, #467). Classes that need a full card get a design that a blind critic
+  # grades (0-10) against the promise and the card before implementation; the rounds are recorded
+  # as critic.verdict records. A design passes at passScore or better within maxRounds; out of
+  # rounds it goes to a person (needs you), never an automatic pass.
+  critic: {docs: none, code: none, user_visible: design, invariant: design}
+  criticLoop: {passScore: 8, maxRounds: 3}

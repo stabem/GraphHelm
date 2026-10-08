@@ -125,7 +125,8 @@ fn built_in_jpd_extension_is_a_closed_digest_bound_package() {
     assert_eq!(result["ok"], true);
     assert_eq!(result["data"]["id"], "graphhelm-jpd");
     assert_eq!(result["data"]["version"], "0.1.0");
-    assert_eq!(result["data"]["contributionCount"], 56);
+    // 49 since #385 removed seven folded skill contributions (their contracts stay).
+    assert_eq!(result["data"]["contributionCount"], 49);
     assert!(
         result["data"]["packageDigest"]
             .as_str()

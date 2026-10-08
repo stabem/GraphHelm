@@ -4,7 +4,7 @@
 // swallowed, a settled approval offered again, and a Watch that does not light the step being
 // played. Cost: jsdom render, no network.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 
 import { fastUserEvent } from "../test/user-event";
 import type { JourneyFlowView, JourneyFlowsView, LiveSession } from "../runtime/types";
@@ -197,6 +197,23 @@ describe("JourneyFlows watch", () => {
     expect(screen.getByRole("button", { name: "Watch" })).toBeEnabled();
     rerender(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn()} sessions={[watchRow({ state: "drift", edge: "cart.checkout", actIndex: 0 })]} />);
     expect(screen.getByRole("status")).toHaveTextContent("Stopped at step 2: the app no longer matches this step.");
+  });
+
+  // Owner report: Watch answered 400 `replay.observer_missing` and the button "did nothing": the
+  // message sat under the whole step list in a scrolling box, in the Runtime's own words.
+  it("says why a watch could not start right under the buttons, in words, and retries", async () => {
+    const refusal = Object.assign(new Error("OBSERVER_MISSING: run setup --install-observer playwright"), { code: "replay.observer_missing" });
+    const onWatch = vi.fn().mockRejectedValueOnce(refusal).mockResolvedValueOnce(undefined);
+    render(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={onWatch} />);
+    await userEvent.click(screen.getByRole("button", { name: "Watch" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Can't play this journey: the browser player isn't installed in this project yet.");
+    expect(alert).not.toHaveTextContent("OBSERVER_MISSING");
+    const buttons = screen.getByRole("button", { name: "Watch" }).parentElement!;
+    expect(buttons.nextElementSibling).toBe(alert);
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(onWatch).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
   it("shows the Runtime's refusal of a watch and hides Watch on a Runtime without it", async () => {

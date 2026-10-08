@@ -106,10 +106,21 @@ function watchWords(session: LiveSession, steps: Step[], current: number): strin
   }
 }
 
+/** Why a Watch could not start, in words the owner can act on; the Runtime's code picks them. */
+function watchFailure(cause: unknown): string {
+  const code = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code: unknown }).code) : "";
+  const message = cause instanceof Error ? cause.message : String(cause);
+  if (code.endsWith("observer_missing")) return "Can't play this journey: the browser player isn't installed in this project yet.";
+  if (code === "driver.host_refused" || code.endsWith("app_unreachable") || code.endsWith("launch_failed")) return "Can't play this journey: the app it opens isn't running.";
+  if (code.endsWith("busy") || code.endsWith("session_busy")) return "Can't play this journey right now: another play is still running.";
+  return `Can't play this journey: ${message}`;
+}
+
 function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; session?: LiveSession }) {
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [watchError, setWatchError] = useState<{ text: string; path?: string } | null>(null);
   const settled = flow.status === "approved" && !flow.approvable;
   const blocked = !flow.approvable && flow.findings.some((finding) => finding.severity === "error");
   const title = splitTitle(flow.title ?? flow.id);
@@ -123,8 +134,10 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
   const watch = (path?: string) => {
     if (!onWatch) return;
     setStarting(true);
-    setError(null);
-    (path === undefined ? onWatch(flow.id) : onWatch(flow.id, path)).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setStarting(false));
+    setWatchError(null);
+    (path === undefined ? onWatch(flow.id) : onWatch(flow.id, path))
+      .catch((cause: unknown) => setWatchError({ text: watchFailure(cause), ...(path === undefined ? {} : { path }) }))
+      .finally(() => setStarting(false));
   };
   return (
     <article className="journey-flow" data-status={flow.status} aria-label={`Journey ${title.name}`}>
@@ -137,6 +150,14 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
         )}
         {!settled && <button type="button" disabled={!flow.approvable || approving} onClick={approve}>{approving ? "Approving…" : "Approve"}</button>}
       </div>
+      {/* Next to the buttons, never below a long step list the owner would have to scroll to. */}
+      {watchError !== null && (
+        <div className="journey-flow-watch-failure" role="alert">
+          <p>{watchError.text}</p>
+          <button type="button" onClick={() => watch(watchError.path)} disabled={starting || playing}>Retry</button>
+        </div>
+      )}
+      {error !== null && <p className="journey-failure" role="alert">{error}</p>}
       {flow.drift.length > 0 && <p className="journey-flow-note">The app changed since this journey was recorded; watch it to see where.</p>}
       {blocked && <p className="journey-flow-note">The agent still has to fix this journey before you can approve it.</p>}
       {(paths.length === 0 ? ["main"] : paths).map((path) => {
@@ -168,7 +189,6 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
           </div>
         );
       })}
-      {error !== null && <p className="journey-failure" role="alert">{error}</p>}
     </article>
   );
 }

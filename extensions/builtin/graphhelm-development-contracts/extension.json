@@ -916,7 +916,7 @@
           "id": "schema/keel-policy",
           "kind": "schema",
           "path": "schemas/keel-policy.schema.json",
-          "sha256": "sha256:03d50110d326d8e5e5fcdb6d4cdcd7dca2556142008882c1aa69af812cf8cf63",
+          "sha256": "sha256:832b614d4a53bd61af4efa989997b4b56e9e106990613ba915073a3c23541059",
           "effects": [],
           "permissions": [],
           "requires": {

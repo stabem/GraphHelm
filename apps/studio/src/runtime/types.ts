@@ -364,11 +364,21 @@ export interface CaptureView {
   unknownCause?: CaptureUnknownCause;
 }
 
+/** What the user does on a step (#379): the contract's semantic action, without its typed input. */
+export interface StepAction {
+  kind: string;
+  target: string;
+  strategy: string;
+}
+
 export interface StepView {
   stepId: string;
   screen?: { screenId: string; title: string; scopePaths: string[] } | null;
   capture?: CaptureView | null;
   promises: string[];
+  /** #379: absent from older Runtimes. */
+  action?: StepAction | null;
+  expectedStates?: string[];
 }
 
 export interface ArrowView {

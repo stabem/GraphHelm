@@ -14,8 +14,10 @@ adds what to do around them.
 - Records the Keel card as a `keel.card` signal (shape: `docs/keel/RECORDS.md`) when working in a
   GraphHelm execution; outside one, `.graphhelm/keel-card.json`.
 - After `gh pr create` succeeds, records `task.pr_opened` (`pr`, `headSha`, `journeys`, `lane`).
-  **The `task.*` records are not implemented yet (Phase F);** until then post the same fields as
-  an `operator_note` to the coordinator on the team execution.
+  Record it as a signal whose `type` is the kind and whose `description` is one
+  `graphhelm-task-event-v1` document, with your own actor (`GRAPHHELM_ACTOR=<lane>`): the
+  Runtime refuses a lane that is not the recorder (`GHCLI038_ACTOR_MISMATCH`). Fields and
+  doors: `docs/process/DELIVERY.md` "Task records".
 
 ## Method
 

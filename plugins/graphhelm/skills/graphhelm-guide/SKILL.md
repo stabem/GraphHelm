@@ -23,7 +23,7 @@ Every task runs the same steps after its issue, in any agent host, each a skill 
 4. `blind-review`: one assigned reviewer runs the reached tests and `keel check` on the pinned head and posts the verdict.
 5. `merge`: the approving reviewer merges the pinned head, reads back what landed, and releases the workspace.
 
-`journey-map` creates journeys for a project that has none; `journey-contract` adds one for a new behavior. `keel plan` and the `task.*` records are still being built; each skill says how to do its step by hand until they land. Skills advise; only GraphHelm's deterministic controls validate and publish operational graph changes.
+`journey-map` creates journeys for a project that has none; `journey-contract` adds one for a new behavior. `keel plan` is still being built (`task-plan` says how to write the plan by hand); the `task.*` records each step emits are live. Skills advise; only GraphHelm's deterministic controls validate and publish operational graph changes.
 
 Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. The `graphhelm-setup` skill covers installing and starting.
 

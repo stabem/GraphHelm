@@ -130,6 +130,29 @@ exists as an optional full local check (it takes about 20 minutes); a merge neve
 
 A change is delivered when it is merged into `main`, not when the PR is open.
 
+### Task records (journey-first spec §7, #386)
+
+Where a Runtime execution coordinates the lanes (`gh-team` here), each step that writes an identity
+line also records the matching `task.*` signal, so the Studio can draw each task's graph from
+records instead of prose. The signal's `type` is the kind, its `source` is
+`{"type":"user","id":"<your lane>"}` and its `description` is one `graphhelm-task-event-v1`
+document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event.schema.json`):
+
+| Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
+|---|---|---|
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan` |
+| open the PR (§3) | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane` |
+| ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
+| post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
+| merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
+
+`taskId` is `issue-<N>` for the whole life of the task. Record through the MCP `signal` tool or
+`graphhelm execution signal --signal <file>`. The Runtime refuses a `task.*` signal whose
+`source.id`, or whose `lane` / `reviewer` (on a verdict) / `merger`, is not the actor recording it
+(`GHCLI038_ACTOR_MISMATCH`), so each lane needs its own actor: export `GRAPHHELM_ACTOR=<your
+ListAgents name>` before the MCP server starts; it wins over the shared `--actor agent-chat`
+registration (#389).
+
 ## 6. Housekeeping
 
 - A session removes only what it created, by name: its worktree, its branch, its scratch

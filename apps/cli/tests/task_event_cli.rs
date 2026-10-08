@@ -1,0 +1,185 @@
+//! #386 (journey-first spec §7, §9 row F): `task.*` signals carry one `graphhelm-task-event-v1`
+//! document and are recorded only by the actor they name. Observed through the real CLI
+//! `execution signal` door, which shares its admission with the HTTP and MCP doors. The five
+//! accepted documents are the package's own fixtures, so the schema and the admission cannot drift
+//! apart unseen. Cost: one held fixture run and a few CLI calls in a tempdir; no network.
+
+use std::path::{Path, PathBuf};
+
+use assert_cmd::Command;
+use serde_json::{Value, json};
+
+const RUN: &str = "task-events";
+/// The actor the CLI's own `execution signal` records under.
+const ACTOR: &str = "owner-cli";
+
+fn command() -> Command {
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command.env("GRAPHHELM_EVENTS_KEY", "01".repeat(32));
+    command
+}
+
+fn write(directory: &Path, name: &str, value: &Value) -> PathBuf {
+    let path = directory.join(name);
+    std::fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+    path
+}
+
+fn start(scratch: &Path) -> PathBuf {
+    let events = scratch.join("events");
+    let keyring = scratch.join("keyring");
+    std::fs::create_dir(&keyring).unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keyring,
+        "owner-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let fixtures = write(scratch, "fixtures.json", &json!({"nodeOutcomes":{}}));
+    let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/graphs/manual-override-deploy.yaml");
+    let output = command()
+        .args(["execution", "start", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN, "--file"])
+        .arg(&graph)
+        .arg("--fixtures")
+        .arg(&fixtures)
+        .args(["--mode", "manual", "--held"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    events
+}
+
+fn signal(
+    scratch: &Path,
+    events: &Path,
+    id: &str,
+    kind: &str,
+    source: &str,
+    document: &Value,
+) -> Value {
+    let envelope = json!({"id":id,"source":{"type":"user","id":source},"type":kind,"severity":"low",
+        "description":document.to_string(),"evidence":["task"],"emittedAt":"2026-10-07T23:00:00Z"});
+    let path = write(scratch, &format!("{id}.json"), &envelope);
+    let output = command()
+        .args(["execution", "signal", "--events"])
+        .arg(events)
+        .args(["--execution", RUN, "--signal"])
+        .arg(&path)
+        .arg("--evidence-out")
+        .arg(scratch.join(format!("{id}-evidence.json")))
+        .arg("--keyring")
+        .arg(scratch.join("keyring"))
+        .args(["--key-id", "owner-key"])
+        .output()
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn package_fixture(name: &str) -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../extensions/builtin/graphhelm-development-contracts/fixtures/task-event/valid/{name}.json"
+    ));
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+/// The identity fields of the fixture, rewritten to the actor this CLI records under.
+fn as_actor(mut document: Value) -> Value {
+    for key in ["lane", "merger"] {
+        if document.get(key).is_some() {
+            document[key] = json!(ACTOR);
+        }
+    }
+    // A verdict is signed by its reviewer; an assignment names someone else and stays as it is.
+    if document.get("verdict").is_some() {
+        document["reviewer"] = json!(ACTOR);
+    }
+    document
+}
+
+#[test]
+fn a_task_signal_naming_another_actor_is_refused_and_records_nothing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let document = package_fixture("pr-opened");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "spoofed",
+        "task.pr_opened",
+        "gh-claude-4",
+        &document,
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"],
+        json!("GHCLI038_ACTOR_MISMATCH"),
+        "{reply}"
+    );
+    assert!(
+        !scratch.path().join("spoofed-evidence.json").exists(),
+        "a refused task record writes no evidence"
+    );
+}
+
+#[test]
+fn each_of_the_five_task_kinds_is_accepted_from_its_recording_actor() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (name, kind) in [
+        ("claimed", "task.claimed"),
+        ("pr-opened", "task.pr_opened"),
+        ("review-assigned", "task.review_assigned"),
+        ("review-verdict", "task.review_verdict"),
+        ("merged", "task.merged"),
+    ] {
+        let reply = signal(
+            scratch.path(),
+            &events,
+            name,
+            kind,
+            ACTOR,
+            &as_actor(package_fixture(name)),
+        );
+        assert_eq!(reply["ok"], json!(true), "{kind}: {reply}");
+    }
+}
+
+#[test]
+fn a_malformed_task_document_is_refused_as_invalid() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut verdict = as_actor(package_fixture("review-verdict"));
+    verdict["verdict"] = json!("LGTM");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "bad-verdict",
+        "task.review_verdict",
+        ACTOR,
+        &verdict,
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"],
+        json!("/signal/description"),
+        "{reply}"
+    );
+    let mut extra = as_actor(package_fixture("merged"));
+    extra["note"] = json!("not in the schema");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "extra-key",
+        "task.merged",
+        ACTOR,
+        &extra,
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+}

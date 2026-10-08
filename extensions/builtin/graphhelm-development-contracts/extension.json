@@ -893,7 +893,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:6991163829f74fc22e71641dcfafb60d17e60d3c43769e4d333522c91dcbfdce",
+          "sha256": "sha256:91f69c99df70c6a94918c7ad0247059f3408f3066ecb69302464670be4a15160",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -969,7 +969,7 @@
           "id": "skill/implement",
           "kind": "skill",
           "path": "skills/implement/SKILL.md",
-          "sha256": "sha256:df760f8233a58584eef8191a4ae0e2a7e594a25572ff48510530f605c4a2ada6",
+          "sha256": "sha256:d81cb5be1923e24917dd302f4d836505bb5417a8dec261813c0671575f7dacaa",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -980,7 +980,7 @@
           "id": "skill/blind-review",
           "kind": "skill",
           "path": "skills/blind-review/SKILL.md",
-          "sha256": "sha256:73cf6b59076b210e72cdbb3165759cb52523bb4fc8e10aa9083e18613a0b972b",
+          "sha256": "sha256:54fd8f57f04805b7643b4135441390815d8a18b5269262ffca419fe484e6ea1c",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -991,7 +991,7 @@
           "id": "skill/merge",
           "kind": "skill",
           "path": "skills/merge/SKILL.md",
-          "sha256": "sha256:3a50fbcd4b3fc2e5350f817d0f71c0c56c182ea7946a0a1de799134573d299a8",
+          "sha256": "sha256:a5baeacf8744d20cde70a18f4524bfc3f42967239b499167270bae1890f04fe0",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -1036,6 +1036,89 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/task-event",
+          "kind": "schema",
+          "path": "schemas/task-event.schema.json",
+          "sha256": "sha256:a5d1985176ad383dbb600f185055606ece1ffbaa4cb9314157c42e04389b715c",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/task-event-valid-claimed",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/claimed.json",
+          "sha256": "sha256:728441f821454b7d9df7a90999dbf392210cd9df2420aaa2944e31edb79e3083",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-pr-opened",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/pr-opened.json",
+          "sha256": "sha256:4cb5fccd6942ae4bba5059396e266a3ea1a03a76cbf01379787e3cc736ff462b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-assigned",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-assigned.json",
+          "sha256": "sha256:960f97611c5656c6e08bc407269efe7e04c993046007171fed8fcdf1400f05a6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-verdict",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-verdict.json",
+          "sha256": "sha256:a01de65d3d944b39d9d7ca031d7a93ee889c5553e068ba7a2821b5fc33d182a5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-merged",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/merged.json",
+          "sha256": "sha256:7993164a7f17b46dbd80a952cacbeda2c6c3ed747726466fa2b9beae8ba420be",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
         },
         {
           "id": "schema/keel-card",

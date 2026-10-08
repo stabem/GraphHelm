@@ -37,7 +37,8 @@ import { devSession, type DevSession } from "./runtime/session";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
-import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
+import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
+import { TaskGraphs } from "./components/task-graphs";
 import type {
   Briefing,
   ClaimEvidence,
@@ -1626,6 +1627,8 @@ export default function App({
   );
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
+  // #391: the per-task graphs, folded from the run's `task.*` records.
+  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[] } | null>(null);
   const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
   useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
@@ -1651,6 +1654,9 @@ export default function App({
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
+    void readTaskEvents({ executionId: run, events: eventList, readEvidence })
+      .then((tasks) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks }); })
+      .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [] }); });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence]);
 
@@ -1793,7 +1799,7 @@ export default function App({
     return workMessages.some((message) => message.provenance === "stored" && agentSequences.has(message.sequence));
   }, [eventList, workMessages]);
   const recentActivity = useMemo(() => eventList
-    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isRunTeamSignal(event))
+    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isTaskEventSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
     .reverse()
     .map((event) => ({
@@ -2860,6 +2866,10 @@ export default function App({
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
             <div id="studio-panel-team" role="tabpanel" aria-labelledby="studio-tab-team" hidden={canvasTab !== "team"}>
+            {canvasTab === "team" && taskGraphs?.executionId === selected && (
+              <TaskGraphs tasks={taskGraphs.tasks}
+                onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }} />
+            )}
             {canvasTab === "team" && (
               <TeamCanvas storageKey={`graphhelm.team-positions:${projectKey}:${selected}`} bots={team.bots} otherRecorders={team.otherRecorders}
                 links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}

@@ -33,8 +33,8 @@ flowchart LR
 
 `keel` carries the binding rules that `implement` follows; `test-audit` gates every new, changed or
 removed test; `journey-map` and `journey-contract` create the journeys that `journey-prove`
-replays (`journey-prove` itself ships with #381). `keel plan` and the `task.*` records are being built (design phases B and F); until they
-land, each skill says how to do its step by hand. The [current delivery process](../process/DELIVERY.md)
+replays (`journey-prove` itself ships with #381). `keel plan` is being built (design phase B); until it lands, `task-plan` says how to write the
+plan by hand. The `task.*` records are live (#388). The [current delivery process](../process/DELIVERY.md)
 sets the repository's issue, evidence, review, and merge rules.
 
 ## Built-in skill catalog

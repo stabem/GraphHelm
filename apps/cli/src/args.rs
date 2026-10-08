@@ -1955,9 +1955,10 @@ pub enum WorkspaceCommand {
     /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
     /// never follows a link, and keeps any workspace whose worktree contains one.
     Sweep(WorkspaceSweepArgs),
-    /// Run one command under the root's shared build slot: one at a time, in arrival order, with
-    /// `CARGO_TARGET_DIR=<root>/target-shared` and `CARGO_BUILD_JOBS`. A waiter that dies loses
-    /// its place by itself (its ticket's OS lock is released). The command's exit code is ours.
+    /// Run one command under the root's build slot: one at a time, in arrival order, with
+    /// `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter
+    /// that dies loses its place by itself (its ticket's OS lock is released). The command's exit
+    /// code is ours.
     Slot(WorkspaceSlotArgs),
 }
 
@@ -2016,10 +2017,15 @@ pub struct WorkspaceSlotArgs {
     pub label: String,
     #[arg(long, default_value_t = 12)]
     pub jobs: u32,
-    /// Before the command, `cargo clean -p` every package of the current cargo workspace, so a
-    /// shared target never serves a crate built from another worktree. Third-party crates stay.
+    /// Before the command, `cargo clean -p` every package of the current cargo workspace out of
+    /// the target in use. Third-party crates stay. Refuses if the clean cannot run or fails.
     #[arg(long)]
     pub clean_workspace: bool,
+    /// Build in `<root>/target-shared` instead of the worktree's own target. UNSAFE for tests:
+    /// cargo treats another worktree's path-dependency artifacts as fresh, so a run can test bytes
+    /// it did not build (#361). Opt-in only, for builds whose result does not vouch for a tree.
+    #[arg(long)]
+    pub shared_target: bool,
     /// The command and its arguments, after `--`.
     #[arg(last = true, required = true)]
     pub command: Vec<String>,

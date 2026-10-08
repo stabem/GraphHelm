@@ -1536,6 +1536,16 @@ workspace are deleted (§3).
    inside its mutex and dropped a live waiter's ticket. `--clean-workspace` runs `cargo clean -p`
    for the current workspace's own packages first, so the shared target never serves a crate built
    from another worktree (seen twice on 2026-10-07); third-party crates stay warm.
+7. **Own target per worktree (#361).** The shared target is retired as the default: cargo treats a
+   path dependency's artifacts built from another worktree as fresh, so a test run in the shared
+   target could vouch for bytes it did not build, and `--clean-workspace` only narrows that window.
+   `slot` now runs the command with `CARGO_TARGET_DIR=<cwd>/target` (run it from the worktree
+   root), and `claim` prints `R/L/T/target`. sccache was measured and left out: its Rust cache keys
+   carry absolute paths, so two worktrees never share an entry (0 hits of 306), and even through
+   one fixed junction path (259 hits of 306) a fresh build took 227 s against 232 s, because the
+   workspace's own crates and the links dominate. `--shared-target` restores `R/target-shared` as
+   an explicit opt-in, unsafe for tests. `--clean-workspace` fails closed: a clean that cannot run or fails is a
+   refusal and the command does not run.
 
 **Deferred:** a disk budget and free-space floor, a Runtime timer, idle and PR-closed triggers and
 a Studio usage panel.

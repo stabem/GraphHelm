@@ -208,14 +208,22 @@ fn observe_cleanup(
         Ok((Err(()), mut report)) => {
             report["branch"] = "bound".into();
             LAST_CLEANUP.with(|cell| *cell.borrow_mut() = Some(report));
-            Err(failure("replay.cleanup_uncertain", format!("{path}/bound"), 1))
+            Err(failure(
+                "replay.cleanup_uncertain",
+                format!("{path}/bound"),
+                1,
+            ))
         }
         Err(_) => {
             LAST_CLEANUP.with(|cell| {
                 *cell.borrow_mut() =
                     Some(json!({"branch":"timeout","windowMs":window.as_millis()}));
             });
-            Err(failure("replay.cleanup_uncertain", format!("{path}/timeout"), 1))
+            Err(failure(
+                "replay.cleanup_uncertain",
+                format!("{path}/timeout"),
+                1,
+            ))
         }
     }
 }

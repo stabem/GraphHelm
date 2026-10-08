@@ -1146,7 +1146,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 remaining: 0,
             };
         };
-        return drain_terminated_job(&members);
+        return drain_terminated_job(&members, || job_member_ids(group).map(|fresh| fresh.1));
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -1260,22 +1260,35 @@ fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
 /// flake was unchanged and the fix looked applied. Two instruments disagreeing about the same
 /// instant; the one that decides is the one a caller can observe.
 #[cfg(windows)]
-fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
+fn drain_terminated_job(
+    members: &(Vec<u32>, usize),
+    refresh_unlisted: impl Fn() -> Option<usize>,
+) -> TerminationOutcome {
     let mut ids = members.0.clone();
-    let unlisted = members.1;
+    let mut unlisted = members.1;
     let started = std::time::Instant::now();
     let mut passes: u32 = 0;
     loop {
         passes = passes.saturating_add(1);
         ids.retain(|id| process_is_running(*id));
         if ids.is_empty() {
+            // #454: the pre-kill `assigned - listed` is not a count of survivors. A member that had
+            // EXITED while another member still held its handle is assigned and unlisted until the
+            // holder goes, and the holder was just killed with the job: re-read the count now,
+            // and keep waiting (inside the same ceiling) while it drains, rather than answering
+            // `BoundReached { remaining: 1 }` for a process that was dead before the kill.
+            unlisted = refresh_unlisted().unwrap_or(unlisted);
             if unlisted == 0 {
                 return TerminationOutcome::Complete;
             }
-            return TerminationOutcome::BoundReached {
-                passes,
-                remaining: unlisted,
-            };
+            if started.elapsed() >= JOB_DRAIN_CEILING {
+                return TerminationOutcome::BoundReached {
+                    passes,
+                    remaining: unlisted,
+                };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
         }
         if started.elapsed() >= JOB_DRAIN_CEILING {
             return TerminationOutcome::BoundReached {
@@ -1554,7 +1567,7 @@ mod post_enumeration_join_window {
             // wait for it.
             terminate_directly(enumerated_id);
 
-            let drain = std::thread::spawn(move || drain_terminated_job(&stale));
+            let drain = std::thread::spawn(move || drain_terminated_job(&stale, || Some(0)));
 
             // EXPLICIT SYNCHRONIZATION, NOT A WALL-CLOCK RACE (Codex, second pass): a bounded poll
             // here would compare THIS thread's elapsed time against a margin over

@@ -306,6 +306,60 @@ class TitleAndSummary(unittest.TestCase):
         self.assertNotIn("title", document)
         self.assertEqual(self.asked, [])
 
+class Planned(unittest.TestCase):
+    """#480: `planned` records the lane's keel plan so the Studio lights Plan (and Critic for a
+    `design` plan). Its fields come from the plan itself, never retyped, and the older steps keep
+    their default revisions (their records' keys)."""
+
+    PLAN = {"schema": "graphhelm-task-plan-v1", "taskId": "issue-480", "classes": ["user_visible", "code"],
+            "invariantClasses": [], "journeys": [], "proof": "both", "reviews": 1, "skills": [], "tools": [],
+            "delegation": {}, "path": ["card", "design"], "decidedBy": "rules", "jev": None,
+            "critic": {"mode": "design", "passScore": 8, "maxRounds": 3}}
+
+    def planned(self, *extra):
+        args = task_record.parse(["--lane", "gh-claude-1", "planned", "--issue", "480", *extra])
+        return task_record.document(args, "2026-10-08T00:00:00Z")
+
+    def plan_file(self, plan):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        with handle:
+            json.dump({"ok": True, "command": "keel", "data": {"plan": plan}}, handle)
+        self.addCleanup(Path(handle.name).unlink)
+        return handle.name
+
+    def test_the_fields_are_copied_from_a_keel_plan_reply(self):
+        doc = self.planned("--plan-file", self.plan_file(self.PLAN), "--summary", "Plan node")
+        self.assertEqual({k: doc[k] for k in ("lane", "classes", "reviews", "proof", "critic", "summary")},
+                         {"lane": "gh-claude-1", "classes": ["user_visible", "code"], "reviews": 1,
+                          "proof": "both", "critic": {"mode": "design", "passScore": 8, "maxRounds": 3},
+                          "summary": "Plan node"})
+
+    def test_a_plan_recorded_before_the_critic_asks_for_none(self):
+        plan = {k: v for k, v in self.PLAN.items() if k != "critic"}
+        doc = self.planned("--plan-file", self.plan_file(plan), "--summary", "old plan")
+        self.assertEqual(doc["critic"], {"mode": "none", "passScore": 8, "maxRounds": 3})
+
+    def test_explicit_fields_stand_in_when_there_is_no_plan(self):
+        doc = self.planned("--classes", "docs", "docs", "--reviews", "1", "--proof", "none",
+                           "--critic-mode", "none", "--summary", "docs only")
+        self.assertEqual(doc["classes"], ["docs"])
+        self.assertEqual(doc["critic"]["mode"], "none")
+
+    def test_no_plan_source_or_no_summary_is_refused(self):
+        with self.assertRaises(SystemExit):
+            self.planned("--summary", "nothing to copy")
+        with self.assertRaises(SystemExit):
+            self.planned("--plan-file", self.plan_file(self.PLAN))
+        with self.assertRaises(SystemExit):
+            self.planned("--plan-file", self.plan_file(self.PLAN), "--summary", "x" * 301)
+
+    def test_the_older_steps_keep_their_default_revisions(self):
+        for kind, extra, revision in (("claimed", ["--branch", "b"], 1),
+                                      ("pr_opened", ["--pr", "1", "--head", HEAD_A], 2),
+                                      ("merged", ["--pr", "1", "--merge-sha", HEAD_A], 5)):
+            args = task_record.parse(["--lane", "l", kind, "--issue", "9", *extra])
+            self.assertEqual(task_record.document(args, "t")["revision"], revision, kind)
+
 
 class GithubWordsDecodeUtf8(unittest.TestCase):
     """#526: `gh` answers in UTF-8. Read with the platform default, a curly quote (byte 0x9d in

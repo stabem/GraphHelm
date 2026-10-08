@@ -190,6 +190,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
 | take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo`, optional `journeys` |
+| plan it, **right after the claim** (§2) | `task.planned` | `lane`, `classes`, `reviews`, `proof`, `critic` `{mode, passScore, maxRounds}`, `summary` |
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
@@ -202,6 +203,14 @@ task with one slice per PR (#460): record `task.claimed` with the new slice's ow
 next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
 Name the journey the issue serves; the Studio Graph tab links the task to it. Ids are the stems of .graphhelm/journeys/*.journey.yaml.
+
+**Plan is a recorded step (#480).** A claimed task shows **Plan** lit until its `task.planned`
+arrives; then **Implement**, or first **Critic** when the plan's `critic.mode` is `design` (#467).
+`planned` copies `classes`, `reviews`, `proof` and `critic` from `graphhelm keel plan` on the
+task's paths (`--paths`, or a saved `keel plan --json` reply with `--plan-file`), so the fields are
+the planner's decision, never retyped; `--classes`/`--reviews`/`--proof`/`--critic-mode` stand in
+only when no plan can be run. `summary` is the plan in one line (at most 300 characters, the same bound as #477's `summary`). A
+`planned` recorded after the PR opened informs the graph without moving it back.
 The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
 verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).
 
@@ -212,6 +221,7 @@ with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
 
 ```sh
 python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch> --journeys <contractId>
+python tools/task-record/task_record.py --lane <you> planned         --issue <N> --paths <card scope...> --summary "<the plan in one line>"
 python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha> --reviewer <reviewer> --journeys <contractId>
 python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <other>   # only when the reviewer changes
 python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
@@ -229,7 +239,7 @@ A critic round's verdict is not an argument: the script derives it from the scor
   serves; from a lane worktree pass `--token-file` with the Runtime checkout's absolute path. A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
   has none until it restarts. Never use the owner's `events.token` for a lane record.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
-  `revision` is the step's position (claimed 1 … merged 5). `closes` is exactly the `--closes`
+  `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
   given it is empty, which is right for a `Refs` PR (#464).
   `--dry-run` prints the request without sending it. `--url` must be a loopback host

@@ -5,6 +5,7 @@ One command per step, the actor set per command, so lanes that share one MCP reg
 need a per-lane environment or a session relaunch:
 
     python tools/task-record/task_record.py --lane gh-claude-2 claimed  --issue 355 --branch issue-355-x
+    python tools/task-record/task_record.py --lane gh-claude-2 planned  --issue 355 --paths <card scope...> --summary "<one line>"
     python tools/task-record/task_record.py --lane gh-claude-2 pr_opened --issue 355 --pr 357 --head <sha>
     python tools/task-record/task_record.py --lane gh-claude-2 review_assigned --issue 355 --pr 357 --head <sha> --reviewer gh-claude-6
     python tools/task-record/task_record.py --lane gh-claude-6 review_verdict --issue 355 --pr 357 --head <sha> --verdict APPROVE --comment-url <url>
@@ -29,7 +30,12 @@ import urllib.request
 from pathlib import Path
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
+KINDS = ("claimed", "planned", "pr_opened", "review_assigned", "review_verdict", "merged", "critic_verdict")
+# The default revision is the step's position in the delivery. `planned` (#480) came later and is
+# the claim's companion, so the older steps keep their numbers (and their records' keys).
+REVISIONS = {"claimed": 1, "planned": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "critic_verdict": 1}
+CLASSES = ("docs", "code", "user_visible", "invariant")
+PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
 STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
 ACCEPTED = {"title": 200, "summary": 300}
@@ -78,7 +84,7 @@ def parse(argv):
     p.add_argument("kind", choices=KINDS)
     p.add_argument("--lane", required=True, help="the recording actor (your ListAgents name)")
     p.add_argument("--issue", type=int, required=True, help="the task is issue-<N> for its whole life")
-    p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 ... merged 5")
+    p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 (planned 1) ... merged 5")
     p.add_argument("--branch")
     p.add_argument("--parent", type=int, help="claimed: the issue whose work turned this task up (#514)")
     p.add_argument("--pr", type=int)
@@ -100,6 +106,17 @@ def parse(argv):
     p.add_argument("--max-rounds", type=int, default=3)
     p.add_argument("--design-ref", help="critic_verdict: the design that was graded (a path or a URL)")
     p.add_argument("--reason", action="append", default=[], help="critic_verdict: one reason; repeat for more (1 to 8)")
+    # planned (#480): the keel plan's fields, from `graphhelm keel plan` on --paths, from a saved
+    # `keel plan --json` reply (--plan-file), or given one by one.
+    p.add_argument("--paths", nargs="*", default=[], help="planned: the task's paths (its card scope); runs `graphhelm keel plan`")
+    p.add_argument("--promise", default="", help="planned: the task's promise, passed to `keel plan`")
+    p.add_argument("--plan-file", help="planned: a saved `graphhelm --json keel plan` reply to copy the fields from")
+    p.add_argument("--graphhelm", default="graphhelm", help="planned: the graphhelm binary that runs `keel plan`")
+    p.add_argument("--plan-repo", default=".", help="planned: the repository `keel plan` reads")
+    p.add_argument("--classes", nargs="*", choices=CLASSES)
+    p.add_argument("--reviews", type=int)
+    p.add_argument("--proof", choices=PROOFS)
+    p.add_argument("--critic-mode", choices=("none", "design"))
     p.add_argument("--repo", default="stabem/GraphHelm",
                    help="owner/name; pass '' to omit it (a Runtime older than #420 refuses the field)")
     p.add_argument("--execution", default="gh-team")
@@ -107,7 +124,8 @@ def parse(argv):
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
                    help="the Runtime's agent session token (never the owner's events.token)")
     p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh")
-    p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh")
+    p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
+                   " planned: the plan in one line (at most 300 characters), required")
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args(argv)
@@ -135,9 +153,48 @@ def need(args, *names):
         sys.exit(f"task_record: {args.kind} needs --" + ", --".join(missing))
 
 
+def keel_plan(args):
+    """The `graphhelm-task-plan-v1` record the step copies its fields from."""
+    if args.plan_file:
+        reply = json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
+    elif args.paths:
+        command = [args.graphhelm, "--json", "keel", "plan", "--task", f"issue-{args.issue}",
+                   "--repo", args.plan_repo, "--promise", args.promise, "--paths", *args.paths]
+        try:
+            run = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            sys.exit(f"task_record: `keel plan` did not run: {error}")
+        try:
+            reply = json.loads(run.stdout)
+        except json.JSONDecodeError:
+            sys.exit(f"task_record: `keel plan` printed no JSON (exit {run.returncode}): {run.stderr.strip()[:300]}")
+        if reply.get("ok") is not True:
+            codes = ", ".join(d.get("code", "?") for d in reply.get("diagnostics", []))
+            sys.exit(f"task_record: `keel plan` refused: {codes}")
+    else:
+        return None
+    plan = reply.get("data", {}).get("plan", reply)
+    if plan.get("schema") != "graphhelm-task-plan-v1":
+        sys.exit("task_record: the plan is not a graphhelm-task-plan-v1 record")
+    return plan
+
+
+def planned_fields(args):
+    plan = keel_plan(args)
+    if plan is not None:
+        # A plan recorded before #467 carries no critic: it asked for none.
+        critic = plan.get("critic") or {"mode": "none", "passScore": 8, "maxRounds": 3}
+        return {"classes": plan["classes"], "reviews": plan["reviews"], "proof": plan["proof"], "critic": critic}
+    need(args, "reviews", "proof", "critic-mode")
+    if not args.classes:
+        sys.exit("task_record: planned needs --paths, --plan-file, or --classes with --reviews, --proof and --critic-mode")
+    return {"classes": list(dict.fromkeys(args.classes)), "reviews": args.reviews, "proof": args.proof,
+            "critic": {"mode": args.critic_mode, "passScore": args.pass_score, "maxRounds": args.max_rounds}}
+
+
 def document(args, now):
     doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
-           "revision": args.revision or (1 if args.kind == "critic_verdict" else KINDS.index(args.kind) + 1), "at": now}
+           "revision": args.revision or REVISIONS[args.kind], "at": now}
     if args.kind == "claimed":
         need(args, "branch")
         doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
@@ -146,6 +203,11 @@ def document(args, now):
         journeys = known_journeys(args)
         if journeys:
             doc["journeys"] = journeys
+    elif args.kind == "planned":
+        need(args, "summary")
+        if len(args.summary) > 300 or not args.summary.isprintable():
+            sys.exit("task_record: --summary is one line of at most 300 characters")
+        doc.update(lane=args.lane, **planned_fields(args), summary=args.summary)
     elif args.kind == "pr_opened":
         # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
         need(args, "pr", "head", "reviewer")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.critic_verdict); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.critic_verdict); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.claimed",
@@ -23,6 +23,34 @@
         "summary": {"$ref": "#/$defs/summary"},
         "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"},
         "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}}
+      }
+    },
+    {
+      "title": "task.planned",
+      "description": "#480: the lane's keel plan for the task, recorded right after task.claimed; the Studio lights the Plan step from it, and a Critic step when critic.mode is design (#467).",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "lane", "classes", "reviews", "proof", "critic", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "lane": {"$ref": "#/$defs/actor"},
+        "classes": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["docs", "code", "user_visible", "invariant"]}},
+        "reviews": {"type": "integer", "minimum": 1, "maximum": 5},
+        "proof": {"enum": ["none", "tests", "journey", "both"]},
+        "critic": {
+          "type": "object",
+          "required": ["mode", "passScore", "maxRounds"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"enum": ["none", "design"]},
+            "passScore": {"type": "integer", "minimum": 1, "maximum": 10},
+            "maxRounds": {"type": "integer", "minimum": 1, "maximum": 5}
+          }
+        },
+        "summary": {"$ref": "#/$defs/summary"}
       }
     },
     {

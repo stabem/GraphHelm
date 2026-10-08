@@ -77,7 +77,7 @@ describe("readTaskEvents", () => {
       readEvidence: async (_, id) => store.get(id)!,
     });
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "implement", pr: null });
+    expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "plan", pr: null });
   });
 
   /* #185: on a gh-team-sized run (~1,250 task records) the graph took about four minutes to draw,
@@ -167,13 +167,54 @@ describe("foldTaskEvents slices (#460)", () => {
       record(3, "task.pr_opened", "gh-claude-4", { ...issue, pr: 456, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),
     ]);
     expect(tasks.map((task) => [task.branch, task.pr, task.step]).sort()).toEqual([
-      ["issue-356-explore", null, "implement"],
+      ["issue-356-explore", null, "plan"],
       ["issue-356-heal", 456, "review"],
     ]);
   });
 
   it("shows the second claim as its own slice before it has a PR", () => {
     const tasks = foldTaskEvents(records.slice(0, 4));
-    expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "implement"]]);
+    expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "plan"]]);
+  });
+});
+
+/* #480: a claimed task is planning until the lane records its keel plan (`task.planned`); a
+ * `design` plan then waits on its critic (#467) before Implement. Catches a fold that lights
+ * Implement on the claim alone (no Plan step), one that skips the Critic a design plan asks for,
+ * one that sends a PR under review back to Plan when the plan is recorded late, and a planned
+ * record that names another lane or carries an out-of-bounds field. Cost: pure functions. */
+describe("foldTaskEvents plan step (#480)", () => {
+  const issue = { taskId: "issue-480" };
+  const claim = record(1, "task.claimed", "gh-claude-1", { ...issue, issue: 480, lane: "gh-claude-1", branch: "issue-480-plan-step" });
+  const plan = (sequence: number, mode: "none" | "design") => record(sequence, "task.planned", "gh-claude-1", {
+    ...issue, lane: "gh-claude-1", classes: ["user_visible"], reviews: 1, proof: "both",
+    critic: { mode, passScore: 8, maxRounds: 3 }, summary: "Record the plan; light Plan.",
+  });
+  const opened = (sequence: number) => record(sequence, "task.pr_opened", "gh-claude-1", { ...issue, pr: 481, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-1" });
+
+  it("lights Plan on the claim, then Implement (or Critic for a design plan) once the plan is recorded", () => {
+    expect(foldTaskEvents([claim])[0].step).toBe("plan");
+    const coded = foldTaskEvents([claim, plan(2, "none")])[0];
+    expect(coded).toMatchObject({ step: "implement", plan: { summary: "Record the plan; light Plan.", critic: { mode: "none" } } });
+    expect(foldTaskEvents([claim, plan(2, "design")])[0].step).toBe("critic");
+    expect(foldTaskEvents([claim, plan(2, "design"), opened(3)])[0].step).toBe("review");
+  });
+
+  it("keeps a plan recorded after the PR without moving the graph back", () => {
+    const state = foldTaskEvents([claim, opened(2), plan(3, "design")]);
+    expect(state).toHaveLength(1);
+    expect(state[0]).toMatchObject({ step: "review", plan: { critic: { mode: "design" } } });
+  });
+
+  it("refuses a planned record for another lane or out of the schema's bounds", () => {
+    const parse = (actor: string, document: Record<string, unknown>) => parseTaskEvent("task.planned", actor, JSON.stringify({
+      schema: "graphhelm-task-event-v1", taskId: "issue-480", revision: 1, at: "2026-10-08T00:00:00Z", lane: "gh-claude-1",
+      classes: ["code"], reviews: 1, proof: "tests", critic: { mode: "none", passScore: 8, maxRounds: 3 }, summary: "s", ...document,
+    }));
+    expect(parse("gh-claude-1", {})).not.toBeNull();
+    expect(parse("gh-claude-2", {})).toBeNull();
+    expect(parse("gh-claude-1", { classes: ["code", "code"] })).toBeNull();
+    expect(parse("gh-claude-1", { critic: { mode: "design", passScore: 11, maxRounds: 3 } })).toBeNull();
+    expect(parse("gh-claude-1", { summary: "x".repeat(301) })).toBeNull();
   });
 });

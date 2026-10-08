@@ -174,3 +174,23 @@ test('a screen expectation waits for a control that renders after load, and stil
   const never=await n.send('snapshot',{expect:[{role:'heading',name:'Never'}]});
   assert.equal(never.code,'driver.expectation_failed');
 });
+
+// #356: a page whose accessibility snapshot is over the model budget (6 KiB) could not be
+// discovered at all (driver.snapshot_too_large), so explore could not see busy screens such as the
+// Studio's Journey tab. The model now gets the page's outline within the budget; identity still
+// reads the whole page. Cost: one real browser page, seconds.
+test('a discover snapshot over the model budget returns the outline and keeps whole-page identity',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/big');
+  const full=await c.send('snapshot',{expect:[]});
+  assert.equal(full.ok,true,JSON.stringify(full).slice(0,300));
+  assert.ok(Buffer.byteLength(full.result.ariaYaml)>6144,'the fixture page is over the model budget');
+  const discovery=await c.send('snapshot',{expect:[],discover:true});
+  assert.equal(discovery.ok,true,JSON.stringify(discovery).slice(0,300));
+  const outline=discovery.result.ariaYaml;
+  assert.ok(Buffer.byteLength(outline)<=6144,`outline is ${Buffer.byteLength(outline)} bytes`);
+  assert.match(outline,/- heading "Big page"/);
+  assert.match(outline,/page summarized: \d+ of \d+ lines, text left out/);
+  assert.ok(!outline.includes('Long paragraph text'),'paragraph text is left out');
+  assert.equal(discovery.result.fingerprint,full.result.fingerprint,'identity reads the whole page');
+});

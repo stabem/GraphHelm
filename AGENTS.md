@@ -230,6 +230,9 @@ and nothing else. It replaces the old `.factory/` protocol and the `superpowers`
   the change reaches, names them, and merges (squash, head pinned, closing check). No gate, no separate presser.
 - Every comment, review and commit body starts with `Session: <ListAgents name [ref]> · Head: <sha8>`,
   because every session pushes under one GitHub account.
+- Each session exports `GRAPHHELM_ACTOR=<ListAgents name>` before starting the MCP server, and the
+  steps that write an identity line also record their `task.*` signal (DELIVERY.md, "Task
+  records"); the Runtime refuses a task record signed by another actor.
 - Preserve user work. Never discard unrelated changes or use destructive Git commands without
   explicit authorization. A session removes only what it created, by name.
 - Keep commits small and independently buildable, with conventional commit messages.

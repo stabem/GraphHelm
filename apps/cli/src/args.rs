@@ -706,8 +706,9 @@ pub struct McpArgs {
     pub project: Option<PathBuf>,
     /// The actor every mutation is attributed to (the serve layer's actor id rules).
     /// OPTIONAL because one `.mcp.json` is shared by every session in a repository, so a
-    /// literal here makes every session the same actor (#1058). Falls back to
-    /// `GRAPHHELM_ACTOR`; absent from both doors is a refusal, never a default.
+    /// literal here makes every session the same actor (#1058). A non-empty `GRAPHHELM_ACTOR`
+    /// wins over this flag (#389), so a lane can sign as itself under the shared registration;
+    /// absent from both doors is a refusal, never a default.
     #[arg(long)]
     pub actor: Option<String>,
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.

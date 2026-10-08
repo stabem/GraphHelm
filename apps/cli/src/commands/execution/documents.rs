@@ -157,6 +157,24 @@ pub(crate) fn validate_task_event(
         return Err(invalid());
     }
     let document: serde_json::Value = serde_json::from_str(text).map_err(|_| invalid())?;
+    // #419: the lane, reviewer or merger a record names is an identity, refused as one (DELIVERY.md
+    // "Task records"), before the shape check, so a wrong name is never reported as a wrong shape.
+    let identity = match kind {
+        "task.claimed" | "task.pr_opened" => Some("lane"),
+        "task.review_verdict" => Some("reviewer"),
+        "task.merged" => Some("merger"),
+        _ => None,
+    };
+    if let Some(field) = identity
+        && let Some(named) = document[field].as_str()
+        && named != actor_id
+    {
+        return Err(Failure {
+            code: crate::error_codes::GHCLI038_ACTOR_MISMATCH,
+            message: format!("a {kind} record's {field} must be the actor that records it"),
+            pointer: format!("/signal/description/{field}"),
+        });
+    }
     let count = |key: &str| document[key].as_u64().filter(|n| *n > 0).is_some();
     let sha = |key: &str| {
         document[key].as_str().is_some_and(|s| {

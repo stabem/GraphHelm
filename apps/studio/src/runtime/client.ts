@@ -1786,7 +1786,7 @@ export class RuntimeClient {
   async signal(
     executionId: string,
     message: string,
-    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; kind?: "operator_note" | "native_persona_linked" | "actor_alias" | "owner_refusal" } = {},
+    options: MutationOptions & { emittedAt?: string; to?: string; replyTo?: string; task?: string; kind?: "operator_note" | "native_persona_linked" | "actor_alias" | "owner_refusal" } = {},
   ): Promise<MutationEvidence> {
     const id = checkedId(executionId, "executionId");
     if (typeof message !== "string" || message.trim().length === 0) {
@@ -1838,6 +1838,11 @@ export class RuntimeClient {
           ...(typeof options.to === "string" && options.to.length > 0 ? { to: options.to } : {}),
           ...(typeof options.replyTo === "string" && options.replyTo.length > 0
             ? { replyTo: options.replyTo }
+            : {}),
+          // The task this message belongs to (schema 1.2.0, #396), only when it is a task id: the
+          // Runtime refuses a malformed one, and that would lose the whole message.
+          ...(typeof options.task === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(options.task)
+            ? { task: options.task }
             : {}),
         },
       },

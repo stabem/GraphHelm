@@ -34,23 +34,30 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
+  /** #396/#402: how many cards are open. When given, the cards live only in the "Needs you"
+   * thread (key `needs-you`), alone, instead of above whichever thread is open (spec §8). */
+  cardCount?: number;
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
   /** Resolves true only once the Runtime confirmed the message; the draft is kept otherwise. */
-  onSend: (text: string, to: string | null, replyTo: string | null) => Promise<boolean>;
+  onSend: (text: string, to: string | null, replyTo: string | null, task?: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
-  answering: { asker: string; signalId: string | null } | null;
+  answering: { asker: string; signalId: string | null; task?: string | null } | null;
   onClearAnswer: () => void;
   composerFocus: number;
   highlight: number | null;
   onUseSuggestion: (text: string) => void;
 }
 
+/** The key of the one thread that holds every open question card (#396). */
+export const NEEDS_YOU = "needs-you";
+
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
-  if (thread.kind === "pair") return "none";
+  // #396: speaking inside a task thread records a message tagged with that task.
+  if (thread.kind === "task") return "record";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
 }
 
@@ -67,6 +74,9 @@ function prefersReducedMotion(): boolean {
 
 export function ChatColumn(props: ChatColumnProps) {
   const thread = props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
+  // #393: task threads that are merged or quiet fold under "older", shown on request.
+  const [showOlder, setShowOlder] = useState(false);
+  const olderCount = props.threads.filter((candidate) => candidate.older && candidate.key !== thread?.key).length;
   const mode = composerMode(thread, props.nativeKeys);
   // One draft per thread: a single shared draft followed the operator across tabs, so text
   // written for one bot could be sent to another.
@@ -85,8 +95,14 @@ export function ChatColumn(props: ChatColumnProps) {
     if (text === "" || props.sending) return;
     const key = draftKey;
     let ok: boolean;
-    if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
+    if (props.answering !== null) {
+      // #402: an answer keeps the question's task, so it lands in the question's thread.
+      ok = props.answering.task
+        ? await props.onSend(text, props.answering.asker, props.answering.signalId, props.answering.task)
+        : await props.onSend(text, props.answering.asker, props.answering.signalId);
+    }
     else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
+    else if (thread?.kind === "task") { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null, thread.key.slice("task:".length)); }
     else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }
     // A refused or unconfirmed send keeps its words; only a delivered one clears its own thread.
     if (ok) setDraftFor(key, "");
@@ -124,7 +140,11 @@ export function ChatColumn(props: ChatColumnProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [unseen, setUnseen] = useState(false);
-  const messages = thread?.messages ?? [];
+  // #396: an agent filter on any thread; "" shows every line. Reset when the thread changes.
+  const [onlyFrom, setOnlyFrom] = useState("");
+  useEffect(() => { setOnlyFrom(""); }, [thread?.key]);
+  const speakers = [...new Set((thread?.messages ?? []).map((message) => message.sender))];
+  const messages = props.selected === NEEDS_YOU ? [] : (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
   const lastId = messages.at(-1)?.id ?? "";
   const toBottom = useCallback((smooth: boolean) => {
     const el = scroller.current;
@@ -165,18 +185,36 @@ export function ChatColumn(props: ChatColumnProps) {
       <div className="chat-tabpanel" id="studio-panel-chat" role="tabpanel" aria-labelledby="studio-tab-chat">
       <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
       <div className="chat-tabs" role="tablist" aria-label="Threads">
-        {props.threads.map((candidate) => {
+        {props.threads.filter((candidate) => showOlder || !candidate.older || candidate.key === thread?.key).map((candidate) => {
           const unread = props.unread[candidate.key] ?? 0;
           return (
             <button key={candidate.key} type="button" role="tab" aria-selected={candidate.key === thread?.key}
+              className={candidate.older ? "chat-tab-older" : undefined}
               aria-label={unread > 0 ? `${candidate.label}, ${unread} unread` : candidate.label} onClick={() => props.onSelect(candidate.key)}>
               {candidate.label}{unread > 0 && <span className="chat-unread" aria-hidden="true">{unread}</span>}
             </button>
           );
         })}
+        {(props.cardCount ?? 0) > 0 && (
+          <button type="button" role="tab" aria-selected={props.selected === NEEDS_YOU} className="chat-tab-needs"
+            onClick={() => props.onSelect(NEEDS_YOU)}>Needs you ({props.cardCount})</button>
+        )}
+        {olderCount > 0 && (
+          <button type="button" className="chat-older-toggle" aria-expanded={showOlder} onClick={() => setShowOlder((open) => !open)}>
+            {showOlder ? "Hide older" : `older (${olderCount})`}
+          </button>
+        )}
       </div>
       <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
-      {thread?.kind === "pair" && <p className="chat-recorded-note">Recorded messages: what these agents recorded to each other through the Runtime, not their native chats.</p>}
+      {thread?.kind === "task" && <p className="chat-recorded-note">Recorded messages about this task: what the agents recorded through the Runtime, not their native chats.</p>}
+      {speakers.length > 1 && (
+        <label className="chat-agent-filter">Lines from
+          <select value={onlyFrom} onChange={(event) => setOnlyFrom(event.target.value)}>
+            <option value="">everyone</option>
+            {speakers.map((sender) => <option key={sender} value={sender}>{props.names[sender] ?? (sender === "studio-operator" ? "You" : sender)}</option>)}
+          </select>
+        </label>
+      )}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
         {messages.map((message) => {
@@ -193,7 +231,7 @@ export function ChatColumn(props: ChatColumnProps) {
           );
         })}
       </ol>
-      {props.cards}
+      {(props.cardCount === undefined || props.selected === NEEDS_YOU) && props.cards}
       {(props.jev.loading || suggestion !== undefined || props.jev.issue !== null) && mode !== "none" && (
         <section className="jev-card" aria-label="Jev suggests">
           {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion ? <>

@@ -39,6 +39,7 @@ import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
 import { TaskGraphs } from "./components/task-graphs";
+import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
 import type {
   Briefing,
   ClaimEvidence,
@@ -86,7 +87,7 @@ import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
 import type { JourneyFlowsView, JourneysView } from "./runtime/types";
 import { JourneyFlows } from "./components/journey-flows";
-import { ChatColumn } from "./components/chat-column";
+import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
@@ -1695,6 +1696,7 @@ export default function App({
       via: string = "run",
       replyTo: string | null = null,
       kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
+      task: string | null = null,
     ): Promise<boolean> => {
       const client = clientRef.current;
       if (!client || selected === "") return false;
@@ -1716,6 +1718,7 @@ export default function App({
           // The receipt the ledger settles by. Without it, an answer sent through the banner's
           // own button never retired the question it answered.
           ...(replyTo === null ? {} : { replyTo }),
+          ...(task === null ? {} : { task }),
           ...(kind === "operator_note" ? {} : { kind }),
         });
         if (evidence.result === "refused") {
@@ -1859,10 +1862,11 @@ export default function App({
       setCurrentIssue("Checking the available model routes…");
       return;
     }
+    // #396: no judge route is a state, not an error. The chat shows no Jev card (there is
+    // nothing to retry); run details carries JEV_ABSENT_NOTE instead.
+    if (jevAvailability(judgeRoutes.length) === "absent") return;
     if (activeJudgeRoute === null) {
-      setCurrentIssue(judgeRoutes.length === 0
-        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
-        : "Choose a Jev model to prepare suggested replies.");
+      setCurrentIssue("Choose a Jev model to prepare suggested replies.");
       return;
     }
     const client = clientRef.current;
@@ -2047,10 +2051,16 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
-  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id), [workMessages, team]);
+  // #393: one thread per task, opened by the run's task.* records.
+  const runTasks = taskGraphs?.executionId === selected ? taskGraphs.tasks : null;
+  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id, runTasks ?? [], clock),
+    [workMessages, team, runTasks, clock]);
   const [thread, setThread] = useState(EVERYONE);
   const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
-  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); }, [selected]);
+  // #402: until the owner picks a thread, a run that needs them opens on the Needs you thread,
+  // where the cards now live (spec §8); otherwise on Everyone.
+  const [threadChosen, setThreadChosen] = useState(false);
+  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
   useEffect(() => {
     const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
     setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
@@ -2069,7 +2079,7 @@ export default function App({
   const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
   const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
   const [graphFileOpen, setGraphFileOpen] = useState(false);
-  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null } | null>(null);
+  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null; task?: string | null } | null>(null);
   const [composerFocus, setComposerFocus] = useState(0);
   const [highlight, setHighlight] = useState<number | null>(null);
   const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
@@ -2120,10 +2130,10 @@ export default function App({
     setMobileTab(canvasTab === "team" ? "team" : "journeys");
     setCitedRecords({ executionId: selected, sequences });
   };
-  const answerQuestion = (asker: string, signalId: string | null) => {
+  const answerQuestion = (asker: string, signalId: string | null, task: string | null = null) => {
     const key = botKeyOf(team.bots, asker) ?? asker;
     setThread(`direct:${key}`);
-    setAnswering({ asker, signalId });
+    setAnswering({ asker, signalId, ...(task ? { task } : {}) });
     setComposerFocus((nonce) => nonce + 1);
     setMobileTab("chat");
   };
@@ -2567,6 +2577,9 @@ export default function App({
             <Beacon
               state={needs.state}
               onOpen={() => {
+                // #402: the cards live in the Needs you thread; the beacon opens it.
+                setThread(NEEDS_YOU);
+                setAnswering(null);
                 setMobileTab("chat");
                 window.setTimeout(() => {
                   const target = document.getElementById(NEEDS_YOU_ID);
@@ -2579,6 +2592,7 @@ export default function App({
           <details className="topbar-menu">
             <summary>Run details</summary>
             <div className="topbar-menu-body">
+            {routes !== null && jevAvailability(judgeRoutes.length) === "absent" && <p className="jev-absent-note">{JEV_ABSENT_NOTE}</p>}
             {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">
@@ -2744,11 +2758,12 @@ export default function App({
               ))}
             </div>
             <ChatColumn
-              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setAnswering(null); setHighlight(null); }} unread={unread}
+              threads={threadsWithAnswer} selected={!threadChosen && thread === EVERYONE && needs.items.length > 0 ? NEEDS_YOU : thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
+              cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
-                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
-                onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId, "operator_note", item.kind === "question" ? item.task ?? null : null)}
+                onAnswer={(item) => answerQuestion(item.asker, item.signalId, item.kind === "question" ? item.task ?? null : null)}
                 onRefuse={(item) => void refuse(item)}
                 onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
                 stepActions={stepActions} />}
@@ -2763,9 +2778,9 @@ export default function App({
                     if (first) setFocus({ kind: "node", id: first.id });
                   }} />
               </aside>}
-              onSend={async (text, to, replyTo) => {
+              onSend={async (text, to, replyTo, task) => {
                 // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
-                const ok = await say(text, to, "chat", replyTo);
+                const ok = await say(text, to, "chat", replyTo, "operator_note", task ?? null);
                 if (ok) setAnswering(null);
                 return ok;
               }}

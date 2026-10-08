@@ -124,6 +124,13 @@ test('capture conceals same-origin and opaque-origin iframe secret echoes',async
   const c=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(c,base);
   assert.equal((await act(c,'enter_text','textbox','Password',{secretEnv:'GRAPHHELM_SECRET_PASSWORD'})).ok,true);
   assert.equal((await act(c,'wait_for','button','Echo ready')).ok,true);
+  // Explore needs frame-aware text privacy before model dispatch, independently
+  // of image masks. The existing replay snapshot never requested this observer.
+  const discovery=await c.send('snapshot',{expect:[],discover:true});
+  assert.equal(discovery.ok,true);
+  assert.ok(!JSON.stringify(discovery).includes(secret));
+  assert.ok(discovery.result.ariaYaml.includes('«secret:PASSWORD»'));
+  assert.ok(discovery.result.expectations.some(v=>v.role==='button'&&v.name==='Echo ready'));
   const capture=await c.send('capture',{path:'frames.png',maskSecrets:true});assert.equal(capture.ok,true);assert.equal(capture.result.masked,true);
   assert.deepEqual((await decode(await readFile(join(c.output,'frames.png')))).slice(0,2),[{ink:0,masked:32000},{ink:0,masked:32000}]);
   const hidden=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(hidden,base+'?shadow');

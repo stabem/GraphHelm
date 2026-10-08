@@ -318,7 +318,19 @@ fn path_pattern(uri: &axum::http::Uri) -> String {
             let uuid = part.len() == 36
                 && part.split('-').map(str::len).eq([8, 4, 4, 4, 12])
                 && part.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
-            if numeric || hex || uuid { ":id" } else { part }
+            // A record id with a short letter prefix (`MLB4000000001`, `ord_1234567`): at most five
+            // letters, an optional `-`/`_`, then six or more digits (#356 calibration).
+            let digits = part.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+            let prefix = part.len() - digits.len();
+            let digits = digits.strip_prefix(['-', '_']).unwrap_or(digits);
+            let prefixed = (1..=5).contains(&prefix)
+                && digits.len() >= 6
+                && digits.bytes().all(|b| b.is_ascii_digit());
+            if numeric || hex || uuid || prefixed {
+                ":id"
+            } else {
+                part
+            }
         })
         .collect::<Vec<_>>()
         .join("/")
@@ -1125,24 +1137,51 @@ mod tests {
     fn prefixed_record_ids_are_ids_and_word_segments_stay_literal() {
         let pattern = |url: &str| path_pattern(&url.parse().unwrap());
         for (a, b) in [
-            ("http://localhost/products/MLB4000000001/desempenho", "http://localhost/products/MLB4000000002/desempenho"),
-            ("http://localhost/creatives/MLB4000000001", "http://localhost/creatives/MLB4000000002"),
-            ("http://localhost/orders/ord_1234567", "http://localhost/orders/ord_7654321"),
-            ("http://localhost/items/A1234567", "http://localhost/items/B7654321"),
+            (
+                "http://localhost/products/MLB4000000001/desempenho",
+                "http://localhost/products/MLB4000000002/desempenho",
+            ),
+            (
+                "http://localhost/creatives/MLB4000000001",
+                "http://localhost/creatives/MLB4000000002",
+            ),
+            (
+                "http://localhost/orders/ord_1234567",
+                "http://localhost/orders/ord_7654321",
+            ),
+            (
+                "http://localhost/items/A1234567",
+                "http://localhost/items/B7654321",
+            ),
         ] {
             assert_eq!(pattern(a), pattern(b), "{a} and {b} are one screen");
         }
-        assert_eq!(pattern("http://localhost/creatives/MLB4000000001"), "/creatives/:id");
+        assert_eq!(
+            pattern("http://localhost/creatives/MLB4000000001"),
+            "/creatives/:id"
+        );
         for (a, b) in [
             ("http://localhost/dashboard", "http://localhost/sales"),
-            ("http://localhost/settings", "http://localhost/settings/seguranca"),
-            ("http://localhost/products", "http://localhost/products/internos"),
+            (
+                "http://localhost/settings",
+                "http://localhost/settings/seguranca",
+            ),
+            (
+                "http://localhost/products",
+                "http://localhost/products/internos",
+            ),
             ("http://localhost/dre", "http://localhost/graficos-anuais"),
-            ("http://localhost/entrar/cadastrar-2fa", "http://localhost/entrar/desafio"),
+            (
+                "http://localhost/entrar/cadastrar-2fa",
+                "http://localhost/entrar/desafio",
+            ),
             ("http://localhost/api/v2", "http://localhost/api/v3"),
         ] {
             assert_ne!(pattern(a), pattern(b), "{a} and {b} stay different screens");
         }
-        assert_eq!(pattern("http://localhost/products/estoque-full"), "/products/estoque-full");
+        assert_eq!(
+            pattern("http://localhost/products/estoque-full"),
+            "/products/estoque-full"
+        );
     }
 }

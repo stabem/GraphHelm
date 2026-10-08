@@ -129,6 +129,9 @@ pub struct KeelPolicy {
     /// under or contains one reports `keel.invariant.<class>`: Law 3 applies in full there.
     #[serde(default)]
     pub invariants: std::collections::BTreeMap<String, Vec<String>>,
+    /// 1.5.0 (#382 phase B): the task planner's per-class rules (`keel plan`).
+    #[serde(default)]
+    pub plan: Option<crate::keel_plan::PlanRules>,
 }
 
 /// What a diff spends.

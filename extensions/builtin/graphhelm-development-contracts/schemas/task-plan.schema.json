@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/task-plan.schema.json",
+  "title": "Task Plan",
+  "description": "The keel.plan record graphhelm keel plan produces (#382 phase B): for one task, its path classes, the touched journeys, the proof type, the review count, the skills and tools the proof needs, the delegation tier and effort, and the shortest path to done. Deterministic: the same paths, promise and policy give the same record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "taskId",
+    "revision",
+    "paths",
+    "classes",
+    "invariantClasses",
+    "journeys",
+    "proof",
+    "reviews",
+    "skills",
+    "tools",
+    "delegation",
+    "path",
+    "decidedBy",
+    "jev"
+  ],
+  "properties": {
+    "schema": {
+      "const": "graphhelm-task-plan-v1"
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})?$"
+    },
+    "paths": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "classes": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "docs",
+          "code",
+          "user_visible",
+          "invariant"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "invariantClasses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "uniqueItems": true
+    },
+    "journeys": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+      },
+      "uniqueItems": true
+    },
+    "proof": {
+      "enum": [
+        "none",
+        "tests",
+        "journey",
+        "both"
+      ]
+    },
+    "reviews": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "uniqueItems": true
+    },
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "tier",
+        "effort"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "tier": {
+          "enum": [
+            "small",
+            "standard",
+            "large"
+          ]
+        },
+        "effort": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      }
+    },
+    "path": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "decidedBy": {
+      "enum": [
+        "rules",
+        "fallback_strict",
+        "jev"
+      ]
+    },
+    "jev": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  }
+}

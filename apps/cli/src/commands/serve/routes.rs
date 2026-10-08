@@ -1753,8 +1753,12 @@ pub(super) async fn briefing(
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
     let events = state.events.clone();
-    let Some(result) =
-        off_reactor(move || execution::briefing::budgeted(&events, Some(&execution_id))).await
+    // #382 phase B: the plan copy needs the sealed keyring; without one the briefing omits it.
+    let keyring = state.sealing.clone();
+    let Some(result) = off_reactor(move || {
+        execution::briefing::budgeted(&events, Some(&execution_id), keyring.as_deref())
+    })
+    .await
     else {
         return respond(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1787,6 +1791,53 @@ pub(super) async fn journeys(
 /// no `/v1/journeys`).
 pub(super) async fn project_journeys(State(state): State<ServeState>) -> Response {
     journeys_over(state, None).await
+}
+
+/// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over
+/// the Runtime's `--project`; the body names the task, its paths and promise, never a directory.
+/// Owner credentials only (`agent_route_allowed` admits no `/v1/keel`).
+pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> Response {
+    const COMMAND: &str = "keel.plan";
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PlanRequest {
+        task: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        promise: String,
+    }
+    let Ok(request) = serde_json::from_slice::<PlanRequest>(&body) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state("the body must be {task, paths, promise?}", "/body"),
+        );
+    };
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "keel plan requires an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    match off_reactor(move || {
+        crate::commands::keel::plan(
+            &project,
+            &request.task,
+            &request.paths,
+            &request.promise,
+            None,
+        )
+    })
+    .await
+    {
+        Some(outcome) => respond_outcome(outcome),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the plan task failed").output,
+        ),
+    }
 }
 
 /// `GET /v1/workspaces` (#360): `graphhelm workspace list` over the Runtime's

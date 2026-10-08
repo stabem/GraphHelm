@@ -746,3 +746,63 @@ fn keel_check_warns_on_a_missing_contract_and_ignores_untouched_screens() {
         "{reply}"
     );
 }
+
+/// #382 phase B: a plan recorded on a run is what the briefing hands the next agent. Credible
+/// regression: the briefing drops or recomputes the plan, or serves a plan it cannot open. No
+/// existing test reads a signal back into the briefing. Cost: the shared temp project, three CLI
+/// runs.
+#[test]
+fn a_recorded_keel_plan_reaches_the_briefing() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    let output = graphhelm()
+        .args([
+            "--json",
+            "keel",
+            "plan",
+            "--task",
+            "issue-7",
+            "--paths",
+            "web/cart/Line.tsx",
+            "--repo",
+        ])
+        .arg(&harness.project)
+        .arg("--events")
+        .arg(&harness.events)
+        .args(["--execution", RUN, "--keyring"])
+        .arg(&harness.keyring)
+        .args(["--key-id", KEY_ID])
+        .output()
+        .unwrap();
+    let recorded = envelope(&output);
+    assert_eq!(output.status.code(), Some(0), "{recorded}");
+    assert_eq!(
+        recorded["data"]["plan"]["journeys"],
+        json!(["cart"]),
+        "{recorded}"
+    );
+    assert_eq!(recorded["data"]["plan"]["proof"], "journey");
+
+    let briefing = |with_keyring: bool| {
+        let mut command = graphhelm();
+        command
+            .args(["--json", "execution", "briefing", "--events"])
+            .arg(&harness.events)
+            .args(["--execution", RUN]);
+        if with_keyring {
+            command
+                .arg("--keyring")
+                .arg(&harness.keyring)
+                .args(["--key-id", KEY_ID]);
+        }
+        envelope(&command.output().unwrap())
+    };
+    let read = briefing(true);
+    assert_eq!(read["data"]["plan"], recorded["data"]["plan"], "{read}");
+    assert!(
+        briefing(false)["data"].get("plan").is_none(),
+        "without a keyring the briefing omits the plan rather than guessing"
+    );
+}

@@ -26,10 +26,16 @@ const SNAPSHOT: usize = 32 * 1024;
 const SNAPSHOT_DISCOVER: usize = 6144;
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024;
 pub(super) const OP_BUDGET: Duration = Duration::from_secs(30);
-// How long a caller waits for OwnedChild::cleanup to report. Cleanup runs the process-tree
-// terminate first and only then its own one-second reap window, so this wait must outlast
-// both; an equal one-second wait raced the terminate and reported cleanup_uncertain.
-const CLEANUP_OBSERVE: Duration = Duration::from_secs(5);
+// How long a caller waits for OwnedChild::cleanup to report (#454). Cleanup runs the
+// process-tree terminate first (bounded by `TERMINATE_CEILING`: on Windows the job drain polls every
+// enumerated member until its process object signals) and only then its own reap window, so this
+// wait is DERIVED from both plus a margin rather than guessed: an equal wait reported a drain that
+// took its full ceiling as a timeout of its own, and a 1 s wait once raced the terminate.
+const REAP_WINDOW: Duration = Duration::from_secs(1);
+const CLEANUP_MARGIN: Duration = Duration::from_secs(1);
+const CLEANUP_OBSERVE: Duration = graphhelm_process_tree::TERMINATE_CEILING
+    .saturating_add(REAP_WINDOW)
+    .saturating_add(CLEANUP_MARGIN);
 // The independent supervisor bounds waiting, including startup and the worker's
 // blocking storage/Git/record calls. Kill/reap gets a separate one-second observer.
 // OS scheduler failure and an inconclusive cleanup are reported uncertain, not success.
@@ -49,10 +55,15 @@ pub(super) fn failure(code: &'static str, path: impl Into<String>, exit: i32) ->
     (code, path.into(), exit)
 }
 
-fn report(data: Value, failed: Option<Failure>) -> Outcome {
+fn report(mut data: Value, failed: Option<Failure>) -> Outcome {
     let Some((code, path, exit_code)) = failed else {
         return Outcome::success(COMMAND, data);
     };
+    if code == "replay.cleanup_uncertain"
+        && let Some(cleanup) = take_cleanup_report()
+    {
+        data["cleanup"] = cleanup;
+    }
     let message = match code {
         "replay.observer_missing" | "driver.observer_missing" => {
             "OBSERVER_MISSING: run setup --install-observer playwright in this project, then retry with a runnable Node/Playwright/Chromium observer"
@@ -61,7 +72,7 @@ fn report(data: Value, failed: Option<Failure>) -> Outcome {
             "the replay budget ended; committed records and masked temporary inputs may remain; reconcile before retrying a mutation"
         }
         "replay.cleanup_uncertain" => {
-            "owned process cleanup was not observed; partial effects remain uncertain"
+            "owned process cleanup was not observed; partial effects remain uncertain. data.cleanup says which: the caller window ran out (branch timeout) or the process tree reported members still alive (branch bound), with elapsed ms and counts"
         }
         "replay.recording_incomplete" => {
             "supply all of --events, --execution, --keyring and --key-id, or none"
@@ -115,18 +126,24 @@ struct OwnedChild {
 }
 
 impl OwnedChild {
-    fn cleanup(mut self) -> Receiver<std::result::Result<i32, ()>> {
+    /// Terminates the tree and reaps the leader on its own thread; the receiver gets the exit
+    /// status (or `Err` when the tree did not drain or the leader did not exit) beside a report
+    /// of what was observed (#454): the terminate's outcome with its counts, whether the leader
+    /// was reaped, and the elapsed milliseconds.
+    fn cleanup(mut self) -> Receiver<(std::result::Result<i32, ()>, Value)> {
         let child = self.child.take().unwrap();
         let group = self.group.take().unwrap();
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let mut child = child;
             let mut group = group;
+            let started = Instant::now();
             // The leader exiting does not prove its pipe-owning descendants exited.
             // Use the adapter's termination observer before closing the group in both cases.
             let terminated = graphhelm_process_tree::terminate(child.id(), group);
+            let terminate_ms = started.elapsed().as_millis();
             graphhelm_process_tree::close(&mut group);
-            let deadline = Instant::now() + Duration::from_secs(1);
+            let deadline = Instant::now() + REAP_WINDOW;
             let status = loop {
                 match child.try_wait() {
                     Ok(Some(status)) => break Ok(status.code().unwrap_or(1)),
@@ -134,11 +151,20 @@ impl OwnedChild {
                     _ => std::thread::sleep(Duration::from_millis(5)),
                 }
             };
-            let complete = matches!(
-                terminated,
-                graphhelm_process_tree::TerminationOutcome::Complete
-            );
-            let _ = tx.send(if complete { status } else { Err(()) });
+            let (outcome, passes, remaining) = match terminated {
+                graphhelm_process_tree::TerminationOutcome::Complete => ("complete", 0, 0),
+                graphhelm_process_tree::TerminationOutcome::BoundReached { passes, remaining } => {
+                    ("bound_reached", passes, remaining)
+                }
+                _ => ("unavailable", 0, 0),
+            };
+            let report = json!({
+                "terminate": outcome, "passes": passes, "remaining": remaining,
+                "terminateMs": terminate_ms, "leaderReaped": status.is_ok(),
+                "elapsedMs": started.elapsed().as_millis(),
+            });
+            let complete = outcome == "complete";
+            let _ = tx.send((if complete { status } else { Err(()) }, report));
         });
         rx
     }
@@ -152,6 +178,44 @@ impl Drop for OwnedChild {
                 graphhelm_process_tree::close(&mut group);
                 let _ = child.wait();
             });
+        }
+    }
+}
+
+thread_local! {
+    /// The last cleanup observation on this thread (#454), attached to the reply as
+    /// `data.cleanup` when the failure is `replay.cleanup_uncertain`.
+    static LAST_CLEANUP: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+fn take_cleanup_report() -> Option<Value> {
+    LAST_CLEANUP.with(|cell| cell.borrow_mut().take())
+}
+
+/// Waits for a cleanup to report within `window` and names what it saw (#454): a receiver that
+/// never answers is `<path>/timeout` with the window; a tree that did not drain or a leader that
+/// did not exit is `<path>/bound` with the terminate's counts. Both are `replay.cleanup_uncertain`.
+fn observe_cleanup(
+    cleanup: Receiver<(std::result::Result<i32, ()>, Value)>,
+    path: &str,
+    window: Duration,
+) -> Result<i32> {
+    match cleanup.recv_timeout(window) {
+        Ok((Ok(status), report)) => {
+            LAST_CLEANUP.with(|cell| *cell.borrow_mut() = Some(report));
+            Ok(status)
+        }
+        Ok((Err(()), mut report)) => {
+            report["branch"] = "bound".into();
+            LAST_CLEANUP.with(|cell| *cell.borrow_mut() = Some(report));
+            Err(failure("replay.cleanup_uncertain", format!("{path}/bound"), 1))
+        }
+        Err(_) => {
+            LAST_CLEANUP.with(|cell| {
+                *cell.borrow_mut() =
+                    Some(json!({"branch":"timeout","windowMs":window.as_millis()}));
+            });
+            Err(failure("replay.cleanup_uncertain", format!("{path}/timeout"), 1))
         }
     }
 }
@@ -289,11 +353,7 @@ fn supervise_owned(
     })();
     // Even a write/read/protocol failure waits for the independent kill/reap
     // observer. No error path silently drops a live pipe-owning group.
-    let status = owned
-        .cleanup()
-        .recv_timeout(CLEANUP_OBSERVE)
-        .map_err(|_| failure("replay.cleanup_uncertain", "/worker", 1))?
-        .map_err(|()| failure("replay.cleanup_uncertain", "/worker", 1))?;
+    let status = observe_cleanup(owned.cleanup(), "/worker", CLEANUP_OBSERVE)?;
     result.map(|bytes| (status, bytes))
 }
 
@@ -408,11 +468,7 @@ impl Driver {
             && !survived
             && let Some(owned) = self.owned.take()
         {
-            owned
-                .cleanup()
-                .recv_timeout(CLEANUP_OBSERVE)
-                .map_err(|_| failure("replay.cleanup_uncertain", path, 1))?
-                .map_err(|()| failure("replay.cleanup_uncertain", path, 1))?;
+            observe_cleanup(owned.cleanup(), path, CLEANUP_OBSERVE)?;
         }
         result
     }
@@ -617,11 +673,7 @@ impl Driver {
             ));
         }
         let owned = self.owned.take().unwrap();
-        owned
-            .cleanup()
-            .recv_timeout(CLEANUP_OBSERVE)
-            .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?
-            .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?;
+        observe_cleanup(owned.cleanup(), "/observer/close/cleanup", CLEANUP_OBSERVE)?;
         Ok(())
     }
 }
@@ -1874,6 +1926,64 @@ mod tests {
                 assert_eq!(reply.unwrap_err().0, "replay.driver_frame_invalid");
             }
         }
+    }
+
+    /// #454: the window a caller waits for cleanup must outlast what cleanup itself may take:
+    /// the terminate's own ceiling and then the reap. An equal window reported a drain that took
+    /// its full ceiling as a timeout of the caller's own. Cost: arithmetic.
+    #[test]
+    fn the_cleanup_window_outlasts_the_terminate_ceiling_and_the_reap() {
+        assert!(
+            CLEANUP_OBSERVE > graphhelm_process_tree::TERMINATE_CEILING + REAP_WINDOW,
+            "{CLEANUP_OBSERVE:?} must exceed {:?} + {REAP_WINDOW:?}",
+            graphhelm_process_tree::TERMINATE_CEILING
+        );
+    }
+
+    /// #454: `replay.cleanup_uncertain` has two causes and the reply must say which, with
+    /// numbers: a cleanup that never reported within the window (`/timeout`, the window), and a
+    /// tree the terminate could not drain (`/bound`, its passes and remaining). Cost: two fixed
+    /// channel messages, one 50 ms wait.
+    #[test]
+    fn an_uncertain_cleanup_names_its_branch_and_its_numbers() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send((
+            Err(()),
+            json!({"terminate":"bound_reached","passes":3,"remaining":2,"terminateMs":5001,"leaderReaped":true,"elapsedMs":5010}),
+        ))
+        .unwrap();
+        let (code, path, _) =
+            observe_cleanup(rx, "/observer/close/cleanup", Duration::from_secs(1)).unwrap_err();
+        assert_eq!(
+            (code, path.as_str()),
+            ("replay.cleanup_uncertain", "/observer/close/cleanup/bound")
+        );
+        let report = take_cleanup_report().unwrap();
+        assert_eq!(report["branch"], "bound");
+        assert_eq!(report["remaining"], 2);
+        assert_eq!(report["passes"], 3);
+
+        let (_tx, rx) = mpsc::sync_channel::<(std::result::Result<i32, ()>, Value)>(1);
+        let (code, path, _) =
+            observe_cleanup(rx, "/worker", Duration::from_millis(50)).unwrap_err();
+        assert_eq!(
+            (code, path.as_str()),
+            ("replay.cleanup_uncertain", "/worker/timeout")
+        );
+        let report = take_cleanup_report().unwrap();
+        assert_eq!(report["branch"], "timeout");
+        assert_eq!(report["windowMs"], 50);
+
+        // The reply carries it as `data.cleanup`, and only for this code.
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send((
+            Err(()),
+            json!({"terminate":"bound_reached","passes":1,"remaining":4}),
+        ))
+        .unwrap();
+        let failed = observe_cleanup(rx, "/x", Duration::from_secs(1)).unwrap_err();
+        let outcome = super::report(json!({}), Some(failed));
+        assert_eq!(outcome.output.data.unwrap()["cleanup"]["remaining"], 4);
     }
 
     /// Contract: browser-canonical local origins and declared dynamic segments match exactly.

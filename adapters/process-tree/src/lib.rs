@@ -557,6 +557,14 @@ pub fn close(group: &mut ProcessGroup) {
     unsafe { libc::kill(-pgid, libc::SIGKILL) };
 }
 
+/// The longest [`terminate`] itself may take before it answers (#454). On Windows it is the job
+/// drain's ceiling (`JOB_DRAIN_CEILING`): every enumerated member is polled until its process
+/// object signals, and after this long the answer is [`TerminationOutcome::BoundReached`]. On Unix
+/// the sweep is bounded by passes, not time, and stays far inside this. A caller that waits on a
+/// cleanup which runs `terminate` and then its own reap must wait LONGER than this plus its reap,
+/// or it reports a drain that merely took its full ceiling as a timeout of its own.
+pub const TERMINATE_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// What a [`terminate`] actually achieved, because "it returned" is not the same as "the tree is
 /// gone" (#748).
 ///
@@ -1164,7 +1172,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
 /// `terminate` HANG, and a hang has no colour -- the gate has no per-test timeout, so it would stop
 /// rather than redden.
 #[cfg(windows)]
-const JOB_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(5);
+const JOB_DRAIN_CEILING: std::time::Duration = TERMINATE_CEILING;
 
 /// The most job members this will enumerate before it stops claiming to have seen them all.
 ///

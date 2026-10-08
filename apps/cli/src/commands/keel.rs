@@ -181,15 +181,19 @@ pub(super) fn check(
         .iter()
         .map(|entry| entry.path.clone())
         .collect();
+    let journeys = super::journeys::keel_journeys(repo);
     if policy.journey_first {
         report.findings.extend(missing_journeys(
-            repo,
+            &journeys,
             card.as_ref().map(|(card, _)| card),
             &changed,
         ));
+        report
+            .findings
+            .extend(journey_reader_findings(&journeys, &changed));
     }
     if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
-        match journey_findings(repo, head, card, records.as_ref(), &changed) {
+        match journey_findings(repo, head, card, &journeys, records.as_ref(), &changed) {
             Ok(findings) => report.findings.extend(findings),
             Err(outcome) => return *outcome,
         }
@@ -274,12 +278,16 @@ impl ScopeHistory for AtHead {
     }
 }
 
-/// Spec #382 §3, advisory: every compiled journey whose screen a changed path touches must be
+/// Spec #382 §3, advisory: every approved journey whose screen a changed path touches must be
 /// named in the card's `journeys`; one `keel.journey.card_missing_journey` per journey that is not
 /// (or per touched journey when there is no card), naming the touching path and step.
-fn missing_journeys(repo: &Path, card: Option<&Card>, changed: &[String]) -> Vec<Finding> {
-    let (contracts, _) = super::journeys::contracts(repo);
-    contracts
+fn missing_journeys(
+    journeys: &super::journeys::KeelJourneys,
+    card: Option<&Card>,
+    changed: &[String],
+) -> Vec<Finding> {
+    journeys
+        .contracts
         .iter()
         .filter(|contract| card.is_none_or(|card| !card.journeys.contains(&contract.contract_id)))
         .filter_map(|contract| {
@@ -304,6 +312,51 @@ fn missing_journeys(repo: &Path, card: Option<&Card>, changed: &[String]) -> Vec
             })
         })
         .collect()
+}
+
+/// #426: what the journey reader could not use, said rather than read as "no journey touched":
+/// a draft flow whose screen a path touches (`keel.journey.flow_draft`), a flow that does not
+/// validate or project (`keel.journey.flow_invalid`), and a project with no flow and no contract
+/// at all (`keel.journey.none`).
+fn journey_reader_findings(
+    journeys: &super::journeys::KeelJourneys,
+    paths: &[String],
+) -> Vec<Finding> {
+    if journeys.is_empty() {
+        return vec![Finding {
+            rule: "keel.journey.none".to_owned(),
+            path: None,
+            detail: "no journey flow (`.graphhelm/journeys/*.journey.yaml`) and no contract: no                      user-visible change here can be proven by a journey"
+                .to_owned(),
+            blocking: false,
+        }];
+    }
+    let mut findings: Vec<Finding> = journeys
+        .drafts
+        .iter()
+        .filter_map(|(flow, scopes)| {
+            let path = paths.iter().find(|path| {
+                scopes
+                    .iter()
+                    .any(|scope| policy_keel::paths_touch(path, scope))
+            })?;
+            Some(Finding {
+                rule: "keel.journey.flow_draft".to_owned(),
+                path: Some(path.clone()),
+                detail: format!(
+                    "{flow}: this change touches a screen of a draft flow; it proves nothing until                      `graphhelm journey approve {flow}`"
+                ),
+                blocking: false,
+            })
+        })
+        .collect();
+    findings.extend(journeys.invalid.iter().map(|(file, reason)| Finding {
+        rule: "keel.journey.flow_invalid".to_owned(),
+        path: Some(format!(".graphhelm/journeys/{file}")),
+        detail: format!("{file}: {reason}; its journeys are not read"),
+        blocking: false,
+    }));
+    findings
 }
 
 /// The steps of flow `<id>.journey.yaml` that a recorded drift touches: the `from` and `to`
@@ -348,6 +401,7 @@ fn journey_findings(
     repo: &Path,
     head: &str,
     card: &Card,
+    journeys: &super::journeys::KeelJourneys,
     records: Option<&JourneyRecords>,
     changed: &[String],
 ) -> Result<Vec<Finding>, Box<Outcome>> {
@@ -376,12 +430,15 @@ fn journey_findings(
     };
     let mut findings = Vec::new();
     let mut contracts = Vec::new();
-    let directory = repo.join(".graphhelm").join("journeys");
     for id in &card.journeys {
-        let read = if valid_journey_id(id) {
-            super::journeys::contract(&directory.join(format!("{id}.json")), id)
-        } else {
-            Err("invalid_journey_id")
+        let known = journeys.contracts.iter().find(|c| &c.contract_id == id);
+        let read = match known {
+            _ if !valid_journey_id(id) => Err("invalid_journey_id"),
+            Some(contract) => Ok(contract.clone()),
+            None if journeys.drafts.iter().any(|(flow, _)| flow == id) => {
+                Err("a draft flow; approve it before it can prove a change")
+            }
+            None => Err("no approved flow or contract has this id"),
         };
         match read {
             Ok(contract) => contracts.push(contract),
@@ -622,14 +679,15 @@ fn head_of(repo: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The plan a task's paths get under the shipped policy, as JSON (`graphhelm-task-plan-v1`).
+/// The plan a task's paths get under the shipped policy, as JSON (`graphhelm-task-plan-v1`), with
+/// what the journey reader could not use (#426), which travels as warnings beside the plan.
 pub(crate) fn plan_value(
     repo: &Path,
     task: &str,
     paths: &[String],
     promise: &str,
     judge: Option<(&dyn graphhelm_architect::JudgeModel, &str)>,
-) -> Result<serde_json::Value, Outcome> {
+) -> Result<(serde_json::Value, Vec<Finding>), Outcome> {
     if !valid_journey_id(task) {
         return Err(input_error(
             "--task must match ^[a-z0-9][a-z0-9._-]{0,127}$ without `..`",
@@ -659,8 +717,10 @@ pub(crate) fn plan_value(
             "shipped keel.yaml has no plan section",
         ));
     };
-    let (contracts, _) = super::journeys::contracts(repo);
-    let journeys = contracts
+    let read = super::journeys::keel_journeys(repo);
+    let warnings = journey_reader_findings(&read, paths);
+    let journeys = read
+        .contracts
         .into_iter()
         .map(|contract| {
             let scopes = contract
@@ -684,6 +744,7 @@ pub(crate) fn plan_value(
         planned = ask_jev(planned, promise, judge, route, &rules);
     }
     serde_json::to_value(planned)
+        .map(|value| (value, warnings))
         .map_err(|error| Outcome::internal(PLAN_COMMAND, error.to_string()))
 }
 
@@ -813,12 +874,24 @@ pub fn plan(
     records: Option<JourneyRecords>,
     judge: Option<(&dyn graphhelm_architect::JudgeModel, &str)>,
 ) -> Outcome {
-    let value = match plan_value(repo, task, paths, promise, judge) {
-        Ok(value) => value,
+    let (value, findings) = match plan_value(repo, task, paths, promise, judge) {
+        Ok(planned) => planned,
         Err(outcome) => return outcome,
     };
+    let warnings: Vec<Diagnostic> = findings
+        .iter()
+        .map(|finding| {
+            Diagnostic::warning(
+                finding.rule.clone(),
+                format!("{}: {}", finding.rule, finding.detail),
+                finding.path.as_deref().unwrap_or("/"),
+                "keel",
+            )
+        })
+        .collect();
     let Some(records) = records else {
-        return Outcome::success(PLAN_COMMAND, serde_json::json!({"plan": value}));
+        return Outcome::success(PLAN_COMMAND, serde_json::json!({"plan": value}))
+            .with_warnings(warnings);
     };
     let signal = serde_json::json!({
         "id": super::execution::idempotency_key("keel-plan").as_str(),
@@ -846,7 +919,8 @@ pub fn plan(
         Ok(recorded) => Outcome::success(
             PLAN_COMMAND,
             serde_json::json!({"plan": value, "recorded": recorded}),
-        ),
+        )
+        .with_warnings(warnings),
         Err(failure) => failure.into_outcome(PLAN_COMMAND),
     }
 }

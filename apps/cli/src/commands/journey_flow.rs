@@ -554,6 +554,69 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
     Ok(contracts)
 }
 
+/// The committed flows as `keel plan` and `keel check` read them (#426). The generated
+/// `<id>.json` contracts are git-ignored, so a clone holds only the `*.journey.yaml` sources: each
+/// is projected here in memory exactly as `journey compile` would write it.
+#[derive(Default)]
+pub(crate) struct ProjectedFlows {
+    /// Every contract of every approved flow that validates and projects: (flow id, contract).
+    pub(crate) approved: Vec<(String, Value)>,
+    /// Every draft flow: its id and the scope paths of its screens.
+    pub(crate) drafts: Vec<(String, Vec<String>)>,
+    /// Every flow file that does not validate or project: its file name and the first refusal.
+    pub(crate) invalid: Vec<(String, String)>,
+}
+
+pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
+    let mut projected = ProjectedFlows::default();
+    let Some(files) = files(project, &[]) else {
+        return projected;
+    };
+    for file in files {
+        let name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let flow = match read(&file) {
+            Ok((_, flow)) => flow,
+            Err(findings) => {
+                let code = findings.first().map_or("flow.not_yaml", |f| f.code);
+                projected.invalid.push((name, code.to_owned()));
+                continue;
+            }
+        };
+        if let Some(refusal) = semantic(&file, &flow, project)
+            .into_iter()
+            .find(|finding| !finding.is_warning())
+        {
+            projected.invalid.push((name, refusal.code.to_owned()));
+            continue;
+        }
+        let id = flow["id"].as_str().unwrap_or_default().to_owned();
+        if flow["status"] != "approved" {
+            let scopes = flow["screens"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|screen| screen["scope"].as_array())
+                .flatten()
+                .filter_map(|path| path.as_str().map(str::to_owned))
+                .collect();
+            projected.drafts.push((id, scopes));
+            continue;
+        }
+        match compile(&flow) {
+            Ok(contracts) => projected.approved.extend(
+                contracts
+                    .into_iter()
+                    .map(|(_, contract)| (id.clone(), contract)),
+            ),
+            Err(refusal) => projected.invalid.push((name, refusal.code.to_owned())),
+        }
+    }
+    projected
+}
+
 fn contract_bytes(value: &Value) -> Vec<u8> {
     let mut bytes = serde_json::to_vec_pretty(value).expect("contract serialization");
     bytes.push(b'\n');

@@ -469,6 +469,12 @@ pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'stati
         return Err("too_large");
     }
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "not_json")?;
+    contract_value(value, stem)
+}
+
+/// One contract document already in memory (a file's bytes, or a flow projected by
+/// `journey_flow::projected_flows`), or the reason it is refused.
+fn contract_value(value: serde_json::Value, stem: &str) -> Result<ContractInput, &'static str> {
     let schemas = contract_schemas().ok_or("schema_unavailable")?;
     if !schemas
         .validate(CONTRACT_SCHEMA_ID, &value, "/journeys")
@@ -541,6 +547,76 @@ pub(crate) fn contracts(project: &Path) -> (Vec<ContractInput>, Vec<serde_json::
         }
     }
     (accepted, refused)
+}
+
+/// The journeys `keel plan` and `keel check` read (#426). The committed `*.journey.yaml` flows
+/// are the source: approved ones are projected in memory, because their generated `<id>.json`
+/// is git-ignored and absent from a fresh clone. A `.json` contract that no flow generates
+/// (handwritten) is read as before; one a flow generates is never read in its place.
+#[derive(Default)]
+pub(crate) struct KeelJourneys {
+    pub(crate) contracts: Vec<ContractInput>,
+    /// Draft flows: their id and every screen scope path. They cannot prove a change yet.
+    pub(crate) drafts: Vec<(String, Vec<String>)>,
+    /// Flow files that do not validate or project, and generated contracts refused: (file, reason).
+    pub(crate) invalid: Vec<(String, String)>,
+}
+
+impl KeelJourneys {
+    /// No flow and no contract: journey-first has nothing to read.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.contracts.is_empty() && self.drafts.is_empty() && self.invalid.is_empty()
+    }
+}
+
+pub(crate) fn keel_journeys(project: &Path) -> KeelJourneys {
+    let flows = super::journey_flow::projected_flows(project);
+    let mut journeys = KeelJourneys {
+        drafts: flows.drafts,
+        invalid: flows.invalid,
+        ..KeelJourneys::default()
+    };
+    let mut flow_ids: Vec<String> = journeys.drafts.iter().map(|(id, _)| id.clone()).collect();
+    flow_ids.extend(
+        journeys
+            .invalid
+            .iter()
+            .filter_map(|(file, _)| file.strip_suffix(".journey.yaml").map(str::to_owned)),
+    );
+    for (flow, contract) in flows.approved {
+        flow_ids.push(flow);
+        let id = contract["contractId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        match contract_value(contract, &id) {
+            Ok(input) => journeys.contracts.push(input),
+            Err(reason) => journeys
+                .invalid
+                .push((format!("{id}.json"), reason.to_owned())),
+        }
+    }
+    let generated = |id: &str| {
+        flow_ids.iter().any(|flow| {
+            id == flow
+                || id
+                    .strip_prefix(flow.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+    };
+    let (files, _) = contracts(project);
+    journeys.contracts.extend(
+        files
+            .into_iter()
+            .filter(|contract| !generated(&contract.contract_id)),
+    );
+    journeys
+        .contracts
+        .sort_by(|a, b| a.contract_id.cmp(&b.contract_id));
+    journeys
+        .contracts
+        .dedup_by(|a, b| a.contract_id == b.contract_id);
+    journeys
 }
 
 /// The shared read behind the CLI, `GET /v1/journeys`, `GET /v1/executions/{id}/journeys` and

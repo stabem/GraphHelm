@@ -899,10 +899,20 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
 
     let (code, reply, _) = plan(
         root,
-        &["--task", "t-1", "--paths", "app/cart/page.tsx", "app/browse/page.tsx"],
+        &[
+            "--task",
+            "t-1",
+            "--paths",
+            "app/cart/page.tsx",
+            "app/browse/page.tsx",
+        ],
     );
     assert_eq!(code, 0, "{reply}");
-    assert_eq!(reply["data"]["plan"]["journeys"], serde_json::json!(["checkout"]), "{reply}");
+    assert_eq!(
+        reply["data"]["plan"]["journeys"],
+        serde_json::json!(["checkout"]),
+        "{reply}"
+    );
     assert_eq!(reply["data"]["plan"]["proof"], "journey", "{reply}");
     assert!(
         codes(&reply).iter().any(|c| c == "keel.journey.flow_draft"),
@@ -913,10 +923,15 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
     assert_eq!(code, 0, "{reply}");
     let found = codes(&reply);
     assert!(
-        found.iter().any(|c| c == "keel.journey.card_missing_journey"),
+        found
+            .iter()
+            .any(|c| c == "keel.journey.card_missing_journey"),
         "{reply}"
     );
-    assert!(found.iter().any(|c| c == "keel.journey.flow_draft"), "{reply}");
+    assert!(
+        found.iter().any(|c| c == "keel.journey.flow_draft"),
+        "{reply}"
+    );
 
     let bare = repository(&[]);
     let (code, reply, _) = plan(bare.path(), &["--task", "t-2", "--paths", "src/lib.rs"]);

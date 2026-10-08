@@ -1295,7 +1295,7 @@ fn drain_terminated_job(
             // and keep waiting (inside the same ceiling) while it drains, rather than answering
             // `BoundReached { remaining: 1 }` for a process that was dead before the kill.
             unlisted = refresh_unlisted().unwrap_or(unlisted);
-            if passes == 1 || passes % 1000 == 0 {
+            if passes == 1 || passes.is_multiple_of(1000) {
                 trace(|| {
                     format!(
                         "drain pass={passes} listed_running=0 unlisted={unlisted} elapsed_ms={}",
@@ -1343,8 +1343,16 @@ fn drain_terminated_job(
 /// drains. Off by default; nothing here is read by code.
 #[cfg(windows)]
 fn trace(line: impl FnOnce() -> String) {
-    if std::env::var_os("GRAPHHELM_PTREE_TRACE").is_some() {
-        eprintln!("ptree-trace {}", line());
+    use std::io::Write;
+    let Some(path) = std::env::var_os("GRAPHHELM_PTREE_TRACE") else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "ptree-trace pid={} {}", std::process::id(), line());
     }
 }
 

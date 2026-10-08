@@ -1725,6 +1725,10 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
         .stderr(Stdio::piped());
     safe_environment(&mut command, true);
     command.env("GRAPHHELM_REPLAY_WORKER", "1");
+    // #454 instrument: the job-drain trace file, when the caller asked for one.
+    if let Some(trace) = std::env::var_os("GRAPHHELM_PTREE_TRACE") {
+        command.env("GRAPHHELM_PTREE_TRACE", trace);
+    }
     let mut secrets = Vec::new();
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))

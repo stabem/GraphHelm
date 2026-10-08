@@ -100,7 +100,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["command"], "keel");
-    assert_eq!(reply["data"]["policyVersion"], "1.5.0");
+    assert_eq!(reply["data"]["policyVersion"], "1.6.0");
     assert_eq!(reply["data"]["cardDeclared"], true);
     assert_eq!(reply["data"]["surface"]["changedFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newPublicSymbols"], 1);
@@ -1067,5 +1067,57 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
             .any(|c| c == "keel.journey.card_missing_journey"
                 || c == "keel.journey.contract_unreadable"),
         "naming the flow covers checkout.back: {reply}"
+    );
+}
+
+/// #467: the planner decides whether a task's design is graded by a critic, from `keel.yaml`
+/// `plan.critic` by class. An invariant path (`core/events/src/journal.rs`, persistence) gets
+/// `critic: design` with the policy's bounds and a design + critic step in its route; a plain
+/// code path gets `none` and no such step. Credible regressions: the critic missing from the
+/// record, or a code-only task routed through a critic it does not need. Cost: one temp
+/// repository, two CLI runs.
+#[test]
+fn keel_plan_decides_the_design_critic_by_class() {
+    let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
+    let (code, invariant, _) = plan(
+        repo.path(),
+        &[
+            "--task",
+            "issue-467",
+            "--paths",
+            "core/events/src/journal.rs",
+        ],
+    );
+    assert_eq!(code, 0, "{invariant}");
+    let record = &invariant["data"]["plan"];
+    assert_eq!(
+        record["critic"],
+        serde_json::json!({"mode": "design", "passScore": 8, "maxRounds": 3}),
+        "{record}"
+    );
+    let route: Vec<&str> = record["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| step.as_str().unwrap())
+        .collect();
+    assert_eq!(route[..2], ["card", "design"], "{record}");
+    assert!(
+        route[2].starts_with("critic: blind, pass at 8/10 within 3 rounds"),
+        "{record}"
+    );
+    let (_, plain, _) = plan(
+        repo.path(),
+        &["--task", "issue-467", "--paths", "src/lib.rs"],
+    );
+    let record = &plain["data"]["plan"];
+    assert_eq!(record["critic"]["mode"], "none", "{record}");
+    assert!(
+        !record["path"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step == "design"),
+        "{record}"
     );
 }

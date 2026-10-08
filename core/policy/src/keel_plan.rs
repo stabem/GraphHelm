@@ -14,7 +14,8 @@ use crate::keel::{KeelPolicy, paths_touch};
 /// The record's schema id, `graphhelm-task-plan-v1`.
 pub const PLAN_SCHEMA: &str = "graphhelm-task-plan-v1";
 
-/// `keel.yaml` `plan` (1.5.0): per-class review counts, delegation and the Jev threshold.
+/// `keel.yaml` `plan` (1.5.0, critic 1.6.0): per-class review counts, delegation, the Jev
+/// threshold, and which classes get a design critic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanRules {
@@ -22,10 +23,53 @@ pub struct PlanRules {
     pub delegation: ClassMap<[String; 2]>,
     /// Probability, in percent, a Jev answer must reach to be taken (spec: 0.8).
     pub jev_threshold_percent: u32,
+    /// #467: whether a class gets a graded design critic before implementation. A policy
+    /// without the field gives none to every class.
+    #[serde(default)]
+    pub critic: ClassMap<CriticMode>,
+    /// #467: the critic's pass score and round budget.
+    #[serde(default)]
+    pub critic_loop: CriticLoop,
+}
+
+/// Whether a task's design is graded by a critic before implementation (#467).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CriticMode {
+    #[default]
+    None,
+    Design,
+}
+
+/// The critic's bounds (#467): a design passes at `pass_score` out of 10 or better within
+/// `max_rounds`; out of rounds, it goes to a person, never an automatic pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CriticLoop {
+    pub pass_score: u32,
+    pub max_rounds: u32,
+}
+
+impl Default for CriticLoop {
+    fn default() -> Self {
+        Self {
+            pass_score: 8,
+            max_rounds: 3,
+        }
+    }
+}
+
+/// The plan's critic (#467): the mode its class gets and, for `design`, the bounds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Critic {
+    pub mode: CriticMode,
+    pub pass_score: u32,
+    pub max_rounds: u32,
 }
 
 /// One value per task class.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct ClassMap<T> {
     pub docs: T,
@@ -85,6 +129,9 @@ pub struct TaskPlan {
     pub path: Vec<String>,
     pub decided_by: String,
     pub jev: Option<serde_json::Value>,
+    /// #467. Absent on records made before the critic existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critic: Option<Critic>,
 }
 
 /// The delegation the class asks for (`core/protocols/src/delegation.rs` names).
@@ -227,6 +274,7 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
         path: Vec::new(),
         decided_by: String::new(),
         jev: None,
+        critic: None,
     };
     decide(
         &base,
@@ -282,7 +330,20 @@ pub fn decide(
     };
     let reviews = *rules.reviews.get(task);
     let [tier, effort] = rules.delegation.get(task).clone();
-    let mut route = vec!["card".to_owned(), "change".to_owned()];
+    let critic = Critic {
+        mode: *rules.critic.get(task),
+        pass_score: rules.critic_loop.pass_score,
+        max_rounds: rules.critic_loop.max_rounds,
+    };
+    let mut route = vec!["card".to_owned()];
+    if critic.mode == CriticMode::Design {
+        route.push("design".to_owned());
+        route.push(format!(
+            "critic: blind, pass at {}/10 within {} rounds",
+            critic.pass_score, critic.max_rounds
+        ));
+    }
+    route.push("change".to_owned());
     if matches!(proof, "journey" | "both") {
         route.extend(
             journeys
@@ -308,6 +369,7 @@ pub fn decide(
         path: route,
         decided_by: decided_by.to_owned(),
         jev,
+        critic: Some(critic),
         ..plan.clone()
     }
 }

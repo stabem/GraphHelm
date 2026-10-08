@@ -60,6 +60,8 @@ pub const TOOL_CALL_MISSING_CODE: &str = "GHA003_TOOL_CALL_MISSING";
 /// node COUNT above the ceiling is [`ArchitectRefusal::TooManyNodes`] and is not repaired; a
 /// budget line that merely states a larger number is a field the model can correct, so it is.
 pub const BUDGET_EXCEEDS_PROFILE_CODE: &str = "GHA004_BUDGET_EXCEEDS_PROFILE";
+/// #467: the draft used a node id the compiler reserves for the design critic. Repairable.
+pub const CRITIC_ID_RESERVED_CODE: &str = "GHA007_CRITIC_ID_RESERVED";
 
 /// Why one node is in the graph, in the compiler's words: the node's own objective, and the
 /// stamp when the compiler added one.
@@ -439,6 +441,8 @@ fn compile_round(
         .get("nodes")
         .and_then(Value::as_object)
         .map_or(0, Map::len);
+    // #467: the two critic nodes the compiler adds count against the same ceiling.
+    let count = count + if profile.critic.is_some() { 2 } else { 0 };
     if count > profile.max_nodes {
         return Err(RoundFailure::Refused(ArchitectRefusal::TooManyNodes {
             count,
@@ -453,6 +457,7 @@ fn compile_round(
     document.insert("kind".to_owned(), Value::String(KIND.to_owned()));
     document.insert("metadata".to_owned(), metadata(profile));
     document.insert("spec".to_owned(), Value::Object(spec));
+    insert_critic(profile, &mut document).map_err(RoundFailure::Invalid)?;
     let stamped = stamp_customs(profile, &mut document);
     let document = Value::Object(document);
 
@@ -595,6 +600,154 @@ fn metadata(profile: &TaskProfile) -> Value {
     metadata.insert("version".to_owned(), Value::from(1_u64));
     metadata.insert("labels".to_owned(), Value::Object(labels));
     Value::Object(metadata)
+}
+
+/// #467: the id of the node that writes the design, added in front of the draft.
+pub const CRITIC_DESIGN_NODE: &str = "critic_design";
+/// #467: the id of the blind critic node, between the design and the draft's first nodes.
+pub const CRITIC_GRADE_NODE: &str = "critic_grade";
+
+/// #467: when the profile carries a critic, puts `critic_design` → `critic_grade` in front of the
+/// draft: the draft's entrypoints (or, with none declared, its nodes without an incoming edge)
+/// become the critic's successors, and `critic_design` becomes the only entrypoint. Deterministic
+/// and after the model: the model never chooses whether a design is graded. The revise rounds run
+/// INSIDE `critic_grade`, one `task.critic_verdict` record per round, because the executor does
+/// not re-run a finished node; the node completes on a `pass` within `maxRounds`, and an
+/// `exhausted` verdict needs a person. A draft that already uses either id is sent back to the
+/// model with a diagnostic rather than overwritten. Without a critic, nothing changes.
+///
+/// # Errors
+/// A repairable diagnostic when the draft already uses a reserved id.
+pub fn insert_critic(
+    profile: &TaskProfile,
+    document: &mut Map<String, Value>,
+) -> Result<(), Vec<Diagnostic>> {
+    let Some(critic) = profile.critic else {
+        return Ok(());
+    };
+    let Some(spec) = document.get_mut("spec").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let Some(nodes) = spec.get("nodes").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let reserved: Vec<Diagnostic> = [CRITIC_DESIGN_NODE, CRITIC_GRADE_NODE]
+        .into_iter()
+        .filter(|id| nodes.contains_key(*id))
+        .map(|id| {
+            Diagnostic::error(
+                CRITIC_ID_RESERVED_CODE,
+                format!("node id {id} is reserved for the compiler's design critic; rename it"),
+                format!("/spec/nodes/{id}"),
+                DRAFT_SOURCE,
+            )
+        })
+        .collect();
+    if !reserved.is_empty() {
+        return Err(reserved);
+    }
+    let declared: Vec<String> = spec
+        .get("entrypoints")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let first: Vec<String> = if declared.is_empty() {
+        let targets: std::collections::BTreeSet<&str> = spec
+            .get("edges")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|edge| edge.get("to").and_then(Value::as_str))
+            .collect();
+        nodes
+            .keys()
+            .filter(|id| !targets.contains(id.as_str()))
+            .cloned()
+            .collect()
+    } else {
+        declared
+    };
+    let agent = |purpose: &str, capability: &str, output: &str, instructions: &str| {
+        serde_json::json!({"ephemeral": {
+            "purpose": purpose,
+            "capabilities": [capability],
+            "inputSchema": "schema://TaskRequest@1",
+            "outputSchema": output,
+            "instructions": instructions,
+            "completionContract": {"requires": []},
+        }})
+    };
+    let design = serde_json::json!({
+        "type": "agent",
+        "name": "Design",
+        "objective": format!(
+            "write the design for the goal, graded before any implementation (critic inserted by              the compiler, #467): {}", profile.goal
+        ),
+        "optionality": "required",
+        "agent": agent(
+            "Write the design: the promise, the paths, the approach.",
+            "design.write",
+            "schema://Design@1",
+            "Write the design the critic will grade: the promise, the paths in scope, the approach              and how it will be proved. Revise it when the critic says revise.",
+        ),
+    });
+    let grade = serde_json::json!({
+        "type": "agent",
+        "name": "Critic",
+        "objective": format!(
+            "grade the design blind against the promise and the card; pass at {}/10 within {}              rounds, one task.critic_verdict per round; out of rounds needs a person (#467)",
+            critic.pass_score, critic.max_rounds
+        ),
+        "optionality": "required",
+        "agent": agent(
+            "Grade the design blind: promise, card and design only, never the author's reasoning.",
+            "design.grade",
+            "schema://CriticVerdict@1",
+            "Run a blind critic on the promise, the card and the design only. Record each round as              task.critic_verdict with a 0-10 score and reasons; revise until it passes or the              rounds run out.",
+        ),
+        "critic": {"passScore": critic.pass_score, "maxRounds": critic.max_rounds,
+                   "record": "task.critic_verdict"},
+    });
+    let nodes = spec
+        .get_mut("nodes")
+        .and_then(Value::as_object_mut)
+        .expect("checked above");
+    nodes.insert(CRITIC_DESIGN_NODE.to_owned(), design);
+    nodes.insert(CRITIC_GRADE_NODE.to_owned(), grade);
+    let mut edges = vec![serde_json::json!({
+        "id": "critic_design_to_grade", "from": CRITIC_DESIGN_NODE, "to": CRITIC_GRADE_NODE,
+        "type": "control"})];
+    edges.extend(first.iter().map(|to| {
+        serde_json::json!({"id": format!("critic_grade_to_{to}"), "from": CRITIC_GRADE_NODE,
+            "to": to, "type": "control"})
+    }));
+    let list = spec
+        .entry("edges")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(list) = list.as_array_mut() {
+        list.extend(edges);
+    }
+    spec.insert(
+        "entrypoints".to_owned(),
+        serde_json::json!([CRITIC_DESIGN_NODE]),
+    );
+    // The draft's own node budget covered the draft; the two compiler nodes are added on top,
+    // never above the profile's ceiling (the node count already reserved room for them).
+    if let Some(budget) = spec
+        .get_mut("budgets")
+        .and_then(|budgets| budgets.get_mut("maxNodes"))
+        && let Some(drafted) = budget.as_u64()
+    {
+        let ceiling = u64::try_from(profile.max_nodes).unwrap_or(u64::MAX);
+        *budget = Value::from(drafted.saturating_add(2).min(ceiling));
+    }
+    Ok(())
 }
 
 /// D2: stamps `completion.customs` onto every node the runtime dispatches as work that can

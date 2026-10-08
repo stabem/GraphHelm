@@ -7,6 +7,9 @@ import { lstat, mkdir } from 'node:fs/promises';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, SNAPSHOT = 6144, TIMEOUT = 30000;
+// The supervisor gives each request 30 s (Rust OP_BUDGET). A screen wait that used the whole
+// TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
+const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
   open: ['base', 'viewport', 'allowOrigins', 'headed'], snapshot: ['expect','discover'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
@@ -217,7 +220,7 @@ async function run(r) {
     for (const expected of r.expect) {
       // A screen renders after its document loads; wait for the control, then require it unique.
       const target=page.getByRole(expected.role,{name:expected.name,exact:true});
-      try { await target.first().waitFor({state:'visible',timeout:TIMEOUT}); } catch (err) { if (err.code) throw err; fail('driver.expectation_failed'); }
+      try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); } catch (err) { if (err.code) throw err; fail('driver.expectation_failed'); }
       await unique(target,'driver.expectation_failed');
     }
     const mainAria=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));

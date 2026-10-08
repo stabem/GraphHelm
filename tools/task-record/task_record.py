@@ -43,7 +43,8 @@ def parse(argv):
     p.add_argument("--merge-sha")
     p.add_argument("--closes", type=int, nargs="*", help="issues the merge closed; defaults to --issue")
     p.add_argument("--journeys", nargs="*", default=[])
-    p.add_argument("--repo", default="stabem/GraphHelm")
+    p.add_argument("--repo", default="stabem/GraphHelm",
+                   help="owner/name; pass '' to omit it (a Runtime older than #420 refuses the field)")
     p.add_argument("--execution", default="gh-team")
     p.add_argument("--url", default="http://127.0.0.1:8793")
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
@@ -63,10 +64,10 @@ def document(args, now):
            "revision": args.revision or KINDS.index(args.kind) + 1, "at": now}
     if args.kind == "claimed":
         need(args, "branch")
-        doc.update(issue=args.issue, lane=args.lane, branch=args.branch, repo=args.repo)
+        doc.update(issue=args.issue, lane=args.lane, branch=args.branch)
     elif args.kind == "pr_opened":
         need(args, "pr", "head")
-        doc.update(pr=args.pr, headSha=args.head, journeys=args.journeys, lane=args.lane, repo=args.repo)
+        doc.update(pr=args.pr, headSha=args.head, journeys=args.journeys, lane=args.lane)
     elif args.kind == "review_assigned":
         need(args, "pr", "head", "reviewer")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.reviewer, ordinal=args.ordinal)
@@ -78,6 +79,8 @@ def document(args, now):
         need(args, "pr", "merge-sha")
         doc.update(pr=args.pr, mergeSha=args.merge_sha, closes=args.closes or [args.issue],
                    merger=args.lane)
+    if args.repo and args.kind in ("claimed", "pr_opened"):
+        doc["repo"] = args.repo
     return doc
 
 
@@ -109,8 +112,9 @@ def main(argv):
     except urllib.error.URLError as error:
         sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")
     ok = reply.get("ok") is True
-    codes = [d.get("code") for d in reply.get("diagnostics", [])]
-    print(f"{'recorded' if ok else 'REFUSED'} {signal_id} {' '.join(c for c in codes if c)}".rstrip())
+    print(f"{'recorded' if ok else 'REFUSED'} {signal_id}")
+    for d in reply.get("diagnostics", []):
+        print(f"  {d.get('code')} {d.get('path')}: {d.get('message')}")
     return 0 if ok else 1
 
 

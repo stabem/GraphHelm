@@ -883,7 +883,18 @@ pub(super) fn observe(
     base: &str,
     path: &str,
 ) -> Result<Value> {
-    let snapshot = driver.call("snapshot", json!({"expect":screen["expect"]}), path)?;
+    // The driver ends its session on any refusal, so read the URL before expectations can fail.
+    // A late client-side route change still passes when its expectations do.
+    let early = driver.call("snapshot", json!({"expect":[]}), path)?;
+    let elsewhere = !early["url"]
+        .as_str()
+        .is_some_and(|url| url_matches(base, screen["url"].as_str().unwrap(), url));
+    let snapshot = match driver.call("snapshot", json!({"expect":screen["expect"]}), path) {
+        Err(refusal) if elsewhere && refusal.0 == "driver.expectation_failed" => {
+            return Err(failure("replay.wrong_screen", path, 1));
+        }
+        other => other?,
+    };
     let url = snapshot["url"]
         .as_str()
         .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
@@ -978,6 +989,46 @@ pub(super) fn walked(
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| failure("replay.record_uncertain", "/recording/walked", 1))
+}
+
+/// Map an observed refusal to its drift code and persist it on the flow (draft, no approval).
+/// Without a drift code the refusal passes through unchanged. No model is involved.
+#[allow(clippy::too_many_arguments)]
+fn drifted(
+    refusal: Failure,
+    data: &mut Value,
+    project: &Path,
+    file: &Path,
+    flow: &Value,
+    edge: &str,
+    act: usize,
+    seen: &str,
+) -> Failure {
+    let code = match refusal.0 {
+        "driver.locator_missing" => "drift.locator_missing",
+        "driver.locator_ambiguous" => "drift.locator_ambiguous",
+        "replay.wrong_screen" => "drift.wrong_screen",
+        "replay.screen_changed" => "drift.screen_changed",
+        "driver.expectation_failed" => "drift.expect_failed",
+        _ => return refusal,
+    };
+    let Ok(at) = super::journey::head(project) else {
+        return failure("replay.drift_unpersisted", "/drift", 1);
+    };
+    let entry = json!({"edge":edge,"act":act,"code":code,"seen":seen,"at":at});
+    if let Err(code) = super::journey_flow::record_drift(project, file, flow, entry.clone()) {
+        return failure(
+            code,
+            "/drift",
+            if code == "replay.source_changed" {
+                2
+            } else {
+                1
+            },
+        );
+    }
+    data["drift"] = entry;
+    failure(code, format!("/edges/{edge}/acts/{act}"), 1)
 }
 
 fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
@@ -1115,7 +1166,14 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                     if let Some(cached) = reused {
                         request["locator"] = cached["edges"][edge_id][act_index].clone();
                     }
-                    let result = driver.call("act", request, &pointer)?;
+                    let seen = format!(
+                        "{} {}",
+                        act["role"].as_str().unwrap(),
+                        serde_json::to_string(&act["name"]).unwrap()
+                    );
+                    let result = driver.call("act", request, &pointer).map_err(|f| {
+                        drifted(f, data, &project, &file, &flow, edge_id, act_index, &seen)
+                    })?;
                     locators.push(result["locator"].clone());
                     // Observe the actual post-act state even before a multi-act edge is complete.
                     driver.call("snapshot", json!({"expect":[]}), &pointer)?;
@@ -1123,8 +1181,29 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                 cache["edges"][edge_id] = locators.into();
             }
             let screen_path = format!("/paths/{name}/screens/{screen_id}");
-            cache["screens"][*screen_id] =
-                observe(&mut driver, screens[screen_id], base, &screen_path)?;
+            let observed = observe(&mut driver, screens[screen_id], base, &screen_path);
+            if step_index > 0 {
+                // A destination failure belongs to the edge that should have reached it.
+                let edge_id = path_edges[step_index - 1].as_str().unwrap();
+                let last = edges[edge_id]["acts"].as_array().unwrap().len() - 1;
+                let observed = observed.and_then(|value| match reused {
+                    Some(cached)
+                        if !super::journey_explore::similar(
+                            &cached["screens"][*screen_id],
+                            &value,
+                        ) =>
+                    {
+                        Err(failure("replay.screen_changed", screen_path.clone(), 1))
+                    }
+                    _ => Ok(value),
+                });
+                cache["screens"][*screen_id] = observed.map_err(|f| {
+                    let seen = format!("screen {screen_id}");
+                    drifted(f, data, &project, &file, &flow, edge_id, last, &seen)
+                })?;
+            } else {
+                cache["screens"][*screen_id] = observed?;
+            }
             path_data["observedScreens"]
                 .as_array_mut()
                 .unwrap()

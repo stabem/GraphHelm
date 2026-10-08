@@ -29,6 +29,13 @@ export async function startFixture() {
     if (u.pathname==='/cart' && fault?.kind==='rename-checkout') {
       res.end(shell(`<main><h1>Cart</h1><button onclick="location.href='/checkout'">Proceed</button></main>`));return;
     }
+    // #356 drift variants: a wrong destination and a changed destination.
+    if (u.pathname==='/cart' && fault?.kind==='wrong-url') {
+      res.end(shell('<main><h1>Cart</h1><button data-testid="checkout" onclick="location.href=\'/guest\'">Checkout</button><a href="/guest">Guest checkout</a></main>'));return;
+    }
+    if (u.pathname==='/checkout' && fault?.kind==='changed-checkout') {
+      res.end(shell('<main><h1>Checkout</h1><label>Password<input aria-label="Password" type="password"></label><button>Apply coupon</button><button>Gift wrap</button><button>Split payment</button><a href="/help">Help</a><a href="/terms">Terms</a><button>Save cart</button></main>'));return;
+    }
     if(u.pathname==='/account/delete' && req.method==='POST') {deleteCount++;res.end(shell('<main><h1>Account deleted</h1></main>'));return;}
     if(u.pathname==='/account') res.end(shell('<main><h1>Account</h1><form method="post" action="/account/delete"><button>Delete account</button></form></main>'));
     else if(u.pathname==='/cart') res.end(shell('<main><h1>Cart</h1><button data-testid="checkout" onclick="location.href=\'/checkout\'">Checkout</button><a href="/guest">Guest checkout</a></main>'));

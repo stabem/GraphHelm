@@ -238,6 +238,8 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         screen["scope"] = json!(["fixture-server.mjs"]);
     }
     flow["screens"][1]["expect"] = json!([{ "role":"heading","name":"Order 42" }]);
+    // The entry screen does not depend on the control a drift case renames.
+    flow["screens"][0]["expect"] = json!([{ "role":"heading","name":"Cart" }]);
     flow["screens"].as_array_mut().unwrap().push(json!({"id":"guest","url":"/guest","state":"stable","expect":[{"role":"heading","name":"Guest checkout"}],"scope":["fixture-server.mjs"]}));
     flow["edges"][1]["acts"][1]["name"] = "Submit order".into();
     flow["edges"].as_array_mut().unwrap().extend([
@@ -499,6 +501,8 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     assert_eq!(result["data"]["paths"][0]["walkedPairs"], json!([]));
     assert_eq!(std::fs::read(&cache).unwrap(), previous_bytes);
     assert_eq!(read_journeys(&project, &events, &keys), before);
+    let flow_path = project.join(".graphhelm/journeys/checkout.journey.yaml");
+    let approved_bytes = std::fs::read(&flow_path).unwrap();
     // A destination failure retains the first sealed capture but invents no walked pair.
     assert_eq!(
         app.control(&json!({"kind":"missing-checkout"}).to_string())["armed"],
@@ -511,7 +515,7 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
             .as_array()
             .unwrap()
             .iter()
-            .any(|d| d["code"] == "driver.expectation_failed"),
+            .any(|d| d["code"] == "drift.expect_failed"),
         "{result}"
     );
     assert_eq!(
@@ -525,9 +529,76 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     assert_eq!(result["data"]["cachePublished"], false);
     assert_eq!(std::fs::read(&cache).unwrap(), previous_bytes);
     assert_eq!(app.control("reset")["reset"], true);
+    // #356: each drift is its own persisted fact at the failing edge, with no model call.
+    let revision = git(&project, &["rev-parse", "HEAD"]).trim().to_owned();
+    let mut drifts = vec![(
+        "missing-checkout",
+        "drift.expect_failed",
+        "screen pay",
+        result,
+    )];
+    for (kind, expected, seen) in [
+        (
+            "rename-checkout",
+            "drift.locator_missing",
+            "button \"Checkout\"",
+        ),
+        ("wrong-url", "drift.wrong_screen", "screen pay"),
+        ("changed-checkout", "drift.screen_changed", "screen pay"),
+    ] {
+        std::fs::write(&flow_path, &approved_bytes).unwrap();
+        assert_eq!(
+            app.control(&json!({ "kind": kind }).to_string())["armed"],
+            true
+        );
+        let (code, result) = replay(&project, &events, &keys, false);
+        assert_eq!(code, 1, "{kind}: {result}");
+        drifts.push((kind, expected, seen, result));
+        assert_eq!(app.control("reset")["reset"], true);
+    }
+    for (kind, expected, seen, result) in drifts {
+        assert!(
+            result["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == expected),
+            "{kind}: {result}"
+        );
+        assert_eq!(result["data"]["modelCalls"], 0, "{kind}");
+        let entry =
+            json!({"edge":"cart.checkout","act":0,"code":expected,"seen":seen,"at":revision});
+        assert_eq!(result["data"]["drift"], entry, "{kind}: {result}");
+        assert_eq!(std::fs::read(&cache).unwrap(), previous_bytes, "{kind}");
+    }
+    // The last case's flow on disk: a draft without approval, carrying exactly that drift.
+    let persisted: Value = serde_yaml_ng::from_slice(&std::fs::read(&flow_path).unwrap()).unwrap();
+    assert_eq!(persisted["status"], "draft");
+    assert_eq!(persisted["approved"], Value::Null);
+    assert_eq!(
+        persisted["drift"],
+        json!([{"edge":"cart.checkout","act":0,"code":"drift.screen_changed","seen":"screen pay","at":revision}])
+    );
+    // The reader shows the drift, finds no error and offers re-approval to the owner.
+    let (code, value) = reply(cli().args(["journey", "flows", "--project"]).arg(&project));
+    assert_eq!(code, 0, "{value}");
+    let listed = &value["data"]["flows"][0];
+    assert_eq!(listed["drift"], persisted["drift"], "{value}");
+    assert!(
+        listed["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["severity"] == "warning"),
+        "{value}"
+    );
+    assert_eq!(listed["approvable"], true, "{value}");
+    assert_eq!(app.control("counts")["model"], 0);
+    // Ordinary replay refuses the drifted draft until it is approved again.
+    let (code, _) = replay(&project, &events, &keys, false);
+    assert_ne!(code, 0);
+    std::fs::write(&flow_path, &approved_bytes).unwrap();
     // An actual canonical-source edit during a browser action cannot publish a cache.
-    let flow_path = project.join(".graphhelm/journeys/checkout.journey.yaml");
-    let approved_bytes = std::fs::read(&flow_path).unwrap();
     assert_eq!(
         app.control(&json!({"kind":"edit-flow","path":flow_path}).to_string())["armed"],
         true

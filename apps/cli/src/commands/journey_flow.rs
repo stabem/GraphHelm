@@ -724,6 +724,25 @@ fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
     Some(files)
 }
 
+/// Ordinary replay found drift on an approved flow: persist it as a draft fact. The writer lock
+/// and a re-read of the replayed source refuse a concurrent edit instead of merging into it.
+pub(crate) fn record_drift(
+    project: &Path,
+    file: &Path,
+    replayed: &Value,
+    entry: Value,
+) -> Result<(), &'static str> {
+    let _lock = write_lock(project).map_err(|_| "replay.drift_unpersisted")?;
+    let (_, mut flow) = read(file).map_err(|_| "replay.source_changed")?;
+    if flow != *replayed {
+        return Err("replay.source_changed");
+    }
+    flow["status"] = json!("draft");
+    flow["approved"] = Value::Null;
+    flow["drift"].as_array_mut().unwrap().push(entry);
+    atomic_write(file, canonical(&flow, false).as_bytes()).map_err(|_| "replay.drift_unpersisted")
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {

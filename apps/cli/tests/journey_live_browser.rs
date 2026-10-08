@@ -6,7 +6,7 @@
 //! Cost: ~30s plus build, Node/Playwright/Chromium explicitly installed and a desktop for the
 //! headed browser, local ports/Git; no provider/account or network installation. Ordinary
 //! offline runs ignore this target.
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -15,7 +15,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 const KEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
-const RUN: &str = "replay-browser";
 const SECRET: &str = "fixture_secret_831597";
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 const FIXTURE: &str = include_str!("../../../tools/journey-driver/fixture-server.mjs");

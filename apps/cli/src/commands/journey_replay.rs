@@ -1372,6 +1372,7 @@ mod tests {
                 replies,
                 sequence: 0,
                 secrets: vec![],
+                headed: false,
             };
             assert_eq!(
                 driver.call(op, request, "/peer").unwrap_err().0,

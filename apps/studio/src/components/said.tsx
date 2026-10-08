@@ -71,7 +71,7 @@ function Inline({ text }: { text: string }) {
     let node: React.ReactNode | null = null;
     if (groups.code !== undefined) node = <code key={key++}>{groups.code}</code>;
     else if (groups.bold !== undefined) node = <strong key={key++}>{groups.bold}</strong>;
-    else if (groups.href !== undefined) node = <a key={key++} href={groups.href} target="_blank" rel="noreferrer noopener">{groups.label}</a>;
+    else if (groups.href !== undefined) node = <a key={key++} href={groups.href} title={groups.href} target="_blank" rel="noreferrer noopener">{groups.label}</a>;
     else if (groups.url !== undefined) node = <a key={key++} href={groups.url} target="_blank" rel="noreferrer noopener">{groups.url}</a>;
     else if (groups.pr !== undefined && links.repoUrl !== null) node = <a key={key++} href={`${links.repoUrl}/pull/${groups.prnum}`} target="_blank" rel="noreferrer noopener">{whole}</a>;
     else if (groups.issue !== undefined && links.repoUrl !== null) node = <a key={key++} href={`${links.repoUrl}/issues/${groups.issuenum}`} target="_blank" rel="noreferrer noopener">{whole}</a>;

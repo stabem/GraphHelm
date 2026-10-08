@@ -15,7 +15,7 @@
  * JSX, which escapes it. There is no `dangerouslySetInnerHTML` in this application.
  */
 
-import React, { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 

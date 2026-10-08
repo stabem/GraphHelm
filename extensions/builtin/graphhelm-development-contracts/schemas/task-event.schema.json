@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://p50.dev/schemas/task-event.schema.json",
+  "title": "Task Event",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.pr_opened, task.review_assigned, task.review_verdict, task.merged); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "oneOf": [
+    {
+      "title": "task.claimed",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "issue", "lane", "branch"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "issue": {"$ref": "#/$defs/positive"},
+        "lane": {"$ref": "#/$defs/actor"},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 256},
+        "plan": {"type": "object"}
+      }
+    },
+    {
+      "title": "task.pr_opened",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "headSha", "journeys", "lane"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "headSha": {"$ref": "#/$defs/sha"},
+        "journeys": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}},
+        "lane": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.review_assigned",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "headSha", "reviewer", "ordinal"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "headSha": {"$ref": "#/$defs/sha"},
+        "reviewer": {"$ref": "#/$defs/actor"},
+        "ordinal": {"enum": [1, 2]}
+      }
+    },
+    {
+      "title": "task.review_verdict",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "headSha", "reviewer", "verdict", "commentUrl"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "headSha": {"$ref": "#/$defs/sha"},
+        "reviewer": {"$ref": "#/$defs/actor"},
+        "verdict": {"enum": ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"]},
+        "commentUrl": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    {
+      "title": "task.merged",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "mergeSha", "closes", "merger"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "mergeSha": {"$ref": "#/$defs/sha"},
+        "closes": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/positive"}},
+        "merger": {"$ref": "#/$defs/actor"}
+      }
+    }
+  ],
+  "$defs": {
+    "taskId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+    "positive": {"type": "integer", "minimum": 1},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
+    "at": {"type": "string", "minLength": 1, "maxLength": 64}
+  }
+}

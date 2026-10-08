@@ -65,6 +65,9 @@ pub const GHCLI035_SKILLS_SYNC_REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
 pub const GHCLI037_WORKSPACE_REFUSED: &str = "GHCLI037_WORKSPACE_REFUSED";
 /// An agent-typed MCP session asked to approve a journey flow; only the owner approves (#353).
 pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY";
+/// A `task.*` record names another actor than the one that recorded it: a lane cannot record a
+/// step under another lane's name (#386).
+pub const GHCLI038_ACTOR_MISMATCH: &str = "GHCLI038_ACTOR_MISMATCH";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -111,6 +114,7 @@ pub const ALL: &[&str] = &[
     GHCLI035_SKILLS_SYNC_REFUSED,
     GHCLI037_WORKSPACE_REFUSED,
     GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
+    GHCLI038_ACTOR_MISMATCH,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

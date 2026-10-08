@@ -61,6 +61,23 @@ pub struct StepInput {
     pub screen: Option<ScreenInput>,
     /// The statements of the contract promises that name this step, in contract order.
     pub promises: Vec<String>,
+    /// What the user does on this step (#379): the contract's `semanticAction` without its
+    /// `input`, which may be typed text.
+    pub action: Option<StepAction>,
+    /// The states the step must reach (`expectedStates`), in contract order.
+    pub expected_states: Vec<String>,
+}
+
+/// A step's semantic action as served (#379): its kind and the element it targets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepAction {
+    /// The semantic action kind (`navigate`, `activate`, `enter_text`, ...).
+    pub kind: String,
+    /// The target's value: an accessible name, a label, visible text or a URL.
+    pub target: String,
+    /// How the target is located (`accessible_name`, `label`, `url`, ...).
+    pub strategy: String,
 }
 
 /// The screen a step shows and the source paths that draw it.
@@ -315,6 +332,10 @@ pub struct StepView {
     pub capture: Option<CaptureView>,
     /// The promise statements that name this step, in contract order.
     pub promises: Vec<String>,
+    /// What the user does on this step (#379), when the contract names it.
+    pub action: Option<StepAction>,
+    /// The states the step must reach, in contract order.
+    pub expected_states: Vec<String>,
 }
 
 /// A step's screen as served.
@@ -554,6 +575,8 @@ fn fold_one(
                 }),
                 capture,
                 promises: step.promises.clone(),
+                action: step.action.clone(),
+                expected_states: step.expected_states.clone(),
             }
         })
         .collect();

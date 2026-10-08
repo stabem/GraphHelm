@@ -7,10 +7,9 @@ discoverable entry skills.
 For the left-to-right view of how these skills fit with Keel and the development-contracts package,
 see the [skills README](../../../docs/skills/README.md).
 
-The eight skills are entry families, not the entire capability inventory and not a fixed
-eight-stage pipeline. Version 0.1.0 contains 53 atomic contributions: 8 skills, 7 agents, 18
-schemas, 3 policies, 3 evaluators, 9 fixtures, 3 host adapters, 1 observer catalog, and 1 dogfood
-graph. GraphHelm should select only the smallest set required by the journey, risk, and available
+The two skills are entry points, not the entire capability inventory and not a fixed
+pipeline. Version 0.1.0 contains 49 atomic contributions: 2 skills, 7 agents, 20 schemas,
+3 policies, 3 evaluators, 9 fixtures, 3 host adapters, 1 observer catalog, and 1 dogfood graph. GraphHelm should select only the smallest set required by the journey, risk, and available
 evidence.
 
 ## Thin host adapters
@@ -44,16 +43,13 @@ route suspected instruction injection through the existing policy and typed-sign
 - `journey-contract`: specify the observable user journey and its failure contract.
 - `journey-map`: map journeys into an existing project from zero (screens, contracts, Playwright
   tests, first capture baseline).
-- `journey-prove`: prove mapped journeys at a revision (fixture script, approve, observer,
+- `journey-prove`: prove mapped journeys at a revision (fixture script, the owner approves, observer,
   `journey replay` in state order, read the map, deliver the proof).
-- `observation-compiler`: lower promises into typed evidence obligations or `OBSERVER_MISSING`.
-- `plan-council`: select a risk-specific council and preserve arguments and dissent.
-- `defect-bounty`: normalize, minimize, replay, and try to falsify journey defect claims.
-- `skill-synthesizer`: compose a task-local Skill Capsule from installed capabilities.
-- `skill-evaluator`: measure a task-local capsule and produce an advisory, non-promotable evaluation
-  candidate; current package capability is advisory only.
-- `retry-provenance`: retain the initial failure and request classification of the complete chain.
-- `journey-verifier`: execute the compiled proof and report only the strongest supported result.
+
+The schemas, policies, evaluators and fixtures of the earlier skills (council, defect, capsule,
+retry and verification contracts) stay in this package as contracts; their skills were folded into
+the `journey-prove` skill (#381) and the development-contracts `task-plan`, `implement` and `blind-review` skills
+(#385).
 
 ## Public-surface rule
 
@@ -95,7 +91,7 @@ have no `@version` suffix. Package validation resolves each reference to an exac
 
 From the repository root, validate the package with `graphhelm extension validate
 extensions/builtin/graphhelm-jpd`. Validate and simulate the contract-level dogfood graph with the
-public `graphhelm graph` commands described by `journey-verifier`.
+public `graphhelm graph` commands.
 
 This first package does not claim to provide a general installer, hot reload, a remote registry, a
 browser engine, any Project Skill activation or publication path, or a generic JPD gate. It can

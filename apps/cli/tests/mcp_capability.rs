@@ -237,7 +237,7 @@ fn a_capability_token_file_without_a_package_is_refused_before_any_protocol_byte
         directory.path(),
         &json!({
             "packageDigest": "sha256:aaaa",
-            "contributionId": "skill/code-contract",
+            "contributionId": "skill/keel",
             "actor": "agent-x",
             "allowedTools": ["approve"],
             "revoked": false,
@@ -273,7 +273,7 @@ fn a_capability_token_file_without_an_audit_log_path_is_refused_before_any_proto
         directory.path(),
         &json!({
             "packageDigest": "sha256:aaaa",
-            "contributionId": "skill/code-contract",
+            "contributionId": "skill/keel",
             "actor": "agent-x",
             "allowedTools": ["approve"],
             "revoked": false,

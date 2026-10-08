@@ -119,6 +119,124 @@ fn document_failure(error: DocumentError) -> Failure {
     )
 }
 
+/// #386 (journey-first spec §7): a `task.*` signal carries one `graphhelm-task-event-v1` document
+/// in its description (`task-event.schema.json` in the development-contracts package), and it is
+/// recorded by the lane it names. The identity check runs for `task.*` only: today every lane signs
+/// as `agent-chat` and names itself in `source.id`, so refusing every mismatch would cut off all
+/// live lanes before each sets its own `GRAPHHELM_ACTOR`.
+pub(crate) fn validate_task_event(
+    value: &serde_json::Value,
+    actor: &PersistedActor,
+) -> Result<(), Failure> {
+    let Some(kind) = value["type"]
+        .as_str()
+        .filter(|kind| kind.starts_with("task."))
+    else {
+        return Ok(());
+    };
+    let invalid = || {
+        super::signal_invalid(
+            "a task.* signal carries one graphhelm-task-event-v1 document for its kind",
+            "/signal/description",
+        )
+    };
+    let actor_id = actor.id().as_str();
+    if value
+        .pointer("/source/id")
+        .and_then(serde_json::Value::as_str)
+        != Some(actor_id)
+    {
+        return Err(Failure {
+            code: crate::error_codes::GHCLI038_ACTOR_MISMATCH,
+            message: "a task.* signal's source.id must be the actor that records it".to_owned(),
+            pointer: "/signal/source/id".to_owned(),
+        });
+    }
+    let text = value["description"].as_str().ok_or_else(invalid)?;
+    if text.len() > 8192 {
+        return Err(invalid());
+    }
+    let document: serde_json::Value = serde_json::from_str(text).map_err(|_| invalid())?;
+    let count = |key: &str| document[key].as_u64().filter(|n| *n > 0).is_some();
+    let sha = |key: &str| {
+        document[key].as_str().is_some_and(|s| {
+            (7..=64).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+    };
+    let short = |key: &str, max: usize| {
+        document[key]
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control))
+    };
+    let is_actor = |key: &str| document[key].as_str() == Some(actor_id);
+    let numbers = |key: &str| {
+        document[key]
+            .as_array()
+            .is_some_and(|items| items.iter().all(|n| n.as_u64().is_some_and(|n| n > 0)))
+    };
+    let ids = |key: &str| {
+        document[key].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .all(|id| id.as_str().is_some_and(|id| OpaqueId::parse(id).is_ok()))
+        })
+    };
+    let common = document["schema"] == "graphhelm-task-event-v1"
+        && document["taskId"]
+            .as_str()
+            .is_some_and(|id| OpaqueId::parse(id).is_ok())
+        && count("revision")
+        && short("at", 64);
+    // The same shapes as the schema's five `oneOf` branches, unknown keys refused alike.
+    let (fields, keys): (bool, &[&str]) = match kind {
+        "task.claimed" => (
+            count("issue")
+                && is_actor("lane")
+                && short("branch", 256)
+                && (document.get("plan").is_none() || document["plan"].is_object()),
+            &["issue", "lane", "branch", "plan"],
+        ),
+        "task.pr_opened" => (
+            count("pr") && sha("headSha") && ids("journeys") && is_actor("lane"),
+            &["pr", "headSha", "journeys", "lane"],
+        ),
+        "task.review_assigned" => (
+            count("pr")
+                && sha("headSha")
+                && short("reviewer", 128)
+                && matches!(document["ordinal"].as_u64(), Some(1 | 2)),
+            &["pr", "headSha", "reviewer", "ordinal"],
+        ),
+        "task.review_verdict" => (
+            count("pr")
+                && sha("headSha")
+                && is_actor("reviewer")
+                && matches!(
+                    document["verdict"].as_str(),
+                    Some("APPROVE" | "APPROVE-WITH-RISK" | "BLOCK")
+                )
+                && short("commentUrl", 512),
+            &["pr", "headSha", "reviewer", "verdict", "commentUrl"],
+        ),
+        "task.merged" => (
+            count("pr") && sha("mergeSha") && numbers("closes") && is_actor("merger"),
+            &["pr", "mergeSha", "closes", "merger"],
+        ),
+        _ => (false, &[]),
+    };
+    let known = document.as_object().is_some_and(|object| {
+        object.keys().all(|key| {
+            matches!(key.as_str(), "schema" | "taskId" | "revision" | "at")
+                || keys.contains(&key.as_str())
+        })
+    });
+    if common && fields && known {
+        Ok(())
+    } else {
+        Err(invalid())
+    }
+}
+
 /// Reserved notice contracts cannot accept arbitrary prose through the generic signal command.
 pub(crate) fn validate_owner_signal(
     value: &serde_json::Value,

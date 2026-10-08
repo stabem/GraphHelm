@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "GraphHelm Development Contracts",
     "shortDescription": "Contract the change, cite the evidence, propose the lesson.",
-    "longDescription": "Entry skills for contract-first development. code-contract states scope, refusal cases and evidence obligations before code exists. context-retrieval assembles evidence, cites it by stable item identity, and declares what it did not retrieve. memory-curator proposes durable lessons as advisory candidates only. keel scopes the change, measures write surface, and names its proof. test-audit guides test authoring, suite audits, and deletion records that name a covering observer. These skills read through public surfaces and propose artifacts; none enforces, publishes, or mutates.",
+    "longDescription": "Entry skills for the per-task graph. task-plan decides paths, promise, proof and reviews before code exists. implement writes the change inside the card with cited context. blind-review gives one blind verdict on a pinned head. merge lands the approved head and reads it back. memory-curator proposes durable lessons as advisory candidates only. keel scopes the change, measures write surface, and names its proof. test-audit guides test authoring, suite audits, and deletion records that name a covering observer. These skills read through public surfaces and propose artifacts; none enforces or publishes on its own.",
     "developerName": "GraphHelm",
     "category": "Developer Tools",
     "capabilities": [

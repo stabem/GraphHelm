@@ -584,56 +584,6 @@
           "schema": "schemas/token-efficiency-evaluator.schema.json"
         },
         {
-          "id": "skill/code-contract",
-          "kind": "skill",
-          "path": "skills/code-contract/SKILL.md",
-          "sha256": "sha256:54ff82f47fa6aab2e53348371eea76c09746d7cc3aa98dcb107daf975efe03dd",
-          "effects": [
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read"
-          ],
-          "requires": {
-            "capabilities": [],
-            "observers": []
-          },
-          "surfaces": [
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "development-contracts"
-        },
-        {
-          "id": "skill/context-retrieval",
-          "kind": "skill",
-          "path": "skills/context-retrieval/SKILL.md",
-          "sha256": "sha256:b7196350b28b513d75178e5ed45a402099266dba1e8b90a118e88985467c43fc",
-          "effects": [
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read"
-          ],
-          "requires": {
-            "capabilities": [],
-            "observers": []
-          },
-          "surfaces": [
-            "tool:routes",
-            "tool:status"
-          ],
-          "family": "development-contracts"
-        },
-        {
           "id": "skill/memory-curator",
           "kind": "skill",
           "path": "skills/memory-curator/SKILL.md",
@@ -677,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:a13271e93a18405b853f6623282f7949103b155cb6a64cc2fa82bbf32be95e14",
+      "sha256": "sha256:d0de4946d5343d40c1bebb89f49236aa6942be9f204253c6002dbed7bd3d39ba",
           "effects": [
             "host.discover"
           ],
@@ -943,7 +893,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:6991163829f74fc22e71641dcfafb60d17e60d3c43769e4d333522c91dcbfdce",
+          "sha256": "sha256:91f69c99df70c6a94918c7ad0247059f3408f3066ecb69302464670be4a15160",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -968,7 +918,7 @@
           "id": "skill/keel-reference",
           "kind": "skill",
           "path": "skills/keel/REFERENCE.md",
-          "sha256": "sha256:f25551888272880abf654df442c604a0fb93aec68f2199c52a784b8dc772807c",
+          "sha256": "sha256:045030157f1806237c882b673ab5f51692795533d84748654c1b8762c8de3739",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -993,7 +943,7 @@
           "id": "skill/test-audit",
           "kind": "skill",
           "path": "skills/test-audit/SKILL.md",
-      "sha256": "sha256:3f35707c5aff59f5baee9a7cadbf0672ce251c709f781c1a585ba01c981601d2",
+      "sha256": "sha256:d10d9100ffc695889257b23b2fdd25eec29faec2633b1ad11a00cc5f2954c043",
           "effects": [],
           "permissions": [
             "package.read"
@@ -1002,6 +952,50 @@
             "capabilities": [],
             "observers": []
           },
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/task-plan",
+          "kind": "skill",
+          "path": "skills/task-plan/SKILL.md",
+          "sha256": "sha256:5e88cfac0024c0f974be2c83eb295f49090d586f866f2582ca987337d9ff27b4",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/implement",
+          "kind": "skill",
+          "path": "skills/implement/SKILL.md",
+          "sha256": "sha256:d81cb5be1923e24917dd302f4d836505bb5417a8dec261813c0671575f7dacaa",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/blind-review",
+          "kind": "skill",
+          "path": "skills/blind-review/SKILL.md",
+          "sha256": "sha256:54fd8f57f04805b7643b4135441390815d8a18b5269262ffca419fe484e6ea1c",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/merge",
+          "kind": "skill",
+          "path": "skills/merge/SKILL.md",
+          "sha256": "sha256:a5baeacf8744d20cde70a18f4524bfc3f42967239b499167270bae1890f04fe0",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
           "family": "development-contracts"
         },
         {
@@ -1042,6 +1036,89 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/task-event",
+          "kind": "schema",
+          "path": "schemas/task-event.schema.json",
+          "sha256": "sha256:a5d1985176ad383dbb600f185055606ece1ffbaa4cb9314157c42e04389b715c",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/task-event-valid-claimed",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/claimed.json",
+          "sha256": "sha256:728441f821454b7d9df7a90999dbf392210cd9df2420aaa2944e31edb79e3083",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-pr-opened",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/pr-opened.json",
+          "sha256": "sha256:4cb5fccd6942ae4bba5059396e266a3ea1a03a76cbf01379787e3cc736ff462b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-assigned",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-assigned.json",
+          "sha256": "sha256:960f97611c5656c6e08bc407269efe7e04c993046007171fed8fcdf1400f05a6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-verdict",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-verdict.json",
+          "sha256": "sha256:a01de65d3d944b39d9d7ca031d7a93ee889c5553e068ba7a2821b5fc33d182a5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-merged",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/merged.json",
+          "sha256": "sha256:7993164a7f17b46dbd80a952cacbeda2c6c3ed747726466fa2b9beae8ba420be",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
         },
         {
           "id": "schema/keel-card",

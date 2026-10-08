@@ -6,7 +6,7 @@
 import { useState } from "react";
 
 import type { BeforeAfterPair } from "../runtime/journeys";
-import { captureAge, liveChipFor } from "../runtime/journeys";
+import { captureAge, journeyPath, liveChipFor } from "../runtime/journeys";
 import type { ArrowView, CaptureUnknownCause, CaptureView, JourneysView, LiveSession, RuntimeEvent, StepAction, StepView } from "../runtime/types";
 import { ago } from "./format";
 import { useImageUrl } from "./use-image-url";
@@ -187,7 +187,10 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
       {view.journeys.length > 1 && (
         <label className="journey-picker">Journey{" "}
           <select value={journey.contractId} onChange={(event) => { setDetail(null); onSelectContract(event.target.value); }}>
-            {view.journeys.map((candidate) => <option key={candidate.contractId} value={candidate.contractId}>{candidate.title}</option>)}
+            {view.journeys.map((candidate) => {
+              const branch = journeyPath(view.journeys.map((j) => j.contractId), candidate.contractId);
+              return <option key={candidate.contractId} value={candidate.contractId}>{branch === null ? candidate.title : `${candidate.title} · ${branch.path} path`}</option>;
+            })}
           </select>
         </label>
       )}

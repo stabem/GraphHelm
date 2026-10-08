@@ -38,6 +38,15 @@ function props(overrides: Partial<JourneyCanvasProps> = {}): JourneyCanvasProps 
     events, botName: (id) => `Bot ${id}`, beforeAfter: [pair], onOpenRecords: vi.fn(), ...overrides };
 }
 
+describe("JourneyCanvas picker (#447)", () => {
+  it("names a branch path in the picker instead of repeating its flow's title", () => {
+    const branch = { ...view.journeys[0], contractId: "checkout.back" };
+    render(<JourneyCanvas {...props({ view: { ...view, journeys: [view.journeys[0], branch] } })} />);
+    const options = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(options).toEqual(["Checkout", "Checkout · back path"]);
+  });
+});
+
 describe("JourneyCanvas", () => {
   // #379: the owner could not follow a journey from screenshots and titles alone. Each card must
   // say what the user does and what they must see, and each arrow the action that leads on.

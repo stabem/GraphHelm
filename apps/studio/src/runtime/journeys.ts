@@ -125,3 +125,12 @@ export function liveChipFor(contractId: string, stepId: string, sessions: LiveSe
     : `at step · ${newest.state}`;
   return { sessionId: newest.sessionId, state: newest.state, label, code: newest.code };
 }
+
+/** #447: a flow with a second path compiles to `<flow>.<path>`. When `<flow>` is itself a journey
+ * here, the contract is that flow's `path` path; anything else (a dotted id alone) is its own row. */
+export function journeyPath(contractIds: readonly string[], contractId: string): { flow: string; path: string } | null {
+  const dot = contractId.lastIndexOf(".");
+  if (dot <= 0 || dot === contractId.length - 1) return null;
+  const flow = contractId.slice(0, dot);
+  return contractIds.includes(flow) ? { flow, path: contractId.slice(dot + 1) } : null;
+}

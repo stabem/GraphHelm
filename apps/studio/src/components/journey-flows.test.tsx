@@ -136,6 +136,39 @@ describe("JourneyFlows titles and selection", () => {
   });
 });
 
+// #466 review: Approve approves every path of a flow, so every path is shown before approval —
+// a second path (`cancel`) was approved unread when only `main` was drawn. Cost: jsdom.
+describe("JourneyFlows paths", () => {
+  const twoWays: JourneyFlowsView = { flows: [flow("checkout", {
+    screens: [...flow("x").screens, { id: "cancelled", url: "/cart", state: "stable", expect: [{ role: "heading", name: "Order cancelled" }] }],
+    edges: [...flow("x").edges, { id: "cart.cancel", from: "cart", to: "cancelled", acts: [{ kind: "activate", role: "button", name: "Cancel order" }] }],
+    paths: { main: ["cart.checkout", "pay.submit"], cancel: ["cart.cancel"] },
+  })] };
+
+  it("shows every path with its own steps, and watches the one asked for", async () => {
+    const onWatch = vi.fn(async () => undefined);
+    render(<JourneyFlows view={twoWays} onApprove={vi.fn()} onWatch={onWatch} />);
+    expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button")).toHaveTextContent("3 steps · 2 ways");
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByRole("heading", { name: "Also approved: the “cancel” way" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Steps: cancel" })).getAllByRole("listitem").map((step) => step.textContent)).toEqual([
+      "1Sees the “Cart” heading",
+      "2Does Clicks “Cancel order”Sees the “Order cancelled” heading",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Watch “cancel”" }));
+    expect(onWatch).toHaveBeenCalledWith("checkout", "cancel");
+  });
+
+  it("lights the watched step only on the path being played", () => {
+    render(<JourneyFlows view={twoWays} onApprove={vi.fn()} onWatch={vi.fn()}
+      sessions={[watchRow({ path: "cancel", edge: "cart.cancel", actIndex: 0, stepCount: 2 })]} />);
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem").every((step) => !step.hasAttribute("aria-current"))).toBe(true);
+    expect(within(screen.getByRole("list", { name: "Steps: cancel" })).getAllByRole("listitem").map((step) => step.getAttribute("aria-current")))
+      .toEqual([null, "step"]);
+    expect(screen.getByRole("status")).toHaveTextContent("Playing step 2 of 2…");
+  });
+});
+
 // #465: Watch plays the journey in a headed browser (#462) while the step being played lights here.
 describe("JourneyFlows watch", () => {
   it("starts a watch of the selected journey and lights the step its session is on", async () => {

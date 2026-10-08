@@ -21,7 +21,7 @@ export interface JourneyFlowsProps {
   /** The live sessions the Runtime holds; a `mode: "watch"` row lights the step being played. */
   sessions?: LiveSession[] | null;
   /** Play the flow in a headed browser (#462). Resolves when the play ends. Absent: no Watch. */
-  onWatch?: (flowId: string) => Promise<void>;
+  onWatch?: (flowId: string, path?: string) => Promise<void>;
   /** The journey the owner selected (and its status), so the proof map below follows it. */
   onSelect?: (flowId: string, status: JourneyFlowView["status"]) => void;
 }
@@ -64,12 +64,18 @@ function seesWords(screen: JourneyFlowScreen): string {
 
 interface Step { screen: JourneyFlowScreen; arrivedBy: JourneyFlowEdge | null }
 
-/** The main path as steps: its first screen, then each edge's destination with the edge that leads
- * there. A flow without a main path lists its screens. */
-function stepsOf(flow: JourneyFlowView): Step[] {
+/** The flow's paths, `main` first: Approve approves every one of them, so every one is shown. */
+function pathsOf(flow: JourneyFlowView): string[] {
+  const names = Object.keys(flow.paths);
+  return [...names.filter((name) => name === "main"), ...names.filter((name) => name !== "main").sort()];
+}
+
+/** One path as steps: its first screen, then each edge's destination with the edge that leads
+ * there. A flow without that path lists its screens. */
+function stepsOf(flow: JourneyFlowView, path = "main"): Step[] {
   const byId = new Map(flow.screens.map((screenView) => [screenView.id, screenView]));
   const edges = new Map(flow.edges.map((edge) => [edge.id, edge]));
-  const main = (flow.paths.main ?? []).map((id) => edges.get(id)).filter((edge): edge is JourneyFlowEdge => edge !== undefined);
+  const main = (flow.paths[path] ?? []).map((id) => edges.get(id)).filter((edge): edge is JourneyFlowEdge => edge !== undefined);
   if (main.length === 0) return flow.screens.map((screenView) => ({ screen: screenView, arrivedBy: null }));
   const first = byId.get(main[0]!.from);
   const steps: Step[] = first ? [{ screen: first, arrivedBy: null }] : [];
@@ -100,26 +106,25 @@ function watchWords(session: LiveSession, steps: Step[], current: number): strin
   }
 }
 
-function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string) => Promise<void>; session?: LiveSession }) {
+function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; onWatch?: (flowId: string, path?: string) => Promise<void>; session?: LiveSession }) {
   const [approving, setApproving] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const settled = flow.status === "approved" && !flow.approvable;
   const blocked = !flow.approvable && flow.findings.some((finding) => finding.severity === "error");
-  const steps = stepsOf(flow);
   const title = splitTitle(flow.title ?? flow.id);
-  const current = currentStep(steps, session);
+  const paths = pathsOf(flow);
   const playing = session?.state === "playing";
   const approve = () => {
     setApproving(true);
     setError(null);
     onApprove(flow.id).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setApproving(false));
   };
-  const watch = () => {
+  const watch = (path?: string) => {
     if (!onWatch) return;
     setStarting(true);
     setError(null);
-    onWatch(flow.id).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setStarting(false));
+    (path === undefined ? onWatch(flow.id) : onWatch(flow.id, path)).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setStarting(false));
   };
   return (
     <article className="journey-flow" data-status={flow.status} aria-label={`Journey ${title.name}`}>
@@ -128,26 +133,41 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
       {title.note !== null && <p className="journey-flow-note">Why it is a draft: {title.note}</p>}
       <div className="journey-flow-approve">
         {onWatch && (
-          <button type="button" onClick={watch} disabled={starting || playing}>{starting || playing ? "Playing…" : "Watch"}</button>
+          <button type="button" onClick={() => watch()} disabled={starting || playing}>{starting || playing ? "Playing…" : "Watch"}</button>
         )}
         {!settled && <button type="button" disabled={!flow.approvable || approving} onClick={approve}>{approving ? "Approving…" : "Approve"}</button>}
       </div>
       {flow.drift.length > 0 && <p className="journey-flow-note">The app changed since this journey was recorded; watch it to see where.</p>}
       {blocked && <p className="journey-flow-note">The agent still has to fix this journey before you can approve it.</p>}
-      <ol className="journey-flow-steps" aria-label="Steps">
-        {steps.map((step, index) => (
-          <li key={step.screen.id} className="journey-flow-step" aria-current={index === current ? "step" : undefined}>
-            <span className="journey-flow-step-number">{index + 1}</span>
-            <span className="journey-flow-step-text">
-              {step.arrivedBy && (step.arrivedBy.acts ?? []).length > 0 && (
-                <span className="journey-does"><span className="journey-label">Does</span> {(step.arrivedBy.acts ?? []).map(actWords).join(", then ")}</span>
-              )}
-              <span className="journey-sees"><span className="journey-label">Sees</span> {seesWords(step.screen)}</span>
-            </span>
-          </li>
-        ))}
-      </ol>
-      {session && <p className="journey-flow-watch" role="status">{watchWords(session, steps, current)}</p>}
+      {(paths.length === 0 ? ["main"] : paths).map((path) => {
+        const steps = stepsOf(flow, path);
+        const here = session !== undefined && (session.path || "main") === path ? session : undefined;
+        const current = currentStep(steps, here);
+        return (
+          <div key={path} className="journey-flow-path">
+            {path !== "main" && (
+              <div className="journey-flow-path-head">
+                <h4>Also approved: the “{path}” way</h4>
+                {onWatch && <button type="button" onClick={() => watch(path)} disabled={starting || playing}>{`Watch “${path}”`}</button>}
+              </div>
+            )}
+            <ol className="journey-flow-steps" aria-label={path === "main" ? "Steps" : `Steps: ${path}`}>
+              {steps.map((step, index) => (
+                <li key={step.screen.id} className="journey-flow-step" aria-current={index === current ? "step" : undefined}>
+                  <span className="journey-flow-step-number">{index + 1}</span>
+                  <span className="journey-flow-step-text">
+                    {step.arrivedBy && (step.arrivedBy.acts ?? []).length > 0 && (
+                      <span className="journey-does"><span className="journey-label">Does</span> {(step.arrivedBy.acts ?? []).map(actWords).join(", then ")}</span>
+                    )}
+                    <span className="journey-sees"><span className="journey-label">Sees</span> {seesWords(step.screen)}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            {here && <p className="journey-flow-watch" role="status">{watchWords(here, steps, current)}</p>}
+          </div>
+        );
+      })}
       {error !== null && <p className="journey-failure" role="alert">{error}</p>}
     </article>
   );
@@ -192,7 +212,7 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
             <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => setPicked(flow.id)}>
               <span className="journey-flow-row-title">{splitTitle(flow.title ?? flow.id).name}</span>
               <span className="journey-flow-row-status">{STATUS_LABEL[flow.status]}</span>
-              <span className="journey-flow-row-steps">{stepsOf(flow).length} steps</span>
+              <span className="journey-flow-row-steps">{stepsOf(flow).length} steps{pathsOf(flow).length > 1 ? ` · ${pathsOf(flow).length} ways` : ""}</span>
             </button>
           </li>
         ))}

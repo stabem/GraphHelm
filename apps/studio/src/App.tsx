@@ -2123,12 +2123,12 @@ export default function App({
   const [watchingFlow, setWatchingFlow] = useState<string | null>(null);
   const [chosenFlow, setChosenFlow] = useState<{ id: string; status: string } | null>(null);
   const selectFlow = useCallback((id: string, status: string) => setChosenFlow({ id, status }), []);
-  const watchFlow = useCallback(async (flowId: string) => {
+  const watchFlow = useCallback(async (flowId: string, path?: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
     setWatchingFlow(flowId);
     try {
-      await client.watchFlow(flowId);
+      await client.watchFlow(flowId, path);
     } finally {
       setWatchingFlow(null);
       setFlowsRevision((revision) => revision + 1);

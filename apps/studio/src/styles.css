@@ -2826,6 +2826,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-step[aria-current="step"] .journey-flow-step-number { border-color: var(--signal); color: var(--text); }
 .journey-flow-step-text { display: grid; gap: 2px; font-size: 13px; }
 .journey-flow-watch { margin: 8px 0 0; font-size: 0.85rem; }
+.journey-flow-path + .journey-flow-path { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--edge); }
+.journey-flow-path-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.journey-flow-path-head h4 { margin: 0; font-size: 13px; }
 
 /* Tab panels preserve the canvas height without changing the column layout. */
 .scene > [role="tabpanel"] { height: 100%; min-height: 0; }

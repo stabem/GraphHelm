@@ -419,7 +419,7 @@ pub(crate) fn contract(path: &Path, stem: &str) -> Result<ContractInput, &'stati
 }
 
 /// Every `*.json` directly under `<project>/.graphhelm/journeys/`, sorted by file name.
-fn contracts(project: &Path) -> (Vec<ContractInput>, Vec<serde_json::Value>) {
+pub(crate) fn contracts(project: &Path) -> (Vec<ContractInput>, Vec<serde_json::Value>) {
     let directory = project.join(".graphhelm").join("journeys");
     let mut accepted = Vec::new();
     let mut refused = Vec::new();

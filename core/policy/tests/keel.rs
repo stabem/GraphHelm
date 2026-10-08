@@ -80,7 +80,7 @@ fn rules(c: &Classification) -> Vec<&str> {
 #[test]
 fn the_shipped_policy_loads_into_the_struct_and_its_fixtures_agree_with_it() {
     let policy = shipped_policy();
-    assert_eq!(policy.version, "1.3.0");
+    assert_eq!(policy.version, "1.4.0");
     assert_eq!(
         policy.surface_enforcement,
         Enforcement::Signal,
@@ -133,7 +133,7 @@ fn a_body_only_edit_in_an_existing_file_charges_nothing() {
     let c = classify_write(&d, &policy, None, Mode::Full);
     assert!(c.charges.is_empty(), "{c:?}");
     assert!(!c.refused);
-    assert_eq!(c.policy_version, "1.3.0");
+    assert_eq!(c.policy_version, "1.4.0");
 }
 
 #[test]

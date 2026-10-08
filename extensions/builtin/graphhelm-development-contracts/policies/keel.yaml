@@ -4,7 +4,7 @@
 # `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
 # rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
 # Bump `version` in the same commit as any change below.
-version: "1.3.0"
+version: "1.4.0"
 
 # READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
 # is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
@@ -69,3 +69,19 @@ ladder:
   strikesPerRung: 2
   creditPerProvenPromise: 1
   windowNodes: 20
+
+# JOURNEY-FIRST PROOF (1.4.0, #382). A diff path that equals, is under or contains a compiled
+# contract's screen scopePaths is user-visible. Its proof is the journey replayed green at the head.
+# `keel check` reports `keel.journey.card_missing_journey` and `keel.journey.replay_not_green` as
+# signals only: Rule 1 is not a gate until the first end-to-end replay on this repository (phase E).
+journeyFirst: true
+
+# INVISIBLE INVARIANTS (1.4.0, #382). Paths whose defects no journey can observe; Law 3 applies in
+# full. Compared like scope paths; `keel check` reports `keel.invariant.<class>` for each class a
+# diff touches. A repository extends the lists in its own keel.yaml.
+invariants:
+  security: [core/policy/, apps/cli/src/commands/serve/mod.rs, apps/cli/src/commands/mcp/tools.rs, core/events/src/key.rs]
+  persistence: [core/events/]
+  concurrency: [core/events/src/local.rs, apps/cli/src/commands/serve/]
+  destructive: [apps/cli/src/commands/workspace.rs]
+  compatibility: [schemas/, core/protocols/]

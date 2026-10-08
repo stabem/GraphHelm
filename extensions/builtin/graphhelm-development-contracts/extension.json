@@ -866,7 +866,7 @@
           "id": "schema/keel-policy",
           "kind": "schema",
           "path": "schemas/keel-policy.schema.json",
-          "sha256": "sha256:3a591ff5c2b4fb1e3ab38c401b53133396a7bdc97203e95879e2c612e12a1e94",
+          "sha256": "sha256:618323abdfabac261a8089a8d54004930600ab0c859f33b14a7c9e1787d9ced5",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -879,7 +879,7 @@
           "id": "policy/keel",
           "kind": "policy",
           "path": "policies/keel.yaml",
-          "sha256": "sha256:b767522e86b5ffc1378f230e369dddbc08075eac0d878692726a73c027f46f4a",
+          "sha256": "sha256:c8db46c519425cb2f8907e297dad893f79830a1a0b406c84996180352f8c3a3e",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1002,7 +1002,7 @@
           "id": "fixture/keel-valid-policy-shipped-shape",
           "kind": "fixture",
           "path": "fixtures/keel/valid/policy-shipped-shape.json",
-          "sha256": "sha256:208c5f9396777acc8c141906d30cc1c8963763f17e427598a8d9219bca954289",
+          "sha256": "sha256:9b97e1f3e826b2d9ff4258efc653981ff512d0e4a39e45d517a48c46f0780eec",
           "effects": [],
           "permissions": [],
           "requires": {

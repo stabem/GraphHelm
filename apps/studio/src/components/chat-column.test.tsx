@@ -16,11 +16,15 @@ const bot = (key: string, name: string, native = false): Bot => ({ key, actorId:
 const BOTS = [bot("coordinator", "Coordinator"), bot("kit-1", "loja kit 1"), bot("kit-2", "loja kit 2")];
 const msg = (sequence: number, sender: string, to: string | null, text: string): WorkMessage => ({ id: `event-${sequence}`, sequence, sender, to,
   replyTo: null, text, at: null, provenance: "stored", acknowledged: false });
-const THREADS = chatThreads([msg(1, "coordinator", null, "Plan ready"), msg(2, "kit-1", "kit-2", "Take the cart")], BOTS, "studio-operator");
+// #393: the agent-to-agent message is tagged with its task, so it lands in that task's thread.
+const TASK = { taskId: "issue-384", issue: 384, pr: null, lane: "kit-1", headSha: null, journeys: [], step: "implement" as const,
+  blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, lastSequence: 2 };
+const THREADS = chatThreads([msg(1, "coordinator", null, "Plan ready"), { ...msg(2, "kit-1", "kit-2", "Take the cart"), task: "issue-384" }],
+  BOTS, "studio-operator", [TASK]);
 
 function props(overrides: Partial<ChatColumnProps> = {}): ChatColumnProps {
   return {
-    threads: THREADS, selected: "everyone", onSelect: vi.fn(), unread: { everyone: 0, "pair:kit-1+kit-2": 1 }, bots: BOTS,
+    threads: THREADS, selected: "everyone", onSelect: vi.fn(), unread: { everyone: 0, "task:issue-384": 1 }, bots: BOTS,
     names: { coordinator: "Coordinator", "kit-1": "loja kit 1", "kit-2": "loja kit 2" }, openingCount: 0, cards: null,
     jev: { suggestions: [], loading: false, issue: null }, nativeKeys: new Set(), principal: <aside aria-label="Principal conversation">main</aside>,
     onSend: vi.fn(), sending: false, sendError: "", answering: null, onClearAnswer: vi.fn(), composerFocus: 0, highlight: null,
@@ -39,18 +43,26 @@ describe("composerMode", () => {
 });
 
 describe("ChatColumn", () => {
-  it("shows thread tabs with unread counts and labels bot pairs as recorded messages", async () => {
+  it("shows thread tabs with unread counts, one per task", async () => {
     const p = props();
     render(<ChatColumn {...p} />);
     expect(screen.getByRole("tab", { name: "Everyone" })).toHaveAttribute("aria-selected", "true");
-    await userEvent.click(screen.getByRole("tab", { name: "loja kit 1 ↔ loja kit 2, 1 unread" }));
-    expect(p.onSelect).toHaveBeenCalledWith("pair:kit-1+kit-2");
+    await userEvent.click(screen.getByRole("tab", { name: "Issue #384, 1 unread" }));
+    expect(p.onSelect).toHaveBeenCalledWith("task:issue-384");
   });
 
-  it("explains that a pair tab shows recorded messages, not native chats", () => {
-    render(<ChatColumn {...props({ selected: "pair:kit-1+kit-2" })} />);
+  it("explains that a task tab shows recorded messages, not native chats", () => {
+    render(<ChatColumn {...props({ selected: "task:issue-384" })} />);
     expect(screen.getByText(/recorded messages/i)).toHaveTextContent("not their native chats");
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  it("folds a merged or quiet task thread under older until asked", async () => {
+    const threads = chatThreads([], BOTS, "studio-operator", [{ ...TASK, step: "merged" as const }]);
+    render(<ChatColumn {...props({ threads })} />);
+    expect(screen.queryByRole("tab", { name: /^Issue #384/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "older (1)" }));
+    expect(screen.getByRole("tab", { name: /^Issue #384/ })).toBeInTheDocument();
   });
 
   it("keeps sealed records counted while they open", () => {
@@ -108,7 +120,7 @@ describe("ChatColumn", () => {
     expect(p.onSend).not.toHaveBeenCalled();
   });
 
-  it("keeps the principal conversation mounted, only hidden, when a pair tab is selected and back", () => {
+  it("keeps the principal conversation mounted, only hidden, when a task tab is selected and back", () => {
     let mounts = 0;
     function Principal() {
       const [state] = useState(() => ({ born: ++mounts }));
@@ -119,7 +131,7 @@ describe("ChatColumn", () => {
     const aside = () => document.querySelector('[aria-label="Principal conversation"]') as HTMLElement;
     const first = aside();
     expect(first.closest("[hidden]")).toBeNull();
-    view.rerender(<ChatColumn {...props({ principal: <Principal />, selected: "pair:kit-1+kit-2" })} />);
+    view.rerender(<ChatColumn {...props({ principal: <Principal />, selected: "task:issue-384" })} />);
     expect(aside()).toBe(first);
     expect(first.closest("[hidden]")).not.toBeNull();
     view.rerender(<ChatColumn {...props({ principal: <Principal /> })} />);

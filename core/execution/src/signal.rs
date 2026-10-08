@@ -87,6 +87,11 @@ struct RawSignal {
     /// and the same present-means-non-empty rule.
     #[serde(default, deserialize_with = "present_nonempty")]
     reply_to: Option<String>,
+    /// The task this message belongs to (schema 1.2.0, #393): `issue-<N>` or `pr-<N>`, the
+    /// `taskId` of the `task.*` records, so the Studio threads by task instead of by actor pair.
+    /// Present means a task id; the pattern is checked in `parse`, as the schema states it.
+    #[serde(default, deserialize_with = "present_nonempty")]
+    task: Option<String>,
     /// A typed Governor proposal carried by this signal. It remains inert until the Governor
     /// validates and publishes it; the signal parser never grants publication authority.
     #[serde(default)]
@@ -132,6 +137,16 @@ impl TypedSignal {
         let raw: RawSignal =
             serde_json::from_value(value.clone()).map_err(|_| SignalError::Invalid)?;
         if raw.kind.is_empty() || raw.description.is_empty() || raw.evidence.is_empty() {
+            return Err(SignalError::Invalid);
+        }
+        // The schema's `task` pattern: `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`.
+        if raw.task.as_deref().is_some_and(|task| {
+            task.len() > 128
+                || !task.starts_with(|c: char| c.is_ascii_alphanumeric())
+                || !task
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+        }) {
             return Err(SignalError::Invalid);
         }
         let kind = SignalKind::parse(&raw.kind);
@@ -184,6 +199,13 @@ impl TypedSignal {
     #[must_use]
     pub fn to(&self) -> Option<&str> {
         self.raw.to.as_deref()
+    }
+
+    /// The task this message belongs to, when it names one (#393). A reading aid for whoever
+    /// threads the conversation, like `to`.
+    #[must_use]
+    pub fn task(&self) -> Option<&str> {
+        self.raw.task.as_deref()
     }
 
     /// The id of the signal this one answers, when it answers one. Same trust posture as `to`.
@@ -276,6 +298,33 @@ mod tests {
         let plain = TypedSignal::parse(&envelope("operator_note")).unwrap();
         assert_eq!(plain.to(), None);
         assert_eq!(plain.reply_to(), None);
+    }
+
+    /// Schema 1.2.0 (#393, journey-first spec §8): a message names the task it belongs to, so the
+    /// Studio threads by task instead of by actor pair. OPTIONAL like `to`; a present value is a
+    /// task id (`issue-382`, `pr-384`), and anything else is refused rather than threaded.
+    #[test]
+    fn a_message_names_its_task_and_a_malformed_task_is_refused() {
+        let mut tagged = envelope("operator_note");
+        tagged["task"] = serde_json::json!("issue-382");
+        let signal = TypedSignal::parse(&tagged).expect("a task-tagged message is schema-valid");
+        assert_eq!(signal.task(), Some("issue-382"));
+        assert_eq!(
+            TypedSignal::parse(&envelope("operator_note"))
+                .unwrap()
+                .task(),
+            None
+        );
+
+        for bad in ["", "issue 382", "../etc"] {
+            let mut malformed = envelope("operator_note");
+            malformed["task"] = serde_json::json!(bad);
+            assert_eq!(
+                TypedSignal::parse(&malformed).unwrap_err(),
+                SignalError::Invalid,
+                "{bad:?} is not a task id"
+            );
+        }
     }
 
     /// The new fields must not have loosened the envelope: a field NOBODY defined is still

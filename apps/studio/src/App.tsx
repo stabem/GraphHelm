@@ -2047,7 +2047,10 @@ export default function App({
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
-  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id), [workMessages, team]);
+  // #393: one thread per task, opened by the run's task.* records.
+  const runTasks = taskGraphs?.executionId === selected ? taskGraphs.tasks : null;
+  const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id, runTasks ?? [], clock),
+    [workMessages, team, runTasks, clock]);
   const [thread, setThread] = useState(EVERYONE);
   const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
   useEffect(() => { setThread(EVERYONE); setThreadOpened({}); }, [selected]);

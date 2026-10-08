@@ -74,19 +74,21 @@ export function readable_content(text: string, mediaType: string): string {
 /** The envelope's address, when it carries one (schema 1.1.0). A group chat where the addressing
  * is invisible is unthreadable by eye - the fields are already in the sealed envelope; this only
  * reads them out. Non-JSON or address-free content yields nothing, never a guess. */
-export function address_of(text: string, mediaType: string): { to: string | null; replyTo: string | null } {
-  const none = { to: null, replyTo: null };
+export function address_of(text: string, mediaType: string): { to: string | null; replyTo: string | null; task: string | null } {
+  const none = { to: null, replyTo: null, task: null };
   if (!mediaType.includes("json")) return none;
   try {
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object") return none;
-    const envelope = parsed as { to?: unknown; replyTo?: unknown };
+    const envelope = parsed as { to?: unknown; replyTo?: unknown; task?: unknown };
     return {
       to: typeof envelope.to === "string" && envelope.to.length > 0 ? envelope.to : null,
       replyTo:
         typeof envelope.replyTo === "string" && envelope.replyTo.length > 0
           ? envelope.replyTo
           : null,
+      // Signal 1.2.0 (#393): the task the message belongs to, read only when it is a task id.
+      task: typeof envelope.task === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(envelope.task) ? envelope.task : null,
     };
   } catch {
     return none;
@@ -96,7 +98,7 @@ export function address_of(text: string, mediaType: string): { to: string | null
 /** The envelope a signal's sealed evidence carried, keyed by the signal event's sequence.
  * `recommendations` is the graph-signal envelope's own field (schemas/graph-signal.schema.json);
  * absent when the envelope carried none or was not JSON. */
-export type EnvelopeRecord = Record<number, { to: string | null; replyTo: string | null; text: string; recommendations?: string[] }>;
+export type EnvelopeRecord = Record<number, { to: string | null; replyTo: string | null; task?: string | null; text: string; recommendations?: string[] }>;
 
 const MAX_RECOMMENDATIONS = 4;
 const MAX_RECOMMENDATION_LENGTH = 120;

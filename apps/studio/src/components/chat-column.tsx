@@ -50,7 +50,8 @@ export interface ChatColumnProps {
 
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
-  if (thread.kind === "pair") return "none";
+  // #393: a task thread is read here; speaking into it (tagging the task) arrives with H2.
+  if (thread.kind === "task") return "none";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
 }
 
@@ -67,6 +68,9 @@ function prefersReducedMotion(): boolean {
 
 export function ChatColumn(props: ChatColumnProps) {
   const thread = props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
+  // #393: task threads that are merged or quiet fold under "older", shown on request.
+  const [showOlder, setShowOlder] = useState(false);
+  const olderCount = props.threads.filter((candidate) => candidate.older && candidate.key !== thread?.key).length;
   const mode = composerMode(thread, props.nativeKeys);
   // One draft per thread: a single shared draft followed the operator across tabs, so text
   // written for one bot could be sent to another.
@@ -165,18 +169,24 @@ export function ChatColumn(props: ChatColumnProps) {
       <div className="chat-tabpanel" id="studio-panel-chat" role="tabpanel" aria-labelledby="studio-tab-chat">
       <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
       <div className="chat-tabs" role="tablist" aria-label="Threads">
-        {props.threads.map((candidate) => {
+        {props.threads.filter((candidate) => showOlder || !candidate.older || candidate.key === thread?.key).map((candidate) => {
           const unread = props.unread[candidate.key] ?? 0;
           return (
             <button key={candidate.key} type="button" role="tab" aria-selected={candidate.key === thread?.key}
+              className={candidate.older ? "chat-tab-older" : undefined}
               aria-label={unread > 0 ? `${candidate.label}, ${unread} unread` : candidate.label} onClick={() => props.onSelect(candidate.key)}>
               {candidate.label}{unread > 0 && <span className="chat-unread" aria-hidden="true">{unread}</span>}
             </button>
           );
         })}
+        {olderCount > 0 && (
+          <button type="button" className="chat-older-toggle" aria-expanded={showOlder} onClick={() => setShowOlder((open) => !open)}>
+            {showOlder ? "Hide older" : `older (${olderCount})`}
+          </button>
+        )}
       </div>
       <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
-      {thread?.kind === "pair" && <p className="chat-recorded-note">Recorded messages: what these agents recorded to each other through the Runtime, not their native chats.</p>}
+      {thread?.kind === "task" && <p className="chat-recorded-note">Recorded messages about this task: what the agents recorded through the Runtime, not their native chats.</p>}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
         {messages.map((message) => {

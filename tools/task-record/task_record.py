@@ -21,9 +21,11 @@ import datetime
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
 KINDS = ("claimed", "pr_opened", "review_assigned", "review_verdict", "merged")
 
 
@@ -88,7 +90,10 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
-    signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-r{doc['revision']}"
+    # The id and key name the step's subject: a fix loop (BLOCK, new head, a second pr_opened and a
+    # verdict on that head) repeats a kind, and a repeated kind on a new subject is a new record.
+    subject = args.head or args.merge_sha or args.branch
+    signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-r{doc['revision']}-{subject[:12]}"
     evidence = args.comment_url or (f"https://github.com/{args.repo}/pull/{args.pr}" if args.pr
                                     else f"https://github.com/{args.repo}/issues/{args.issue}")
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",
@@ -98,20 +103,33 @@ def main(argv):
     url = f"{args.url.rstrip('/')}/v1/executions/{args.execution}/signal"
     headers = {"Content-Type": "application/json", "Idempotency-Key": signal_id,
                "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent"}
+    if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
+        sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
     if args.dry_run:
         print(json.dumps({"url": url, "headers": headers, "body": body}, indent=1))
         return 0
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={**headers, "Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            reply = json.load(response)
-    except urllib.error.HTTPError as error:
-        reply = json.loads(error.read() or b"{}")
-    except urllib.error.URLError as error:
-        sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")
+    # GHE001: another writer appended between the Runtime's read and this append; the same body
+    # under the same key is safe to send again.
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                reply = json.load(response)
+        except urllib.error.HTTPError as error:
+            reply = json.loads(error.read() or b"{}")
+        except urllib.error.URLError as error:
+            sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")
+        if not any(d.get("code") == "GHE001_SEQUENCE_CONFLICT" for d in reply.get("diagnostics", [])):
+            break
     ok = reply.get("ok") is True
+    codes = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
+    if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
+        # This key names one step on one subject, so a conflict on it is a retry of a step already
+        # recorded (with an earlier timestamp), not a different step.
+        print(f"already recorded {signal_id}")
+        return 0
     print(f"{'recorded' if ok else 'REFUSED'} {signal_id}")
     for d in reply.get("diagnostics", []):
         if d.get("severity") == "error":

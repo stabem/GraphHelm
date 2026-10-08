@@ -183,8 +183,18 @@ python tools/task-record/task_record.py --lane <you> merged          --issue <N>
   has none until it restarts. Never use the owner's `events.token` for a lane record.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.
-  `--dry-run` prints the request without sending it.
-- **Output.** `recorded <signal id>` and exit 0, or `REFUSED <signal id> <code>` and exit 1.
+  `--dry-run` prints the request without sending it. `--url` must be a loopback host
+  (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
+- **Repeated steps.** The record id and its `Idempotency-Key` end with the step's subject (the head
+  sha for `pr_opened`, `review_assigned`, `review_verdict`; the merge sha for `merged`; the branch
+  for `claimed`). In the fix loop (BLOCK, new head, a second `pr_opened`, a verdict on the new head)
+  run the same commands with the new `--head`; no `--revision` is needed.
+- **Retry.** Re-running a step already recorded (a call that timed out and may have landed) is
+  safe: the Runtime answers `GHE003_IDEMPOTENCY_CONFLICT` on that key and the script prints
+  `already recorded <signal id>`, exit 0. A `GHE001_SEQUENCE_CONFLICT` (another writer appended
+  first) is re-sent up to three times.
+- **Output.** `recorded <signal id>` or `already recorded <signal id>` and exit 0, or
+  `REFUSED <signal id>` plus each error diagnostic and exit 1.
 - **Limit.** The agent token proves the caller holds an agent credential on this machine, not
   which lane it is; the actor is the lane's own claim, checked only for consistency with the
   document. Signing as another lane is a protocol violation, not something the Runtime can stop.

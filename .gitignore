@@ -16,6 +16,8 @@ target/
 # ...except the journey-flow sources, which are the project's own user-journey map (#368) and
 # carry no secret: names only, never a token or a key value (journey-explore design, section 11).
 !/.graphhelm/journeys/
+# The launcher `journey watch` runs when the app under test is down (#462): committed config.
+!/.graphhelm/journey-fixture.json
 /.graphhelm/journeys/*
 !/.graphhelm/journeys/*.journey.yaml
 # The optional full check (ci/gate.ps1) writes its run manifests under .factory/gate-runs/. The

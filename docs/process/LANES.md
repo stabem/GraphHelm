@@ -39,9 +39,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - A worktree's `node_modules` (for example `apps\studio\node_modules`) can be a junction into the
   owner's copy. `Remove-Item -Recurse`, `rm -rf` **and `git worktree remove --force`** all follow a
   junction and delete the owner's files through it. Remove each junction first (`rmdir` removes the
-  link only), then the worktree, without `--force`:
+  link only), check it is gone, then remove the worktree, without `--force`:
 
       cmd /c rmdir D:\gh\<lane>\wt-<issue>\apps\studio\node_modules
+      cmd /c if exist D:\gh\<lane>\wt-<issue>\apps\studio\node_modules echo STILL THERE
       git -C F:/github/GraphHelm worktree remove D:/gh/<lane>/wt-<issue>
 
   When git still refuses ("contains modified or untracked files"), find what is left and deal with

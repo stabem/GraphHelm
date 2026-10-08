@@ -151,3 +151,71 @@ describe("TaskGraphs order (#481)", () => {
     expect(screen.getAllByRole("group").map(number)).toEqual(["7", "8"]);
   });
 });
+
+/* #477 (owner, on the live Team tab): a row said only "#454". It now reads "#454" (linked to the
+ * issue) · the issue's title, with its one-line summary under it; a PR shows its own title without
+ * the `type(area):` prefix; journeys are links into the Journey tab; the confusing stray-verdict
+ * lines sit behind a details toggle; and a row that just changed is marked. Cost: jsdom only, well under a second. */
+describe("TaskGraphs titles (#477)", () => {
+  const repo = "stabem/GraphHelm";
+  function task(n: number, extra: TaskEventRecord[] = []) {
+    return [
+      record(n * 10, `issue-${n}`, "task.claimed", "gh-claude-2", { issue: n, lane: "gh-claude-2", branch: `issue-${n}-x`, repo,
+        title: `Studio: task ${n} title`, summary: `The owner gets thing ${n}.` }),
+      ...extra,
+    ];
+  }
+
+  it("shows the issue number as a link, the title, and the summary line", () => {
+    render(<TaskGraphs tasks={foldTaskEvents(task(477))} onOpenJourney={vi.fn()} />);
+    const row = screen.getByRole("group", { name: /issue #477/i });
+    expect(within(row).getByRole("link", { name: "#477" })).toHaveAttribute("href", "https://github.com/stabem/GraphHelm/issues/477");
+    const heading = within(row).getByText("Studio: task 477 title");
+    expect(heading).toHaveAttribute("title", "Studio: task 477 title");
+    expect(within(row).getByText("The owner gets thing 477.")).toBeInTheDocument();
+  });
+
+  it("falls back to the number when no title was recorded", () => {
+    const tasks = foldTaskEvents([record(1, "issue-5", "task.claimed", "gh-claude-2", { issue: 5, lane: "gh-claude-2", branch: "b", repo })]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    expect(within(screen.getByRole("group", { name: /issue #5/i })).getByRole("link", { name: "#5" })).toBeInTheDocument();
+  });
+
+  it("shows the PR's own title without its type(area) prefix, and journeys as links", () => {
+    const onOpenJourney = vi.fn();
+    const tasks = foldTaskEvents(task(478, [
+      record(4781, "issue-478", "task.pr_opened", "gh-claude-2", { pr: 479, headSha: "a".repeat(40), journeys: ["studio-see-team"], lane: "gh-claude-2", repo,
+        title: "feat(studio): team tab shows task titles", summary: "The owner reads titles." }),
+    ]));
+    render(<TaskGraphs tasks={tasks} onOpenJourney={onOpenJourney} />);
+    const row = screen.getByRole("group", { name: /issue #478/i });
+    expect(within(row).getByText(/team tab shows task titles/)).toBeInTheDocument();
+    expect(within(row).queryByText(/feat\(studio\)/)).toBeNull();
+    fireEvent.click(within(row).getByRole("link", { name: "studio-see-team" }));
+    expect(onOpenJourney).toHaveBeenCalledWith("studio-see-team");
+  });
+
+  it("keeps stray verdicts behind a details toggle", () => {
+    const tasks = foldTaskEvents(task(480, [
+      record(4801, "issue-480", "task.pr_opened", "gh-claude-2", { pr: 481, headSha: "a".repeat(40), journeys: [], lane: "gh-claude-2" }),
+      record(4802, "issue-480", "task.review_verdict", "gh-claude-5", { pr: 481, headSha: "b".repeat(40), reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl }),
+    ]));
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const stray = screen.getByText(/a head with no pr_opened record/);
+    expect(stray.closest("details")).not.toBeNull();
+    expect(stray.closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("marks a row that just changed and moves it live", () => {
+    const head = "a".repeat(40);
+    const before = foldTaskEvents([...task(7), ...task(8)]);
+    const { rerender } = render(<TaskGraphs tasks={before} onOpenJourney={vi.fn()} />);
+    const after = foldTaskEvents([...task(7), ...task(8),
+      record(99, "issue-7", "task.pr_opened", "gh-claude-2", { pr: 17, headSha: head, journeys: [], lane: "gh-claude-2" })]);
+    rerender(<TaskGraphs tasks={after} onOpenJourney={vi.fn()} />);
+    const rows = screen.getAllByRole("group");
+    expect(rows[0]).toHaveAttribute("aria-label", expect.stringMatching(/#7\b/));
+    expect(rows[0]).toHaveClass("task-graph-changed");
+    expect(rows[1]).not.toHaveClass("task-graph-changed");
+  });
+});

@@ -250,3 +250,29 @@ fn an_opening_record_may_name_its_repo_and_a_malformed_one_is_refused() {
         }
     }
 }
+
+/// #477: an opening record may carry the issue's or the PR's title and one-line summary for the
+/// Team tab. Optional; empty, oversized or control-character text is refused like any bad field.
+#[test]
+fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (fixture, kind) in [("claimed", "task.claimed"), ("pr-opened", "task.pr_opened")] {
+        for (case, title, summary, accepted) in [
+            ("ok", json!("Studio: Team tab shows task titles"), json!("The owner reads each task's title."), true),
+            ("unicode", json!("Studio: título da tarefa"), json!("O dono lê o título."), true),
+            ("empty", json!(""), json!("x"), false),
+            ("long", json!("t".repeat(201)), json!("x"), false),
+            ("newline", json!("a\nb"), json!("x"), false),
+            ("number", json!(7), json!("x"), false),
+            ("summary-long", json!("ok"), json!("s".repeat(301)), false),
+        ] {
+            let mut document = as_actor(package_fixture(fixture));
+            document["title"] = title;
+            document["summary"] = summary;
+            let id = format!("words-{fixture}-{case}");
+            let reply = signal(scratch.path(), &events, &id, kind, ACTOR, &document);
+            assert_eq!(reply["ok"], json!(accepted), "{kind} {case}: {reply}");
+        }
+    }
+}

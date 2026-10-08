@@ -299,9 +299,10 @@ graphhelm journey explore --id checkout --base http://localhost:3000/cart   --go
   (plus `--broker` / `--gateway-keyring` / `--gateway-key-id` when the route leases a key).
   Anything else is refused with `GHCLI009_GATEWAY_INVALID` before any browser starts.
 - **What the model sees:** the goal, the screens visited so far, the last three acts and the
-  current page's accessibility snapshot, with every declared secret value and the gateway/events
-  keys replaced by `«secret:<name>»`. A prompt that would still contain one is refused
-  (`driver.redaction_failed`).
+  current page's accessibility snapshot. The driver already shows a typed secret field as
+  `«secret:<name>»`; before dispatch every remaining occurrence of a declared secret value or of
+  the gateway/events keys is replaced by `«private»`. A prompt over 16 KiB, or one that would still
+  contain such a value, is refused (`driver.redaction_failed`).
 - **What it may answer:** one closed JSON object: `act` (kind, role, name, and `text` or a
   *declared* `secret` name), `newScreen` (id, title), `done: true`, or `giveUp`. Anything else is
   `explore.proposal_invalid`. A second invalid reply in a row ends the run. Every proposal counts as
@@ -316,7 +317,8 @@ graphhelm journey explore --id checkout --base http://localhost:3000/cart   --go
     `approved: null`, `drift: []` and every screen's `scope: unknown`. The replay cache is written
     to `.graphhelm/journey-cache/<id>.json`.
   - An existing id is refused before any effect (`explore.id_conflict`), and a second writer gets
-    `explore.writer_busy`.
+    `explore.writer_busy`. A flow, cache or contract file that appears at the id while the run is
+    exploring stops publication (`explore.source_changed`); nothing is overwritten.
   - `data.outcome` is `draft_completed`, or `partial_draft` when the run stopped early and only a
     valid prefix was published. `data.goalCertification` is always `unresolved`: `done` means the
     model stopped, not that the goal is proven.

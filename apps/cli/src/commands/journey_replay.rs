@@ -19,6 +19,11 @@ const COMMAND: &str = "journey.replay";
 const PROTOCOL: &str = "graphhelm-journey-driver/1";
 const CACHE_SCHEMA: &str = "https://p50.dev/schemas/journey-replay-cache.schema.json";
 const FRAME: usize = 64 * 1024;
+/// The driver's ARIA snapshot caps (`tools/journey-driver/driver.mjs` `SNAPSHOT` /
+/// `SNAPSHOT_DISCOVER`, #434): a replay snapshot may carry a real page, a discover snapshot feeds a
+/// model and keeps the explore design's budget.
+const SNAPSHOT: usize = 32 * 1024;
+const SNAPSHOT_DISCOVER: usize = 6144;
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024;
 pub(super) const OP_BUDGET: Duration = Duration::from_secs(30);
 // How long a caller waits for OwnedChild::cleanup to report. Cleanup runs the process-tree
@@ -537,7 +542,14 @@ impl Driver {
                                 })
                         }))
                         && text(&result["url"], 4096)
-                        && text(&result["ariaYaml"], 6144)
+                        && text(
+                            &result["ariaYaml"],
+                            if request["discover"] == true {
+                                SNAPSHOT_DISCOVER
+                            } else {
+                                SNAPSHOT
+                            },
+                        )
                         && result["fingerprint"].as_str().is_some_and(|value| {
                             value.strip_prefix("sha256:").is_some_and(|hash| {
                                 hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
@@ -893,7 +905,9 @@ pub(super) fn observe(
     let aria = snapshot["ariaYaml"]
         .as_str()
         .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
-    if aria.len() > 6144 || !snapshot["controls"].is_array() || !snapshot["fingerprint"].is_string()
+    if aria.len() > SNAPSHOT
+        || !snapshot["controls"].is_array()
+        || !snapshot["fingerprint"].is_string()
     {
         return Err(failure("replay.driver_frame_invalid", path, 1));
     }
@@ -1424,6 +1438,52 @@ mod tests {
                 driver.call(op, request, "/peer").unwrap_err().0,
                 "replay.driver_frame_invalid"
             );
+        }
+    }
+
+    /// #434: a replay snapshot may carry a real page (a Studio Journey tab listing 21 flows is
+    /// 13.8 KiB), so its ARIA is accepted up to `SNAPSHOT`; a `discover` snapshot feeds a model
+    /// and keeps `SNAPSHOT_DISCOVER`. Regression: one cap for both, and every flow that opens a
+    /// busy page stops replaying. Cost: milliseconds, two fixed peer frames.
+    #[test]
+    fn a_replay_snapshot_accepts_a_real_page_and_a_discover_snapshot_keeps_the_model_budget() {
+        let aria = "- heading \"Journey flows\"\n".repeat(400);
+        assert!(aria.len() > SNAPSHOT_DISCOVER && aria.len() <= SNAPSHOT);
+        let fingerprint = format!("sha256:{}", "a".repeat(64));
+        for (request, accepted) in [
+            (json!({"expect":[]}), true),
+            (json!({"expect":[],"discover":true}), false),
+        ] {
+            let mut result = json!({"url":"http://localhost/","ariaYaml":aria,"controls":[],"fingerprint":fingerprint});
+            if request["discover"] == true {
+                result["expectations"] = json!([]);
+            }
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(
+                serde_json::to_vec(
+                    &json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":result}),
+                )
+                .unwrap(),
+            )))
+            .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                headed: false,
+            };
+            let reply = driver.call("snapshot", request.clone(), "/peer");
+            assert_eq!(reply.is_ok(), accepted, "{request}: {reply:?}");
+            if !accepted {
+                assert_eq!(reply.unwrap_err().0, "replay.driver_frame_invalid");
+            }
         }
     }
 

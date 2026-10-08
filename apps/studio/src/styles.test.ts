@@ -250,3 +250,24 @@ describe("the stylesheet and the components agree", () => {
     expect(rule).toMatch(/text-overflow:\s*ellipsis/);
   });
 });
+
+describe("the journey map keeps its cards readable in a narrow column (#443)", () => {
+  /** Found by the #301 observer walk at 1440 px: the canvas column was 453 px, the journey picker
+   * grew to its longest option (916 px) and was clipped by `overflow-x: hidden`, and each step's
+   * card got 70 px beside its Open-live chip and 96 px arrow, so a title wrapped one word per line.
+   * Text-level, like #435's guard; the viewport measurement is the PR's observer. */
+  const rule = (selector: string) => {
+    const at = CODE.indexOf(`${selector} {`);
+    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
+  };
+  it("caps the journey picker at the column width", () => {
+    expect(rule(".journey-picker select")).toMatch(/max-width:\s*100%/);
+  });
+  it("gives every card a readable minimum width and lets steps wrap instead of squeezing it", () => {
+    const basis = /flex:\s*\d+\s+\d+\s+(\d+)px/.exec(rule(".journey-card"));
+    expect(basis && Number(basis[1])).toBeGreaterThanOrEqual(160);
+    const step = rule(".journey-step");
+    expect(step).toMatch(/flex-wrap:\s*wrap/);
+    expect(step).not.toMatch(/max-width:\s*264px/);
+  });
+});

@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename Demo Studio}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
+    scope: [apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
   - id: renaming
     title: Inline rename form in the rail
     url: /?session=studio-fixture
@@ -25,7 +25,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename demo}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
+    scope: [apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
 edges:
   - id: renaming.save
     from: renaming

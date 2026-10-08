@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Connect existing chat}, {role: heading, name: Connect existing chat}, {role: textbox, name: Search chats}, {role: list, name: Existing native chats}, {role: button, name: Add persona to activity}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/native-chats.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/native-chats.tsx, apps/studio/src/runtime/client.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Main chat}, {role: heading, name: Main chat}, {role: button, name: Connect existing chat}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/main-chat.tsx]
+    scope: [apps/studio/src/components/main-chat.tsx]
 edges:
   - id: run.connect-chat
     from: run

@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: New task}, {role: heading, name: New task}, {role: textbox, name: What should this task do?}, {role: combobox, name: Model}, {role: button, name: start this task}, {role: button, name: Discard this task}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/compose.tsx, apps/studio/src/components/board.tsx]
+    scope: [apps/studio/src/components/compose.tsx, apps/studio/src/components/board.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: New task in demo}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx]
+    scope: [apps/studio/src/components/rail.tsx]
   - id: started
     title: The new run opens
     url: /?session=studio-fixture

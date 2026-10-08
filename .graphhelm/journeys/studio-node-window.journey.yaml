@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Node deploy}, {role: heading, name: Deploy}, {role: button, name: Close this node}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/keel-chain.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/keel-chain.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: heading, name: Steps without a bot}, {role: button, name: Deploy · ready}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx]
+    scope: [apps/studio/src/components/team-canvas.tsx]
 edges:
   - id: run.step
     from: run

@@ -19,7 +19,7 @@ screens:
     url: /?session=studio-fixture
     state: empty
     expect: [{role: heading, name: Your agents are one token away}, {role: button, name: Connect}]
-    scope: [apps/studio/src/components/Connect.tsx, apps/studio/src/App.tsx]
+    scope: [apps/studio/src/components/Connect.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture

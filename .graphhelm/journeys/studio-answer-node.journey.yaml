@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: heading, name: This node is waiting for you}, {role: textbox, name: Kind of proof}, {role: button, name: Answer with no evidence}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
   - id: released
     title: The claim is countersigned and the node is released
     url: /?session=studio-fixture

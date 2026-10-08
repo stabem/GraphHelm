@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
   - id: refused
     title: The refusal is recorded; the card leaves Needs you
     url: /?session=studio-fixture
     state: success
     expect: [{role: region, name: Team}, {role: article, name: Implementação concluída is blocked.}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
 edges:
   - id: asked.refuse
     from: asked

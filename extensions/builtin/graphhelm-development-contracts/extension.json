@@ -943,7 +943,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:6991163829f74fc22e71641dcfafb60d17e60d3c43769e4d333522c91dcbfdce",
+          "sha256": "sha256:91f69c99df70c6a94918c7ad0247059f3408f3066ecb69302464670be4a15160",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -1042,6 +1042,89 @@
             "observers": []
           },
           "family": "development-contracts"
+        },
+        {
+          "id": "schema/task-event",
+          "kind": "schema",
+          "path": "schemas/task-event.schema.json",
+          "sha256": "sha256:a5d1985176ad383dbb600f185055606ece1ffbaa4cb9314157c42e04389b715c",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts"
+        },
+        {
+          "id": "fixture/task-event-valid-claimed",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/claimed.json",
+          "sha256": "sha256:728441f821454b7d9df7a90999dbf392210cd9df2420aaa2944e31edb79e3083",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-pr-opened",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/pr-opened.json",
+          "sha256": "sha256:4cb5fccd6942ae4bba5059396e266a3ea1a03a76cbf01379787e3cc736ff462b",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-assigned",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-assigned.json",
+          "sha256": "sha256:960f97611c5656c6e08bc407269efe7e04c993046007171fed8fcdf1400f05a6",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-review-verdict",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/review-verdict.json",
+          "sha256": "sha256:a01de65d3d944b39d9d7ca031d7a93ee889c5553e068ba7a2821b5fc33d182a5",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-merged",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/merged.json",
+          "sha256": "sha256:7993164a7f17b46dbd80a952cacbeda2c6c3ed747726466fa2b9beae8ba420be",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
         },
         {
           "id": "schema/keel-card",

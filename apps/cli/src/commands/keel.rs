@@ -605,88 +605,6 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
     serde_json::Value::Object(card)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Stdio;
-    use std::thread;
-
-    #[test]
-    fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
-        use std::io::{Read, Write};
-        use std::net::{TcpListener, TcpStream};
-
-        const TEST: &str =
-            "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";
-        if let Ok(address) = std::env::var("GRAPHHELM_TEST_HOLDER_ADDRESS") {
-            if std::env::var_os("GRAPHHELM_TEST_PIPE_HOLDER").is_some() {
-                let mut connection = TcpStream::connect(address).unwrap();
-                connection.write_all(&[1]).unwrap();
-                connection
-                    .set_read_timeout(Some(Duration::from_secs(30)))
-                    .unwrap();
-                // Keep this descendant and its inherited stdout alive until tree cleanup.
-                let _ = connection.read(&mut [0]);
-            } else {
-                let mut command = Command::new(std::env::current_exe().unwrap());
-                command
-                    .args(["--exact", TEST, "--nocapture"])
-                    .env("GRAPHHELM_TEST_PIPE_HOLDER", "1");
-                // The wrapper must exit first; the outer observer owns descendant cleanup.
-                #[allow(clippy::zombie_processes)]
-                let _descendant = command.spawn().unwrap();
-            }
-            return;
-        }
-
-        // Native wrappers avoid cold PowerShell startup inside the execution bound. The socket
-        // retains readiness followed by EOF even when this observer is scheduled after cleanup;
-        // sampling a PID file before the kill lost that evidence under competing suite load.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let (observed, observation) = std::sync::mpsc::channel();
-        thread::spawn(move || {
-            let (mut connection, _) = listener.accept().unwrap();
-            connection
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut ready = [0];
-            let result = connection
-                .read_exact(&mut ready)
-                .and_then(|()| {
-                    connection.read(&mut [0]).or_else(|error| {
-                        // TerminateProcess closes a Windows socket with a reset rather than EOF.
-                        if error.kind() == std::io::ErrorKind::ConnectionReset {
-                            Ok(0)
-                        } else {
-                            Err(error)
-                        }
-                    })
-                })
-                .map(|bytes| (ready, bytes));
-            let _ = observed.send(result);
-        });
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", TEST, "--nocapture"])
-            .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let result = graphhelm_process_tree::run_bounded(command, Duration::from_secs(2)).unwrap();
-
-        assert!(result.is_none(), "inherited pipe bypassed the deadline");
-        assert_eq!(
-            observation
-                .recv_timeout(Duration::from_secs(5))
-                .expect("the descendant must report readiness and disconnect after cleanup")
-                .expect("the descendant connection must close after process-tree cleanup"),
-            ([1], 0),
-            "the real pipe holder must start and then exit during bounded cleanup"
-        );
-    }
-}
-
 /// The `keel.plan` signal kind and its description protocol (#382 phase B).
 pub(crate) const PLAN_KIND: &str = "keel.plan";
 const PLAN_COMMAND: &str = "keel.plan";
@@ -807,5 +725,87 @@ pub fn plan(
             serde_json::json!({"plan": value, "recorded": recorded}),
         ),
         Err(failure) => failure.into_outcome(PLAN_COMMAND),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+    use std::thread;
+
+    #[test]
+    fn bounded_proof_kills_a_descendant_that_holds_an_output_pipe() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        const TEST: &str =
+            "commands::keel::tests::bounded_proof_kills_a_descendant_that_holds_an_output_pipe";
+        if let Ok(address) = std::env::var("GRAPHHELM_TEST_HOLDER_ADDRESS") {
+            if std::env::var_os("GRAPHHELM_TEST_PIPE_HOLDER").is_some() {
+                let mut connection = TcpStream::connect(address).unwrap();
+                connection.write_all(&[1]).unwrap();
+                connection
+                    .set_read_timeout(Some(Duration::from_secs(30)))
+                    .unwrap();
+                // Keep this descendant and its inherited stdout alive until tree cleanup.
+                let _ = connection.read(&mut [0]);
+            } else {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", TEST, "--nocapture"])
+                    .env("GRAPHHELM_TEST_PIPE_HOLDER", "1");
+                // The wrapper must exit first; the outer observer owns descendant cleanup.
+                #[allow(clippy::zombie_processes)]
+                let _descendant = command.spawn().unwrap();
+            }
+            return;
+        }
+
+        // Native wrappers avoid cold PowerShell startup inside the execution bound. The socket
+        // retains readiness followed by EOF even when this observer is scheduled after cleanup;
+        // sampling a PID file before the kill lost that evidence under competing suite load.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (observed, observation) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut ready = [0];
+            let result = connection
+                .read_exact(&mut ready)
+                .and_then(|()| {
+                    connection.read(&mut [0]).or_else(|error| {
+                        // TerminateProcess closes a Windows socket with a reset rather than EOF.
+                        if error.kind() == std::io::ErrorKind::ConnectionReset {
+                            Ok(0)
+                        } else {
+                            Err(error)
+                        }
+                    })
+                })
+                .map(|bytes| (ready, bytes));
+            let _ = observed.send(result);
+        });
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", TEST, "--nocapture"])
+            .env("GRAPHHELM_TEST_HOLDER_ADDRESS", address.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let result = graphhelm_process_tree::run_bounded(command, Duration::from_secs(2)).unwrap();
+
+        assert!(result.is_none(), "inherited pipe bypassed the deadline");
+        assert_eq!(
+            observation
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the descendant must report readiness and disconnect after cleanup")
+                .expect("the descendant connection must close after process-tree cleanup"),
+            ([1], 0),
+            "the real pipe holder must start and then exit during bounded cleanup"
+        );
     }
 }

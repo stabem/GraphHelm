@@ -157,3 +157,25 @@ export function writeLastSeen(project: string, executionId: string, sequence: nu
     // A convenience: without storage the next visit shows no card, which is correct.
   }
 }
+
+/** The owner's Hide on the handover bar: for this browser session and this gap only (a later
+ * last-seen position is a new gap and shows the bar again). Storage that throws means not hidden. */
+function hiddenKey(project: string, executionId: string, fromSeq: number): string {
+  return `graphhelm.handover.hidden:${project}:${executionId}:${fromSeq}`;
+}
+
+export function hiddenThisSession(project: string, executionId: string, fromSeq: number): boolean {
+  try {
+    return globalThis.sessionStorage.getItem(hiddenKey(project, executionId, fromSeq)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function hideThisSession(project: string, executionId: string, fromSeq: number): void {
+  try {
+    globalThis.sessionStorage.setItem(hiddenKey(project, executionId, fromSeq), "1");
+  } catch {
+    // Without storage, Hide lasts until the page reloads (the caller also keeps it in state).
+  }
+}

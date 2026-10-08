@@ -148,7 +148,7 @@ detect the defect is absent, optional, or unlinked.
 **S1b was a third-site finding, not a missing check.** The discipline *"independence is compared by
 identity, never by count"* is applied twice with the reasoning written down —
 `core/governor/src/memory.rs:1180` (`validate_candidate`: a validator roster may not be the producer) and
-`apps/cli/tests/jpd_plugin.rs:1560` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
+`apps/cli/tests/jpd_plugin.rs:1561` (`identityDistinctValidation`, present in 1 of 57 schemas) — and
 was absent on the promise-to-observer pair. `JourneyContractGate` now binds the validated contract,
 its validated observation obligations, and its verification result by `contractId` and trusted
 `contractDigest`. For each promise it requires one or more obligations with the same `promiseId`,
@@ -310,7 +310,7 @@ that passes everything.
 Independence **is** enforced here, and well, on a different pair:
 
 ```
-apps/cli/tests/jpd_plugin.rs:1550  jpd_defect_independence_is_distinct_input_with_candidate_authority
+apps/cli/tests/jpd_plugin.rs:1551  jpd_defect_independence_is_distinct_input_with_candidate_authority
   - identityDistinctValidation must be present
   - reporter and reviewer actorIds        must be distinct
   - reporter and reviewer runIds          must be distinct

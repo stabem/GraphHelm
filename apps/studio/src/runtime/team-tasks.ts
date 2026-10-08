@@ -259,6 +259,9 @@ export interface TaskState {
   mergeSha: string | null;
   /** `https://github.com/<owner>/<repo>`, read off a verdict's comment URL; links need it. */
   repoUrl: string | null;
+  /** #457: verdicts on a head no `pr_opened` named, newest last. They say nothing about the current
+   * head, but dropping them silently drew "no review" where a review exists and a record is missing. */
+  strayVerdicts: { reviewer: string; verdict: string; headSha: string }[];
   lastSequence: number;
 }
 
@@ -269,7 +272,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     const state = tasks.get(event.taskId) ?? {
       taskId: event.taskId, issue: null, pr: null, lane: null, headSha: null, journeys: [],
-      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, lastSequence: 0,
+      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], lastSequence: 0,
     };
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
@@ -292,7 +295,10 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         break;
       case "task.review_verdict":
         // A verdict on a head other than the current one says nothing about the current one.
-        if (event.headSha !== state.headSha) break;
+        if (event.headSha !== state.headSha) {
+          state.strayVerdicts.push({ reviewer: event.reviewer ?? "", verdict: event.verdict ?? "", headSha: event.headSha ?? "" });
+          break;
+        }
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
         // Old logs carry no `repo`: a verdict's comment URL still names the repository.
         state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;

@@ -16,8 +16,11 @@ adds what to do around them.
 - Records the task steps it owns, one command each, signed as your own lane (from a GraphHelm
   checkout; `docs/process/DELIVERY.md` "Task records" has the token and the defaults):
   - on taking the issue: `python tools/task-record/task_record.py --lane <you> claimed --issue <N> --branch <branch>`
-  - after `gh pr create`: `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha>`
-  - on asking the reviewer: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>`
+  - after `gh pr create` **and after every push to the PR** (each fix head): `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha>`
+  - on asking the reviewer: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>` (again when the reviewer changes)
+
+  A verdict counts only on a head that has a `pr_opened` record; without it the Studio shows it
+  as a verdict on an unrecorded head.
 
   The Runtime refuses a record whose lane is not the recorder (`GHCLI038_ACTOR_MISMATCH`).
 

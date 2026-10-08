@@ -974,6 +974,8 @@ fn respond_failure(command: &'static str, failure: execution::Failure) -> Respon
         // fallback uses, told apart from it by the code (`GHCLI008_SERVE_NOT_FOUND` is "no
         // route", this is "no execution").
         crate::error_codes::GHCLI028_EXECUTION_NOT_FOUND => StatusCode::NOT_FOUND,
+        // #418: a `task.*` record in another actor's name is the caller's refusal, not an outage.
+        crate::error_codes::GHCLI038_ACTOR_MISMATCH => StatusCode::FORBIDDEN,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     respond(status, failure.into_outcome(command).output)

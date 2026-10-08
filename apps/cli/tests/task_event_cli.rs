@@ -183,3 +183,38 @@ fn a_malformed_task_document_is_refused_as_invalid() {
     );
     assert_eq!(reply["ok"], json!(false), "{reply}");
 }
+
+/// #419: the recording lane is the source, but the document names another lane, reviewer or merger.
+/// DELIVERY.md promises `GHCLI038_ACTOR_MISMATCH` for this too; it was refused only as a malformed
+/// document (`GHCLI003`), so a lane could not tell a wrong name from a wrong shape. Cost: three
+/// CLI calls on one held run.
+#[test]
+fn a_document_naming_another_lane_reviewer_or_merger_is_an_actor_mismatch() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (fixture, kind, field) in [
+        ("pr-opened", "task.pr_opened", "lane"),
+        ("review-verdict", "task.review_verdict", "reviewer"),
+        ("merged", "task.merged", "merger"),
+    ] {
+        let mut document = as_actor(package_fixture(fixture));
+        document[field] = json!("gh-claude-4");
+        let id = format!("named-{field}");
+        let reply = signal(scratch.path(), &events, &id, kind, ACTOR, &document);
+        assert_eq!(reply["ok"], json!(false), "{field}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"],
+            json!("GHCLI038_ACTOR_MISMATCH"),
+            "{field}: {reply}"
+        );
+        assert_eq!(
+            reply["diagnostics"][0]["path"],
+            json!(format!("/signal/description/{field}")),
+            "{field}: {reply}"
+        );
+        assert!(
+            !scratch.path().join(format!("{id}-evidence.json")).exists(),
+            "{field}: a refused task record writes no evidence"
+        );
+    }
+}

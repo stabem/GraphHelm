@@ -2129,6 +2129,79 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert_eq!(event["actor"]["id"], "agent-planner");
 }
 
+/// #418, #419: a `task.*` record in another lane's name is refused as `GHCLI038_ACTOR_MISMATCH`
+/// with **403**, whether the wrong name is the envelope's `source.id` or the document's own
+/// `reviewer`. Before: the source case answered 500 (`respond_failure`'s catch-all), which a lane
+/// reads as an outage, and the reviewer case was a shape refusal (`GHCLI003`, 400). Neither
+/// records an event. Cost: one served Runtime, two refused POSTs.
+#[test]
+fn a_task_record_in_another_lanes_name_is_a_403_actor_mismatch() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-task-actor";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let recorded = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+            Some(&token),
+        )["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "signal_recorded")
+            .count()
+    };
+    let before = recorded();
+    for (case, source, reviewer, pointer) in [
+        ("source", "lane-beta", "lane-beta", "/signal/source/id"),
+        (
+            "reviewer",
+            "lane-alpha",
+            "lane-beta",
+            "/signal/description/reviewer",
+        ),
+    ] {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-902", "revision": 1, "at": "2026-10-08T05:00:00Z", "pr": 9002,
+            "headSha": "ddddddd4", "reviewer": reviewer, "verdict": "APPROVE",
+            "commentUrl": "https://github.com/stabem/GraphHelm/pull/9002#issuecomment-9"});
+        let body = serde_json::json!({"signal": {"id": format!("forged-{case}"),
+            "source": {"type": "user", "id": source}, "type": "task.review_verdict",
+            "severity": "low", "description": document.to_string(), "evidence": ["task"],
+            "emittedAt": "2026-10-08T05:00:00Z"}});
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", &format!("forged-{case}")),
+                ("X-GraphHelm-Actor", "lane-alpha"),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        );
+        assert_eq!(status, 403, "{case}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH",
+            "{case}: {reply}"
+        );
+        assert_eq!(reply["diagnostics"][0]["path"], pointer, "{case}: {reply}");
+    }
+    assert_eq!(recorded(), before, "a refused task record appends nothing");
+}
+
 /// A scoped agent bearer is the principal. Caller supplied actor headers cannot turn it into an
 /// owner or another seat, and the same credential cannot cross its one execution binding. This
 /// observes the real HTTP middleware plus the durable event actor, rather than checking a parser

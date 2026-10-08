@@ -92,6 +92,13 @@ describe("TeamCanvas", () => {
     expect(onNameBot).toHaveBeenCalledWith("kit-1", "Cart builder");
   });
 
+  // #448: the name field said nothing while empty (it had an accessible name but no visible one).
+  it("shows a visible hint in the empty name field", async () => {
+    render(<TeamCanvas {...props({ onNameBot: vi.fn(), bots: [bot("kit-1", "working")] })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Name this bot" }));
+    expect(screen.getByRole("textbox", { name: "Name for kit-1" })).toHaveAttribute("placeholder", "Display name");
+  });
+
   it("hides Name this bot without a handler", () => {
     render(<TeamCanvas {...props()} />);
     expect(screen.queryByRole("button", { name: "Name this bot" })).toBeNull();

@@ -26,6 +26,20 @@ describe("RightPanel", () => {
     expect(screen.getByRole("region", { name: "Before and after" })).toHaveTextContent("Opening screenshots…");
   });
 
+  // #447: a flow with a second path compiles to `<flow>.<path>`; the panel showed both as two rows
+  // with the same title. The branch is a sub-row named by its path, and each still opens its contract.
+  it("shows a flow's branch path as a named sub-row, never as a second identical row", async () => {
+    const j = (contractId: string, title: string): JourneyView => ({ contractId, title, arrows: [], steps: [{ stepId: "a", capture: null, promises: [] }] });
+    const onOpenJourney = vi.fn();
+    render(<RightPanel activity={[]} onOpenActivity={vi.fn()} onOpenJourney={onOpenJourney}
+      journeys={[j("run-actions", "Owner pauses a run"), j("run-actions.cancel", "Owner pauses a run"), j("other.thing", "Dotted but alone")]} />);
+    const rows = screen.getAllByRole("button").map((button) => button.textContent ?? "");
+    expect(rows.filter((text) => text.startsWith("Owner pauses a run"))).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /cancel path/ }));
+    expect(onOpenJourney).toHaveBeenCalledWith("run-actions.cancel");
+    expect(screen.getByRole("button", { name: /Dotted but alone/ })).toBeInTheDocument();
+  });
+
   it("lists what just happened as bot verb object, each opening its record", async () => {
     const onOpen = vi.fn();
     render(<RightPanel activity={[{ sequence: 7, text: "loja kit 1 asked you “Merge now?”", at: null }]} onOpenActivity={onOpen} />);

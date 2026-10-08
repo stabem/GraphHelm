@@ -955,7 +955,7 @@
           "id": "schema/screen-capture",
           "kind": "schema",
           "path": "schemas/screen-capture.schema.json",
-          "sha256": "sha256:b6837de8f53ecad7eef71bec6122376379fedde375f06115484b35cee28f76c7",
+          "sha256": "sha256:0d6c7764fb89ee722385de1c92df701b9b9bf5b207a520da239f8b49ebe0f712",
           "effects": [],
           "permissions": [],
           "requires": {

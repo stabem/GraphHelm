@@ -55,7 +55,9 @@ export interface ChatColumnProps {
 export const NEEDS_YOU = "needs-you";
 
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
-  if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
+  // #410: Needs you speaks to the room like Everyone, so the Jev suggestions for the pending
+  // question stay usable beside its cards; only its panel is its own.
+  if (thread === undefined || thread.kind === "everyone" || thread.kind === "needs") return nativeKeys.size > 0 ? "native" : "record+principal";
   // #396: speaking inside a task thread records a message tagged with that task.
   if (thread.kind === "task") return "record";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
@@ -73,7 +75,11 @@ function prefersReducedMotion(): boolean {
 }
 
 export function ChatColumn(props: ChatColumnProps) {
-  const thread = props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
+  // #410: Needs you is a thread of its own (its own panel and label), not Everyone's panel with
+  // the cards on top.
+  const thread = props.selected === NEEDS_YOU && (props.cardCount ?? 0) > 0
+    ? { key: NEEDS_YOU, kind: "needs" as const, label: "Open cards", participants: [], messages: [] }
+    : props.threads.find((candidate) => candidate.key === props.selected) ?? props.threads[0];
   // #393: task threads that are merged or quiet fold under "older", shown on request.
   const [showOlder, setShowOlder] = useState(false);
   const olderCount = props.threads.filter((candidate) => candidate.older && candidate.key !== thread?.key).length;

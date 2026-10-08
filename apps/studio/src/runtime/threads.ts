@@ -9,7 +9,7 @@ import type { RuntimeEvent } from "./types";
 import type { TaskState } from "./team-tasks";
 import type { WorkMessage } from "./work-conversation";
 
-export type ThreadKind = "everyone" | "task" | "direct";
+export type ThreadKind = "everyone" | "task" | "direct" | "needs";
 export interface ChatThread {
   key: string;
   kind: ThreadKind;

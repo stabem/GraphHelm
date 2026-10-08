@@ -2061,6 +2061,11 @@ export default function App({
   // where the cards now live (spec §8); otherwise on Everyone.
   const [threadChosen, setThreadChosen] = useState(false);
   useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
+  // #410: the landing is real thread state, so unread tracking marks the thread actually shown.
+  const needsCount = needs.items.length;
+  useEffect(() => {
+    if (!threadChosen && thread === EVERYONE && needsCount > 0) setThread(NEEDS_YOU);
+  }, [threadChosen, thread, needsCount]);
   useEffect(() => {
     const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
     setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
@@ -2758,7 +2763,7 @@ export default function App({
               ))}
             </div>
             <ChatColumn
-              threads={threadsWithAnswer} selected={!threadChosen && thread === EVERYONE && needs.items.length > 0 ? NEEDS_YOU : thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
+              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
               cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}

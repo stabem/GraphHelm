@@ -7,6 +7,8 @@ export interface WorkMessage {
   sender: string;
   to: string | null;
   replyTo: string | null;
+  /** The task the envelope names (signal 1.2.0, #393); absent when it names none. */
+  task?: string | null;
   text: string;
   at: string | null;
   provenance: "stored" | "verified-team";
@@ -26,7 +28,7 @@ export function mcpTransportFromRecordKey(key: string | null): string | null {
 export function workConversation(
   executionId: string,
   events: RuntimeEvent[],
-  envelopes: Record<number, { to: string | null; replyTo: string | null; text: string }>,
+  envelopes: Record<number, { to: string | null; replyTo: string | null; task?: string | null; text: string }>,
   team: RunTeamReadModel | null,
 ): WorkMessage[] {
   const messages: WorkMessage[] = [];
@@ -39,7 +41,7 @@ export function workConversation(
     const text = envelope?.text.trim();
     if (!text) continue;
     messages.push({ id: `event-${event.sequence}`, sequence: event.sequence, sender: event.actorId,
-      to: envelope.to, replyTo: envelope.replyTo, text, at: event.occurredAt,
+      to: envelope.to, replyTo: envelope.replyTo, task: envelope.task ?? null, text, at: event.occurredAt,
       provenance: "stored", acknowledged: false,
       transportSession: event.actorType === "agent" ? mcpTransportFromRecordKey(event.idempotencyKey) : null });
   }

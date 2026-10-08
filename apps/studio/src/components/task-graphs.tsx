@@ -42,40 +42,60 @@ function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, 
   );
 }
 
+/** #481 (owner): what needs a person first. Blocked, then in review (review or merge), then
+ * implementing, each newest activity first; delivered tasks last, collapsed. */
+function rank(task: TaskState): number {
+  return task.blockedBy !== null ? 0 : task.step === "review" || task.step === "merge" ? 1 : 2;
+}
+const newest = (a: TaskState, b: TaskState) => b.lastSequence - a.lastSequence;
+
 export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
   if (tasks.length === 0) return null;
+  const active = tasks.filter((task) => task.step !== "merged").sort((a, b) => rank(a) - rank(b) || newest(a, b));
+  const delivered = tasks.filter((task) => task.step === "merged").sort(newest);
+  const graph = (task: TaskState) => <Graph key={task.key} task={task} onOpenJourney={onOpenJourney} />;
   return (
     <section className="task-graphs" aria-label="Tasks">
-      {tasks.map((task) => (
-        <div key={task.key} className="task-graph" role="group" aria-label={title(task)}>
-          <div className="task-graph-head">
-            {task.repoUrl !== null && task.issue !== null
-              ? <a href={`${task.repoUrl}/issues/${task.issue}`} target="_blank" rel="noreferrer">{title(task)}</a>
-              : <strong>{title(task)}</strong>}
-            {task.pr !== null && (task.repoUrl !== null
-              ? <a href={`${task.repoUrl}/pull/${task.pr}`} target="_blank" rel="noreferrer">PR #{task.pr}</a>
-              : <span>PR #{task.pr}</span>)}
-            {task.step === "merged" && <span className="task-graph-merged">merged</span>}
-            {task.journeys.map((journey) => (
-              <button key={journey} type="button" className="task-graph-journey" onClick={() => onOpenJourney(journey)}>{journey}</button>
-            ))}
-          </div>
-          <ol className="task-graph-steps">
-            {STEPS.map(({ step, label }) => <Node key={step} task={task} step={step} label={label} />)}
-          </ol>
-          {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
-            ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
-                blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
-              </a>
-            : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
-          {task.strayVerdicts.map((stray, index) => (
-            <p key={index} className="task-graph-stray">
-              {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
-                ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
-            </p>
-          ))}
-        </div>
-      ))}
+      {active.map(graph)}
+      {delivered.length > 0 && (
+        <details className="task-graphs-delivered">
+          <summary>Delivered ({delivered.length})</summary>
+          {delivered.map(graph)}
+        </details>
+      )}
     </section>
+  );
+}
+
+function Graph({ task, onOpenJourney }: { task: TaskState; onOpenJourney: (contractId: string) => void }) {
+  return (
+    <div className="task-graph" role="group" aria-label={title(task)}>
+      <div className="task-graph-head">
+        {task.repoUrl !== null && task.issue !== null
+          ? <a href={`${task.repoUrl}/issues/${task.issue}`} target="_blank" rel="noreferrer">{title(task)}</a>
+          : <strong>{title(task)}</strong>}
+        {task.pr !== null && (task.repoUrl !== null
+          ? <a href={`${task.repoUrl}/pull/${task.pr}`} target="_blank" rel="noreferrer">PR #{task.pr}</a>
+          : <span>PR #{task.pr}</span>)}
+        {task.step === "merged" && <span className="task-graph-merged">merged</span>}
+        {task.journeys.map((journey) => (
+          <button key={journey} type="button" className="task-graph-journey" onClick={() => onOpenJourney(journey)}>{journey}</button>
+        ))}
+      </div>
+      <ol className="task-graph-steps">
+        {STEPS.map(({ step, label }) => <Node key={step} task={task} step={step} label={label} />)}
+      </ol>
+      {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
+        ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
+            blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
+          </a>
+        : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
+      {task.strayVerdicts.map((stray, index) => (
+        <p key={index} className="task-graph-stray">
+          {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
+            ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
+        </p>
+      ))}
+    </div>
   );
 }

@@ -5,7 +5,7 @@
 import { openQuestions, type EnvelopeRecord } from "../graph/ledger";
 import type { ExecutionStatus, NativeChatRequest, NativeChatRequestState, RuntimeEvent } from "./types";
 
-export interface QuestionItem { kind: "question"; key: string; asker: string; text: string; signalId: string | null; recommendations: string[]; at: string | null; sequence: number }
+export interface QuestionItem { kind: "question"; key: string; asker: string; text: string; signalId: string | null; recommendations: string[]; at: string | null; sequence: number; task?: string | null }
 export interface NativeRequestItem { kind: "native_request"; key: string; requestId: string; threadId: string; nodeId: string; title: string; state: NativeChatRequestState; detail: string | null }
 export interface StepItem { kind: "waiting_step" | "blocked_step"; key: string; nodeId: string; name: string; reason: string }
 export interface DraftItem { kind: "draft"; key: string; draftId: string }
@@ -28,7 +28,8 @@ export function needsYou(input: NeedsYouInput): { state: BeaconState; items: Nee
   const items: NeedsYouItem[] = [];
   for (const debt of openQuestions(input.events, input.envelopes, input.operatorId)) {
     items.push({ kind: "question", key: `question:${debt.signalId ?? `seq-${debt.sequence}`}`, asker: debt.asker, text: debt.text,
-      signalId: debt.signalId, recommendations: input.envelopes[debt.sequence]?.recommendations ?? [], at: debt.at, sequence: debt.sequence });
+      signalId: debt.signalId, recommendations: input.envelopes[debt.sequence]?.recommendations ?? [], at: debt.at, sequence: debt.sequence,
+      ...(debt.task ? { task: debt.task } : {}) });
   }
   for (const request of input.nativeRequests ?? []) {
     if (request.state !== "unobserved" && request.state !== "blocked") continue;

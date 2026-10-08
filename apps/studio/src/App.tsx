@@ -87,7 +87,7 @@ import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
 import type { JourneyFlowsView, JourneysView } from "./runtime/types";
 import { JourneyFlows } from "./components/journey-flows";
-import { ChatColumn } from "./components/chat-column";
+import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
@@ -2057,7 +2057,10 @@ export default function App({
     [workMessages, team, runTasks, clock]);
   const [thread, setThread] = useState(EVERYONE);
   const [threadOpened, setThreadOpened] = useState<Record<string, number>>({});
-  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); }, [selected]);
+  // #402: until the owner picks a thread, a run that needs them opens on the Needs you thread,
+  // where the cards now live (spec §8); otherwise on Everyone.
+  const [threadChosen, setThreadChosen] = useState(false);
+  useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
   useEffect(() => {
     const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
     setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
@@ -2076,7 +2079,7 @@ export default function App({
   const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
   const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
   const [graphFileOpen, setGraphFileOpen] = useState(false);
-  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null } | null>(null);
+  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null; task?: string | null } | null>(null);
   const [composerFocus, setComposerFocus] = useState(0);
   const [highlight, setHighlight] = useState<number | null>(null);
   const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
@@ -2127,10 +2130,10 @@ export default function App({
     setMobileTab(canvasTab === "team" ? "team" : "journeys");
     setCitedRecords({ executionId: selected, sequences });
   };
-  const answerQuestion = (asker: string, signalId: string | null) => {
+  const answerQuestion = (asker: string, signalId: string | null, task: string | null = null) => {
     const key = botKeyOf(team.bots, asker) ?? asker;
     setThread(`direct:${key}`);
-    setAnswering({ asker, signalId });
+    setAnswering({ asker, signalId, ...(task ? { task } : {}) });
     setComposerFocus((nonce) => nonce + 1);
     setMobileTab("chat");
   };
@@ -2574,6 +2577,9 @@ export default function App({
             <Beacon
               state={needs.state}
               onOpen={() => {
+                // #402: the cards live in the Needs you thread; the beacon opens it.
+                setThread(NEEDS_YOU);
+                setAnswering(null);
                 setMobileTab("chat");
                 window.setTimeout(() => {
                   const target = document.getElementById(NEEDS_YOU_ID);
@@ -2752,12 +2758,12 @@ export default function App({
               ))}
             </div>
             <ChatColumn
-              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setAnswering(null); setHighlight(null); }} unread={unread}
+              threads={threadsWithAnswer} selected={!threadChosen && thread === EVERYONE && needs.items.length > 0 ? NEEDS_YOU : thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
               cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
-                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
-                onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId, "operator_note", item.kind === "question" ? item.task ?? null : null)}
+                onAnswer={(item) => answerQuestion(item.asker, item.signalId, item.kind === "question" ? item.task ?? null : null)}
                 onRefuse={(item) => void refuse(item)}
                 onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
                 stepActions={stepActions} />}

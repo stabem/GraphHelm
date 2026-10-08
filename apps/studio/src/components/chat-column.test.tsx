@@ -97,6 +97,13 @@ describe("ChatColumn", () => {
     expect(screen.queryByText("Plan ready")).toBeNull();
   });
 
+  // #402 (spec §8): the cards live only in Needs you, never above another thread.
+  it("keeps the open cards out of every other thread", () => {
+    render(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, selected: "everyone" })} />);
+    expect(screen.queryByText("Which region?")).toBeNull();
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+  });
+
   it("keeps sealed records counted while they open", () => {
     render(<ChatColumn {...props({ openingCount: 3 })} />);
     expect(screen.getByText("Opening 3 sealed records…")).toBeInTheDocument();
@@ -119,6 +126,16 @@ describe("ChatColumn", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "Wait for review");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(p.onSend).toHaveBeenCalledWith("Wait for review", "kit-1", "sig-q");
+  });
+
+  // #402 (spec §8): an answer keeps replyTo and adds the question's task when it had one.
+  it("answers a question that named a task with that task", async () => {
+    const p = props({ selected: "direct:kit-1", threads: [...THREADS, { key: "direct:kit-1", kind: "direct", label: "loja kit 1", participants: ["kit-1"], messages: [] }],
+      answering: { asker: "kit-1", signalId: "sig-q", task: "issue-384" } });
+    render(<ChatColumn {...p} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "Ship it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(p.onSend).toHaveBeenCalledWith("Ship it", "kit-1", "sig-q", "issue-384");
   });
 
   it("keeps one draft per thread so text typed for one bot never follows to another", async () => {

@@ -34,8 +34,8 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
-  /** #396: how many cards are open. When above zero, a "Needs you" thread (key `needs-you`)
-   * shows the cards alone, with no conversation under them. */
+  /** #396/#402: how many cards are open. When given, the cards live only in the "Needs you"
+   * thread (key `needs-you`), alone, instead of above whichever thread is open (spec §8). */
   cardCount?: number;
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
@@ -44,7 +44,7 @@ export interface ChatColumnProps {
   onSend: (text: string, to: string | null, replyTo: string | null, task?: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
-  answering: { asker: string; signalId: string | null } | null;
+  answering: { asker: string; signalId: string | null; task?: string | null } | null;
   onClearAnswer: () => void;
   composerFocus: number;
   highlight: number | null;
@@ -95,7 +95,12 @@ export function ChatColumn(props: ChatColumnProps) {
     if (text === "" || props.sending) return;
     const key = draftKey;
     let ok: boolean;
-    if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
+    if (props.answering !== null) {
+      // #402: an answer keeps the question's task, so it lands in the question's thread.
+      ok = props.answering.task
+        ? await props.onSend(text, props.answering.asker, props.answering.signalId, props.answering.task)
+        : await props.onSend(text, props.answering.asker, props.answering.signalId);
+    }
     else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
     else if (thread?.kind === "task") { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null, thread.key.slice("task:".length)); }
     else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }
@@ -226,7 +231,7 @@ export function ChatColumn(props: ChatColumnProps) {
           );
         })}
       </ol>
-      {props.cards}
+      {(props.cardCount === undefined || props.selected === NEEDS_YOU) && props.cards}
       {(props.jev.loading || suggestion !== undefined || props.jev.issue !== null) && mode !== "none" && (
         <section className="jev-card" aria-label="Jev suggests">
           {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion ? <>

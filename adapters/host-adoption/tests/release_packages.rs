@@ -10,7 +10,11 @@ fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one
     let release: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert!(
-        release["packages"].as_array().unwrap().iter().all(|p| p.get("digest").is_none()),
+        release["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p.get("digest").is_none()),
         "the source release file must not pin digests (#407): {release}"
     );
     let packages = graphhelm_host_adoption::hosts::release_packages().unwrap();
@@ -46,11 +50,21 @@ fn two_package_edits_do_not_collide_in_the_release_file() {
         let out = Command::new("git")
             .arg("-C")
             .arg(dir.path())
-            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .output()
             .unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned())
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     };
     assert!(git(&["init", "-q", "-b", "main"]).0);
     std::fs::write(dir.path().join("release.json"), &text).unwrap();
@@ -71,7 +85,10 @@ fn two_package_edits_do_not_collide_in_the_release_file() {
             None => text.to_owned(),
         }
     };
-    for (branch, id) in [("pr-a", "graphhelm-jpd"), ("pr-b", "graphhelm-development-contracts")] {
+    for (branch, id) in [
+        ("pr-a", "graphhelm-jpd"),
+        ("pr-b", "graphhelm-development-contracts"),
+    ] {
         assert!(git(&["checkout", "-q", "-b", branch, "main"]).0);
         std::fs::write(dir.path().join("release.json"), forced(id, &text)).unwrap();
         std::fs::write(dir.path().join(format!("{id}.txt")), "edited package\n").unwrap();

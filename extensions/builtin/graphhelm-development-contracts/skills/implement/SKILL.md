@@ -19,8 +19,8 @@ adds what to do around them.
   - name the issue and the PR by the standard (`docs/process/DELIVERY.md` "Naming": issue
     `<Area>: <what changes>` ≤ 50, PR `type(area): <what changes>` ≤ 60, each body starting with
     `Summary: <one sentence>`); `claimed` and `pr_opened` read them from GitHub for the Team tab
-  - after `gh pr create` **and after every push to the PR** (each fix head): `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha>`
-  - on asking the reviewer: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>` (again when the reviewer changes)
+  - after `gh pr create` **and after every push to the PR** (each fix head): `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha> --reviewer <reviewer>` (records the review assignment in the same call)
+  - only when the reviewer changes: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>`
 
   A verdict counts only on a head that has a `pr_opened` record; without it the Studio shows it
   as a verdict on an unrecorded head.

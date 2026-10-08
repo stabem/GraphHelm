@@ -136,6 +136,28 @@ describe("the Journey tab is a column that reserves the dock (#435)", () => {
   });
 });
 
+describe("the Team tab is a column that reserves the dock (#481)", () => {
+  /** The owner could not scroll the Team tab past ~11 task rows: the list was clipped under Run
+   * actions. Text-level only, like #435's cells; the 1440x900 viewport run is the PR's observer. */
+  const rule = (selector: string) => {
+    const at = CODE.indexOf(`${selector} {`);
+    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
+  };
+  it("lays the tab panel out as a flex column with the dock's cover reserved below it", () => {
+    const panel = rule("#studio-panel-team");
+    expect(panel).toMatch(/display:\s*flex/);
+    expect(panel).toMatch(/flex-direction:\s*column/);
+    expect(panel).toMatch(/padding-bottom:\s*var\(--dock-reserve/);
+    expect(rule("#studio-panel-team[hidden]")).toMatch(/display:\s*none/);
+  });
+  it("scrolls the task list in its own box and gives the team canvas the rest", () => {
+    const list = rule("#studio-panel-team > .task-graphs");
+    expect(list).toMatch(/overflow-y:\s*auto/);
+    expect(list).toMatch(/max-height:/);
+    expect(rule("#studio-panel-team > .team-canvas")).toMatch(/flex:\s*1/);
+  });
+});
+
 describe("the stylesheet and the components agree", () => {
   /** The second half of the same defect: `.blob` survived as modifiers with no base rule, so the
    * element had a colour and no size and would have rendered as nothing. */

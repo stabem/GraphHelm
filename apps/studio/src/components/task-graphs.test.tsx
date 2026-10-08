@@ -117,3 +117,37 @@ describe("TaskGraphs", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+/* #481 (owner, on the live Team tab): the active lanes sat at the bottom under ~15 merged rows.
+ * Rows are ordered by state — blocked, then in review, then implementing, newest activity first —
+ * and delivered tasks go last, collapsed under "Delivered (N)". Cost: jsdom only. */
+describe("TaskGraphs order (#481)", () => {
+  const head = "a".repeat(40);
+  const claim = (n: number) => record(n * 10, `issue-${n}`, "task.claimed", "gh-claude-2", { issue: n, lane: "gh-claude-2", branch: `issue-${n}-x` });
+  const opened = (n: number, seq: number) => record(seq, `issue-${n}`, "task.pr_opened", "gh-claude-2", { pr: n + 100, headSha: head, journeys: [], lane: "gh-claude-2" });
+  const number = (group: HTMLElement) => /#(\d+)/.exec(group.getAttribute("aria-label") ?? "")?.[1];
+
+  it("puts blocked, then in review, then implementing first, newest first, and folds delivered tasks last", () => {
+    const tasks = foldTaskEvents([
+      claim(1),
+      claim(2), opened(2, 21),
+      claim(3), opened(3, 31), record(32, "issue-3", "task.review_verdict", "gh-claude-5", { pr: 103, headSha: head, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl }),
+      claim(4), opened(4, 41), record(42, "issue-4", "task.merged", "gh-claude-5", { pr: 104, mergeSha: "c".repeat(40), closes: [4], merger: "gh-claude-5" }),
+      claim(5), opened(5, 51), record(52, "issue-5", "task.merged", "gh-claude-5", { pr: 105, mergeSha: "d".repeat(40), closes: [5], merger: "gh-claude-5" }),
+      claim(6),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const delivered = screen.getByText("Delivered (2)").closest("details")!;
+    expect(delivered).not.toHaveAttribute("open");
+    const active = screen.getAllByRole("group").filter((group) => !delivered.contains(group));
+    expect(active.map(number)).toEqual(["3", "2", "6", "1"]);
+    expect(within(delivered).getAllByRole("group").map(number)).toEqual(["5", "4"]);
+  });
+
+  it("moves a row to its new place when a record arrives", () => {
+    const { rerender } = render(<TaskGraphs tasks={foldTaskEvents([claim(7), claim(8)])} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group").map(number)).toEqual(["8", "7"]);
+    rerender(<TaskGraphs tasks={foldTaskEvents([claim(7), claim(8), opened(7, 99)])} onOpenJourney={vi.fn()} />);
+    expect(screen.getAllByRole("group").map(number)).toEqual(["7", "8"]);
+  });
+});

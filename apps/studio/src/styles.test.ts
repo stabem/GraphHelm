@@ -112,6 +112,30 @@ describe("every token is real", () => {
   });
 });
 
+describe("the Journey tab is a column that reserves the dock (#435)", () => {
+  /** Found while the owner rehearsed approvals at 1024 px: the flow cards grew the tab panel to
+   * 6,759 px, the dock (absolute at the scene's bottom) covered the first Approve buttons, and
+   * the journey canvas sat below all the cards. Text-level, so it can only see that the rules
+   * exist; the viewport measurement is the PR's observer. */
+  const rule = (selector: string) => {
+    const at = CODE.indexOf(`${selector} {`);
+    return at === -1 ? "" : CODE.slice(at + selector.length + 2, CODE.indexOf("}", at));
+  };
+  it("lays the tab panel out as a flex column with the dock's cover reserved below it", () => {
+    const panel = rule("#studio-panel-journeys");
+    expect(panel).toMatch(/display:\s*flex/);
+    expect(panel).toMatch(/flex-direction:\s*column/);
+    expect(panel).toMatch(/padding-bottom:\s*var\(--dock-reserve/);
+    expect(rule("#studio-panel-journeys[hidden]")).toMatch(/display:\s*none/);
+  });
+  it("scrolls the flow cards in their own box and gives the canvas the rest", () => {
+    const flows = rule("#studio-panel-journeys > .journey-flows");
+    expect(flows).toMatch(/overflow-y:\s*auto/);
+    expect(flows).toMatch(/max-height:/);
+    expect(rule("#studio-panel-journeys > .journey-canvas")).toMatch(/flex:\s*1/);
+  });
+});
+
 describe("the stylesheet and the components agree", () => {
   /** The second half of the same defect: `.blob` survived as modifiers with no base rule, so the
    * element had a colour and no size and would have rendered as nothing. */

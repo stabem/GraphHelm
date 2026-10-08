@@ -193,6 +193,19 @@ pub(crate) fn validate_task_event(
             .get("repo")
             .is_none_or(|repo| repo.as_str().is_some_and(valid_repo))
     };
+    // #477: optional `title` / `summary` on claimed and pr_opened, the schema's `$defs` limits.
+    // CHARACTERS, as JSON Schema's `maxLength` and the recipe count them, not UTF-8 bytes: an
+    // accented title within the limit would otherwise be refused and the record lost (#486 review).
+    let words = || {
+        let within = |key: &str, max: usize| {
+            document.get(key).is_none_or(|value| {
+                value.as_str().is_some_and(|s| {
+                    !s.is_empty() && s.chars().count() <= max && !s.chars().any(char::is_control)
+                })
+            })
+        };
+        within("title", 200) && within("summary", 300)
+    };
     let numbers = |key: &str| {
         document[key]
             .as_array()
@@ -218,12 +231,22 @@ pub(crate) fn validate_task_event(
                 && is_actor("lane")
                 && short("branch", 256)
                 && (document.get("plan").is_none() || document["plan"].is_object())
-                && repo(),
-            &["issue", "lane", "branch", "plan", "repo"],
+                && repo()
+                && words(),
+            &[
+                "issue", "lane", "branch", "plan", "repo", "title", "summary",
+            ],
         ),
         "task.pr_opened" => (
-            count("pr") && sha("headSha") && ids("journeys") && is_actor("lane") && repo(),
-            &["pr", "headSha", "journeys", "lane", "repo"],
+            count("pr")
+                && sha("headSha")
+                && ids("journeys")
+                && is_actor("lane")
+                && repo()
+                && words(),
+            &[
+                "pr", "headSha", "journeys", "lane", "repo", "title", "summary",
+            ],
         ),
         "task.review_assigned" => (
             count("pr")

@@ -16,6 +16,9 @@ adds what to do around them.
 - Records the task steps it owns, one command each, signed as your own lane (from a GraphHelm
   checkout; `docs/process/DELIVERY.md` "Task records" has the token and the defaults):
   - on taking the issue: `python tools/task-record/task_record.py --lane <you> claimed --issue <N> --branch <branch>`
+  - name the issue and the PR by the standard (`docs/process/DELIVERY.md` "Naming": issue
+    `<Area>: <what changes>` ≤ 50, PR `type(area): <what changes>` ≤ 60, each body starting with
+    `Summary: <one sentence>`); `claimed` and `pr_opened` read them from GitHub for the Team tab
   - after `gh pr create` **and after every push to the PR** (each fix head): `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha>`
   - on asking the reviewer: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>` (again when the reviewer changes)
 

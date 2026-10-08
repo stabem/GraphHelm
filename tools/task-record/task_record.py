@@ -20,6 +20,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -28,6 +29,46 @@ from pathlib import Path
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 KINDS = ("claimed", "pr_opened", "review_assigned", "review_verdict", "merged")
+# #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
+STANDARD = {"claimed": 50, "pr_opened": 60, "summary": 100}
+ACCEPTED = {"title": 200, "summary": 300}
+
+
+def github_words(kind, number, repo):
+    """The issue's (claimed) or the PR's (pr_opened) title and the body's `Summary:` line, read with
+    `gh`. Returns (title, summary); either is None when gh is missing or the field is absent."""
+    command = ["gh", "issue" if kind == "claimed" else "pr", "view", str(number), "--json", "title,body"]
+    if repo:
+        command += ["--repo", repo]
+    try:
+        reply = json.loads(subprocess.run(command, capture_output=True, text=True, timeout=60, check=True).stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, None
+    summary = next((line.split(":", 1)[1].strip() for line in (reply.get("body") or "").splitlines()
+                    if line.strip().lower().startswith("summary:")), None)
+    return (reply.get("title") or "").strip() or None, summary or None
+
+
+def words(args):
+    """#477: `title` and `summary` for an opening record: the flags win, else GitHub. Over the
+    standard's length only warns; over what the Runtime accepts is clipped, so a long title never
+    costs the record. Control characters become spaces."""
+    title, summary = args.title, args.summary
+    if (title is None or summary is None) and not args.no_github:
+        number = args.issue if args.kind == "claimed" else args.pr
+        fetched = github_words(args.kind, number, args.repo)
+        title = title if title is not None else fetched[0]
+        summary = summary if summary is not None else fetched[1]
+    out = {}
+    for key, value, standard in (("title", title, STANDARD[args.kind]), ("summary", summary, STANDARD["summary"])):
+        if not value:
+            continue
+        value = " ".join("".join(c if c.isprintable() else " " for c in value).split())
+        if len(value) > standard:
+            print(f"task_record: warning: {key} is {len(value)} characters; the standard asks for {standard}", file=sys.stderr)
+        if value:
+            out[key] = value[:ACCEPTED[key]]
+    return out
 
 
 def parse(argv):
@@ -53,6 +94,9 @@ def parse(argv):
     p.add_argument("--url", default="http://127.0.0.1:8793")
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
                    help="the Runtime's agent session token (never the owner's events.token)")
+    p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh")
+    p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh")
+    p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args(argv)
 
@@ -85,6 +129,8 @@ def document(args, now):
                    merger=args.lane)
     if args.repo and args.kind in ("claimed", "pr_opened"):
         doc["repo"] = args.repo
+    if args.kind in ("claimed", "pr_opened"):
+        doc.update(words(args))
     return doc
 
 

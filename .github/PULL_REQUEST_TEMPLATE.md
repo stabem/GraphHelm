@@ -1,3 +1,5 @@
+Summary: <!-- One sentence, at most 100 characters: who gets what. The title is `type(area): what changes for the user`, at most 60 characters (docs/process/DELIVERY.md, "Naming"). -->
+
 ## Change and user-visible promise
 
 What changed, and what result should a user or contributor observe?

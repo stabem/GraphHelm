@@ -2897,6 +2897,16 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #481: delivered tasks fold away below the active ones. */
 .task-graphs-delivered { display: grid; gap: 8px; }
 .task-graphs-delivered > summary { cursor: pointer; color: var(--dim); font-size: 13px; padding: 4px 0; }
+/* #477: each task reads "#N · title", one summary line under it, then the PR by its own title.
+   Long text is clipped at the row's width; the element's title attribute shows all of it. */
+.task-graph-title { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.task-graph-summary { margin: 2px 0 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-graph-pr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 4px 0 0; font-size: 12px; }
+.task-graph-pr .task-graph-title { font-weight: 400; }
+.task-graph-details { font-size: 12px; color: var(--dim); }
+.task-graph-details > summary { cursor: pointer; }
+/* A row whose last record just moved is marked for a few seconds (the owner sees what changed). */
+.task-graph-changed { outline: 2px solid var(--signal); outline-offset: 2px; transition: outline-color 1s; }
 .task-graph { border: 1px solid var(--edge); border-radius: var(--r); padding: 8px 12px; background: var(--raised); display: grid; gap: 6px; }
 .task-graph-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
 .task-graph-merged { color: var(--live); font-weight: 600; }

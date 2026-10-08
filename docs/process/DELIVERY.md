@@ -16,6 +16,24 @@ New community issues receive `needs-triage`. A maintainer assigns exactly one wo
 `current-wave`, `in-flight`, `tech-debt`, or `product-vision`, removing `needs-triage` when the
 issue is classified. Maintainer-created issues may start with their workflow label.
 
+### Naming: issue and PR titles the owner can read (#477)
+
+The Team tab shows each task as its issue number, its title and one summary line, and each PR
+by its title. They are read at a glance, so they follow one standard:
+
+- **Issue title:** `<Area>: <what changes for the user>`, plain words, at most 50 characters, no
+  file names, codes or issue numbers. Areas: Studio, Journeys, Keel, Runtime, Build, Skills, Docs.
+  Example: `Studio: Team tab shows task titles`.
+- **PR title:** `type(area): <what changes for the user>`, at most 60 characters, the same plain
+  words (the squash commit takes this title, so the conventional type stays). Example:
+  `feat(studio): team tab shows task titles`. The Studio shows it without the `type(area):` prefix.
+- **First line of every issue and PR body:** `Summary: <one sentence, at most 100 characters, who
+  gets what>`. Technical detail goes below it, and the identity line follows it.
+
+`task_record.py` reads the title and the `Summary:` line with `gh` on `claimed` (the issue) and
+`pr_opened` (the PR); `--title` / `--summary` override, `--no-github` skips. Over the standard's
+length it warns and still records; the Studio clips long text and shows all of it on hover.
+
 ## 2. Keel card
 
 Keel is proportional. Use only as much of it as the change needs.

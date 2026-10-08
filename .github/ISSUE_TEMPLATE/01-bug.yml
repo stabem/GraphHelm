@@ -1,8 +1,19 @@
 name: Bug report
 description: Report a reproducible problem in current GraphHelm code or documentation.
-title: "[Bug] "
+title: ""
 labels: ["needs-triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Title: `<Area>: <what changes for the user>`, plain words, at most 50 characters (Studio, Journeys, Keel, Runtime, Build, Skills, Docs). Example: `Studio: Team tab shows task titles`.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence, at most 100 characters, saying who gets what.
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |

@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -64,6 +64,12 @@ class TaskRecordTest(unittest.TestCase):
     def setUp(self):
         FakeRuntime.keys.clear()
         FakeRuntime.seen.clear()
+        # #477: opening records read their title from GitHub; these cells are about the wire.
+        self.github = task_record.github_words
+        task_record.github_words = lambda *_: (None, None)
+
+    def tearDown(self):
+        task_record.github_words = self.github
 
     def run_step(self, *argv, url=None):
         out = io.StringIO()
@@ -135,6 +141,55 @@ class ClosesAsGiven(unittest.TestCase):
     def test_closes_lists_exactly_the_given_issues(self):
         self.assertEqual(self.closes("--closes", "356"), [356])
         self.assertEqual(self.closes("--closes", "457", "458"), [457, 458])
+
+
+class TitleAndSummary(unittest.TestCase):
+    """#477: an opening record carries the issue's or PR's title and its `Summary:` line for the
+    Team tab. Flags win over GitHub; over the standard only warns; over what the Runtime accepts is
+    clipped; nothing is added to the other kinds."""
+
+    def setUp(self):
+        self.github = task_record.github_words
+        self.asked = []
+
+        def fake(kind, number, repo):
+            self.asked.append((kind, number, repo))
+            return ("Studio: Team tab shows task titles", "The owner reads each task's title.")
+        task_record.github_words = fake
+
+    def tearDown(self):
+        task_record.github_words = self.github
+
+    def doc(self, *argv):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            document = task_record.document(task_record.parse(["--lane", "gh-claude-2", *argv]), "2026-10-08T00:00:00Z")
+        return document, err.getvalue()
+
+    def test_claimed_reads_the_issue_title_and_summary_from_github(self):
+        document, err = self.doc("claimed", "--issue", "477", "--branch", "b")
+        self.assertEqual((document["title"], document["summary"]), ("Studio: Team tab shows task titles", "The owner reads each task's title."))
+        self.assertEqual(self.asked, [("claimed", 477, "stabem/GraphHelm")])
+        self.assertEqual(err, "")
+
+    def test_pr_opened_reads_the_pr_and_flags_win(self):
+        document, _ = self.doc("pr_opened", "--issue", "477", "--pr", "484", "--head", "a" * 40, "--title", "fix(studio): mine")
+        self.assertEqual(document["title"], "fix(studio): mine")
+        self.assertEqual(document["summary"], "The owner reads each task's title.")
+        self.assertEqual(self.asked, [("pr_opened", 484, "stabem/GraphHelm")])
+
+    def test_over_the_standard_warns_and_over_the_runtime_limit_clips(self):
+        document, err = self.doc("claimed", "--issue", "1", "--branch", "b", "--title", "t" * 250, "--summary", "line\nbreak")
+        self.assertEqual(len(document["title"]), 200)
+        self.assertEqual(document["summary"], "line break")
+        self.assertIn("title is 250 characters; the standard asks for 50", err)
+
+    def test_no_github_and_other_kinds_add_nothing(self):
+        document, _ = self.doc("claimed", "--issue", "1", "--branch", "b", "--no-github")
+        self.assertNotIn("title", document)
+        document, _ = self.doc("merged", "--issue", "1", "--pr", "2", "--merge-sha", "c" * 40)
+        self.assertNotIn("title", document)
+        self.assertEqual(self.asked, [])
 
 
 if __name__ == "__main__":

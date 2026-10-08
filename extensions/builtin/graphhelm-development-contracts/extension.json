@@ -969,7 +969,7 @@
           "id": "skill/implement",
           "kind": "skill",
           "path": "skills/implement/SKILL.md",
-          "sha256": "sha256:0c6bd3483d163e769ade2510d03de245241ebbd4ef05afa3ab2498960282f81c",
+          "sha256": "sha256:c1cf6aa72c082e7e1e95e63f36ecd98c84060c5d8d26919576700c9a618b45d5",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -1041,7 +1041,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:406c06a8328ede05c5d4dfc28ae83fdaeeb8f363f037986467d32ad1ea961ffb",
+          "sha256": "sha256:d72fb771321f1e7e65bb29ff19223c4b080bca97149602e9f5d70429a016ebf6",
           "effects": [],
           "permissions": [],
           "requires": {

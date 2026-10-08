@@ -850,7 +850,8 @@ fn keel_plan_never_lets_jev_lower_a_non_prose_path_to_docs() {
 
 /// #426: the generated `<id>.json` contracts are git-ignored, so a fresh clone holds only the
 /// committed `*.journey.yaml` flows. Plan and check must read those flows (projected in memory as
-/// `journey compile` would), and say so when a touched flow is a draft or no journey exists at all.
+/// `journey compile` would), and say so when a touched flow is a draft; the plan also says when no
+/// journey exists at all.
 /// Credible regression: the readers go back to the generated JSON and journey-first falls silent in
 /// every reviewer's clone. Cost: one temp git repository, one approve, five CLI runs.
 #[test]
@@ -940,9 +941,10 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
         codes(&reply).iter().any(|c| c == "keel.journey.none"),
         "no flow and no contract is said, not implied: {reply}"
     );
+    // The plan says it; `keel check` does not repeat it on every diff of such a project.
     let (_, reply) = run(bare.path(), None);
     assert!(
-        codes(&reply).iter().any(|c| c == "keel.journey.none"),
+        !codes(&reply).iter().any(|c| c == "keel.journey.none"),
         "{reply}"
     );
 }

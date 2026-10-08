@@ -315,22 +315,12 @@ fn missing_journeys(
 }
 
 /// #426: what the journey reader could not use, said rather than read as "no journey touched":
-/// a draft flow whose screen a path touches (`keel.journey.flow_draft`), a flow that does not
-/// validate or project (`keel.journey.flow_invalid`), and a project with no flow and no contract
-/// at all (`keel.journey.none`).
+/// a draft flow whose screen a path touches (`keel.journey.flow_draft`) and a flow that does not
+/// validate or project (`keel.journey.flow_invalid`).
 fn journey_reader_findings(
     journeys: &super::journeys::KeelJourneys,
     paths: &[String],
 ) -> Vec<Finding> {
-    if journeys.is_empty() {
-        return vec![Finding {
-            rule: "keel.journey.none".to_owned(),
-            path: None,
-            detail: "no journey flow (`.graphhelm/journeys/*.journey.yaml`) and no contract: no                      user-visible change here can be proven by a journey"
-                .to_owned(),
-            blocking: false,
-        }];
-    }
     let mut findings: Vec<Finding> = journeys
         .drafts
         .iter()
@@ -344,7 +334,8 @@ fn journey_reader_findings(
                 rule: "keel.journey.flow_draft".to_owned(),
                 path: Some(path.clone()),
                 detail: format!(
-                    "{flow}: this change touches a screen of a draft flow; it proves nothing until                      `graphhelm journey approve {flow}`"
+                    "{flow}: this change touches a screen of a draft flow; it proves nothing \
+                     until `graphhelm journey approve {flow}`"
                 ),
                 blocking: false,
             })
@@ -718,7 +709,19 @@ pub(crate) fn plan_value(
         ));
     };
     let read = super::journeys::keel_journeys(repo);
-    let warnings = journey_reader_findings(&read, paths);
+    let mut warnings = journey_reader_findings(&read, paths);
+    // #426: the plan decides the proof type, so it says when no journey could ever be the proof.
+    // `keel check` does not repeat it on every diff of a project that has no journeys.
+    if read.is_empty() {
+        warnings.push(Finding {
+            rule: "keel.journey.none".to_owned(),
+            path: None,
+            detail: "no journey flow (`.graphhelm/journeys/*.journey.yaml`) and no contract: \
+                     no user-visible change here can be proven by a journey"
+                .to_owned(),
+            blocking: false,
+        });
+    }
     let journeys = read
         .contracts
         .into_iter()

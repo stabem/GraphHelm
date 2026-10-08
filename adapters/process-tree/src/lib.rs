@@ -1136,7 +1136,13 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
         // empty" -- see `drain_terminated_job`'s own doc for the open window this leaves and issue
         // #846 for the measurement.
         let members = job_member_ids(group);
-        unsafe { TerminateJobObject(group.0 as _, 1) };
+        let killed = unsafe { TerminateJobObject(group.0 as _, 1) } != 0;
+        let kill_error = if killed {
+            0
+        } else {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        };
+        trace(|| format!("TerminateJobObject ok={killed} error={kill_error}"));
         // `passes: 0` IS THE SIGNATURE of "membership could not be read", and it is distinguishable
         // from a real ceiling, which always reports at least one pass. Both are `BoundReached`
         // because both mean the same thing to a caller: this did not observe the tree go.
@@ -1274,6 +1280,7 @@ fn drain_terminated_job(
     let mut unlisted = members.1;
     let started = std::time::Instant::now();
     let mut passes: u32 = 0;
+    let mut direct_kill_sent = false;
     loop {
         passes = passes.saturating_add(1);
         ids.retain(|id| process_is_running(*id));
@@ -1311,6 +1318,16 @@ fn drain_terminated_job(
             std::thread::sleep(std::time::Duration::from_millis(1));
             continue;
         }
+        // #454: a member the job kill has not ended after a second is ended directly, once. The
+        // job's termination is one request for every member; under load a Chromium process was
+        // still running five seconds after it. A direct request names that process.
+        if !direct_kill_sent && started.elapsed() >= std::time::Duration::from_secs(1) {
+            direct_kill_sent = true;
+            for id in &ids {
+                let outcome = terminate_member(*id);
+                trace(|| format!("direct kill member={id} {outcome}"));
+            }
+        }
         if started.elapsed() >= JOB_DRAIN_CEILING {
             trace(|| {
                 format!(
@@ -1326,6 +1343,29 @@ fn drain_terminated_job(
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
+
+/// One direct `TerminateProcess` on a job member the job kill has not ended (#454), and what the
+/// system answered: whether the handle opened, whether the request was accepted, the error.
+#[cfg(windows)]
+fn terminate_member(process_id: u32) -> String {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
+    };
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        return format!("open=false error={error}");
+    }
+    let accepted = unsafe { TerminateProcess(handle, 1) } != 0;
+    let error = if accepted {
+        0
+    } else {
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    };
+    unsafe { CloseHandle(handle) };
+    format!("open=true accepted={accepted} error={error}")
 }
 
 /// `GRAPHHELM_PTREE_TRACE=1` (#454 instrument): one stderr line per observation while a job

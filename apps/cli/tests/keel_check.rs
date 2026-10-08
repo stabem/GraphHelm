@@ -991,6 +991,17 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     let journeys = root.join(".graphhelm/journeys");
     fs::create_dir_all(&journeys).unwrap();
     fs::write(journeys.join("checkout.journey.yaml"), flow).unwrap();
+    let canonical = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .current_dir(root)
+        .args(["--json", "journey", "compile", "--fmt", "checkout"])
+        .output()
+        .unwrap();
+    assert!(
+        canonical.status.success(),
+        "{}",
+        String::from_utf8_lossy(&canonical.stdout)
+    );
     git(root, &["add", "."]);
     git(root, &["commit", "-q", "-m", "flow"]);
     let approve = Command::cargo_bin("graphhelm")

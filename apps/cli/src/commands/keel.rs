@@ -311,7 +311,8 @@ fn missing_journeys(
                     rule: "keel.journey.card_missing_journey".to_owned(),
                     path: Some(path.clone()),
                     detail: format!(
-                        "{name}/{}: this change touches the screen; name `{name}` in the card's                          journeys and replay it at the head",
+                        "{name}/{}: this change touches the screen; name `{name}` in the card's \
+                         journeys and replay it at the head",
                         step.step_id
                     ),
                     blocking: false,

@@ -1,9 +1,18 @@
-//! The bundled release manifest pins each builtin package's digest. Editing a package under
-//! `extensions/builtin/` without re-pinning it makes every `setup --apply` built from the manifest
-//! refuse with `/adoption/plan_stale` (#206, #323). This names every stale package directly.
+//! The bundled release manifest names each builtin package. In a source checkout it pins no
+//! digest (#407): the loader derives each one from the package, so an edit under
+//! `extensions/builtin/` needs no re-pin and two PRs never collide on the file. A packaged bundle
+//! still pins digests (`hosts/packages.rs`, refused without them).
 
 #[test]
-fn release_manifest_pins_the_current_digest_of_every_bundled_package() {
+fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../extensions/releases/adoption-0.1.1.json");
+    let release: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    assert!(
+        release["packages"].as_array().unwrap().iter().all(|p| p.get("digest").is_none()),
+        "the source release file must not pin digests (#407): {release}"
+    );
     let packages = graphhelm_host_adoption::hosts::release_packages().unwrap();
     assert!(!packages.is_empty());
     let stale: Vec<String> = packages
@@ -16,7 +25,7 @@ fn release_manifest_pins_the_current_digest_of_every_bundled_package() {
         .collect();
     assert!(
         stale.is_empty(),
-        "extensions/releases/adoption-0.1.1.json pins stale digests; re-pin: {stale:?}"
+        "the loader derived a digest the package does not have: {stale:?}"
     );
 }
 

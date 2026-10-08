@@ -1697,6 +1697,10 @@ fn journey_screens_and_capture_records_validate() {
     let mut during = capture.clone();
     during["phase"] = serde_json::json!("during");
     assert!(refused(&capture_schema, &during));
+    // #398: a `journey open` session records its step as `phase: live`.
+    let mut live = capture.clone();
+    live["phase"] = serde_json::json!("live");
+    accepted(&capture_schema, &live);
     let mut no_dirty = capture.clone();
     no_dirty.as_object_mut().unwrap().remove("dirty");
     assert!(refused(&capture_schema, &no_dirty));

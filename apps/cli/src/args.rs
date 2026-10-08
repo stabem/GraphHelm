@@ -159,6 +159,71 @@ pub enum JourneyCommand {
     Flows(JourneyFlowsArgs),
     /// Replay every approved path with the explicitly installed browser observer, without a model.
     Replay(JourneyReplayArgs),
+    /// Open an approved flow live at one step (#398): replays the cached acts of the earlier
+    /// edges in a visible browser, without a model, reports the step's state, and keeps the
+    /// browser open for `journey act` / `journey close` until the replay run budget ends.
+    Open(JourneyOpenArgs),
+    /// Send one act to an open live session and report the screen it lands on.
+    Act(JourneyActArgs),
+    /// Close an open live session and its browser.
+    Close(JourneyCloseArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct JourneyOpenArgs {
+    /// The flow id (`<id>.journey.yaml`).
+    pub id: String,
+    /// The screen id to open at.
+    #[arg(long)]
+    pub step: String,
+    /// The named path to walk; defaults to the first path that reaches the step (`main` first).
+    #[arg(long)]
+    pub path: Option<String>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub events: Option<PathBuf>,
+    #[arg(long)]
+    pub execution: Option<String>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long)]
+    pub key_id: Option<String>,
+    /// Exact extra subresource origin; never permits navigation away from the local base.
+    #[arg(long)]
+    pub allow_origin: Vec<String>,
+    /// Internal long-lived session host; `journey open` supplies its start handshake.
+    #[arg(long, hide = true)]
+    pub live_host: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyActArgs {
+    /// The session id `journey open` printed.
+    pub session: String,
+    /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for` or `inspect`.
+    #[arg(long)]
+    pub kind: String,
+    #[arg(long)]
+    pub role: String,
+    /// The control's exact accessible name.
+    #[arg(long)]
+    pub name: String,
+    /// Literal text for `enter_text`.
+    #[arg(long, conflicts_with = "secret")]
+    pub text: Option<String>,
+    /// A flow secret name for `enter_text`; its value was supplied to `journey open`.
+    #[arg(long)]
+    pub secret: Option<String>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyCloseArgs {
+    pub session: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -257,7 +322,7 @@ pub struct JourneyCaptureArgs {
     pub viewport: Option<String>,
     #[arg(long)]
     pub pr: Option<u64>,
-    /// `before` or `after`.
+    /// `before`, `after`, or `live` (a `journey open` session at its step, #398).
     #[arg(long)]
     pub phase: Option<String>,
 }

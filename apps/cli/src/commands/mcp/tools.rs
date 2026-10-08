@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 37] = [
+const TOOLS: [ToolSpec; 40] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -128,6 +128,33 @@ const TOOLS: [ToolSpec; 37] = [
                       validate reports findings. Owner sessions only: an agent-typed MCP session \
                       is refused, because only the owner approves a journey.",
         schema: journey_approve_schema,
+    },
+    ToolSpec {
+        name: "journey_open",
+        description: "Open an approved journey live at one step (POST \
+                      /v1/journeys/{contractId}/open; exactly `graphhelm journey open`): a \
+                      visible browser on the Runtime host replays the cached acts of the earlier \
+                      edges, without a model, and reports the step's state (pass, fail, or the \
+                      drift edge where the walk stopped). The browser stays open; the reply's \
+                      sessionId addresses journey_act and journey_close. Optional executionId \
+                      records the step's `phase: live` capture. Owner credential only.",
+        schema: journey_open_schema,
+    },
+    ToolSpec {
+        name: "journey_act",
+        description: "Send one act to an open live journey session (POST \
+                      /v1/journeys/sessions/{sessionId}/act; exactly `graphhelm journey act`) and \
+                      report the screen it lands on and that screen's state. Destructive-looking \
+                      names are refused unless the approved flow has that act. Owner credential \
+                      only.",
+        schema: journey_act_schema,
+    },
+    ToolSpec {
+        name: "journey_close",
+        description: "Close an open live journey session and its browser (DELETE \
+                      /v1/journeys/sessions/{sessionId}; exactly `graphhelm journey close`). \
+                      Owner credential only.",
+        schema: journey_close_schema,
     },
     ToolSpec {
         name: "events",
@@ -453,6 +480,39 @@ fn optional_execution_schema() -> serde_json::Value {
 
 fn journey_approve_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"id": {"type": "string"}}), &["id"])
+}
+
+fn journey_open_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "contractId": {"type": "string"},
+            "stepId": {"type": "string"},
+            "path": {"type": "string"},
+            "executionId": {"type": "string"}
+        }),
+        &["contractId", "stepId"],
+    )
+}
+
+fn journey_act_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "sessionId": {"type": "string"},
+            "kind": {"enum": ["activate", "submit", "enter_text", "navigate", "wait_for", "inspect"]},
+            "role": {"type": "string"},
+            "name": {"type": "string"},
+            "text": {"type": "string"},
+            "secret": {"type": "string"}
+        }),
+        &["sessionId", "kind", "role", "name"],
+    )
+}
+
+fn journey_close_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({"sessionId": {"type": "string"}}),
+        &["sessionId"],
+    )
 }
 
 fn execution_only_schema() -> serde_json::Value {
@@ -1523,6 +1583,46 @@ pub(crate) fn call(
             api.request(
                 "POST",
                 &url::segment_path(&["v1", "journey-flows", id, "approve"]),
+                None,
+                None,
+                None,
+            )
+        }),
+        "journey_open" => require(arguments, "contractId").and_then(|contract| {
+            let step = require(arguments, "stepId")?;
+            let mut body = serde_json::json!({"stepId": step});
+            for key in ["path", "executionId"] {
+                if let Some(value) = arguments.get(key).and_then(serde_json::Value::as_str) {
+                    body[key] = value.into();
+                }
+            }
+            Ok(api.request(
+                "POST",
+                &url::segment_path(&["v1", "journeys", contract, "open"]),
+                Some(&body),
+                None,
+                None,
+            ))
+        }),
+        "journey_act" => require(arguments, "sessionId").map(|session| {
+            let mut body = serde_json::json!({});
+            for key in ["kind", "role", "name", "text", "secret"] {
+                if let Some(value) = arguments.get(key).and_then(serde_json::Value::as_str) {
+                    body[key] = value.into();
+                }
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "journeys", "sessions", session, "act"]),
+                Some(&body),
+                None,
+                None,
+            )
+        }),
+        "journey_close" => require(arguments, "sessionId").map(|session| {
+            api.request(
+                "DELETE",
+                &url::segment_path(&["v1", "journeys", "sessions", session]),
                 None,
                 None,
                 None,

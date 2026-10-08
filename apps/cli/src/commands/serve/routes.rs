@@ -1861,6 +1861,124 @@ pub(super) async fn approve_journey_flow(
     .await
 }
 
+/// `POST /v1/journeys/{contractId}/open` (#398): exactly `graphhelm journey open` for the
+/// Runtime's `--project`. `contractId` is a flow id or `<flowId>.<path>`; the body names the
+/// step (`stepId`) and may name the path or an `executionId` to record the live capture into
+/// (with this Runtime's own events store and keyring). Owner credential only: the agent session
+/// token's allow-list (#380) does not reach `/v1/journeys/*` writes.
+pub(super) async fn open_journey(
+    State(state): State<ServeState>,
+    UrlPath(contract): UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.open";
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let Some(step) = payload["stepId"].as_str().map(str::to_owned) else {
+        return bad_request(COMMAND, "the request body must carry \"stepId\"", "/stepId");
+    };
+    let (flow, named) = match contract.split_once('.') {
+        Some((flow, path)) => (flow.to_owned(), Some(path.to_owned())),
+        None => (contract.clone(), None),
+    };
+    let path = match (named, payload["path"].as_str()) {
+        (Some(a), Some(b)) if a != b => {
+            return bad_request(COMMAND, "\"path\" disagrees with the contract id", "/path");
+        }
+        (Some(a), _) => Some(a),
+        (None, b) => b.map(str::to_owned),
+    };
+    let recording = match payload["executionId"].as_str() {
+        None => None,
+        Some(execution) => {
+            let Some(keyring) = state.sealing.clone() else {
+                return respond_failure(
+                    COMMAND,
+                    execution::execution_state(
+                        "recording a live capture requires a sealed keyring",
+                        "/keyring",
+                    ),
+                );
+            };
+            Some((execution.to_owned(), keyring))
+        }
+    };
+    let events = state.events.to_path_buf();
+    flow_command(state, COMMAND, move |project| {
+        let (execution, keyring, key_id) = match recording {
+            Some((execution, keyring)) => (
+                Some(execution),
+                Some(keyring.directory.clone()),
+                Some(keyring.key_id.clone()),
+            ),
+            None => (None, None, None),
+        };
+        crate::commands::journey_live::open(&crate::args::JourneyOpenArgs {
+            id: flow,
+            step,
+            path,
+            project: Some(project),
+            events: execution.as_ref().map(|_| events),
+            execution,
+            keyring,
+            key_id,
+            allow_origin: Vec::new(),
+            live_host: false,
+        })
+    })
+    .await
+}
+
+/// `POST /v1/journeys/sessions/{id}/act` (#398): exactly `graphhelm journey act`.
+pub(super) async fn act_journey(
+    State(state): State<ServeState>,
+    UrlPath(session): UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.act";
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(COMMAND, "the request body is not valid JSON", "/"),
+    };
+    let text = |key: &str| payload[key].as_str().map(str::to_owned);
+    let (Some(kind), Some(role), Some(name)) = (text("kind"), text("role"), text("name")) else {
+        return bad_request(
+            COMMAND,
+            "the request body must carry \"kind\", \"role\" and \"name\"",
+            "/",
+        );
+    };
+    let (literal, secret) = (text("text"), text("secret"));
+    flow_command(state, COMMAND, move |project| {
+        crate::commands::journey_live::act(&crate::args::JourneyActArgs {
+            session,
+            kind,
+            role,
+            name,
+            text: literal,
+            secret,
+            project: Some(project),
+        })
+    })
+    .await
+}
+
+/// `DELETE /v1/journeys/sessions/{id}` (#398): exactly `graphhelm journey close`.
+pub(super) async fn close_journey(
+    State(state): State<ServeState>,
+    UrlPath(session): UrlPath<String>,
+) -> Response {
+    flow_command(state, "journey.close", move |project| {
+        crate::commands::journey_live::close(&crate::args::JourneyCloseArgs {
+            session,
+            project: Some(project),
+        })
+    })
+    .await
+}
+
 async fn flow_command(
     state: ServeState,
     command: &'static str,

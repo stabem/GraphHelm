@@ -20,15 +20,23 @@ const PROTOCOL: &str = "graphhelm-journey-driver/1";
 const CACHE_SCHEMA: &str = "https://p50.dev/schemas/journey-replay-cache.schema.json";
 const FRAME: usize = 64 * 1024;
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024;
-const OP_BUDGET: Duration = Duration::from_secs(30);
+pub(super) const OP_BUDGET: Duration = Duration::from_secs(30);
 // The independent supervisor bounds waiting, including startup and the worker's
 // blocking storage/Git/record calls. Kill/reap gets a separate one-second observer.
 // OS scheduler failure and an inconclusive cleanup are reported uncertain, not success.
-const RUN_BUDGET: Duration = Duration::from_secs(180);
-type Failure = (&'static str, String, i32);
-type Result<T> = std::result::Result<T, Failure>;
+pub(super) const RUN_BUDGET: Duration = Duration::from_secs(180);
+/// Driver failures a headed session survives (`tools/journey-driver/driver.mjs` `SURVIVABLE`).
+pub(super) const SURVIVABLE: [&str; 5] = [
+    "driver.locator_missing",
+    "driver.locator_ambiguous",
+    "driver.expectation_failed",
+    "driver.action_failed",
+    "driver.timeout",
+];
+pub(super) type Failure = (&'static str, String, i32);
+pub(super) type Result<T> = std::result::Result<T, Failure>;
 
-fn failure(code: &'static str, path: impl Into<String>, exit: i32) -> Failure {
+pub(super) fn failure(code: &'static str, path: impl Into<String>, exit: i32) -> Failure {
     (code, path.into(), exit)
 }
 
@@ -65,7 +73,7 @@ fn report(data: Value, failed: Option<Failure>) -> Outcome {
     }
 }
 
-fn safe_environment(command: &mut Command, recording: bool) {
+pub(super) fn safe_environment(command: &mut Command, recording: bool) {
     command.env_clear();
     for key in [
         "PATH",
@@ -271,18 +279,19 @@ fn supervise_owned(
     result.map(|bytes| (status, bytes))
 }
 
-struct Driver {
+pub(super) struct Driver {
     owned: Option<OwnedChild>,
     writer: mpsc::SyncSender<(Vec<u8>, mpsc::SyncSender<bool>)>,
     replies: Receiver<Result<Option<Vec<u8>>>>,
     sequence: u64,
     secrets: Vec<String>,
+    headed: bool,
 }
 
-struct TemporaryOutput(PathBuf);
+pub(super) struct TemporaryOutput(PathBuf);
 
 impl TemporaryOutput {
-    fn create() -> Result<Self> {
+    pub(super) fn create() -> Result<Self> {
         let root = std::env::temp_dir()
             .canonicalize()
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
@@ -291,7 +300,7 @@ impl TemporaryOutput {
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
         Ok(Self(path))
     }
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -307,7 +316,11 @@ impl Drop for TemporaryOutput {
 }
 
 impl Driver {
-    fn start(project: &Path, output: &Path, secrets: &BTreeMap<String, String>) -> Result<Self> {
+    pub(super) fn start(
+        project: &Path,
+        output: &Path,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         // Node's main-module resolver rejects Windows canonical drive prefixes.
         // Change only the external spelling, and verify it still identifies the
         // same directory before sending it to an observer.
@@ -360,12 +373,21 @@ impl Driver {
             replies,
             sequence: 0,
             secrets: secrets.values().cloned().collect(),
+            headed: false,
         })
     }
 
-    fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
+    pub(super) fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
+        if op == "open" && request["headed"] == true {
+            self.headed = true;
+        }
         let result = self.call_inner(op, request, path);
+        // A headed (live, #398) session survives an observation failure; the driver keeps
+        // its browser open too (`SURVIVABLE` in driver.mjs).
+        let survived =
+            self.headed && matches!(&result, Err((code, _, _)) if SURVIVABLE.contains(code));
         if result.is_err()
+            && !survived
             && let Some(owned) = self.owned.take()
         {
             owned
@@ -527,7 +549,7 @@ impl Driver {
         Ok(result.clone())
     }
 
-    fn close(mut self) -> Result<()> {
+    pub(super) fn close(mut self) -> Result<()> {
         self.call("close", json!({}), "/observer/close")?;
         let trailing = self
             .replies
@@ -546,7 +568,7 @@ impl Driver {
     }
 }
 
-fn safe_node(path: &Path) -> bool {
+pub(super) fn safe_node(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| {
         #[cfg(windows)]
         {
@@ -559,7 +581,7 @@ fn safe_node(path: &Path) -> bool {
     })
 }
 
-fn safe_directory(path: &Path, create: bool) -> Result<()> {
+pub(super) fn safe_directory(path: &Path, create: bool) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && safe_node(path) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => {
@@ -635,7 +657,7 @@ fn cache_valid(cache: &Value, flow: &Value) -> bool {
     true
 }
 
-fn load_cache(path: &Path, flow: &Value) -> Result<Option<Value>> {
+pub(super) fn load_cache(path: &Path, flow: &Value) -> Result<Option<Value>> {
     let metadata = match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Ok(metadata) => metadata,
@@ -656,7 +678,7 @@ fn load_cache(path: &Path, flow: &Value) -> Result<Option<Value>> {
     Ok(Some(value))
 }
 
-fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
+pub(super) fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
     let supported = [
         "activate",
         "submit",
@@ -733,7 +755,7 @@ fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
     Ok(secrets)
 }
 
-fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
+pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
     let Ok(expected_url) =
         format!("{}{}", base.trim_end_matches('/'), pattern).parse::<axum::http::Uri>()
     else {
@@ -787,7 +809,34 @@ fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
         })
 }
 
-fn observe(driver: &mut Driver, screen: &Value, base: &str, path: &str) -> Result<Value> {
+/// The installed observer must be byte-identical to this binary's bundled driver.
+pub(super) fn observer_ready(project: &Path) -> Result<()> {
+    let installed = project.join(".graphhelm/observers/journey_driver.mjs");
+    let expected = include_bytes!("../../../../tools/journey-driver/driver.mjs");
+    let mut installed_bytes = Vec::new();
+    if !safe_node(&installed)
+        || std::fs::File::open(&installed)
+            .and_then(|file| {
+                file.take(expected.len() as u64 + 1)
+                    .read_to_end(&mut installed_bytes)
+            })
+            .is_err()
+        || installed_bytes != expected
+    {
+        return Err(failure("replay.observer_missing", "/observer", 3));
+    }
+    if !safe_node(&project.join(".graphhelm/observers")) {
+        return Err(failure("replay.observer_missing", "/observer", 3));
+    }
+    Ok(())
+}
+
+pub(super) fn observe(
+    driver: &mut Driver,
+    screen: &Value,
+    base: &str,
+    path: &str,
+) -> Result<Value> {
     let snapshot = driver.call("snapshot", json!({"expect":screen["expect"]}), path)?;
     let url = snapshot["url"]
         .as_str()
@@ -824,9 +873,18 @@ fn record_command(args: &JourneyReplayArgs, kind: &str, contract: &str) -> Resul
     Ok(command)
 }
 
-fn record(args: &JourneyReplayArgs, contract: &str, step: &str, image: &Path) -> Result<String> {
+pub(super) fn record(
+    args: &JourneyReplayArgs,
+    contract: &str,
+    step: &str,
+    image: &Path,
+    phase: Option<&str>,
+) -> Result<String> {
     let mut capture = record_command(args, "capture", contract)?;
     capture.args(["--step", step, "--image"]).arg(image);
+    if let Some(phase) = phase {
+        capture.args(["--phase", phase]);
+    }
     // Blocking store/record calls are inside the independently supervised worker.
     let output = capture
         .output()
@@ -912,23 +970,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         }
     }
     data["flowId"] = args.id.clone().into();
-    let installed = project.join(".graphhelm/observers/journey_driver.mjs");
-    let expected = include_bytes!("../../../../tools/journey-driver/driver.mjs");
-    let mut installed_bytes = Vec::new();
-    if !safe_node(&installed)
-        || std::fs::File::open(&installed)
-            .and_then(|file| {
-                file.take(expected.len() as u64 + 1)
-                    .read_to_end(&mut installed_bytes)
-            })
-            .is_err()
-        || installed_bytes != expected
-    {
-        return Err(failure("replay.observer_missing", "/observer", 3));
-    }
-    if !safe_node(&project.join(".graphhelm/observers")) {
-        return Err(failure("replay.observer_missing", "/observer", 3));
-    }
+    observer_ready(&project)?;
     let reused = previous
         .as_ref()
         .filter(|cache| cache["flowDigest"] == digest);
@@ -1060,7 +1102,13 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                 let previous = last_capture
                     .as_deref()
                     .map(|capture| (visited[step_index - 1], capture));
-                let signal = record(args, &contract, screen_id, &temporary.path().join(&image))?;
+                let signal = record(
+                    args,
+                    &contract,
+                    screen_id,
+                    &temporary.path().join(&image),
+                    None,
+                )?;
                 path_data["capturedSignalIds"]
                     .as_array_mut()
                     .unwrap()

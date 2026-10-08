@@ -58,6 +58,9 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "replay.cache_missing" => {
             "open needs the replay cache of this approved flow; run `graphhelm journey replay <id>` first"
         }
+        "live.host_exited" => {
+            "the session host exited before reporting; data.hostExitCode is its exit status"
+        }
         "live.step_unreachable" => "no path of this flow (or the named path) reaches the step",
         "live.session_gone" => {
             "no live session answers; it closed or its run budget ended. Open it again"
@@ -122,16 +125,77 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
 
 /// `journey open` from the CLI. The Runtime's route calls [`open_in_runtime`] instead.
 pub(super) fn open(args: &JourneyOpenArgs) -> Outcome {
-    open_with(args, true)
+    open_with(args)
 }
 
-/// The Runtime's `POST /v1/journeys/{contractId}/open`: the same open, without touching the
-/// Runtime process's own standard handles.
+/// The Runtime's `POST /v1/journeys/{contractId}/open` (#416 review): runs exactly the CLI
+/// `journey open` as a child with its own explicit pipes, so the session host is spawned by a
+/// process whose std handles are those pipes, never by the Runtime itself. A host spawned
+/// straight from a Runtime started under MSYS `nohup` inherited that Runtime's std handles and
+/// died before its first line; the CLI path never did. The Runtime's own handles are untouched.
 pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
-    open_with(args, false)
+    let data = json!({"flowId":args.id,"step":args.step,"sessionId":null});
+    let Ok(executable) = std::env::current_exe() else {
+        return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
+    };
+    let mut command = Command::new(executable);
+    command
+        .args(["--json", "journey", "open", &args.id, "--step", &args.step])
+        .arg("--project")
+        .arg(args.project.as_deref().unwrap_or(Path::new(".")))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(path) = &args.path {
+        command.args(["--path", path]);
+    }
+    for origin in &args.allow_origin {
+        command.args(["--allow-origin", origin]);
+    }
+    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) =
+        (&args.events, &args.execution, &args.keyring, &args.key_id)
+    {
+        command
+            .arg("--events")
+            .arg(events)
+            .args(["--execution", execution])
+            .arg("--keyring")
+            .arg(keyring)
+            .args(["--key-id", key_id]);
+    }
+    safe_environment(&mut command, args.events.is_some());
+    for (key, value) in std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
+    {
+        command.env(key, value);
+    }
+    let Ok(child) = command.spawn() else {
+        return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
+    };
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let Ok(Ok(output)) = rx.recv_timeout(RUN_BUDGET + Duration::from_secs(5)) else {
+        return report(OPEN, data, Some(failure("live.timeout", "/host", 1)));
+    };
+    let Ok(envelope) = serde_json::from_slice::<Value>(&output.stdout) else {
+        return report(OPEN, data, Some(failure("live.host_invalid", "/host", 1)));
+    };
+    let diagnostics: Vec<Diagnostic> =
+        serde_json::from_value(envelope["diagnostics"].clone()).unwrap_or_default();
+    Outcome {
+        output: CommandOutput {
+            ok: envelope["ok"] == true,
+            command: OPEN,
+            data: Some(envelope["data"].clone()),
+            diagnostics,
+        },
+        exit_code: output.status.code().unwrap_or(1),
+    }
 }
 
-fn open_with(args: &JourneyOpenArgs, detach_std: bool) -> Outcome {
+fn open_with(args: &JourneyOpenArgs) -> Outcome {
     let data = json!({"flowId":args.id,"step":args.step,"path":null,"sessionId":null,"state":"unobserved","at":null,"headed":true,"modelCalls":0,"liveCaptureSignalId":null});
     if !graphhelm_execution::valid_journey_id(&args.id) {
         return report(OPEN, data, Some(failure("replay.id_invalid", "/id", 3)));
@@ -160,7 +224,7 @@ fn open_with(args: &JourneyOpenArgs, detach_std: bool) -> Outcome {
     if args.live_host {
         host(args, data);
     }
-    spawn_host(args, data, detach_std)
+    spawn_host(args, data)
 }
 
 /// The caller half: start the host, hand it the start frame, return its first envelope line.
@@ -190,10 +254,8 @@ fn detach_std_handles() {
     }
 }
 
-fn spawn_host(args: &JourneyOpenArgs, data: Value, detach_std: bool) -> Outcome {
-    if detach_std {
-        detach_std_handles();
-    }
+fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
+    detach_std_handles();
     let Ok(executable) = std::env::current_exe() else {
         return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
     };
@@ -260,7 +322,25 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value, detach_std: bool) -> Outcome 
     });
     let line = match rx.recv_timeout(RUN_BUDGET) {
         Ok(Ok(line)) if !line.is_empty() => line,
-        _ => {
+        // An empty first line is the host's stdout closing: it exited before its envelope.
+        // Name its exit status, so nobody has to bisect a bare timeout (#416 review).
+        Ok(_) => {
+            let status = (0..50)
+                .find_map(|_| match child.try_wait() {
+                    Ok(Some(status)) => Some(status.code()),
+                    _ => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        None
+                    }
+                })
+                .flatten();
+            let _ = child.kill();
+            let _ = child.wait();
+            let mut data = data;
+            data["hostExitCode"] = status.map_or(Value::Null, Value::from);
+            return report(OPEN, data, Some(failure("live.host_exited", "/host", 1)));
+        }
+        Err(_) => {
             let _ = child.kill();
             let _ = child.wait();
             return report(OPEN, data, Some(failure("live.timeout", "/host", 1)));
@@ -372,6 +452,9 @@ fn survivable(code: &str) -> bool {
 
 /// Walks to the step. `Ok` means a session exists (the browser is open); its second element is
 /// the step's failure, if any: the step's expectations, or the drift that stopped the walk.
+/// With recording, the step is captured `phase: live` on `pass` AND on `fail` (a live look at
+/// the step even when its expectations do not hold); a drift stopped before the step, so it
+/// records nothing.
 fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Failure>)> {
     let project = project_of(args.project.as_deref())?;
     safe_directory(&project.join(".graphhelm"), false)?;
@@ -543,6 +626,38 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     Ok((session, step_failure))
 }
 
+/// Removes the records and tokens of sessions whose run budget ended without a close (a killed
+/// host never removes its own). Only `live-<hex>` names, only regular files, only expired ones.
+fn sweep_expired(dir: &Path) {
+    let now = chrono::Utc::now();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.strip_suffix(".json"))
+            .filter(|id| valid_session(id))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let expired = safe_node(&entry.path())
+            && std::fs::read(entry.path())
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|record| {
+                    chrono::DateTime::parse_from_rfc3339(record["expiresAt"].as_str()?).ok()
+                })
+                .is_some_and(|expires| expires < now);
+        if expired {
+            let _ = std::fs::remove_file(dir.join(format!("{id}.json")));
+            let token = dir.join(format!("{id}.token"));
+            if safe_node(&token) {
+                let _ = std::fs::remove_file(token);
+            }
+        }
+    }
+}
+
 fn save_record(path: &Path, record: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(record).unwrap();
     bytes.push(b'\n');
@@ -566,6 +681,7 @@ fn start_session(
 ) -> Result<Session> {
     let dir = project.join(SESSIONS);
     safe_directory(&dir, true)?;
+    sweep_expired(&dir);
     let id = format!("live-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
     let (_, token) = crate::commands::secret_file::ensure(
         &dir.join(format!("{id}.token")),

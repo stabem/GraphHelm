@@ -70,9 +70,9 @@
     },
     "graph-signal": {
       "id": "https://p50.dev/schemas/graph-signal.schema.json",
-      "documentVersion": "1.1.0",
+      "documentVersion": "1.2.0",
       "path": "schemas/graph-signal.schema.json",
-      "sha256": "sha256:12fa90d9455c15925ed4acbd4d11bfa9b7ae63015ceb75ba6556d6533f8745b5"
+      "sha256": "sha256:9c3857b57b72ffabdf705b9e5e2204b5ac0fd0889f120be1ff896beb14139733"
     },
     "node": {
       "id": "https://p50.dev/schemas/node.schema.json",

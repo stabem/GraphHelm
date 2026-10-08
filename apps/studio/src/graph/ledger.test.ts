@@ -57,6 +57,12 @@ describe("the shared ledger of unanswered questions", () => {
     ]);
   });
 
+  it("carries the task a question named, so its answer lands in the same thread (#402)", () => {
+    const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];
+    const envelopes = { 5: { to: OPERATOR, replyTo: null, task: "issue-384", text: "which region?" } };
+    expect(openQuestions(events, envelopes, OPERATOR)[0].task).toBe("issue-384");
+  });
+
   it("settles a debt only when the OPERATOR answers it", () => {
     const events = [
       signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" }),
@@ -104,15 +110,20 @@ describe("reading a sealed envelope", () => {
   it("reads the sentence and the address out of a JSON envelope", () => {
     const sealed = JSON.stringify({ description: "which region?", to: OPERATOR, replyTo: "sig-1" });
     expect(readable_content(sealed, "application/json")).toBe("which region?");
-    expect(address_of(sealed, "application/json")).toEqual({ to: OPERATOR, replyTo: "sig-1" });
+    expect(address_of(sealed, "application/json")).toEqual({ to: OPERATOR, replyTo: "sig-1", task: null });
+  });
+
+  it("reads the task a message belongs to, and only when it is a task id (#393)", () => {
+    expect(address_of(JSON.stringify({ description: "x", task: "issue-384" }), "application/json").task).toBe("issue-384");
+    expect(address_of(JSON.stringify({ description: "x", task: "../etc" }), "application/json").task).toBeNull();
   });
 
   it("returns non-JSON content unchanged and address-free", () => {
     expect(readable_content("plain words", "text/plain")).toBe("plain words");
-    expect(address_of("plain words", "text/plain")).toEqual({ to: null, replyTo: null });
+    expect(address_of("plain words", "text/plain")).toEqual({ to: null, replyTo: null, task: null });
     // Claims JSON, is not: the bytes still reach the reader, and no address is guessed.
     expect(readable_content("{broken", "application/json")).toBe("{broken");
-    expect(address_of("{broken", "application/json")).toEqual({ to: null, replyTo: null });
+    expect(address_of("{broken", "application/json")).toEqual({ to: null, replyTo: null, task: null });
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/graph-signal.schema.json",
-  "x-graphhelm-schema-version": "1.1.0",
+  "x-graphhelm-schema-version": "1.2.0",
   "title": "GraphHelm Graph Signal",
   "type": "object",
   "required": ["id", "source", "type", "severity", "description", "evidence", "emittedAt"],
@@ -23,7 +23,8 @@
     "recommendations": {"type": "array", "items": {"type": "string"}},
     "emittedAt": {"type": "string", "format": "date-time"},
     "to": {"type": "string", "minLength": 1},
-    "replyTo": {"type": "string", "minLength": 1}
+    "replyTo": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
     ,"proposal": {
       "type": "object",
       "required": ["id", "expectedVersion", "expectedHash", "operations"],

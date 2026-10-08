@@ -967,6 +967,7 @@ dependencies = [
  "libc",
  "pathogens",
  "predicates",
+ "regex",
  "semver",
  "serde",
  "serde_json",

@@ -19,15 +19,32 @@ pub struct PinnedPackage {
     pub path: PathBuf,
 }
 
+/// One package line of a release file. `digest` is required in a packaged bundle and absent in
+/// the source checkout's file (#407), where the loader derives it from the package itself.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseEntry {
+    id: String,
+    version: String,
+    #[serde(default)]
+    digest: Option<String>,
+    path: PathBuf,
+}
+
 /// The versioned local bundle contains both authoritative packages. Packaged distributions place
-/// `extensions` next to the executable; a source checkout uses its checked-in release bundle.
+/// `extensions` next to the executable and pin each package's digest there; a source checkout uses
+/// its checked-in release file, which names id, version and path only (#407): every PR that edited
+/// a package used to re-pin a line of that one shared file, so open PRs collided on it. In a
+/// source checkout the pin always equalled the digest computed from the same tree, so deriving it
+/// here loses no check: `prepare_packages` still compares plan, pin and package at apply time.
 pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
     let local = std::env::current_exe()
         .map_err(|_| invalid())?
         .parent()
         .ok_or_else(invalid)?
         .join("extensions/releases/adoption-0.1.1.json");
-    let bundle = if local.is_file() {
+    let packaged = local.is_file();
+    let bundle = if packaged {
         local
     } else {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43,12 +60,60 @@ pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
     if value["version"] != "0.1.1" {
         return Err(invalid());
     }
-    let mut packages: Vec<PinnedPackage> =
+    let entries: Vec<ReleaseEntry> =
         serde_json::from_value(value["packages"].clone()).map_err(|_| invalid())?;
-    for package in &mut packages {
-        package.path = bundle.parent().ok_or_else(invalid)?.join(&package.path);
+    let base = bundle.parent().ok_or_else(invalid)?;
+    entries
+        .into_iter()
+        .map(|entry| resolve_entry(entry, base, packaged))
+        .collect()
+}
+
+/// A release line with its path made absolute and its digest pinned. A packaged bundle must pin
+/// the digest; the source checkout derives it from the package, refusing a package whose id or
+/// version disagrees with its line.
+fn resolve_entry(
+    entry: ReleaseEntry,
+    base: &Path,
+    packaged: bool,
+) -> Result<PinnedPackage, AdoptionError> {
+    let path = base.join(&entry.path);
+    let digest = match (entry.digest, packaged) {
+        (Some(digest), _) => digest,
+        (None, true) => return Err(invalid()),
+        (None, false) => {
+            let current =
+                graphhelm_schema::validate_extension_package(&path).map_err(|_| invalid())?;
+            if current.id != entry.id || current.version != entry.version {
+                return Err(invalid());
+            }
+            current.package_digest
+        }
+    };
+    Ok(PinnedPackage {
+        id: entry.id,
+        version: entry.version,
+        digest,
+        path,
+    })
+}
+
+#[cfg(test)]
+mod release_entry_tests {
+    use super::*;
+
+    /// #407: only the source checkout may leave the digest out; a packaged bundle without one is
+    /// refused rather than trusted. Cost: no I/O beyond the refusal path.
+    #[test]
+    fn a_packaged_bundle_must_pin_the_digest() {
+        let entry = ReleaseEntry {
+            id: "graphhelm-jpd".into(),
+            version: "0.1.0".into(),
+            digest: None,
+            path: PathBuf::from("../builtin/graphhelm-jpd"),
+        };
+        assert!(resolve_entry(entry, Path::new("."), true).is_err());
     }
-    Ok(packages)
 }
 
 pub(crate) fn prepare_packages(

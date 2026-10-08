@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 
 import { fastUserEvent } from "../test/user-event";
 import type { BeforeAfterPair, CaptureDocument } from "../runtime/journeys";
-import type { CaptureView, JourneysView, RuntimeEvent } from "../runtime/types";
+import type { CaptureView, JourneysView, LiveSession, RuntimeEvent } from "../runtime/types";
 import { JourneyCanvas, type JourneyCanvasProps } from "./journey-canvas";
 import studioStyles from "../styles.css?raw";
 
@@ -149,5 +149,45 @@ describe("a journeys read that failed", () => {
     render(<JourneyCanvas {...props({ view: null, failed: true, failure: "journeys require an explicit --project on this Runtime" })} />);
     expect(screen.getByText("Journeys could not be read.")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("explicit --project");
+  });
+});
+
+/* #409 (journey-first spec §5 point 5, §9 row D): Open live on a step card, and a chip that is read
+ * from the Runtime's session list, never from the click. Credible regressions: a card that lights
+ * the chip when the button is pressed, a chip that survives the session's absence, or a chip on
+ * the wrong step. Cost: jsdom, one render per cell. */
+describe("Open live at this step", () => {
+  const session = (over: Partial<LiveSession> = {}): LiveSession => ({ sessionId: "s-1", contractId: "checkout", flowId: "checkout", path: "main",
+    stepId: "pay", state: "pass", code: null, at: "pay", screen: null, since: "2026-10-08T03:00:00Z", lastActAt: null, expiresAt: null, ...over });
+
+  it("offers Open live on each step and does not light a chip on the click alone", async () => {
+    const onOpenLive = vi.fn(() => Promise.resolve());
+    render(<JourneyCanvas {...props({ liveSessions: [], onOpenLive })} />);
+    const cards = screen.getAllByRole("button", { name: /open live at/i });
+    expect(cards.map((button) => button.getAttribute("aria-label"))).toEqual(["Open live at Cart", "Open live at Pay", "Open live at confirm", "Open live at Receipt"]);
+    await userEvent.click(cards[1]);
+    expect(onOpenLive).toHaveBeenCalledWith("checkout", "pay");
+    expect(screen.queryByRole("status", { name: /live/i })).toBeNull();
+  });
+
+  it("shows the chip the session list reports, on its own step only, and drops it when the session is gone", () => {
+    const view1 = render(<JourneyCanvas {...props({ liveSessions: [session({ state: "drift", code: "drift.locator_missing", at: "cart.checkout/0" })], onOpenLive: vi.fn(), onCloseLive: vi.fn() })} />);
+    const chip = screen.getByRole("status", { name: "Live session at Pay" });
+    expect(chip).toHaveTextContent("drift at cart.checkout/0");
+    expect(chip).toHaveTextContent("drift.locator_missing");
+    expect(screen.queryByRole("status", { name: "Live session at Cart" })).toBeNull();
+    view1.rerender(<JourneyCanvas {...props({ liveSessions: [session({ state: "pass" })], onOpenLive: vi.fn(), onCloseLive: vi.fn() })} />);
+    expect(screen.getByRole("status", { name: "Live session at Pay" })).toHaveTextContent("at step · pass");
+    view1.rerender(<JourneyCanvas {...props({ liveSessions: [], onOpenLive: vi.fn(), onCloseLive: vi.fn() })} />);
+    expect(screen.queryByRole("status", { name: "Live session at Pay" })).toBeNull();
+  });
+
+  it("marks the step as opening while the request is pending, and lets the owner close a live session from the detail", async () => {
+    const onCloseLive = vi.fn(() => Promise.resolve());
+    render(<JourneyCanvas {...props({ liveSessions: [session()], opening: [{ contractId: "checkout", stepId: "cart" }], onOpenLive: vi.fn(), onCloseLive })} />);
+    expect(screen.getByRole("status", { name: "Live session at Cart" })).toHaveTextContent("opening");
+    await userEvent.click(screen.getByRole("button", { name: "Pay, open detail" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Pay detail" })).getByRole("button", { name: "Close live session" }));
+    expect(onCloseLive).toHaveBeenCalledWith("s-1");
   });
 });

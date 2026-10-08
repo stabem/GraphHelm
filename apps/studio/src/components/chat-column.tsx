@@ -34,6 +34,9 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
+  /** #396: how many cards are open. When above zero, a "Needs you" thread (key `needs-you`)
+   * shows the cards alone, with no conversation under them. */
+  cardCount?: number;
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
@@ -47,6 +50,9 @@ export interface ChatColumnProps {
   highlight: number | null;
   onUseSuggestion: (text: string) => void;
 }
+
+/** The key of the one thread that holds every open question card (#396). */
+export const NEEDS_YOU = "needs-you";
 
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
@@ -133,7 +139,7 @@ export function ChatColumn(props: ChatColumnProps) {
   const [onlyFrom, setOnlyFrom] = useState("");
   useEffect(() => { setOnlyFrom(""); }, [thread?.key]);
   const speakers = [...new Set((thread?.messages ?? []).map((message) => message.sender))];
-  const messages = (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
+  const messages = props.selected === NEEDS_YOU ? [] : (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
   const lastId = messages.at(-1)?.id ?? "";
   const toBottom = useCallback((smooth: boolean) => {
     const el = scroller.current;
@@ -184,6 +190,10 @@ export function ChatColumn(props: ChatColumnProps) {
             </button>
           );
         })}
+        {(props.cardCount ?? 0) > 0 && (
+          <button type="button" role="tab" aria-selected={props.selected === NEEDS_YOU} className="chat-tab-needs"
+            onClick={() => props.onSelect(NEEDS_YOU)}>Needs you ({props.cardCount})</button>
+        )}
         {olderCount > 0 && (
           <button type="button" className="chat-older-toggle" aria-expanded={showOlder} onClick={() => setShowOlder((open) => !open)}>
             {showOlder ? "Hide older" : `older (${olderCount})`}

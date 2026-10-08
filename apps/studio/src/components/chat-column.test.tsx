@@ -85,6 +85,18 @@ describe("ChatColumn", () => {
     expect(screen.getByText("Next")).toBeInTheDocument();
   });
 
+  // #396 (spec §8): one Needs you thread gathers every open card, with no conversation under it.
+  it("offers a Needs you thread that shows the open cards alone", async () => {
+    const onSelect = vi.fn();
+    const view = render(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, onSelect })} />);
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Needs you (1)" }));
+    expect(onSelect).toHaveBeenCalledWith("needs-you");
+    view.rerender(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, selected: "needs-you" })} />);
+    expect(screen.getByText("Which region?")).toBeInTheDocument();
+    expect(screen.queryByText("Plan ready")).toBeNull();
+  });
+
   it("keeps sealed records counted while they open", () => {
     render(<ChatColumn {...props({ openingCount: 3 })} />);
     expect(screen.getByText("Opening 3 sealed records…")).toBeInTheDocument();

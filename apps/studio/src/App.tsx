@@ -2754,6 +2754,7 @@ export default function App({
             <ChatColumn
               threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
+              cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
                 onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
                 onAnswer={(item) => answerQuestion(item.asker, item.signalId)}

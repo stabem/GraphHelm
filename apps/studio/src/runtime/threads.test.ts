@@ -40,7 +40,7 @@ describe("chatThreads", () => {
 describe("task threads", () => {
   const tagged = (sequence: number, sender: string, to: string | null, task: string, at: string | null = null): WorkMessage =>
     ({ ...msg(sequence, sender, to), task, at });
-  const task = (taskId: string, fields: Partial<TaskState>): TaskState => ({ taskId, issue: null, pr: null, lane: null, headSha: null,
+  const task = (taskId: string, fields: Partial<TaskState>): TaskState => ({ key: taskId, taskId, branch: null, issue: null, pr: null, lane: null, headSha: null,
     journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0, ...fields });
   const now = Date.parse("2026-10-08T12:00:00Z");
 

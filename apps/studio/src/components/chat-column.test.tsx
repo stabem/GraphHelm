@@ -17,7 +17,7 @@ const BOTS = [bot("coordinator", "Coordinator"), bot("kit-1", "loja kit 1"), bot
 const msg = (sequence: number, sender: string, to: string | null, text: string): WorkMessage => ({ id: `event-${sequence}`, sequence, sender, to,
   replyTo: null, text, at: null, provenance: "stored", acknowledged: false });
 // #393: the agent-to-agent message is tagged with its task, so it lands in that task's thread.
-const TASK = { taskId: "issue-384", issue: 384, pr: null, lane: "kit-1", headSha: null, journeys: [], step: "implement" as const,
+const TASK = { key: "issue-384", branch: null, taskId: "issue-384", issue: 384, pr: null, lane: "kit-1", headSha: null, journeys: [], step: "implement" as const,
   blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 2 };
 const THREADS = chatThreads([msg(1, "coordinator", null, "Plan ready"), { ...msg(2, "kit-1", "kit-2", "Take the cart"), task: "issue-384" }],
   BOTS, "studio-operator", [TASK]);

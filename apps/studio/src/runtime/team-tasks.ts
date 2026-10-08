@@ -249,7 +249,11 @@ export type StrayVerdict =
   | { reason: "superseded"; reviewer: string; verdict: string; headSha: string; supersededBy: string };
 
 export interface TaskState {
+  /** #460: one slice of a task, unique in the fold: its PR once one is recorded, else its claim. */
+  key: string;
   taskId: string;
+  /** The branch the slice's `task.claimed` named, if any. */
+  branch: string | null;
   issue: number | null;
   pr: number | null;
   lane: string | null;
@@ -287,17 +291,54 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
 
 /** Folds records in sequence order into one state per task (spec §7): a new head re-arms review
  * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
-export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
-  const tasks = new Map<string, TaskState>();
-  for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
-    const state = tasks.get(event.taskId) ?? {
-      taskId: event.taskId, issue: null, pr: null, lane: null, headSha: null, journeys: [],
-      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
+/** #460: the slice of its task a record belongs to. An issue can be worked in several PRs (#356: one
+ * PR merged while the next slice was claimed), and one state per issue let the first merge hide the
+ * rest. A claim on a branch no slice holds opens a slice, which that lane's next `pr_opened` joins;
+ * every later record names its PR (admission requires `pr`) and lands in that PR's slice, so a
+ * merge ends only its own. */
+function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
+  const group = slices.filter((slice) => slice.taskId === event.taskId);
+  const open = (slice: TaskState) => slice.pr === null && slice.step !== "merged"
+    && (slice.lane === null || event.lane === undefined || slice.lane === event.lane);
+  const add = () => {
+    const slice: TaskState = {
+      key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
+      lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
+      repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
     };
+    slices.push(slice);
+    return slice;
+  };
+  if (event.kind === "task.claimed") {
+    return group.find((slice) => slice.branch !== null && slice.branch === event.branch)
+      ?? group.filter(open).at(-1)
+      ?? add();
+  }
+  const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
+  if (own !== undefined) return own;
+  // A PR no slice holds yet joins the newest open claim of its task (for pr_opened, the same
+  // lane's claim): the claim's slice becomes that PR's slice. A merge recorded with no pr_opened
+  // (#449's own log) still lands on the issue's claim instead of opening a second graph.
+  const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
+    : slice.pr === null && slice.step !== "merged").at(-1);
+  if (claimed !== undefined) {
+    if (event.pr !== undefined) claimed.pr = event.pr;
+    return claimed;
+  }
+  // A record without a PR (none is admitted today) stays with the newest slice of its task.
+  if (event.pr === undefined && group.length > 0) return group[group.length - 1];
+  return add();
+}
+
+export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
+  const slices: TaskState[] = [];
+  for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    const state = sliceFor(slices, event);
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
     switch (event.kind) {
       case "task.claimed":
+        state.branch = event.branch ?? state.branch;
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
@@ -337,9 +378,13 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.step = "merged";
         break;
     }
-    tasks.set(event.taskId, state);
   }
-  return [...tasks.values()].sort((a, b) => a.lastSequence - b.lastSequence);
+  slices.forEach((slice, index) => {
+    // A slice opened by a PR record (no claim seen) still belongs to its issue.
+    slice.issue ??= slices.find((other) => other.taskId === slice.taskId && other.issue !== null)?.issue ?? null;
+    slice.key = slice.pr !== null ? `${slice.taskId}#pr-${slice.pr}` : `${slice.taskId}#claim-${index}`;
+  });
+  return slices.sort((a, b) => a.lastSequence - b.lastSequence);
 }
 
 export function isTaskEventSignal(event: RuntimeEvent): boolean {

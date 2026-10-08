@@ -82,6 +82,12 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
             "the project's launcher did not bring the app under test up on the flow's base in time"
         }
         "watch.pace_invalid" => "paceMs must be between 0 and 10000",
+        "watch.pace_too_slow" => {
+            "this path's acts at this pace would wait longer than half the run budget; choose a shorter paceMs"
+        }
+        "watch.budget_exceeded" => {
+            "the play reached the run budget before its last act; the app it launched has been stopped"
+        }
         "watch.path_unknown" => "the flow has no path with that name",
         "live.recording_incomplete" => {
             "supply all of --events, --execution, --keyring and --key-id, or none"
@@ -224,7 +230,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
     });
-    let Ok(Ok(output)) = rx.recv_timeout(RUN_BUDGET + Duration::from_secs(5)) else {
+    let Ok(Ok(output)) = rx.recv_timeout(caller_wait(args) + Duration::from_secs(5)) else {
         return report(OPEN, data, Some(failure("live.timeout", "/host", 1)));
     };
     let Ok(envelope) = serde_json::from_slice::<Value>(&output.stdout) else {
@@ -394,7 +400,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
             .read_until(b'\n', &mut line);
         let _ = tx.send(read.map(|_| line));
     });
-    let line = match rx.recv_timeout(RUN_BUDGET) {
+    let line = match rx.recv_timeout(caller_wait(args)) {
         Ok(Ok(line)) if !line.is_empty() => line,
         // An empty first line is the host's stdout closing: it exited before its envelope.
         // Name its exit status, so nobody has to bisect a bare timeout (#416 review).
@@ -611,6 +617,23 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     };
     let target = visited.iter().position(|s| *s == step).unwrap();
     data["step"] = step.clone().into();
+    if args.watch {
+        let acts: u64 = path_edges
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| {
+                edges[id.as_str().unwrap()]["acts"]
+                    .as_array()
+                    .unwrap()
+                    .len() as u64
+            })
+            .sum();
+        // Half the run budget for waiting leaves the other half for the browser's own work.
+        if acts.saturating_mul(args.pace_ms) > RUN_BUDGET.as_millis() as u64 / 2 {
+            return Err(failure("watch.pace_too_slow", "/paceMs", 3));
+        }
+    }
     data["path"] = name.as_str().into();
     let contract = if name == "main" {
         args.id.clone()
@@ -685,6 +708,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         data["sessionId"] = session_id.clone().into();
     }
     let pace = Duration::from_millis(args.pace_ms);
+    let play_deadline = Instant::now() + RUN_BUDGET;
     let mut current = Some(visited[0].clone());
     let mut step_failure = None;
     for (index, screen_id) in visited.iter().enumerate().take(target + 1) {
@@ -694,6 +718,9 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
             for (act_index, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
                 let at = format!("{edge_id}/{act_index}");
                 if args.watch {
+                    if Instant::now() + pace >= play_deadline {
+                        return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
+                    }
                     progress.show(
                         &visited[index - 1],
                         index - 1,
@@ -837,6 +864,18 @@ const FIXTURE_FILE: &str = ".graphhelm/journey-fixture.json";
 const FIXTURE_SCHEMA: &str = "graphhelm-journey-fixture/1";
 /// How long a launched app may take to answer on the flow's base.
 const LAUNCH_READY: Duration = Duration::from_secs(120);
+
+/// How long a caller waits for the host's first line (#462 review). An open answers within the
+/// run budget. A watch may first launch the app (`LAUNCH_READY`), retry a cold entry once (two
+/// request budgets), then play inside the run budget, which the host enforces itself before every
+/// act, so the host always ends (and stops what it launched) before any caller gives up on it.
+fn caller_wait(args: &JourneyOpenArgs) -> Duration {
+    if args.watch {
+        LAUNCH_READY + OP_BUDGET * 2 + RUN_BUDGET + Duration::from_secs(10)
+    } else {
+        RUN_BUDGET
+    }
+}
 
 struct Launched {
     project: PathBuf,

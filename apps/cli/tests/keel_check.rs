@@ -965,3 +965,93 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
         "{reply}"
     );
 }
+
+/// #425: a flow with a second path compiles into a branch contract (`checkout.back`), and `journey
+/// replay` takes the flow id, not that contract id. The plan names flows, so every replay step it
+/// prints can run, and a card naming the flow covers its branch contracts. Credible regression: the
+/// plan goes back to contract ids and prints `graphhelm journey replay checkout.back`, which replay
+/// refuses with `replay.flow_invalid`. Cost: one temp git repository, one approve, two CLI runs.
+#[test]
+fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branches() {
+    let flow = include_str!("fixtures/journey_flow/checkout.journey.yaml").replace(
+        "  main: [cart.checkout, pay.submit]\n",
+        "  back: [cart.checkout]\n  main: [cart.checkout, pay.submit]\n",
+    );
+    let repo = tempfile::tempdir().unwrap();
+    let root = repo.path();
+    git(root, &["init", "-q"]);
+    for path in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+    ] {
+        fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        fs::write(root.join(path), "export {}\n").unwrap();
+    }
+    let journeys = root.join(".graphhelm/journeys");
+    fs::create_dir_all(&journeys).unwrap();
+    fs::write(journeys.join("checkout.journey.yaml"), flow).unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "flow"]);
+    let approve = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .current_dir(root)
+        .args(["--json", "journey", "approve", "checkout"])
+        .output()
+        .unwrap();
+    assert!(
+        approve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approve.stdout)
+    );
+    assert!(
+        journeys.join("checkout.back.json").is_file(),
+        "the branch contract exists"
+    );
+    git(root, &["add", ".graphhelm/journeys/checkout.journey.yaml"]);
+    git(root, &["commit", "-q", "-m", "approve"]);
+    fs::write(root.join("app/cart/page.tsx"), "export const x = 1\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "change"]);
+
+    let (code, reply, _) = plan(root, &["--task", "t-1", "--paths", "app/cart/page.tsx"]);
+    assert_eq!(code, 0, "{reply}");
+    let record = &reply["data"]["plan"];
+    assert_eq!(
+        record["journeys"],
+        serde_json::json!(["checkout"]),
+        "{record}"
+    );
+    let replays: Vec<&str> = record["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|step| step.starts_with("graphhelm journey replay"))
+        .collect();
+    assert_eq!(
+        replays,
+        vec!["graphhelm journey replay checkout"],
+        "{record}"
+    );
+
+    let card = root.join("card.json");
+    fs::write(
+        &card,
+        serde_json::to_vec(&serde_json::json!({
+            "promise": "the cart shows x", "scopePaths": ["app"], "proof": "journey replay",
+            "journeys": ["checkout"],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (code, reply) = run(root, Some(&card));
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        !codes(&reply)
+            .iter()
+            .any(|c| c == "keel.journey.card_missing_journey"
+                || c == "keel.journey.contract_unreadable"),
+        "naming the flow covers checkout.back: {reply}"
+    );
+}

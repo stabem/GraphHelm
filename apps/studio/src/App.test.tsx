@@ -2188,6 +2188,32 @@ describe("the answer path", () => {
     expect(firstCall(client.signal)[2]).not.toHaveProperty("to");
   });
 
+  /** #410: landing on Needs you is the thread the owner is shown, so it is the one marked read.
+   * The derived landing left the state on Everyone and silently marked the room's messages read. */
+  it("lands on Needs you without marking the room's messages read", async () => {
+    const room = { description: "Room: deploy window opens at 18:00" };
+    const base = askedClient();
+    const client = askedClient({
+      getEvents: vi.fn(async () => ({
+        head: 14,
+        events: [
+          { sequence: 12, kind: "signal_recorded", payload: { kind: "operator_note", signalId: "n-0", sourceKind: "agent" },
+            occurredAt: "2026-08-27T12:00:00Z", actorId: "codex", actorType: "agent", idempotencyKey: "k12", eventId: "event-12",
+            evidenceRefs: ["ev-room"] },
+          ...(await (base.getEvents as () => Promise<{ events: unknown[] }>)()).events,
+        ],
+      })),
+      readEvidence: vi.fn(async (executionId: string, evidenceId: string) => evidenceId === "ev-room"
+        ? { evidenceId, mediaType: "application/json", sensitivity: "confidential", contentSha256: "sha256:whatever", content: JSON.stringify(room) }
+        : (base.readEvidence as (a: string, b: string) => Promise<unknown>)(executionId, evidenceId)),
+    });
+    await open(client);
+    await screen.findByLabelText("Needs you");
+    const chat = screen.getByRole("complementary", { name: "Chat" });
+    expect(await within(chat).findByRole("tab", { name: /^Needs you/ })).toHaveAttribute("aria-selected", "true");
+    expect(await within(chat).findByRole("tab", { name: "Everyone, 1 unread" })).toBeInTheDocument();
+  });
+
   it("quotes the unanswered question and addresses its asker", async () => {
     const client = askedClient();
     await open(client);

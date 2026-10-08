@@ -104,6 +104,13 @@ describe("ChatColumn", () => {
     expect(screen.getByText("Plan ready")).toBeInTheDocument();
   });
 
+  // #410: Needs you is a thread of its own, not Everyone's panel with the cards on top.
+  it("shows the Needs you thread as its own panel", () => {
+    render(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, selected: "needs-you" })} />);
+    expect(screen.getByRole("tabpanel", { name: "Open cards" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "Everyone" })).toBeNull();
+  });
+
   it("keeps sealed records counted while they open", () => {
     render(<ChatColumn {...props({ openingCount: 3 })} />);
     expect(screen.getByText("Opening 3 sealed records…")).toBeInTheDocument();

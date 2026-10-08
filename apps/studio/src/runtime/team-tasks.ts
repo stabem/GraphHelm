@@ -430,28 +430,56 @@ export function isTaskEventSignal(event: RuntimeEvent): boolean {
   return typeof kind === "string" && kind.startsWith("task.");
 }
 
+/** How many envelope reads one fold keeps in flight (#185). A browser opens about six connections
+ * per host anyway; more than that only queues in the browser. */
+const EVIDENCE_READS_IN_FLIGHT = 8;
+
+/** #185: the same envelope object comes back from the caller's evidence cache on every tick; its
+ * digest is computed once, not on every re-fold. */
+const digests = new WeakMap<EvidenceContent, Promise<string>>();
+function contentDigest(evidence: EvidenceContent): Promise<string> {
+  let pending = digests.get(evidence);
+  if (pending === undefined) {
+    pending = digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle).then(rawHash);
+    digests.set(evidence, pending);
+  }
+  return pending;
+}
+
 /** Reads the sealed `task.*` envelopes of a run and folds them (#391). An envelope whose hash does
  * not match its record, whose type is not the recorded kind, or whose signer is not the actor
  * that recorded it is skipped: the Runtime refuses those, and an old log must not draw them. */
 export async function readTaskEvents({ executionId, events, readEvidence }: ReadClaudeTasksOptions): Promise<TaskState[]> {
-  const records: TaskEventRecord[] = [];
-  for (const event of [...events].sort((a, b) => a.sequence - b.sequence)) {
-    if (!isTaskEventSignal(event)) continue;
+  const ordered = [...events].sort((a, b) => a.sequence - b.sequence).filter(isTaskEventSignal);
+  const read = async (event: RuntimeEvent): Promise<TaskEventRecord | null> => {
     const payload = record(event.payload);
     const kind = payload?.kind as string;
     const seq = sequence(event.sequence);
     const evidenceId = event.evidenceRefs.length === 1 ? event.evidenceRefs[0] : null;
     const envelopeHash = text(payload?.envelopeSha256, 128);
-    if (seq === null || evidenceId === null || envelopeHash === null || typeof event.actorId !== "string") continue;
+    if (seq === null || evidenceId === null || envelopeHash === null || typeof event.actorId !== "string") return null;
     let evidence: EvidenceContent;
-    try { evidence = await readEvidence(executionId, evidenceId); } catch { continue; }
-    if (evidence.evidenceId !== evidenceId) continue;
-    const computed = rawHash(await digestOf(new TextEncoder().encode(evidence.content).buffer, globalThis.crypto.subtle));
-    if (rawHash(envelopeHash) !== computed || rawHash(evidence.contentSha256) !== computed) continue;
+    try { evidence = await readEvidence(executionId, evidenceId); } catch { return null; }
+    if (evidence.evidenceId !== evidenceId) return null;
+    const computed = await contentDigest(evidence);
+    if (rawHash(envelopeHash) !== computed || rawHash(evidence.contentSha256) !== computed) return null;
     const envelope = json(evidence);
-    if (envelope?.type !== kind || record(envelope?.source)?.id !== event.actorId || typeof envelope?.description !== "string") continue;
+    if (envelope?.type !== kind || record(envelope?.source)?.id !== event.actorId || typeof envelope?.description !== "string") return null;
     const parsed = parseTaskEvent(kind, event.actorId, envelope.description);
-    if (parsed !== null) records.push({ ...parsed, sequence: seq });
-  }
+    return parsed === null ? null : { ...parsed, sequence: seq };
+  };
+  // #185: a gh-team-sized run has ~1,250 envelopes, and reading them one round trip at a time
+  // kept the Team tab empty for minutes. A few reads stay in flight at once; each result keeps
+  // its position, so the fold still sees the records in sequence order.
+  const results: (TaskEventRecord | null)[] = new Array(ordered.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < ordered.length) {
+      const index = next++;
+      results[index] = await read(ordered[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(EVIDENCE_READS_IN_FLIGHT, ordered.length) }, worker));
+  const records = results.filter((entry): entry is TaskEventRecord => entry !== null);
   return foldTaskEvents(records);
 }

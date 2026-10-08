@@ -19,7 +19,7 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: region, name: Team}, {role: article, name: Implementação concluída is blocked.}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/components/team-canvas.tsx]
 edges:
   - id: asked.refuse
     from: asked

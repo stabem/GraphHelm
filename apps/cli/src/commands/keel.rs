@@ -286,11 +286,19 @@ fn missing_journeys(
     card: Option<&Card>,
     changed: &[String],
 ) -> Vec<Finding> {
+    let mut named = std::collections::BTreeSet::new();
     journeys
         .contracts
         .iter()
-        .filter(|contract| card.is_none_or(|card| !card.journeys.contains(&contract.contract_id)))
         .filter_map(|contract| {
+            let name = journeys.name(&contract.contract_id);
+            if card.is_some_and(|card| {
+                card.journeys
+                    .iter()
+                    .any(|id| id == name || id == &contract.contract_id)
+            }) {
+                return None;
+            }
             contract.steps.iter().find_map(|step| {
                 let screen = step.screen.as_ref()?;
                 let path = changed.iter().find(|path| {
@@ -299,18 +307,21 @@ fn missing_journeys(
                         .iter()
                         .any(|scope| policy_keel::paths_touch(path, scope))
                 })?;
-                Some(Finding {
+                Some((name, Finding {
                     rule: "keel.journey.card_missing_journey".to_owned(),
                     path: Some(path.clone()),
                     detail: format!(
-                        "{}/{}: this change touches the screen; name `{}` in the card's journeys \
-                         and replay it at the head",
-                        contract.contract_id, step.step_id, contract.contract_id
+                        "{name}/{}: this change touches the screen; name `{name}` in the card's \
+                         journeys and replay it at the head",
+                        step.step_id
                     ),
                     blocking: false,
-                })
+                }))
             })
         })
+        // One finding per flow: its branch contracts share the name a card uses.
+        .filter(|(name, _)| named.insert(*name))
+        .map(|(_, finding)| finding)
         .collect()
 }
 
@@ -422,24 +433,29 @@ fn journey_findings(
     let mut findings = Vec::new();
     let mut contracts = Vec::new();
     for id in &card.journeys {
-        let known = journeys.contracts.iter().find(|c| &c.contract_id == id);
-        let read = match known {
-            _ if !valid_journey_id(id) => Err("invalid_journey_id"),
-            Some(contract) => Ok(contract.clone()),
-            None if journeys.drafts.iter().any(|(flow, _)| flow == id) => {
-                Err("a draft flow; approve it before it can prove a change")
+        // A card names a flow (#425): every contract it projects, branches included.
+        let known: Vec<_> = journeys
+            .contracts
+            .iter()
+            .filter(|c| journeys.name(&c.contract_id) == id || &c.contract_id == id)
+            .collect();
+        let reason = match known.as_slice() {
+            _ if !valid_journey_id(id) => "invalid_journey_id",
+            [_, ..] => {
+                contracts.extend(known.into_iter().cloned());
+                continue;
             }
-            None => Err("no approved flow or contract has this id"),
+            [] if journeys.drafts.iter().any(|(flow, _)| flow == id) => {
+                "a draft flow; approve it before it can prove a change"
+            }
+            [] => "no approved flow or contract has this id",
         };
-        match read {
-            Ok(contract) => contracts.push(contract),
-            Err(reason) => findings.push(Finding {
-                rule: "keel.journey.contract_unreadable".to_owned(),
-                path: None,
-                detail: format!("{id}: {reason}"),
-                blocking: false,
-            }),
-        }
+        findings.push(Finding {
+            rule: "keel.journey.contract_unreadable".to_owned(),
+            path: None,
+            detail: format!("{id}: {reason}"),
+            blocking: false,
+        });
     }
     let (captures, transitions) = match records {
         Some(records) => {
@@ -461,7 +477,7 @@ fn journey_findings(
     let view = fold_journeys(&contracts, &captures, &transitions, &history);
     let mut screens = Vec::new();
     for journey in view.journeys {
-        let drifted = drifted_steps(repo, &journey.contract_id);
+        let drifted = drifted_steps(repo, journeys.name(&journey.contract_id));
         for step in journey.steps {
             let Some(screen) = step.screen else {
                 continue;
@@ -722,19 +738,23 @@ pub(crate) fn plan_value(
             blocking: false,
         });
     }
-    let journeys = read
-        .contracts
-        .into_iter()
-        .map(|contract| {
-            let scopes = contract
-                .steps
-                .into_iter()
-                .filter_map(|step| step.screen)
-                .flat_map(|screen| screen.scope_paths)
-                .collect();
-            (contract.contract_id, scopes)
-        })
-        .collect();
+    // #425: one entry per flow (its branch contracts' screens merged), so every `journey replay`
+    // step the plan prints names something replay accepts.
+    let mut by_name: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for contract in &read.contracts {
+        by_name
+            .entry(read.name(&contract.contract_id).to_owned())
+            .or_default()
+            .extend(
+                contract
+                    .steps
+                    .iter()
+                    .filter_map(|step| step.screen.as_ref())
+                    .flat_map(|screen| screen.scope_paths.iter().cloned()),
+            );
+    }
+    let journeys = by_name.into_iter().collect();
     let input = keel_plan::PlanInput {
         task_id: task.to_owned(),
         revision: head_of(repo),

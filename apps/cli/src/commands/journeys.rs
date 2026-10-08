@@ -560,12 +560,22 @@ pub(crate) struct KeelJourneys {
     pub(crate) drafts: Vec<(String, Vec<String>)>,
     /// Flow files that do not validate or project, and generated contracts refused: (file, reason).
     pub(crate) invalid: Vec<(String, String)>,
+    /// The flow each projected contract came from (#425): `checkout.back` -> `checkout`.
+    pub(crate) flow_of: BTreeMap<String, String>,
 }
 
 impl KeelJourneys {
     /// No flow and no contract: journey-first has nothing to read.
     pub(crate) fn is_empty(&self) -> bool {
         self.contracts.is_empty() && self.drafts.is_empty() && self.invalid.is_empty()
+    }
+
+    /// The name a journey is replayed and named by (#425): its flow's id, or, for a handwritten
+    /// contract that no flow generates, its own contract id.
+    pub(crate) fn name<'a>(&'a self, contract_id: &'a str) -> &'a str {
+        self.flow_of
+            .get(contract_id)
+            .map_or(contract_id, String::as_str)
     }
 }
 
@@ -584,11 +594,12 @@ pub(crate) fn keel_journeys(project: &Path) -> KeelJourneys {
             .filter_map(|(file, _)| file.strip_suffix(".journey.yaml").map(str::to_owned)),
     );
     for (flow, contract) in flows.approved {
-        flow_ids.push(flow);
         let id = contract["contractId"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        journeys.flow_of.insert(id.clone(), flow.clone());
+        flow_ids.push(flow);
         match contract_value(contract, &id) {
             Ok(input) => journeys.contracts.push(input),
             Err(reason) => journeys

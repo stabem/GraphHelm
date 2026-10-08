@@ -25,7 +25,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
-    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx]
 edges:
   - id: answering.send
     from: answering

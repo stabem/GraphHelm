@@ -2806,6 +2806,15 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* Tab panels preserve the canvas height without changing the column layout. */
 .scene > [role="tabpanel"] { height: 100%; min-height: 0; }
+
+/* #435: the Journey tab is a column inside the scene: the flow cards (#353) scroll in their own
+   box above the journey canvas, the canvas keeps the rest, and the dock's cover (`--dock-reserve`,
+   measured by the App) is reserved below both, so no Approve button sits under Run actions and
+   the canvas is never pushed thousands of pixels below the fold. */
+#studio-panel-journeys { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
+#studio-panel-journeys[hidden] { display: none; }
+#studio-panel-journeys > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 50%; overflow-y: auto; }
+#studio-panel-journeys > .journey-canvas { flex: 1 1 auto; height: auto; }
 .cited-records { z-index: 20; }
 
 .chat-tabpanel { display: contents; }

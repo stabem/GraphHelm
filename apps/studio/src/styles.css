@@ -2730,11 +2730,16 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .right-panel { flex: 0 0 280px; width: 280px; }
 .journey-empty { display: grid; place-items: center; height: 100%; color: var(--dim); }
 .journey-canvas { position: relative; display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 12px; overflow-x: hidden; overflow-y: auto; }
-.journey-picker { font-size: 13px; color: var(--dim); }
+.journey-picker { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* #443: the picker never grows past the column to its longest option (916 px at 1440 px). */
+.journey-picker select { max-width: 100%; min-width: 0; }
 .journey-title { margin: 0; font-size: 15px; }
 .journey-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: flex-start; row-gap: 12px; min-width: 0; }
-.journey-step { display: flex; align-items: center; flex: 1 1 200px; min-width: 0; max-width: 264px; }
-.journey-card { position: relative; display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; padding: 10px; text-align: left; border: 1px solid var(--edge); border-radius: var(--r); background: var(--surface); color: inherit; }
+/* #443: a step is its card (160 px basis), its Open-live chip and its arrow. When they do not fit,
+   the chip and arrow wrap under the card instead of squeezing it (70 px, one word per line, at a
+   453 px column); the card itself still shrinks rather than clipping (min-width: 0). */
+.journey-step { display: flex; flex-wrap: wrap; align-items: center; flex: 1 1 320px; min-width: 0; max-width: 420px; }
+.journey-card { position: relative; display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; padding: 10px; text-align: left; border: 1px solid var(--edge); border-radius: var(--r); background: var(--surface); color: inherit; }
 .journey-card[data-state="stale"] { opacity: 0.55; filter: grayscale(0.8); border-color: var(--danger); }
 .journey-card[data-state="unknown"] { border-style: dashed; border-color: var(--faint); }
 .journey-card[data-state="missing"] { border-style: dashed; }

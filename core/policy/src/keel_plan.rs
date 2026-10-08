@@ -104,7 +104,18 @@ fn is_code(path: &str) -> bool {
     CODE.iter().any(|ext| path.ends_with(ext))
 }
 
-/// Words that name an invariant class in a promise. A promise that uses one while its paths touch
+/// Plainly prose (review of #405): only these are docs. Every other path that is no invariant, no
+/// screen and no source file (a policy like `keel.yaml`, a schema, a fixture, an unknown file) is
+/// not plainly docs, so the plan is ambiguous and takes the stricter class (spec §6).
+fn is_prose(path: &str) -> bool {
+    const PROSE: [&str; 4] = [".md", ".txt", ".rst", ".adoc"];
+    PROSE
+        .iter()
+        .any(|ext| path.to_ascii_lowercase().ends_with(ext))
+}
+
+/// Word stems that name an invariant class in a promise; a promise word must START with one
+/// (`race` matches `race`/`races`, never `trace`). A promise that uses one while its paths touch
 /// no invariant is ambiguous, and the planner takes the stricter answer.
 const INVARIANT_WORDS: [&str; 10] = [
     "permission",
@@ -171,8 +182,27 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
     journeys.dedup();
 
     let promise = input.promise.to_lowercase();
-    let ambiguous = !classes.contains(&TaskClass::Invariant)
-        && INVARIANT_WORDS.iter().any(|word| promise.contains(word));
+    let words: Vec<&str> = promise
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let names_invariant = INVARIANT_WORDS
+        .iter()
+        .any(|stem| words.iter().any(|word| word.starts_with(stem)));
+    let unclassified = paths.iter().any(|path| {
+        !is_prose(path)
+            && !is_code(path)
+            && !policy
+                .invariants
+                .values()
+                .flatten()
+                .any(|root| paths_touch(path, root))
+            && !input
+                .journeys
+                .iter()
+                .any(|(_, scopes)| scopes.iter().any(|scope| paths_touch(path, scope)))
+    });
+    let ambiguous = !classes.contains(&TaskClass::Invariant) && (names_invariant || unclassified);
     let mut task = classes.last().copied().unwrap_or(TaskClass::Docs);
     if ambiguous {
         task = TaskClass::Invariant;

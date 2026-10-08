@@ -2167,7 +2167,12 @@ fn a_task_record_in_another_lanes_name_is_a_403_actor_mismatch() {
     let before = recorded();
     for (case, source, reviewer, pointer) in [
         ("source", "lane-beta", "lane-beta", "/signal/source/id"),
-        ("reviewer", "lane-alpha", "lane-beta", "/signal/description/reviewer"),
+        (
+            "reviewer",
+            "lane-alpha",
+            "lane-beta",
+            "/signal/description/reviewer",
+        ),
     ] {
         let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
             "taskId": "issue-902", "revision": 1, "at": "2026-10-08T05:00:00Z", "pr": 9002,

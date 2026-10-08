@@ -171,7 +171,8 @@ impl<'a> RuntimeAdapter<'a> {
             .expect("native_runtime routes carry command — enforced by manifest validation");
         let cleanup_permit = CleanupPermit::acquire().ok_or(GatewayError::ProviderUnavailable)?;
 
-        let mut command = Command::new(resolve_program(std::path::Path::new(&command_spec.program)));
+        let mut command =
+            Command::new(resolve_program(std::path::Path::new(&command_spec.program)));
         command
             .args(&command_spec.args)
             .env_clear()
@@ -453,11 +454,17 @@ impl CleanupSupervisor {
 /// path is returned unchanged, so the spawn still fails as before.
 pub fn resolve_program(program: &std::path::Path) -> std::path::PathBuf {
     let unchanged = || program.to_path_buf();
-    if program.is_file() || program.parent().is_none_or(|parent| parent.as_os_str().is_empty()) {
+    if program.is_file()
+        || program
+            .parent()
+            .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
         return unchanged();
     }
-    let (Some(name), Some(bin)) = (program.file_name(), program.parent().and_then(|v| v.parent()))
-    else {
+    let (Some(name), Some(bin)) = (
+        program.file_name(),
+        program.parent().and_then(|v| v.parent()),
+    ) else {
         return unchanged();
     };
     let Ok(entries) = std::fs::read_dir(bin) else {

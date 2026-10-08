@@ -875,6 +875,12 @@ fn a_route_pinned_to_a_replaced_versioned_codex_reaches_the_current_binary() {
 
     let reply = adapter
         .call(&call("versioned-codex-prompt"))
-        .unwrap_or_else(|error| panic!("a replaced versioned Codex must still be reached: {error}"));
-    assert!(reply.text.contains("versioned-codex-prompt"), "{}", reply.text);
+        .unwrap_or_else(|error| {
+            panic!("a replaced versioned Codex must still be reached: {error}")
+        });
+    assert!(
+        reply.text.contains("versioned-codex-prompt"),
+        "{}",
+        reply.text
+    );
 }

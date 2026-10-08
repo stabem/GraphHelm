@@ -215,8 +215,9 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
         .command()
         .expect("native_runtime routes carry command — enforced by manifest validation");
 
-    let program =
-        graphhelm_model_gateway::runtime::resolve_program(std::path::Path::new(&command_spec.program));
+    let program = graphhelm_model_gateway::runtime::resolve_program(std::path::Path::new(
+        &command_spec.program,
+    ));
     let mut command = Command::new(&program);
     command
         .arg("--version")
@@ -232,7 +233,9 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
         Ok(child) => child,
         Err(_) => {
             // A path (not a bare name) that is not a file is the updater case of #370: name it.
-            let is_path = program.parent().is_some_and(|parent| !parent.as_os_str().is_empty());
+            let is_path = program
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty());
             return Check {
                 name: "runtime",
                 ok: false,

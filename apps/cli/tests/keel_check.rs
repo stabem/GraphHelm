@@ -765,6 +765,8 @@ fn keel_plan_asks_jev_only_when_ambiguous_and_takes_a_confident_answer() {
         clear["data"]["plan"]["jev"].is_null(),
         "Jev is not asked when the rules are clear"
     );
+}
+
 /// Review of #405 (gh-claude-5's BLOCK): a path that is no invariant, no screen and no source file
 /// is not plainly docs. A policy (`keel.yaml`) or a schema was planned as docs with proof `none`
 /// and no keel; spec §6 calls that ambiguous and takes the stricter answer. Also: a promise word

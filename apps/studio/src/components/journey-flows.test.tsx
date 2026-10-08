@@ -216,6 +216,15 @@ describe("JourneyFlows watch", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
+  // #475's `watch.app_down` (the app is down and the project declares no launcher) read as the
+  // Runtime's raw message; it is the same owner fact as an unreachable app. Cost: jsdom.
+  it("says the app isn't running when the Runtime refuses with watch.app_down", async () => {
+    const refusal = Object.assign(new Error("watch.app_down: http://127.0.0.1:5184 did not answer"), { code: "watch.app_down" });
+    render(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn().mockRejectedValue(refusal)} />);
+    await userEvent.click(screen.getByRole("button", { name: "Watch" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Can't play this journey: the app it opens isn't running.");
+  });
+
   it("shows the Runtime's refusal of a watch and hides Watch on a Runtime without it", async () => {
     render(<JourneyFlows view={view} onApprove={vi.fn()} onWatch={vi.fn().mockRejectedValue(new Error("the app did not start"))} />);
     await userEvent.click(screen.getByRole("button", { name: "Watch" }));

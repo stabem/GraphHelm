@@ -111,7 +111,7 @@ function watchFailure(cause: unknown): string {
   const code = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code: unknown }).code) : "";
   const message = cause instanceof Error ? cause.message : String(cause);
   if (code.endsWith("observer_missing")) return "Can't play this journey: the browser player isn't installed in this project yet.";
-  if (code === "driver.host_refused" || code.endsWith("app_unreachable") || code.endsWith("launch_failed")) return "Can't play this journey: the app it opens isn't running.";
+  if (code === "driver.host_refused" || code.endsWith("app_unreachable") || code.endsWith("app_down") || code.endsWith("launch_failed")) return "Can't play this journey: the app it opens isn't running.";
   if (code.endsWith("busy") || code.endsWith("session_busy")) return "Can't play this journey right now: another play is still running.";
   return `Can't play this journey: ${message}`;
 }

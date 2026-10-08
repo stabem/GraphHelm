@@ -497,6 +497,33 @@ fn an_agent_session_token_cannot_approve_whatever_type_it_declares() {
     // The same token still reads what agents read.
     let (status, listed) = http(&base, "GET", "/v1/journey-flows", Some(agent_token));
     assert_eq!(status, 200, "{listed}");
+    let (status, run) = http(
+        &base,
+        "GET",
+        &format!("/v1/executions/{RUN}"),
+        Some(agent_token),
+    );
+    assert_eq!(status, 200, "{run}");
+
+    // Not only the named owner actions: everything outside the agent allow-list is the owner's,
+    // so starting, approving or cancelling a run and rewriting the gateway routes are refused
+    // before any handler, and the run is untouched.
+    for (method, path) in [
+        ("POST", format!("/v1/executions/{RUN}/approve")),
+        ("POST", format!("/v1/executions/{RUN}/cancel")),
+        ("POST", format!("/v1/executions/{RUN}/start")),
+        ("PUT", "/v1/gateway/routes".to_owned()),
+    ] {
+        let (status, refused) = http(&base, method, &path, Some(agent_token));
+        assert_eq!(status, 403, "{method} {path}: {refused}");
+    }
+    let (_, after) = http(
+        &base,
+        "GET",
+        &format!("/v1/executions/{RUN}"),
+        Some(agent_token),
+    );
+    assert_eq!(after["data"]["status"], run["data"]["status"], "{after}");
 }
 
 #[test]

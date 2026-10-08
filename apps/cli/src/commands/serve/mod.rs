@@ -113,7 +113,7 @@ struct ServeState {
     token: Arc<[u8]>,
     /// #380: the agent session token (`events.agent.token`), minted beside the owner token. It
     /// authenticates an agent session project-wide, forces the request's actor type to `agent`,
-    /// and is refused on every owner-only route (`owner_only_route`), whatever type is declared.
+    /// and reaches only `agent_session_route_allowed`, whatever type is declared.
     agent_session_token: Arc<[u8]>,
     /// Optional scoped agent credentials. They are separate from the owner bearer token and are
     /// only accepted for agent authored proposal/evidence mutations.
@@ -813,9 +813,10 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
         return next.run(request).await;
     }
     // #380: the agent session token. The declared actor type is a claim, not a credential, so
-    // the type is forced to `agent` here and owner-only routes are refused before any handler.
+    // the type is forced to `agent` here, and only the routes agents use are reachable: every
+    // other route, existing or added later, is the owner's.
     if constant_time_eq(presented.as_bytes(), &state.agent_session_token) {
-        if owner_only_route(&request) {
+        if !agent_session_route_allowed(&request) {
             return owner_required_response();
         }
         let mut request = request;
@@ -851,23 +852,46 @@ async fn require_token(State(state): State<ServeState>, request: Request, next: 
     next.run(request).await
 }
 
-/// Routes only the owner credential reaches (#380). An agent session token is refused here
-/// whatever actor type it declares. Listed are the owner actions whose handlers take no actor
-/// type at all (journey approve, workspace sweep, gateway credential set) and the two whose
-/// handlers check the declared type (assign, document save), so the refusal never depends on a
-/// header. Agent tools read and signal; none of them needs these.
-fn owner_only_route(request: &Request) -> bool {
+/// The routes an agent session token reaches (#380): an ALLOW-list, so a route not named here,
+/// including any added later, needs the owner credential whatever actor type is declared.
+/// Agents read runs and project maps, record signals, wait, claim and clear their own work,
+/// read documents, and use the development services. Starting, steering or ending a run
+/// (start, approve, assign, amend-budget, pause, resume, cancel, sweep), saving documents,
+/// approving journey flows, sweeping workspaces, native-chat sends, the Graph Architect,
+/// gateway route/credential writes and provider probes are the owner's.
+fn agent_session_route_allowed(request: &Request) -> bool {
     let segments: Vec<_> = request.uri().path().split('/').collect();
     let method = request.method();
-    let post = method == axum::http::Method::POST;
-    match segments.as_slice() {
-        ["", "v1", "journey-flows", _, "approve"] => post,
-        ["", "v1", "workspaces", "sweep"] => post,
-        ["", "v1", "gateway", "credentials", _] => method == axum::http::Method::PUT,
-        ["", "v1", "executions", _, "assign"] => post,
-        ["", "v1", "executions", _, "documents", "save"] => post,
-        _ => false,
+    if method == axum::http::Method::GET {
+        return matches!(
+            segments.as_slice(),
+            ["", "v1", "executions", ..]
+                | ["", "v1", "native-chats"]
+                | ["", "v1", "journeys"]
+                | ["", "v1", "journey-flows"]
+                | ["", "v1", "workspaces"]
+                | ["", "v1", "gateway", "routes"]
+                | ["", "v1", "development", "memory" | "accounting"]
+        );
     }
+    method == axum::http::Method::POST
+        && matches!(
+            segments.as_slice(),
+            [
+                "",
+                "v1",
+                "executions",
+                _,
+                "signal" | "wake-lease" | "claim" | "clear"
+            ] | ["", "v1", "executions", _, "documents", "read"]
+                | ["", "v1", "graph", "topology"]
+                | [
+                    "",
+                    "v1",
+                    "development",
+                    "contract" | "memory" | "present" | "context"
+                ]
+        )
 }
 
 fn owner_required_response() -> Response {

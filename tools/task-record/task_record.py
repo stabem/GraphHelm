@@ -160,8 +160,9 @@ def send_opening(args, doc, now):
     if code == 1 and errors == {"GHCLI003_SIGNAL_INVALID"} and words:
         # #498: a Runtime built before #486 refuses these keys. The step itself matters more than
         # its words, so it is sent again without them, loudly: an old Runtime must be noticed.
-        print(f"task_record: warning: the Runtime refused {signal_id} with GHCLI003; it predates task "
-              f"titles (#486), so the step is sent again without title/summary. Restart it on a current build.",
+        print(f"task_record: warning: the Runtime refused {signal_id} with GHCLI003. It may predate task "
+              f"titles (#486), so the step is sent again without title/summary; if that lands, restart the "
+              f"Runtime on a current build. GHCLI003 also covers other defects, so a second refusal is reported as is.",
               file=sys.stderr)
         code, signal_id, reply = send(args, {k: v for k, v in doc.items() if k not in words}, now)
     return code, signal_id, reply

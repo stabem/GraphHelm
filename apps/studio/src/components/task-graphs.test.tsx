@@ -403,3 +403,21 @@ describe("TaskGraphs step timer (#502)", () => {
     expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["10 min", "20 min", "2 min"]);
   });
 });
+
+describe("TaskGraphs round timers (#502 on #514)", () => {
+  it("times a lit Fix from its BLOCK and a lit Re-review from the fix, not from when Review began", () => {
+    const T0 = Date.parse("2026-10-08T10:00:00Z");
+    const at = (m: number) => new Date(T0 + m * 60_000).toISOString();
+    const A = "a".repeat(40), B = "b".repeat(40);
+    const steps = [
+      { ...record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: A, journeys: [], lane: "gh-claude-2" }), occurredAt: at(0) },
+      { ...record(2, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: A, reviewer: "gh-claude-5", verdict: "BLOCK", commentUrl }), occurredAt: at(40) },
+      { ...record(3, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: B, journeys: [], lane: "gh-claude-2" }), occurredAt: at(55) },
+    ];
+    const { unmount } = render(<TaskGraphs tasks={foldTaskEvents(steps.slice(0, 2))} onOpenJourney={vi.fn()} now={T0 + 50 * 60_000} />);
+    expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent(/^Fix · round 1.*in this step: 10 min/);
+    unmount();
+    render(<TaskGraphs tasks={foldTaskEvents(steps)} onOpenJourney={vi.fn()} now={T0 + 60 * 60_000} />);
+    expect(screen.getByRole("listitem", { current: "step" })).toHaveTextContent(/^Re-review · round 1.*in this step: 5 min/);
+  });
+});

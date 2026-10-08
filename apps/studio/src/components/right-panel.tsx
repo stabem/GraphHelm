@@ -12,6 +12,10 @@ export interface RightPanelProps {
   onOpenJourney?: (contractId: string) => void;
   onOpenPair?: (pair: BeforeAfterPair) => void;
   botName?: (actorOrObserver: string) => string;
+  /** #446: the journeys read has not answered yet. */
+  journeysLoading?: boolean;
+  /** #446: screen captures exist whose envelopes are not opened yet. */
+  pairsLoading?: boolean;
 }
 
 function stepTitle(journeys: JourneyView[], pair: BeforeAfterPair): string {
@@ -20,12 +24,13 @@ function stepTitle(journeys: JourneyView[], pair: BeforeAfterPair): string {
 }
 
 /** Right panel (spec §4.6): journeys with their proven share, before/after pairs, recent activity. */
-export function RightPanel({ activity, onOpenActivity, journeys = [], beforeAfter = [], onOpenJourney, onOpenPair, botName = (id) => id }: RightPanelProps) {
+export function RightPanel({ activity, onOpenActivity, journeys = [], beforeAfter = [], onOpenJourney, onOpenPair, botName = (id) => id,
+  journeysLoading = false, pairsLoading = false }: RightPanelProps) {
   return (
     <aside className="right-panel" aria-label="Run side panel">
       <section className="right-section" aria-label="Journeys">
         <h2>Journeys</h2>
-        {journeys.length === 0 ? <p className="right-empty">No journeys mapped yet.</p> : (
+        {journeys.length === 0 ? <p className="right-empty">{journeysLoading ? "Loading journeys…" : "No journeys mapped yet."}</p> : (
           <ul className="right-journeys">
             {journeys.map((journey) => {
               const s = journeySummary(journey);
@@ -49,7 +54,7 @@ export function RightPanel({ activity, onOpenActivity, journeys = [], beforeAfte
       </section>
       <section className="right-section" aria-label="Before and after">
         <h2>Before / after</h2>
-        {beforeAfter.length === 0 ? <p className="right-empty">No before/after screenshots yet.</p> : (
+        {beforeAfter.length === 0 ? <p className="right-empty">{pairsLoading ? "Opening screenshots…" : "No before/after screenshots yet."}</p> : (
           <ul className="right-pairs">
             {beforeAfter.map((pair) => (
               <li key={`${pair.contractId}:${pair.stepId}:${pair.pr}`}>

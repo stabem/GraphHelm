@@ -1809,7 +1809,8 @@ export default function App({
       sequence: event.sequence,
       actorId: event.actorId,
       occurredAt: event.occurredAt,
-      text: envelopes[event.sequence]?.text?.trim().slice(0, 220) || null,
+      // #442: never cut a document before it is parsed; describeActivity shortens what it prints.
+      text: envelopes[event.sequence]?.text?.trim() || null,
     })), [eventList, envelopes]);
   // THE LEDGER OF UNANSWERED QUESTIONS. The attention block used to name the debtor ("start is
   // waiting for input") and never the debt — the question itself was nowhere on screen, and the
@@ -2048,6 +2049,10 @@ export default function App({
   const journeysFailure = journeysRead?.failure ?? null;
   const journeysFailed = journeysRead?.failed ?? false;
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
+  // #446: captures whose envelopes are not opened yet; the before/after list is not empty, it is opening.
+  const capturesOpening = useMemo(() => eventList.filter((event) => event.kind === "signal_recorded" && event.evidenceRefs.length > 0
+    && (event.payload as { kind?: unknown } | null)?.kind === "jpd.screen_captured" && envelopes[event.sequence] === undefined).length,
+  [eventList, envelopes]);
   const [journeyContract, setJourneyContract] = useState<string | null>(null);
   const [journeyDetail, setJourneyDetail] = useState<string | null>(null);
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
@@ -3375,6 +3380,8 @@ export default function App({
             )}
             <RightPanel activity={activityLines} onOpenActivity={(sequence) => openRecords([sequence])}
               journeys={journeysView?.journeys ?? []} beforeAfter={beforeAfter} botName={botNameOf}
+              journeysLoading={journeysView === null && !journeysFailed && selected !== null}
+              pairsLoading={capturesOpening > 0}
               onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }}
               onOpenPair={(pair: BeforeAfterPair) => {
                 const known = journeysView?.journeys.some((j) => j.contractId === pair.contractId && j.steps.some((step) => step.stepId === pair.stepId)) ?? false;

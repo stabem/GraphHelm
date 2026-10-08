@@ -694,3 +694,41 @@ fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     let (code, bad, _) = plan(repo.path(), &["--task", "issue-1", "--paths", "../etc"]);
     assert_eq!(code, 3, "{bad}");
 }
+
+/// Review of #405 (gh-claude-5's BLOCK): a path that is no invariant, no screen and no source file
+/// is not plainly docs. A policy (`keel.yaml`) or a schema was planned as docs with proof `none`
+/// and no keel; spec §6 calls that ambiguous and takes the stricter answer. Also: a promise word
+/// must start with an invariant stem, so `trace` never reads as `race`. Cost: one temp repository,
+/// three CLI runs.
+#[test]
+fn keel_plan_treats_unclassified_non_prose_paths_as_ambiguous() {
+    let repo = repository(&[]);
+    for path in [
+        "extensions/builtin/graphhelm-development-contracts/policies/keel.yaml",
+        "extensions/builtin/graphhelm-development-contracts/schemas/task-plan.schema.json",
+    ] {
+        let (code, reply, _) = plan(repo.path(), &["--task", "issue-405", "--paths", path]);
+        assert_eq!(code, 0, "{reply}");
+        let record = &reply["data"]["plan"];
+        assert_eq!(record["decidedBy"], "fallback_strict", "{path}: {record}");
+        assert_eq!(record["delegation"]["tier"], "large", "{path}: {record}");
+        assert_ne!(record["proof"], "none", "{path}: {record}");
+    }
+    let (_, prose, _) = plan(
+        repo.path(),
+        &["--task", "issue-405", "--paths", "docs/guide.md"],
+    );
+    assert_eq!(prose["data"]["plan"]["decidedBy"], "rules", "{prose}");
+    let (_, traced, _) = plan(
+        repo.path(),
+        &[
+            "--task",
+            "issue-405",
+            "--paths",
+            "src/lib.rs",
+            "--promise",
+            "add a trace line",
+        ],
+    );
+    assert_eq!(traced["data"]["plan"]["decidedBy"], "rules", "{traced}");
+}

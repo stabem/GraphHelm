@@ -20,7 +20,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use graphhelm_events::PreparedAppend;
+use graphhelm_events::{LocalEventRepository, PreparedAppend};
 use graphhelm_gateway::manifest::RouteManifest;
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_protocols::{
@@ -132,11 +132,12 @@ struct ServeState {
     /// `commands::event_store` (which, under `serve`, reuses the journal verification an earlier
     /// request proved, for up to `SHARED_PREFIX_MAX_AGE`; no lock is shared) — exactly the call every CLI command makes — does its one command's
     /// work, and lets the handle drop before the response is sent. `ServeState` deliberately does
-    /// *not* cache an open repository handle: Milestone 05a Task 1 confirmed empirically that
-    /// `LocalEventRepository::open` holds an OS-level exclusive lock for the handle's entire
-    /// lifetime, so a handle cached here would hold that lock for the server's whole run and lock
-    /// out every concurrent CLI process against the same events directory — defeating the
-    /// multi-agent premise this API exists for. The per-request open/use/drop cycle *is* the
+    /// *not* cache an open repository handle across requests. Milestone 05a Task 1 measured
+    /// `LocalEventRepository::open` holding an exclusive lock for the handle's lifetime; that is
+    /// no longer so (`open` releases its locks before returning and every call takes and releases
+    /// its own, core/events/src/local.rs `open:named-release` and `with_lock`), which is what lets
+    /// a mutation keep ONE handle for its whole request (#478). A cross-request handle would still
+    /// skip the recovery each fresh open runs, so it stays per request. The per-request open/use/drop cycle *is* the
     /// concurrency model: the store's own exclusive append lock is what serializes concurrent
     /// writers safely, not anything this server does.
     events: Arc<Path>,
@@ -1785,7 +1786,16 @@ async fn run_idempotent_mutation_inner<'a>(
     >,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
-    match classify_existing_keys(events, execution, &identity) {
+    // #478: ONE store open for the request's own reads and the presence append. Every open runs
+    // the reconcile listing and a journal fsync, and the request used to pay them four or five
+    // times. A handle holds no lock between operations and re-reads the journal tail before each
+    // one, so it sees the body's append made through `run`'s own handle; the rare error paths
+    // below still open their own.
+    let store = match event_store(events) {
+        Ok(store) => store,
+        Err(error) => return respond_failure(command, execution::repository_failure(&error)),
+    };
+    match classify_existing_keys_on(&store, execution, &identity) {
         Ok(KeyState::Complete(original_decision_sequence)) => {
             return reply_with_current_status(
                 events,
@@ -1823,7 +1833,7 @@ async fn run_idempotent_mutation_inner<'a>(
     // task. `If-Match` only lets a caller fail fast on a head it already knows is stale, without
     // waiting for the store to discover the same thing one append later.
     if let Some(expected) = identity.if_match {
-        let head = current_head(events, execution);
+        let head = current_head_on(&store, execution);
         if head != Some(expected) {
             return if_match_conflict(command, head);
         }
@@ -1844,7 +1854,7 @@ async fn run_idempotent_mutation_inner<'a>(
             // was given up, and it buys the narrower claim: a declaration now asserts who sent a
             // request that SUCCEEDED.
             if let Err(failure) = record_presence_declaration(
-                events,
+                &store,
                 execution,
                 &identity,
                 observation.after_presence_read,
@@ -1865,7 +1875,7 @@ async fn run_idempotent_mutation_inner<'a>(
             // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
             // validated stream snapshot so those fields describe the same committed history.
             let (head_sequence, waiting_input) =
-                fresh_stream_snapshot(events, execution, wiring.any_fixture());
+                fresh_stream_snapshot_on(&store, execution, wiring.any_fixture());
             if let serde_json::Value::Object(ref mut map) = value {
                 map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
             }
@@ -2047,13 +2057,22 @@ fn classify_existing_keys(
     identity: &MutationIdentity,
 ) -> Result<KeyState, execution::Failure> {
     let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
+    classify_existing_keys_on(&store, execution, identity)
+}
+
+/// [`classify_existing_keys`] on a handle the caller already opened (#478).
+fn classify_existing_keys_on(
+    store: &LocalEventRepository,
+    execution: &str,
+    identity: &MutationIdentity,
+) -> Result<KeyState, execution::Failure> {
     // `resolve_stream`'s raw `history` is reused directly below for every key's classification —
     // Complete/Partial *and* the new Divergent check — rather than a second, per-key store read
     // (the pre-fix version called `committed_events_for_idempotency` once per key; both it and
     // `resolve_stream`/`read_replay_stream` read from the exact same underlying committed batches,
     // so scanning `history` once here is strictly equivalent for Complete/Partial and additionally
     // enables Divergent detection for free).
-    let (scope, stream, history) = execution::resolve_stream(&store, Some(execution))?;
+    let (scope, stream, history) = execution::resolve_stream(store, Some(execution))?;
     let expected = ExpectedDecision {
         actor: &identity.actor,
         scope: &scope,
@@ -2459,7 +2478,7 @@ struct PlannedPresence {
 }
 
 fn plan_presence_declaration(
-    events: &Path,
+    store: &LocalEventRepository,
     execution: &str,
     identity: &MutationIdentity,
 ) -> Result<Option<PlannedPresence>, execution::Failure> {
@@ -2484,8 +2503,7 @@ fn plan_presence_declaration(
         session: identity.declared_session.clone(),
     };
 
-    let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
-    let (scope, stream, history) = execution::resolve_stream(&store, Some(execution))?;
+    let (scope, stream, history) = execution::resolve_stream(store, Some(execution))?;
     if newest_declaration_for(&history, &declared).is_some_and(|newest| *newest == declared) {
         return Ok(None);
     }
@@ -2520,15 +2538,14 @@ fn plan_presence_declaration(
 /// Writes a planned declaration AT THE SEQUENCE ITS DECISION WAS MADE AGAINST, so a stream that
 /// moved in between refuses the write instead of absorbing a stale decision.
 ///
-/// Opens the store again rather than carrying one across the seam: `LocalEventRepository` takes its
-/// exclusive lock per call, and holding one open across a suspension point is how a test seam turns
-/// into a deadlock in production. Re-opening is safe precisely because the sequence travels in
-/// `planned` -- the second handle cannot quietly answer a newer number.
+/// Takes the request's one handle (#478). `LocalEventRepository` takes its lock per CALL and holds
+/// none between calls, so carrying the handle across the seam holds nothing across the suspension
+/// point; the sequence still travels in `planned`, so the append cannot quietly answer a newer
+/// number.
 fn commit_presence_declaration(
-    events: &Path,
+    store: &LocalEventRepository,
     planned: PlannedPresence,
 ) -> Result<(), execution::Failure> {
-    let store = event_store(events).map_err(|error| execution::repository_failure(&error))?;
     let request = PreparedAppend::new(
         planned.scope,
         planned.stream_id,
@@ -2574,7 +2591,7 @@ const PRESENCE_COMMIT_ATTEMPTS: usize = 3;
 /// is the honest answer instead: it reads the stream the winner just moved and, for the same triple,
 /// finds its own declaration already newest and writes nothing at all.
 async fn record_presence_declaration<P>(
-    events: &Path,
+    store: &LocalEventRepository,
     execution: &str,
     identity: &MutationIdentity,
     seam: P,
@@ -2586,13 +2603,13 @@ where
     let mut attempts = 0;
     loop {
         attempts += 1;
-        let Some(planned) = plan_presence_declaration(events, execution, identity)? else {
+        let Some(planned) = plan_presence_declaration(store, execution, identity)? else {
             return Ok(());
         };
         if let Some(seam) = seam.take() {
             seam.await;
         }
-        match commit_presence_declaration(events, planned) {
+        match commit_presence_declaration(store, planned) {
             Ok(()) => return Ok(()),
             Err(failure)
                 if failure.code == "GHE001_SEQUENCE_CONFLICT"
@@ -2621,8 +2638,12 @@ fn newest_declaration_for<'a>(
 }
 
 fn current_head(events: &Path, execution: &str) -> Option<u64> {
-    let store = event_store(events).ok()?;
-    let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
+    current_head_on(&event_store(events).ok()?, execution)
+}
+
+/// [`current_head`] on a handle the caller already opened (#478).
+fn current_head_on(store: &LocalEventRepository, execution: &str) -> Option<u64> {
+    let (_, _, history) = execution::resolve_stream(store, Some(execution)).ok()?;
     Some(history.last().map_or(0, |event| event.sequence))
 }
 
@@ -2742,7 +2763,17 @@ fn fresh_stream_snapshot(
     let Ok(store) = event_store(events) else {
         return (None, WaitingInputCheck::Undetermined);
     };
-    let Ok((scope, stream, history)) = execution::resolve_stream(&store, Some(execution)) else {
+    fresh_stream_snapshot_on(&store, execution, check_waiting)
+}
+
+/// [`fresh_stream_snapshot`] on a handle the caller already opened (#478). Still fresh: the
+/// handle re-reads the journal tail before the read.
+fn fresh_stream_snapshot_on(
+    store: &LocalEventRepository,
+    execution: &str,
+    check_waiting: bool,
+) -> (Option<u64>, WaitingInputCheck) {
+    let Ok((scope, stream, history)) = execution::resolve_stream(store, Some(execution)) else {
         return (None, WaitingInputCheck::Undetermined);
     };
     let head = Some(history.last().map_or(0, |event| event.sequence));
@@ -3436,7 +3467,9 @@ mod tests {
 
         // `execution::Failure` is not `Debug` (it carries operator-facing text and this crate keeps
         // it off the derive list), so the failure arm is matched rather than `expect`ed.
-        let Ok(planned) = plan_presence_declaration(&events, execution_id, &identity) else {
+        let Ok(planned) =
+            plan_presence_declaration(&event_store(&events).unwrap(), execution_id, &identity)
+        else {
             panic!("planning must succeed on a readable store");
         };
         let planned = planned.expect("an undeclared triple on a fresh execution is news");
@@ -3909,6 +3942,123 @@ mod tests {
             execution_paused_under(directory.path(), execution, &key_a, &caller("caller-b")),
             PausedUnderCaller::Absent,
             "A's key under B's actor is not A's request: two actors can derive the same key"
+        );
+    }
+
+    /// #478: a signal mutation opens the event store ONCE for its own reads and its presence
+    /// append, plus once in the command body (`signal::execute`): two opens, where main paid five
+    /// (classify, execute, presence plan, presence commit, fresh snapshot). Every open runs the
+    /// reconcile listing and a journal fsync, so each extra one was paid on every signal. The
+    /// declaration is on so the presence path runs. The spawned wake sweep is not counted: on this
+    /// single-threaded runtime it has not run when the count is read. Credible regression: a
+    /// helper on the request path opening its own store again. Cost: one fixture run, one
+    /// in-process mutation.
+    #[tokio::test]
+    async fn a_signal_mutation_opens_the_store_twice_not_five_times() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let fixtures = directory.path().join("fixtures.json");
+        std::fs::write(
+            &fixtures,
+            serde_json::to_vec(&serde_json::json!({
+                "nodeOutcomes": {"implementation": "success", "deploy": "success"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let graph = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("examples/graphs/software-feature.yaml");
+        let loaded = graphhelm_schema::load_graph(&graph).unwrap();
+        let version =
+            crate::commands::publish_loaded(&loaded, crate::commands::owner("owner-test")).unwrap();
+        let execution_id = "exec-unit-one-open";
+        execution::start::execute(
+            &version,
+            &events,
+            Some(&fixtures),
+            "supervised",
+            Some(execution_id),
+            execution::system_actor(),
+            OpaqueId::parse("unit-start-key").unwrap(),
+        )
+        .unwrap();
+        let actor = PersistedActor::new(
+            PersistedActorType::Agent,
+            ActorId::parse("agent-one-open").unwrap(),
+        );
+        let signal_value = serde_json::json!({
+            "id": "signal-unit-one-open",
+            "source": {"type": "node", "id": "implementation"},
+            "type": "no_progress",
+            "severity": "high",
+            "description": "one open per request",
+            "evidence": ["exec-1"],
+            "emittedAt": "2026-10-08T00:00:00Z"
+        });
+        let signal = serde_json::to_vec(&signal_value).unwrap();
+        let evidence_out = directory.path().join("one-open-evidence.json");
+        let identity = MutationIdentity {
+            actor: actor.clone(),
+            keys: vec![DerivedKey {
+                prefix: "unit-one-open".to_owned(),
+                full: OpaqueId::parse("unit-one-open-0123456789abcdef").unwrap(),
+            }],
+            decision_kind: MutationDecisionKind::SignalRecorded,
+            request_body: serde_json::json!({
+                "signal": signal_value.clone(),
+                "evidenceOut": evidence_out.clone(),
+            }),
+            idempotency_header: "unit-one-open".to_owned(),
+            if_match: None,
+            declared_model: Some("claude-opus-5-5".to_owned()),
+            declared_effort: None,
+            declared_session: Some("session-one-open".to_owned()),
+        };
+        crate::commands::STORE_OPENS.lock().unwrap().remove(&events);
+        let events_for_run = events.clone();
+        let response = run_idempotent_mutation_inner(
+            &events,
+            execution_id,
+            "execution.signal",
+            identity,
+            ExecutorWiring::FIXTURE_ONLY,
+            MutationObservation {
+                after_absent_preflight: std::future::ready(()),
+                after_presence_read: std::future::ready(()),
+                post_append_conflict: || {},
+            },
+            move |event_actor, key| {
+                Box::pin(async move {
+                    Ok(execution::signal::execute(
+                        &events_for_run,
+                        Some(execution_id),
+                        &signal,
+                        Some(&evidence_out),
+                        event_actor,
+                        key,
+                        None,
+                        &[],
+                    )?)
+                })
+            },
+        )
+        .await;
+        let opens = crate::commands::STORE_OPENS
+            .lock()
+            .unwrap()
+            .get(&events)
+            .copied()
+            .unwrap_or(0);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(opens, 2, "store opens for one signal request");
+        let store = event_store(&events).unwrap();
+        let (_, _, history) = execution::resolve_stream(&store, Some(execution_id)).unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|event| matches!(event.kind, EventKind::AgentPresenceDeclared(_))),
+            "the presence declaration still lands through the shared handle"
         );
     }
 }

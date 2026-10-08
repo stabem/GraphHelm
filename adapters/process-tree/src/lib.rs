@@ -1431,6 +1431,82 @@ mod post_enumeration_join_window {
     /// process still holding `graphhelm_process_tree-*.exe`). So the arrangement below happens before
     /// any assertion that can fail, and everything that can panic is wrapped so the two fixture
     /// processes and the job handle are always ended, panic or not.
+    /// The leader a cell below spawns into a job (#454): it starts a grandchild that exits at
+    /// once, keeps the grandchild's handle open, reports through the marker file named by
+    /// `GH_PTREE_HOLD_MARKER`, and lingers until it is terminated. Without that variable it is an
+    /// ordinary empty test. The replay driver's Node holds an exited Chromium exactly like this.
+    #[test]
+    fn hold_an_exited_grandchild() {
+        let Some(marker) = std::env::var_os("GH_PTREE_HOLD_MARKER") else {
+            return;
+        };
+        let mut grandchild = std::process::Command::new("cmd")
+            .args(["/c", "exit 0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("HELPER: grandchild spawns");
+        // `try_wait` observes the exit and keeps the handle; only dropping `grandchild` closes it.
+        while grandchild.try_wait().expect("HELPER: try_wait").is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::fs::write(&marker, b"exited").expect("HELPER: marker");
+        std::thread::sleep(std::time::Duration::from_secs(120));
+        drop(grandchild);
+    }
+
+    /// #454, measured mechanism of `replay.cleanup_uncertain`: a member that has EXITED but whose
+    /// handle another member still holds is counted by the job as assigned and is no longer
+    /// listed. A drain that reads the PRE-KILL `assigned - listed` as "members still alive"
+    /// answers `BoundReached { remaining: 1 }` the instant the listed members are gone, although
+    /// the holder died with the kill and the count dropped with it. `terminate` must re-read the
+    /// count after the kill. The arrangement is asserted first: if the job does not count an
+    /// exited, handle-held member this way, this cell says so instead of proving nothing.
+    #[test]
+    fn an_exited_member_whose_handle_a_dying_member_holds_is_not_a_survivor() {
+        let marker = std::env::temp_dir().join(format!("gh-ptree-hold-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "post_enumeration_join_window::hold_an_exited_grandchild",
+                "--nocapture",
+            ])
+            .env("GH_PTREE_HOLD_MARKER", &marker)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        super::configure(&mut command);
+        let mut leader = command.spawn().expect("ARRANGEMENT: leader spawns");
+        let mut group = super::create(&leader).expect("ARRANGEMENT: the leader is contained");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::fs::read(&marker).ok().as_deref() != Some(b"exited") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ARRANGEMENT: the leader did not report its grandchild's exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let before = job_member_ids(group).expect("ARRANGEMENT: the job's membership can be read");
+        assert_eq!(
+            (before.0.clone(), before.1),
+            (vec![leader.id()], 1),
+            "ARRANGEMENT: an exited member whose handle the leader holds must be assigned-but-unlisted \
+             (listed = the leader alone, unlisted = 1), or the mechanism this cell names is not real"
+        );
+        let outcome = super::terminate(leader.id(), group);
+        super::close(&mut group);
+        let _ = leader.wait();
+        let _ = std::fs::remove_file(&marker);
+        assert_eq!(
+            outcome,
+            TerminationOutcome::Complete,
+            "the exited grandchild's handle died with the leader; nothing survived the kill"
+        );
+    }
+
     #[test]
     fn a_member_assigned_after_enumeration_is_not_waited_for() {
         // EVERY FIXTURE LIVES BEHIND THIS GUARD FROM THE MOMENT IT EXISTS (Codex, second pass): the

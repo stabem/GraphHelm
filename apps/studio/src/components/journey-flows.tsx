@@ -22,6 +22,16 @@ export interface JourneyFlowsProps {
   sessions?: LiveSession[] | null;
   /** Play the flow in a headed browser (#462). Resolves when the play ends. Absent: no Watch. */
   onWatch?: (flowId: string) => Promise<void>;
+  /** The journey the owner selected (and its status), so the proof map below follows it. */
+  onSelect?: (flowId: string, status: JourneyFlowView["status"]) => void;
+}
+
+/** A title's trailing parenthetical is a note for the reader (`Name (draft: why)`), not the name. */
+export function splitTitle(title: string): { name: string; note: string | null } {
+  const match = /^(.*\S)\s*\(([^()]*)\)\s*$/.exec(title);
+  if (match === null) return { name: title, note: null };
+  const note = match[2]!.replace(/^draft\s*[:—-]\s*/i, "").trim();
+  return { name: match[1]!, note: note === "" ? null : note };
 }
 
 const STATUS_LABEL: Record<JourneyFlowView["status"], string> = {
@@ -97,6 +107,7 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
   const settled = flow.status === "approved" && !flow.approvable;
   const blocked = !flow.approvable && flow.findings.some((finding) => finding.severity === "error");
   const steps = stepsOf(flow);
+  const title = splitTitle(flow.title ?? flow.id);
   const current = currentStep(steps, session);
   const playing = session?.state === "playing";
   const approve = () => {
@@ -111,9 +122,10 @@ function Detail({ flow, onApprove, onWatch, session }: { flow: JourneyFlowView; 
     onWatch(flow.id).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setStarting(false));
   };
   return (
-    <article className="journey-flow" data-status={flow.status} aria-label={`Journey ${flow.title ?? flow.id}`}>
-      <h3 className="journey-title">{flow.title ?? flow.id}</h3>
+    <article className="journey-flow" data-status={flow.status} aria-label={`Journey ${title.name}`}>
+      <h3 className="journey-title">{title.name}</h3>
       <p className="journey-flow-status">{STATUS_LABEL[flow.status]}</p>
+      {title.note !== null && <p className="journey-flow-note">Why it is a draft: {title.note}</p>}
       <div className="journey-flow-approve">
         {onWatch && (
           <button type="button" onClick={watch} disabled={starting || playing}>{starting || playing ? "Playing…" : "Watch"}</button>
@@ -148,7 +160,7 @@ function flowOf(flows: JourneyFlowView[], journeyId: string | null | undefined):
   return owners.sort((a, b) => b.id.length - a.id.length)[0]?.id ?? null;
 }
 
-export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch }: JourneyFlowsProps) {
+export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null, sessions = null, onWatch, onSelect }: JourneyFlowsProps) {
   const focused = view === null ? null : flowOf(view.flows, focusFlowId);
   const [picked, setPicked] = useState<string | null>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -158,6 +170,11 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
     detail.current?.scrollIntoView?.({ block: "start" });
     detail.current?.focus();
   }, [focused]);
+  const chosen = view === null || view.flows.length === 0 ? null
+    : view.flows.find((flow) => flow.id === picked) ?? view.flows.find((flow) => flow.approvable) ?? view.flows[0]!;
+  useEffect(() => {
+    if (chosen !== null) onSelect?.(chosen.id, chosen.status);
+  }, [chosen?.id, chosen?.status, onSelect]);
   if (view === null) {
     return failure === null ? null : <section className="journey-flows" aria-label="Journey flows"><p className="journey-failure" role="alert">{failure}</p></section>;
   }
@@ -173,7 +190,7 @@ export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = nu
         {view.flows.map((flow) => (
           <li key={flow.id}>
             <button type="button" className="journey-flow-row" aria-pressed={flow.id === selectedId} data-status={flow.status} onClick={() => setPicked(flow.id)}>
-              <span className="journey-flow-row-title">{flow.title ?? flow.id}</span>
+              <span className="journey-flow-row-title">{splitTitle(flow.title ?? flow.id).name}</span>
               <span className="journey-flow-row-status">{STATUS_LABEL[flow.status]}</span>
               <span className="journey-flow-row-steps">{stepsOf(flow).length} steps</span>
             </button>

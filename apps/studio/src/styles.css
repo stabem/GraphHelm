@@ -2837,6 +2837,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 #studio-panel-journeys { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
 #studio-panel-journeys[hidden] { display: none; }
 #studio-panel-journeys > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
+/* #465: a draft has no proof map below; its journey takes the whole panel. */
+#studio-panel-journeys > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
 #studio-panel-journeys > .journey-canvas { flex: 1 1 auto; height: auto; }
 .cited-records { z-index: 20; }
 

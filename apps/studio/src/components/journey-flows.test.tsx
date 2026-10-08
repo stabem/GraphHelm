@@ -115,6 +115,27 @@ describe("JourneyFlows", () => {
   });
 });
 
+// #465: a title's parenthetical is a note, not the name; the selection is reported upward so the
+// proof map follows it.
+describe("JourneyFlows titles and selection", () => {
+  it("moves a title's draft note out of the name into a why-line", () => {
+    const noted: JourneyFlowsView = { flows: [flow("route", { title: "Owner adds a model route (draft: the fixture Runtime has no gateway manifest)" })] };
+    render(<JourneyFlows view={noted} onApprove={vi.fn()} />);
+    expect(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button")).toHaveTextContent(/^Owner adds a model routeWaiting/);
+    const detail = screen.getByRole("article", { name: "Journey Owner adds a model route" });
+    expect(within(detail).getByRole("heading")).toHaveTextContent(/^Owner adds a model route$/);
+    expect(detail).toHaveTextContent("Why it is a draft: the fixture Runtime has no gateway manifest");
+  });
+
+  it("reports the selected journey and its status", async () => {
+    const onSelect = vi.fn();
+    render(<JourneyFlows view={view} onApprove={vi.fn()} onSelect={onSelect} />);
+    expect(onSelect).toHaveBeenLastCalledWith("checkout", "draft");
+    await pick("done");
+    expect(onSelect).toHaveBeenLastCalledWith("done", "approved");
+  });
+});
+
 // #465: Watch plays the journey in a headed browser (#462) while the step being played lights here.
 describe("JourneyFlows watch", () => {
   it("starts a watch of the selected journey and lights the step its session is on", async () => {

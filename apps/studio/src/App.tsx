@@ -2121,6 +2121,8 @@ export default function App({
   // #465: Watch plays a flow in a headed browser (#462); the call answers when the play ends, and
   // the sessions read above lights the current step meanwhile.
   const [watchingFlow, setWatchingFlow] = useState<string | null>(null);
+  const [chosenFlow, setChosenFlow] = useState<{ id: string; status: string } | null>(null);
+  const selectFlow = useCallback((id: string, status: string) => setChosenFlow({ id, status }), []);
   const watchFlow = useCallback(async (flowId: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -2973,9 +2975,12 @@ export default function App({
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
             {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
-              sessions={liveSessions} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
-            {canvasTab === "journey" && (
-              <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
+              sessions={liveSessions} onSelect={selectFlow} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
+            {/* #465: the proof map follows the journey chosen in the list; a draft has nothing proven
+              * yet, so its owner sees Watch and Approve above instead of capture labels. */}
+            {canvasTab === "journey" && (chosenFlow === null || chosenFlow.status !== "draft") && (
+              <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={chosenFlow?.id ?? journeyContract} onSelectContract={setJourneyContract}
+                pickerHidden={chosenFlow !== null}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
                 executionId={selected}
                 events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}

@@ -218,3 +218,35 @@ fn a_document_naming_another_lane_reviewer_or_merger_is_an_actor_mismatch() {
         );
     }
 }
+
+/// #420: `task.claimed` and `task.pr_opened` may name the task's GitHub repository (`repo`,
+/// `owner/name`) so the Studio links its issue and PR before any review exists. A malformed value
+/// is refused like any malformed field, so nothing but `owner/name` reaches a link. Cost: a few
+/// CLI calls on one held run.
+#[test]
+fn an_opening_record_may_name_its_repo_and_a_malformed_one_is_refused() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (fixture, kind) in [("claimed", "task.claimed"), ("pr-opened", "task.pr_opened")] {
+        for (case, repo, accepted) in [
+            ("ok", "stabem/GraphHelm", true),
+            ("dotfile", "stabem/.github", true),
+            ("url", "https://evil.example/x/y", false),
+            ("dots", "stabem/..", false),
+            ("deep", "a/b/c", false),
+        ] {
+            let mut document = as_actor(package_fixture(fixture));
+            document["repo"] = json!(repo);
+            let id = format!("repo-{fixture}-{case}");
+            let reply = signal(scratch.path(), &events, &id, kind, ACTOR, &document);
+            assert_eq!(reply["ok"], json!(accepted), "{kind} {repo}: {reply}");
+            if !accepted {
+                assert_eq!(
+                    reply["diagnostics"][0]["code"],
+                    json!("GHCLI003_SIGNAL_INVALID"),
+                    "{kind} {repo}: {reply}"
+                );
+            }
+        }
+    }
+}

@@ -5,7 +5,7 @@
  * /v1/journey-flows/{id}/approve`, the same path as `graphhelm journey approve`; it is offered only
  * when the Runtime says approval would be accepted, and a refusal shows the Runtime's own message.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { JourneyFlowView, JourneyFlowsView } from "../runtime/types";
 
@@ -14,6 +14,9 @@ export interface JourneyFlowsProps {
   /** The Runtime's message for a failed read; shown instead of the list. */
   failure?: string | null;
   onApprove: (flowId: string) => Promise<void>;
+  /** The journey a task graph's chip named (#421): a flow id, or a path's contract id
+   * `<flow>.<path>`. Its flow is marked current, focused and scrolled into view. */
+  focusFlowId?: string | null;
 }
 
 const STATUS_LABEL: Record<JourneyFlowView["status"], string> = {
@@ -31,8 +34,14 @@ function driftText(entry: unknown): string {
   return JSON.stringify(entry);
 }
 
-function Flow({ flow, onApprove }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void> }) {
+function Flow({ flow, onApprove, current }: { flow: JourneyFlowView; onApprove: (flowId: string) => Promise<void>; current: boolean }) {
   const [approving, setApproving] = useState(false);
+  const article = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!current || article.current === null) return;
+    article.current.scrollIntoView?.({ block: "start" });
+    article.current.focus();
+  }, [current]);
   const [error, setError] = useState<string | null>(null);
   const errors = flow.findings.filter((finding) => finding.severity === "error");
   const settled = flow.status === "approved" && !flow.approvable;
@@ -42,7 +51,8 @@ function Flow({ flow, onApprove }: { flow: JourneyFlowView; onApprove: (flowId: 
     onApprove(flow.id).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setApproving(false));
   };
   return (
-    <article className="journey-flow" data-status={flow.status} aria-label={`Flow ${flow.id}`}>
+    <article ref={article} className="journey-flow" data-status={flow.status} aria-label={`Flow ${flow.id}`}
+      tabIndex={-1} aria-current={current ? "true" : undefined}>
       <h3 className="journey-title">{flow.title ?? flow.id}</h3>
       <p className="journey-flow-status">{STATUS_LABEL[flow.status]}</p>
       {flow.drift.length > 0 && (
@@ -82,15 +92,23 @@ function Flow({ flow, onApprove }: { flow: JourneyFlowView; onApprove: (flowId: 
   );
 }
 
-export function JourneyFlows({ view, failure = null, onApprove }: JourneyFlowsProps) {
+/** The flow a journey id belongs to: itself, or the longest flow id it extends with `.<path>`. */
+function flowOf(flows: JourneyFlowView[], journeyId: string | null | undefined): string | null {
+  if (!journeyId) return null;
+  const owners = flows.filter((flow) => journeyId === flow.id || journeyId.startsWith(`${flow.id}.`));
+  return owners.sort((a, b) => b.id.length - a.id.length)[0]?.id ?? null;
+}
+
+export function JourneyFlows({ view, failure = null, onApprove, focusFlowId = null }: JourneyFlowsProps) {
   if (view === null) {
     return failure === null ? null : <section className="journey-flows" aria-label="Journey flows"><p className="journey-failure" role="alert">{failure}</p></section>;
   }
   if (view.flows.length === 0) return null;
+  const focused = flowOf(view.flows, focusFlowId);
   return (
     <section className="journey-flows" aria-label="Journey flows">
       <h2>Journey flows</h2>
-      {view.flows.map((flow) => <Flow key={flow.id} flow={flow} onApprove={onApprove} />)}
+      {view.flows.map((flow) => <Flow key={flow.id} flow={flow} onApprove={onApprove} current={flow.id === focused} />)}
     </section>
   );
 }

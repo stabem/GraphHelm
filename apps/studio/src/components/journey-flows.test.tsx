@@ -73,3 +73,24 @@ describe("JourneyFlows", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("--project");
   });
 });
+
+// #421: a task graph's journey chip opens the Journey tab ON that journey. The panel ignored the
+// selection, so the owner landed on the top of the list (drafts have no compiled contract for the
+// canvas to select). A contract id of a named path (`<flow>.<path>`) selects its flow. Cost: jsdom.
+describe("JourneyFlows focus", () => {
+  it("marks and focuses the flow a journey chip named, by flow id or by a path's contract id", () => {
+    for (const focusId of ["broken", "broken.alt"]) {
+      render(<JourneyFlows view={view} onApprove={vi.fn()} focusFlowId={focusId} />);
+      const broken = screen.getByRole("article", { name: "Flow broken" });
+      expect(broken).toHaveAttribute("aria-current", "true");
+      expect(document.activeElement).toBe(broken);
+      expect(screen.getByRole("article", { name: "Flow checkout" })).not.toHaveAttribute("aria-current");
+      cleanup();
+    }
+  });
+
+  it("selects nothing for an id no flow has", () => {
+    render(<JourneyFlows view={view} onApprove={vi.fn()} focusFlowId="no-such-flow" />);
+    for (const article of screen.getAllByRole("article")) expect(article).not.toHaveAttribute("aria-current");
+  });
+});

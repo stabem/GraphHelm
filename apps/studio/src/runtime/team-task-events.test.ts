@@ -65,3 +65,25 @@ describe("readTaskEvents", () => {
     expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "implement", pr: null });
   });
 });
+
+/* #420: a task links to its issue and PR from the record that opens it, not from a review comment.
+ * Before, `repoUrl` was learned only from a verdict's `commentUrl`, so a task waiting for its first
+ * review (the one the owner most wants to open) had no link. The record's optional `repo`
+ * (`owner/name`) gives it from `task.claimed` on; a malformed one is refused like any bad field.
+ * Cost: pure functions, milliseconds. */
+describe("task links from the record's own repo", () => {
+  it("knows the repository from task.claimed, before any verdict", () => {
+    const states = foldTaskEvents([
+      record(1, "task.claimed", "gh-claude-4", { issue: 902, lane: "gh-claude-4", branch: "issue-902-x", repo: "stabem/GraphHelm" }),
+      record(2, "task.pr_opened", "gh-claude-4", { pr: 9002, headSha: "dddddddd", journeys: [], lane: "gh-claude-4" }),
+    ]);
+    expect(states[0]).toMatchObject({ issue: 902, pr: 9002, repoUrl: "https://github.com/stabem/GraphHelm" });
+  });
+
+  it("refuses a repo that is not owner/name", () => {
+    for (const repo of ["stabem", "https://evil.example/x/y", "a/b/c", "../x", "a /b"]) {
+      expect(parseTaskEvent("task.claimed", "gh-claude-4", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-1",
+        revision: 1, at: "2026-10-08T00:00:00Z", issue: 1, lane: "gh-claude-4", branch: "b", repo })), repo).toBeNull();
+    }
+  });
+});

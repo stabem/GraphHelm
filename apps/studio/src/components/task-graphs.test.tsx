@@ -53,6 +53,16 @@ describe("TaskGraphs", () => {
     expect(onOpenJourney).toHaveBeenCalledWith("studio-see-team");
   });
 
+  it("never turns a recorded comment URL that is not a github.com page into a link", () => {
+    const tasks = foldTaskEvents([
+      record(1, "issue-9", "task.pr_opened", "gh-claude-4", { pr: 9, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),
+      record(2, "issue-9", "task.review_verdict", "gh-claude-1", { pr: 9, headSha: "aaaaaaaa", reviewer: "gh-claude-1", verdict: "BLOCK", commentUrl: "javascript:alert(1)" }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    expect(screen.getByText(/blocked by gh-claude-1/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /blocked by/ })).toBeNull();
+  });
+
   it("renders nothing when no task has been recorded", () => {
     const { container } = render(<TaskGraphs tasks={[]} onOpenJourney={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();

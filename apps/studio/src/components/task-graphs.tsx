@@ -10,6 +10,10 @@ const STEPS: { step: Exclude<TaskStep, "merged">; label: string }[] = [
   { step: "merge", label: "Merge" },
 ];
 
+/** A recorded URL becomes a link only when it points at github.com: the records are written by
+ * lanes, and a `javascript:` or look-alike URL must not become clickable in the owner's view. */
+const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(pull|issues)\/\d+(#[A-Za-z0-9_-]*)?$/;
+
 export interface TaskGraphsProps {
   tasks: TaskState[];
   onOpenJourney: (contractId: string) => void;
@@ -55,11 +59,11 @@ export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
           <ol className="task-graph-steps">
             {STEPS.map(({ step, label }) => <Node key={step} task={task} step={step} label={label} />)}
           </ol>
-          {task.blockedBy !== null && (
-            <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
-              blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
-            </a>
-          )}
+          {task.blockedBy !== null && (GITHUB_URL.test(task.blockedBy.commentUrl)
+            ? <a className="task-graph-blocked" href={task.blockedBy.commentUrl} target="_blank" rel="noreferrer">
+                blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
+              </a>
+            : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
         </div>
       ))}
     </section>

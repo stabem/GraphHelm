@@ -251,6 +251,9 @@ with its own `GRAPHHELM_ACTOR`; `graphhelm execution signal` writes to a store d
 
 ## 6. Housekeeping
 
+Lanes sharing one machine follow [LANES.md](LANES.md) on top of this section: where a lane writes,
+how it removes a worktree, the single build slot and the per-worktree cargo target.
+
 - A session removes only what it created, by name: its worktree, its branch, its scratch
   directory. Never sweep other sessions' worktrees or branches, and never run `git worktree prune`
   by hand.

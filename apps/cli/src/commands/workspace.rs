@@ -42,6 +42,7 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
             &slot.label,
             slot.jobs,
             slot.clean_workspace,
+            slot.shared_target,
             &slot.command,
         ),
     }
@@ -134,12 +135,12 @@ fn read_record(file: &Path) -> Option<Value> {
     .then_some(value)
 }
 
-/// The environment a claimed workspace builds with: its own temp directory, and the root's one
-/// shared cargo target (#360 phase 2), which `workspace slot` serves one build at a time.
-fn env_of(root: &Path, dir: &Path) -> Value {
+/// The environment a claimed workspace builds with: its own temp directory and its own cargo
+/// target (#361: a shared target lets one worktree's tests run another's bytes).
+fn env_of(dir: &Path) -> Value {
     let show = |p: PathBuf| p.to_string_lossy().into_owned();
     json!({
-        "CARGO_TARGET_DIR": show(super::workspace_slot::shared_target(root)),
+        "CARGO_TARGET_DIR": show(dir.join("target")),
         "TEMP": show(dir.join("tmp")),
         "TMP": show(dir.join("tmp")),
     })
@@ -227,7 +228,7 @@ fn run_claim(
         COMMAND,
         json!({"lane": lane, "task": task, "branch": branch,
             "path": dir.to_string_lossy(), "worktree": worktree.to_string_lossy(),
-            "env": env_of(root, &dir)}),
+            "env": env_of(&dir)}),
     )
 }
 

@@ -1,12 +1,13 @@
-//! The shared build slot (#360 phase 2): one cargo build at a time per workspace root, served in
-//! arrival order, every build sharing one warm target directory.
+//! The build slot (#360 phase 2, #361): one cargo build at a time per workspace root, served in
+//! arrival order. Each build uses its own worktree's target (`<cwd>/target`); `--shared-target`
+//! keeps the old `<root>/target-shared`, unsafe for tests.
 //!
 //! Each waiter creates a ticket file under `<root>/.graphhelm-workspaces/slot/` and holds an
 //! exclusive OS lock on it for as long as it lives. A ticket whose lock can be taken belongs to a
 //! process that has gone (the OS releases a dead process's locks), so it is removed; no process id
 //! is read and no process table is asked, which is what lost a live waiter's place in the
 //! script this replaces. The oldest live ticket takes `slot.lock`, also held by an OS lock, runs the
-//! command with `CARGO_TARGET_DIR=<root>/target-shared` and `CARGO_BUILD_JOBS`, and releases both.
+//! command with its `CARGO_TARGET_DIR` and `CARGO_BUILD_JOBS`, and releases both.
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -35,7 +36,7 @@ fn refuse(message: &str, path: &str) -> Outcome {
     )
 }
 
-/// The shared target directory every slotted build of `root` uses.
+/// The opt-in shared target directory (`--shared-target`).
 pub(crate) fn shared_target(root: &Path) -> PathBuf {
     root.join("target-shared")
 }
@@ -121,6 +122,7 @@ pub(crate) fn run_slot(
     label: &str,
     jobs: u32,
     clean_workspace: bool,
+    shared: bool,
     command: &[String],
 ) -> Outcome {
     if !super::workspace::valid_id(lane) {
@@ -170,7 +172,19 @@ pub(crate) fn run_slot(
     let mut holder = &slot;
     let _ = holder.set_len(0);
     let _ = writeln!(holder, "{lane} {label} pid={}", std::process::id());
-    let target = shared_target(root);
+    let target = if shared {
+        shared_target(root)
+    } else {
+        match std::env::current_dir() {
+            Ok(dir) => dir.join("target"),
+            Err(_) => {
+                drop(slot);
+                drop(ticket);
+                let _ = std::fs::remove_file(&mine);
+                return refuse("the current directory could not be read", "/target");
+            }
+        }
+    };
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cleaned = None;
     if clean_workspace {

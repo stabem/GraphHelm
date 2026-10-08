@@ -105,8 +105,8 @@ fn claim_lays_out_the_workspace_and_refuses_a_second_claim() {
     assert_eq!(reply["data"]["branch"], "issue-360-lane-a");
     assert_eq!(
         Path::new(reply["data"]["env"]["CARGO_TARGET_DIR"].as_str().unwrap()),
-        root.join("target-shared"),
-        "claimed workspaces build in the root's one shared target (#360 phase 2)"
+        ws.join("target"),
+        "a claimed workspace builds in its own target (#361: never another worktree's bytes)"
     );
     let (code, again) = run(&[
         "claim",
@@ -382,14 +382,15 @@ fn slot(root: &str, lane: &str, command: &[String]) -> std::process::Child {
             "--",
         ])
         .args(command)
+        .current_dir(Path::new(root).parent().unwrap())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap()
 }
 
-/// #360 phase 2: the shared build slot serves one command at a time, in arrival order, with the
-/// root's shared target and the job count, and a waiter that died does not hold the queue.
+/// #360 phase 2: the build slot serves one command at a time, in arrival order, with the
+/// worktree's own target (#361) and the job count, and a waiter that died does not hold the queue.
 /// Credible regressions: two builds overlap in the shared target (the stale-artifact and
 /// lock-contention failure), a later waiter overtakes, or a dead waiter's ticket blocks everyone
 /// (the lost-ticket failure of the script this replaces). Cost: three short child commands.
@@ -424,10 +425,10 @@ fn the_slot_serves_one_command_at_a_time_in_order_and_skips_dead_waiters() {
     );
     assert!(lines[2].starts_with("b start"), "{text}");
     assert_eq!(lines[3], "b end");
-    let shared = root.join("target-shared");
+    let own = dir.path().join("target");
     assert!(
-        lines[0].contains(shared.to_str().unwrap()) && lines[0].ends_with(" 3"),
-        "the command gets the shared target and the job count: {text}"
+        lines[0].contains(own.to_str().unwrap()) && lines[0].ends_with(" 3"),
+        "the command gets its own worktree's target and the job count: {text}"
     );
     let left: Vec<_> = std::fs::read_dir(&tickets)
         .unwrap()
@@ -676,4 +677,65 @@ fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ticket"))
         .count();
     assert_eq!(left, 0, "the refusal frees the slot");
+}
+
+/// A command that writes `CARGO_TARGET_DIR` to `log`.
+fn target_command(log: &Path) -> Vec<String> {
+    let log = log.to_str().unwrap().to_owned();
+    if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!("Set-Content -LiteralPath '{log}' \"$env:CARGO_TARGET_DIR\""),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("echo \"$CARGO_TARGET_DIR\" > '{log}'"),
+        ]
+    }
+}
+
+/// #361: by default the slot builds in the current worktree's own target, never the shared one
+/// (cargo treats another worktree's path-dependency artifacts as fresh, so a shared-target test run
+/// can vouch for bytes it did not build); `--shared-target` is the explicit opt-in. Credible
+/// regression: the default drifting back to the shared target. Cost: two short child commands.
+#[test]
+fn the_slot_builds_in_the_worktrees_own_target_unless_shared_is_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let worktree = dir.path().join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let log = dir.path().join("target.txt");
+    let run = |extra: &[&str]| {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .current_dir(&worktree)
+            .env("CARGO_TARGET_DIR", root.join("inherited"))
+            .args([
+                "--json",
+                "workspace",
+                "slot",
+                "--root",
+                root.to_str().unwrap(),
+            ])
+            .args(["--lane", "lane-a"])
+            .args(extra)
+            .arg("--")
+            .args(target_command(&log))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        std::fs::read_to_string(&log).unwrap().trim().to_owned()
+    };
+    assert_eq!(
+        Path::new(&run(&[])),
+        worktree.join("target"),
+        "own target, whatever the caller inherited"
+    );
+    assert_eq!(
+        Path::new(&run(&["--shared-target"])),
+        root.join("target-shared")
+    );
 }

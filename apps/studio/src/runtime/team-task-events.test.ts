@@ -64,6 +64,34 @@ describe("readTaskEvents", () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "implement", pr: null });
   });
+
+  /* #185: on a gh-team-sized run (~1,250 task records) the graph took about four minutes to draw,
+   * because each envelope was read only after the previous one arrived: one round trip at a time.
+   * The reads now overlap (bounded), and the fold still sees the records in sequence order. */
+  it("reads the envelopes concurrently, bounded, and folds them in sequence order", async () => {
+    const claimed = await sealed("c1", "task.claimed", "gh-claude-4", { issue: 9, lane: "gh-claude-4", branch: "issue-9-x" });
+    const heads = await Promise.all(Array.from({ length: 30 }, (_, n) =>
+      sealed(`p${n}`, "task.pr_opened", "gh-claude-4", { pr: 10, headSha: `${n}`.padStart(8, "a"), journeys: [], lane: "gh-claude-4" })));
+    const store = new Map([claimed, ...heads].map((evidence) => [evidence.evidenceId, evidence]));
+    let inFlight = 0;
+    let most = 0;
+    const tasks = await readTaskEvents({
+      executionId: "gh-team",
+      events: [event(1, "gh-claude-4", "task.claimed", claimed), ...heads.map((evidence, n) => event(n + 2, "gh-claude-4", "task.pr_opened", evidence))].reverse(),
+      readEvidence: async (_, id) => {
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        // The later records answer first: the fold must not depend on arrival order.
+        await new Promise((resolve) => setTimeout(resolve, 40 - Number(id.slice(1) || 0)));
+        inFlight -= 1;
+        return store.get(id)!;
+      },
+    });
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(16);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ issue: 9, pr: 10, headSha: "29".padStart(8, "a"), step: "review" });
+  });
 });
 
 /* #420: a task links to its issue and PR from the record that opens it, not from a review comment.

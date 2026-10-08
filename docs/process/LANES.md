@@ -16,13 +16,22 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - On start, send `<lane> ready` plus one line on what you read first, then wait for an order.
 - Read [`AGENTS.md`](../../AGENTS.md) and [DELIVERY.md](DELIVERY.md) before any work.
 - **Only the coordinator assigns a reviewer**, one per PR. Do not pick one and do not review a PR
-  you were not assigned. The assigned reviewer merges (pinned squash, DELIVERY.md §5).
+  you were not assigned; when none was named, ask the coordinator. The assigned reviewer merges
+  (pinned squash, DELIVERY.md §5).
+- A lane holds at most **one implementation task, one review in progress and one waiting slot
+  ticket** at a time.
+- As reviewer, read every comment on the PR first. When a review of record already exists for that
+  head, stop and tell the coordinator instead of adding a second one.
 
 ## 2. Where a lane writes
 
 - Everything of yours lives under `D:\gh\<lane>\`: worktrees, scripts, logs, temp files.
-- Never write in the owner's checkout (`F:\github\GraphHelm`) and never in the root of `F:\`. Read
-  from it, and run its tools, freely.
+- Never write or edit a file in the owner's checkout (`F:\github\GraphHelm`), `.claude/launch.json`
+  included, and never in the root of `F:\`. Read from it, and run its tools, freely.
+- Start a dev server from your own folder and open it with `preview_start {url}`, not by adding an
+  entry to the owner's `.claude/launch.json`.
+- No bare `git stash`: the stash is shared by every worktree of the repository, so another lane can
+  pop yours. Commit to your branch instead.
 - One new worktree per task, cut from `origin/main`:
 
       git -C F:/github/GraphHelm worktree add D:/gh/<lane>/wt-<issue> -b issue-<N>-<slug> origin/main
@@ -43,8 +52,16 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       export CARGO_TARGET_DIR="<your worktree>/target"
 
-  Never use `D:\gh\target-shared` (`--shared-target`) for tests: cargo can treat another worktree's
+  Never use or export `D:\gh\target-shared` (`--shared-target`): cargo can treat another worktree's
   artifacts as fresh, so the run vouches for bytes it did not build (#361). No `cargo clean`.
+- Write Git Bash's full path in the slot command, as above. A bare `bash` or `sh` resolves to WSL.
+- A `cargo` run allowed outside the slot (`check`, `clippy`) uses
+  `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
+- Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
+  a build does.
+- A fix the owner is waiting to see may run outside the slot with `CARGO_BUILD_JOBS=6`, and only
+  when at least 8 GB of RAM is free.
+- After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** Put everything the diff needs in one script instead of queueing
   several.
 - Run only what the diff reaches (DELIVERY.md §3):
@@ -65,10 +82,12 @@ records"). From a lane worktree the token path must be absolute:
 | When | Command |
 |---|---|
 | Start a task | `$T --issue N claimed --branch B` |
-| Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA` |
-| The coordinator names the reviewer, and again when it changes | `$T --issue N review_assigned --pr P --head SHA --reviewer <reviewer>` |
+| Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
-| As merger, only after `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA` |
+| As merger, only after `gh pr merge` exits 0 and `gh pr view P --json mergedBy` shows the merge is yours | `$T --issue N merged --pr P --merge-sha SHA` |
+
+`pr_opened --reviewer` is meant to record the reviewer in the same call. Until the change that does
+so lands, also run `$T --issue N review_assigned --pr P --head SHA --reviewer <reviewer>`.
 
 Record only as yourself. Recording as another lane is a protocol violation the Runtime cannot stop.
 

@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-refuse-question
-title: "Owner answers, or refuses, a question an agent asked"
+title: Owner refuses a question an agent asked
 status: draft
 approved: null
 base: http://127.0.0.1:5184

@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
   "card": {
     "maxScopePaths": 12,
     "maxExportedSymbols": 8,
@@ -51,5 +51,32 @@
       "schemas/",
       "core/protocols/"
     ]
+  },
+  "plan": {
+    "reviews": {
+      "docs": 1,
+      "code": 1,
+      "user_visible": 1,
+      "invariant": 1
+    },
+    "delegation": {
+      "docs": [
+        "small",
+        "low"
+      ],
+      "code": [
+        "standard",
+        "medium"
+      ],
+      "user_visible": [
+        "standard",
+        "medium"
+      ],
+      "invariant": [
+        "large",
+        "high"
+      ]
+    },
+    "jevThresholdPercent": 80
   }
 }

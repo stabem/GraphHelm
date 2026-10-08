@@ -5,6 +5,7 @@ mod code_contract;
 pub mod delegation;
 mod evaluator;
 pub mod keel;
+pub mod keel_plan;
 pub mod keel_prove;
 
 pub use code_contract::{

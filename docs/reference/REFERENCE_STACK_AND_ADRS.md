@@ -1527,8 +1527,18 @@ recursive deletes, so leftovers waited for the owner.
 sweep acts on released workspaces nothing should still write to); ignored files of a released
 workspace are deleted (§3).
 
-**Deferred:** a disk budget and free-space floor, a Runtime timer, idle and PR-closed triggers, a
-Studio usage panel, and a shared build cache per root.
+6. **The shared build slot (phase 2).** `graphhelm workspace slot --root R --lane L -- <cmd>` runs
+   one command at a time per root, in arrival order, with `CARGO_TARGET_DIR=R/target-shared` and
+   `CARGO_BUILD_JOBS` (`--jobs`, default 12); `claim` now points its env at that shared target.
+   Each waiter holds an exclusive OS lock (`File::lock`) on its own ticket file under
+   `R/.graphhelm-workspaces/slot/`; a ticket whose lock can be taken belongs to a dead waiter and is
+   removed. No process id is read: the script this replaces judged liveness from the process table
+   inside its mutex and dropped a live waiter's ticket. `--clean-workspace` runs `cargo clean -p`
+   for the current workspace's own packages first, so the shared target never serves a crate built
+   from another worktree (seen twice on 2026-10-07); third-party crates stay warm.
+
+**Deferred:** a disk budget and free-space floor, a Runtime timer, idle and PR-closed triggers and
+a Studio usage panel.
 
 **Proof:** `apps/cli/tests/workspace_cli.rs`: the claim layout and environment, a second claim
 refused, invalid ids refused; a sweep that keeps unreleased, dirty and moved workspaces, removes the

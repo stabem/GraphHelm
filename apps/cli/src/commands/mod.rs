@@ -34,6 +34,7 @@ mod topology;
 mod validate;
 mod wake_wait;
 mod workspace;
+mod workspace_slot;
 
 use std::sync::Arc;
 
@@ -285,9 +286,22 @@ pub fn run(command: TopLevel) -> Outcome {
                 html.as_deref(),
                 file.as_deref(),
             ),
-            ExecutionCommand::Briefing { events, execution } => {
-                execution::briefing::run(&events, execution.as_deref())
-            }
+            ExecutionCommand::Briefing {
+                events,
+                execution,
+                keyring,
+                key_id,
+            } => execution::briefing::run(
+                &events,
+                execution.as_deref(),
+                keyring
+                    .zip(key_id)
+                    .map(|(directory, key_id)| execution::signal::SignalKeyring {
+                        directory,
+                        key_id,
+                    })
+                    .as_ref(),
+            ),
             ExecutionCommand::Signal {
                 events,
                 execution,
@@ -622,6 +636,27 @@ pub fn run(command: TopLevel) -> Outcome {
                     timeout_secs: prove_timeout_secs,
                     command: prove_command,
                 }),
+                events.map(|events| keel::JourneyRecords {
+                    events,
+                    execution: execution.unwrap_or_default(),
+                    keyring: keyring.unwrap_or_default(),
+                    key_id: key_id.unwrap_or_default(),
+                }),
+            ),
+            KeelCommand::Plan {
+                task,
+                paths,
+                promise,
+                repo,
+                events,
+                execution,
+                keyring,
+                key_id,
+            } => keel::plan(
+                &repo,
+                &task,
+                &paths,
+                &promise,
                 events.map(|events| keel::JourneyRecords {
                     events,
                     execution: execution.unwrap_or_default(),

@@ -4,7 +4,7 @@
 # `context-utilization.yaml`'s version travels with a receipt: a refusal that does not name the
 # rules it was judged under cannot be replayed, and a penalty that cannot be replayed is void.
 # Bump `version` in the same commit as any change below.
-version: "1.4.0"
+version: "1.5.0"
 
 # READ ECONOMY. The agent loads a contract card, never the tree. A card that outgrows these bounds
 # is refused before anyone reads it (`keel.card.*`): the cure for a wide scope is two promises.
@@ -85,3 +85,14 @@ invariants:
   concurrency: [core/events/src/local.rs, apps/cli/src/commands/serve/]
   destructive: [apps/cli/src/commands/workspace.rs]
   compatibility: [schemas/, core/protocols/]
+
+# PLANNER (1.5.0, #382 phase B). `graphhelm keel plan` classifies each path a task names (invariant
+# class -> user-visible screen -> code -> docs, first match wins), takes the highest class, and
+# reads the review count and delegation for it from here. ONE REVIEW FOR EVERY CLASS (owner
+# decision, 2026-10-07): the field stays so the count can be raised later, never lowered by a
+# reviewer. When the promise names an invariant its paths do not touch, the planner takes the
+# stricter class and records `fallback_strict`.
+plan:
+  reviews: {docs: 1, code: 1, user_visible: 1, invariant: 1}
+  delegation: {docs: [small, low], code: [standard, medium], user_visible: [standard, medium], invariant: [large, high]}
+  jevThresholdPercent: 80

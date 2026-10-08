@@ -289,8 +289,6 @@ function applyVerdict(state: TaskState, event: TaskEventRecord): void {
   }
 }
 
-/** Folds records in sequence order into one state per task (spec §7): a new head re-arms review
- * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
 /** #460: the slice of its task a record belongs to. An issue can be worked in several PRs (#356: one
  * PR merged while the next slice was claimed), and one state per issue let the first merge hide the
  * rest. A claim on a branch no slice holds opens a slice, which that lane's next `pr_opened` joins;
@@ -309,18 +307,18 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     slices.push(slice);
     return slice;
   };
+  // A claim names its branch: the same branch is the same slice (a re-claim), any other opens one.
   if (event.kind === "task.claimed") {
-    return group.find((slice) => slice.branch !== null && slice.branch === event.branch)
-      ?? group.filter(open).at(-1)
-      ?? add();
+    return group.find((slice) => slice.branch !== null && slice.branch === event.branch) ?? add();
   }
   const own = event.pr === undefined ? undefined : group.find((slice) => slice.pr === event.pr);
   if (own !== undefined) return own;
-  // A PR no slice holds yet joins the newest open claim of its task (for pr_opened, the same
-  // lane's claim): the claim's slice becomes that PR's slice. A merge recorded with no pr_opened
-  // (#449's own log) still lands on the issue's claim instead of opening a second graph.
+  // A PR no slice holds yet joins the oldest open claim of its task (for pr_opened, the same
+  // lane's): PRs open in the order their slices were claimed. The claim's slice becomes that PR's
+  // slice. A merge recorded with no pr_opened (#449's own log) still lands on the issue's claim
+  // instead of opening a second graph.
   const claimed = group.filter((slice) => event.kind === "task.pr_opened" ? open(slice)
-    : slice.pr === null && slice.step !== "merged").at(-1);
+    : slice.pr === null && slice.step !== "merged").at(0);
   if (claimed !== undefined) {
     if (event.pr !== undefined) claimed.pr = event.pr;
     return claimed;
@@ -330,6 +328,8 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
   return add();
 }
 
+/** Folds records in sequence order into one state per task slice (spec §7): a new head re-arms review
+ * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
 export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   const slices: TaskState[] = [];
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {

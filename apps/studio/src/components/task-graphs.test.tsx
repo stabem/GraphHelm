@@ -63,6 +63,32 @@ describe("TaskGraphs", () => {
     expect(screen.queryByRole("link", { name: /blocked by/ })).toBeNull();
   });
 
+  it("shows a late verdict on an older, recorded head as superseded, not as missing (#459 a)", () => {
+    const tasks = foldTaskEvents([
+      record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: "a".repeat(40), journeys: [], lane: "gh-claude-2" }),
+      record(2, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "gh-claude-2" }),
+      record(3, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: "a".repeat(40), reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const graph = screen.getByRole("group", { name: /PR #19/i });
+    expect(within(graph).getByText(/APPROVE by gh-claude-5 on aaaaaaaa, superseded by bbbbbbbb/)).toBeInTheDocument();
+    expect(within(graph).queryByText(/no pr_opened record/)).toBeNull();
+    expect(within(graph).getByRole("listitem", { current: "step" })).toHaveTextContent(/review/i);
+  });
+
+  it("applies a verdict recorded before its own pr_opened once that pr_opened arrives (#459 b)", () => {
+    const tasks = foldTaskEvents([
+      record(1, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: "a".repeat(40), journeys: [], lane: "gh-claude-2" }),
+      record(2, "issue-9", "task.review_verdict", "gh-claude-5", { pr: 19, headSha: "b".repeat(40), reviewer: "gh-claude-5", verdict: "APPROVE", commentUrl }),
+      record(3, "issue-9", "task.pr_opened", "gh-claude-2", { pr: 19, headSha: "b".repeat(40), journeys: [], lane: "gh-claude-2" }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const graph = screen.getByRole("group", { name: /PR #19/i });
+    expect(within(graph).getByRole("listitem", { current: "step" })).toHaveTextContent(/merge/i);
+    expect(within(graph).getByText("gh-claude-5")).toBeInTheDocument();
+    expect(within(graph).queryByText(/no pr_opened record|superseded/)).toBeNull();
+  });
+
   it("names a verdict on a head that has no pr_opened record instead of dropping it (#457)", () => {
     const tasks = foldTaskEvents([
       record(1, "issue-439", "task.pr_opened", "gh-claude-2", { pr: 449, headSha: "8aeaef0e380e0eb487b810e994f1b9d8d01f077e", journeys: [], lane: "gh-claude-2", repo: "stabem/GraphHelm" }),

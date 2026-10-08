@@ -334,3 +334,70 @@ fn a_claim_may_name_its_parent_issue_and_a_malformed_one_is_refused() {
     );
     assert_eq!(reply["ok"], json!(false), "{reply}");
 }
+
+/// #467: the design critic's round is a `task.critic_verdict` record, signed by the lane, and the
+/// Runtime refuses a verdict that disagrees with its score and round, so running out of rounds can
+/// never be recorded as a pass. Credible regressions: an under-threshold `pass`, a `revise` on the
+/// last round (an endless loop), an `exhausted` with rounds left, or another lane signing it.
+/// Cost: one held run, six CLI calls.
+#[test]
+fn a_critic_verdict_must_agree_with_its_score_and_round() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let valid = as_actor(package_fixture("critic-verdict"));
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "critic-ok",
+        "task.critic_verdict",
+        ACTOR,
+        &valid,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    for (id, patch) in [
+        ("pass-below", json!({"verdict": "pass", "score": 7})),
+        (
+            "revise-last",
+            json!({"verdict": "revise", "score": 5, "round": 3}),
+        ),
+        (
+            "exhausted-early",
+            json!({"verdict": "exhausted", "score": 5, "round": 2}),
+        ),
+        ("round-over", json!({"verdict": "pass", "round": 4})),
+    ] {
+        let mut document = valid.clone();
+        for (key, value) in patch.as_object().unwrap() {
+            document[key] = value.clone();
+        }
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.critic_verdict",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(false), "{id}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["code"],
+            json!("GHCLI003_SIGNAL_INVALID"),
+            "{id}: {reply}"
+        );
+    }
+    let mut other = valid.clone();
+    other["lane"] = json!("gh-claude-4");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "critic-spoof",
+        "task.critic_verdict",
+        ACTOR,
+        &other,
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["code"],
+        json!("GHCLI038_ACTOR_MISMATCH"),
+        "{reply}"
+    );
+}

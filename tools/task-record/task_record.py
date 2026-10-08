@@ -18,6 +18,7 @@ Standard library only. `--dry-run` prints the request instead of sending it.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import sys
 import urllib.error
@@ -90,10 +91,12 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
-    # The id and key name the step's subject: a fix loop (BLOCK, new head, a second pr_opened and a
-    # verdict on that head) repeats a kind, and a repeated kind on a new subject is a new record.
-    subject = args.head or args.merge_sha or args.branch
-    signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-r{doc['revision']}-{subject[:12]}"
+    # The id and key are the record's content without its timestamp: the same step sent again is
+    # the same key (a retry), and any change (a new head, a second reviewer, a changed verdict) is
+    # a new key, so a GHE003 conflict on it can only be a retry of this exact record.
+    content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256("\n".join((args.lane, args.kind, content)).encode()).hexdigest()[:16]
+    signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
     evidence = args.comment_url or (f"https://github.com/{args.repo}/pull/{args.pr}" if args.pr
                                     else f"https://github.com/{args.repo}/issues/{args.issue}")
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",
@@ -126,8 +129,8 @@ def main(argv):
     ok = reply.get("ok") is True
     codes = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
     if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
-        # This key names one step on one subject, so a conflict on it is a retry of a step already
-        # recorded (with an earlier timestamp), not a different step.
+        # The key is this record's content, so a conflict on it is this record already committed
+        # with an earlier timestamp.
         print(f"already recorded {signal_id}")
         return 0
     print(f"{'recorded' if ok else 'REFUSED'} {signal_id}")

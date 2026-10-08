@@ -185,12 +185,12 @@ python tools/task-record/task_record.py --lane <you> merged          --issue <N>
   `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.
   `--dry-run` prints the request without sending it. `--url` must be a loopback host
   (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
-- **Repeated steps.** The record id and its `Idempotency-Key` end with the step's subject (the head
-  sha for `pr_opened`, `review_assigned`, `review_verdict`; the merge sha for `merged`; the branch
-  for `claimed`). In the fix loop (BLOCK, new head, a second `pr_opened`, a verdict on the new head)
-  run the same commands with the new `--head`; no `--revision` is needed.
+- **Repeated steps.** The record id and its `Idempotency-Key` end with a hash of the lane, the kind
+  and the record without `at`. Any change is a new record: a new head in the fix loop, a second
+  reviewer, a changed verdict on the same head. Run the same commands with the new values; no
+  `--revision` is needed.
 - **Retry.** Re-running a step already recorded (a call that timed out and may have landed) is
-  safe: the Runtime answers `GHE003_IDEMPOTENCY_CONFLICT` on that key and the script prints
+  safe: the same content gives the same key, the Runtime answers `GHE003_IDEMPOTENCY_CONFLICT` and the script prints
   `already recorded <signal id>`, exit 0. A `GHE001_SEQUENCE_CONFLICT` (another writer appended
   first) is re-sent up to three times.
 - **Output.** `recorded <signal id>` or `already recorded <signal id>` and exit 0, or

@@ -584,7 +584,7 @@ fn start_session(
     // sessions`): updated after every act, removed on close. Port and pid address the host.
     let record = json!({"sessionId":id,"contractId":contract,"flowId":args.id,"path":data["path"],
         "stepId":args.step,"state":data["state"],"code":data["code"],"at":data["at"],
-        "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,
+        "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,"lastActState":null,"lastActCode":null,
         "expiresAt":expires_at.to_rfc3339(),"port":port,"pid":std::process::id()});
     save_record(&dir.join(format!("{id}.json")), &record)?;
     data["sessionId"] = id.clone().into();
@@ -780,10 +780,11 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
             }
         }
     }
-    session.record["state"] = reply["state"].clone();
-    session.record["code"] = reply["code"].clone();
+    // `state`, `code` and `at` stay the OPEN result (a drift keeps naming its edge); an act
+    // only moves the screen and the `lastAct*` fields.
     session.record["screen"] = reply["screen"].clone();
-    session.record["at"] = reply["screen"].clone();
+    session.record["lastActState"] = reply["state"].clone();
+    session.record["lastActCode"] = reply["code"].clone();
     session.record["lastActAt"] = chrono::Utc::now().to_rfc3339().into();
     let path = session
         .project

@@ -69,14 +69,45 @@ fn approved() -> tempfile::TempDir {
     }
     let (code, reply) = cli(dir.path(), &["approve", "checkout"]);
     assert_eq!(code, 0, "{reply}");
-    let observer = dir.path().join(".graphhelm/observers");
+    tripwire(dir.path());
+    dir
+}
+
+/// The same project with the flow left a DRAFT (never approved), and the same tripwire.
+fn draft() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for path in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+    ] {
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "export {}").unwrap();
+    }
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journeys")).unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journeys/checkout.journey.yaml"),
+        FLOW,
+    )
+    .unwrap();
+    let (code, reply) = cli(
+        dir.path(),
+        &["compile", "checkout", "--fmt", "--include-draft"],
+    );
+    assert_eq!(code, 0, "{reply}");
+    tripwire(dir.path());
+    dir
+}
+
+fn tripwire(project: &Path) {
+    let observer = project.join(".graphhelm/observers");
     std::fs::create_dir_all(&observer).unwrap();
     std::fs::write(
         observer.join("journey_driver.mjs"),
         "import {writeFileSync} from 'node:fs';writeFileSync('DRIVER_STARTED','unsafe');",
     )
     .unwrap();
-    dir
 }
 
 fn refuses(project: &Path, args: &[&str], command: &str, exit: i32, code: &str) -> Value {
@@ -182,5 +213,53 @@ fn act_and_close_without_a_live_session_are_refused() {
         "journey.close",
         3,
         "live.request_invalid",
+    );
+}
+
+/// `journey watch` plays a flow before its owner approves it, so a DRAFT must get past both gates
+/// that refuse `journey open` (approval and replay cache) and stop only where a browser would be
+/// needed (the tripwire observer is refused as missing, so no driver starts). It writes no
+/// session record when it fails, and a pace slower than its bound is refused before anything.
+/// Credible defect: watch inheriting open's `flow.not_approved` / `replay.cache_missing`, which
+/// makes the owner's look-before-approve impossible. Cost: seconds, no browser.
+#[test]
+fn watch_plays_a_draft_past_the_gates_that_refuse_open() {
+    let dir = draft();
+    refuses(
+        dir.path(),
+        &["open", "checkout", "--step", "pay"],
+        "journey.open",
+        2,
+        "flow.not_approved",
+    );
+    let reply = refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        3,
+        "replay.observer_missing",
+    );
+    assert_eq!(reply["data"]["mode"], "watch", "{reply}");
+    assert_eq!(reply["data"]["proof"], false, "{reply}");
+    let sessions = dir.path().join(".graphhelm/journey-sessions");
+    assert!(
+        std::fs::read_dir(&sessions)
+            .map(|entries| entries.count() == 0)
+            .unwrap_or(true),
+        "a failed watch leaves no session record"
+    );
+    refuses(
+        dir.path(),
+        &["watch", "checkout", "--pace-ms", "20000"],
+        "journey.watch",
+        3,
+        "watch.pace_invalid",
+    );
+    refuses(
+        dir.path(),
+        &["watch", "checkout", "--path", "nowhere"],
+        "journey.watch",
+        2,
+        "watch.path_unknown",
     );
 }

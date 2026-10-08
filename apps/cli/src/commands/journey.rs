@@ -38,6 +38,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
         JourneyCommand::Replay(replay) => super::journey_replay::run(replay),
         JourneyCommand::Open(open) => super::journey_live::open(open),
+        JourneyCommand::Watch(watch) => super::journey_live::watch(watch),
         JourneyCommand::Act(act) => super::journey_live::act(act),
         JourneyCommand::Close(close) => super::journey_live::close(close),
         JourneyCommand::Sessions(sessions) => super::journey_live::sessions(sessions),

@@ -421,6 +421,18 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     }
 }
 
+/// `journey watch` plays a flow before its owner approves it: the same validated snapshot as
+/// replay, without the approval requirement. Watching proves nothing and writes nothing.
+pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
+    let (text, value) = read(file)?;
+    let findings = check_snapshot(file, &text, &value, project);
+    if findings.iter().any(|f| !f.is_warning()) {
+        Err(findings)
+    } else {
+        Ok(value)
+    }
+}
+
 /// Replay consumes exactly the validated source snapshot, never a second unchecked read.
 pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;

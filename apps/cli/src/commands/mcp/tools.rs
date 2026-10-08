@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 42] = [
+const TOOLS: [ToolSpec; 43] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -159,6 +159,16 @@ const TOOLS: [ToolSpec; 42] = [
                       names are refused unless the approved flow has that act. Owner credential \
                       only.",
         schema: journey_act_schema,
+    },
+    ToolSpec {
+        name: "journey_watch",
+        description: "Play a journey flow, draft or approved, in a visible browser on the Runtime \
+                      host, paced for a person to follow (POST /v1/journey-flows/{id}/watch; \
+                      exactly `graphhelm journey watch`). Optional path and paceMs. It answers \
+                      when the play ends; journey_sessions shows it while it plays (mode watch, \
+                      state playing, the screen and act it is at). Never proof and never an \
+                      approval. Owner credential only.",
+        schema: journey_watch_schema,
     },
     ToolSpec {
         name: "journey_close",
@@ -536,6 +546,17 @@ fn journey_act_schema() -> serde_json::Value {
             "secret": {"type": "string"}
         }),
         &["sessionId", "kind", "role", "name"],
+    )
+}
+
+fn journey_watch_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "id": {"type": "string"},
+            "path": {"type": "string"},
+            "paceMs": {"type": "integer", "minimum": 0, "maximum": 10000}
+        }),
+        &["id"],
     )
 }
 
@@ -1663,6 +1684,22 @@ pub(crate) fn call(
             api.request(
                 "POST",
                 &url::segment_path(&["v1", "journeys", "sessions", session, "act"]),
+                Some(&body),
+                None,
+                None,
+            )
+        }),
+        "journey_watch" => require(arguments, "id").map(|id| {
+            let mut body = serde_json::json!({});
+            if let Some(path) = arguments.get("path").and_then(serde_json::Value::as_str) {
+                body["path"] = path.into();
+            }
+            if let Some(pace) = arguments.get("paceMs").and_then(serde_json::Value::as_u64) {
+                body["paceMs"] = pace.into();
+            }
+            api.request(
+                "POST",
+                &url::segment_path(&["v1", "journey-flows", id, "watch"]),
                 Some(&body),
                 None,
                 None,

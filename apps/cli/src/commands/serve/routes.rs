@@ -2032,7 +2032,68 @@ pub(super) async fn open_journey(
             key_id,
             allow_origin: Vec::new(),
             live_host: false,
+            watch: false,
+            pace_ms: 1500,
         })
+    })
+    .await
+}
+
+/// `POST /v1/journey-flows/{id}/watch`: exactly `graphhelm journey watch` for the Runtime's
+/// `--project`. The body may name a `path` and a `paceMs`; the answer comes when the play ends,
+/// and `GET /v1/journeys/sessions` shows the play while it runs (`mode: watch`, `state:
+/// playing`). A draft is accepted: watching proves nothing and approves nothing. Owner
+/// credential only (the agent session token's allow-list does not reach `/v1/journey-flows`).
+pub(super) async fn watch_journey_flow(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    const COMMAND: &str = "journey.watch";
+    let payload: serde_json::Value = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value @ serde_json::Value::Object(_)) => value,
+            _ => return bad_request(COMMAND, "the body must be {path?, paceMs?}", "/body"),
+        }
+    };
+    if let Some(key) = payload
+        .as_object()
+        .unwrap()
+        .keys()
+        .find(|key| !matches!(key.as_str(), "path" | "paceMs"))
+    {
+        return bad_request(
+            COMMAND,
+            "the body must be {path?, paceMs?}",
+            &format!("/body/{key}"),
+        );
+    }
+    let path = match payload.get("path") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(path)) => Some(path.clone()),
+        Some(_) => return bad_request(COMMAND, "\"path\" must be a string", "/body/path"),
+    };
+    let pace_ms = match payload.get("paceMs") {
+        None | Some(serde_json::Value::Null) => 1500,
+        Some(value) => match value.as_u64() {
+            Some(pace) => pace,
+            None => {
+                return bad_request(COMMAND, "\"paceMs\" must be a whole number", "/body/paceMs");
+            }
+        },
+    };
+    flow_command(state, COMMAND, move |project| {
+        crate::commands::journey_live::open_in_runtime(&crate::commands::journey_live::watch_args(
+            &crate::args::JourneyWatchArgs {
+                id,
+                path,
+                project: Some(project),
+                pace_ms,
+                allow_origin: Vec::new(),
+            },
+        ))
     })
     .await
 }

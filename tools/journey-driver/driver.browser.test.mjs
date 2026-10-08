@@ -124,6 +124,13 @@ test('capture conceals same-origin and opaque-origin iframe secret echoes',async
   const c=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(c,base);
   assert.equal((await act(c,'enter_text','textbox','Password',{secretEnv:'GRAPHHELM_SECRET_PASSWORD'})).ok,true);
   assert.equal((await act(c,'wait_for','button','Echo ready')).ok,true);
+  // Explore needs frame-aware text privacy before model dispatch, independently
+  // of image masks. The existing replay snapshot never requested this observer.
+  const discovery=await c.send('snapshot',{expect:[],discover:true});
+  assert.equal(discovery.ok,true);
+  assert.ok(!JSON.stringify(discovery).includes(secret));
+  assert.ok(discovery.result.ariaYaml.includes('«secret:PASSWORD»'));
+  assert.ok(discovery.result.expectations.some(v=>v.role==='button'&&v.name==='Echo ready'));
   const capture=await c.send('capture',{path:'frames.png',maskSecrets:true});assert.equal(capture.ok,true);assert.equal(capture.result.masked,true);
   assert.deepEqual((await decode(await readFile(join(c.output,'frames.png')))).slice(0,2),[{ink:0,masked:32000},{ink:0,masked:32000}]);
   const hidden=await client(t,{GRAPHHELM_SECRET_PASSWORD:secret});await open(hidden,base+'?shadow');
@@ -149,4 +156,21 @@ test('context network guard blocks popup, frame, fetch, redirect, websocket and 
   const allowed=await client(t);await open(allowed,f.base+'/network',[f.canaryOrigin]);assert.equal((await act(allowed,'activate','button','Fetch')).ok,true);await new Promise(done=>setTimeout(done,100));assert.equal(f.counts().canary,1);
   assert.equal((await act(allowed,'activate','button','Popup')).code,'driver.host_refused');assert.equal(f.counts().canary,1);
   const alias=await client(t);await open(alias,f.base.replace('127.0.0.1','fixture.graphhelm.test')+'/cart');assert.equal((await alias.send('snapshot',{expect:[{role:'heading',name:'Cart'}]})).ok,true);await alias.send('close');
+});
+
+// #381: a real app renders its screen after the document loads (the Studio reads the run over
+// HTTP before the team canvas exists). A screen expectation checked at the instant of
+// `domcontentloaded` refused every Studio flow at its first screen. The defect: snapshot counted
+// the control once instead of waiting for it. Cost: ~2 s for the late page; the absent control
+// still waits the driver timeout before refusing, as a contract's failure timeout would.
+test('a screen expectation waits for a control that renders after load, and still refuses one that never does',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/late');
+  const late=await c.send('snapshot',{expect:[{role:'heading',name:'Ready'},{role:'button',name:'Continue'}]});
+  assert.equal(late.ok,true,JSON.stringify(late));
+  assert.deepEqual(late.result.controls.filter(x=>x.role!=='main'),[{role:'button',name:'Continue'},{role:'heading',name:'Ready'}]);
+  await c.send('close');
+  const n=await client(t);await open(n,f.base+'/late');
+  const never=await n.send('snapshot',{expect:[{role:'heading',name:'Never'}]});
+  assert.equal(never.code,'driver.expectation_failed');
 });

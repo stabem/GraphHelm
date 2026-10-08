@@ -4,7 +4,7 @@
  */
 import type { EnvelopeRecord } from "../graph/ledger";
 import { timeOf } from "./team";
-import type { JourneyView, RuntimeEvent } from "./types";
+import type { JourneyView, LiveSession, LiveState, RuntimeEvent } from "./types";
 
 export const SCREEN_CAPTURE_KIND = "jpd.screen_captured";
 export const SCREEN_CAPTURE_PROTOCOL = "graphhelm-screen-capture-v1";
@@ -43,7 +43,7 @@ export interface CaptureDocument {
   observer: string;
   actorId: string | null;
   pr?: number;
-  phase?: "before" | "after";
+  phase?: "before" | "after" | "live";
   occurredAt: string | null;
 }
 
@@ -68,7 +68,8 @@ export function captureDocuments(events: RuntimeEvent[], envelopes: EnvelopeReco
     if (d.protocol !== SCREEN_CAPTURE_PROTOCOL || !nonEmpty(d.contractId) || !nonEmpty(d.stepId) || !nonEmpty(d.revision)
       || typeof d.dirty !== "boolean" || !nonEmpty(d.observer)) continue;
     if (d.pr !== undefined && !(typeof d.pr === "number" && Number.isSafeInteger(d.pr) && d.pr >= 1)) continue;
-    if (d.phase !== undefined && d.phase !== "before" && d.phase !== "after") continue;
+    // `live` (#409): a live session's capture at a step (phase C); kept, never a before/after pair.
+    if (d.phase !== undefined && d.phase !== "before" && d.phase !== "after" && d.phase !== "live") continue;
     const ref = event.evidenceRefs[0];
     const signalId = nonEmpty(payload.signalId) ? payload.signalId : nonEmpty(ref) && ref.startsWith("signal-") ? ref.slice("signal-".length) : null;
     out.push({
@@ -109,4 +110,18 @@ export function beforeAfterPairs(captures: CaptureDocument[]): BeforeAfterPair[]
       observer: slot.after.observer, actorId: slot.after.actorId });
   }
   return pairs.sort((a, b) => Math.max(b.before.sequence, b.after.sequence) - Math.max(a.before.sequence, a.after.sequence));
+}
+
+/** The live chip of one step card (#409, spec §5 point 5): what the Runtime's session list says
+ * about the newest session at that step, never what the Open live click returned. */
+export interface LiveChip { sessionId: string; state: LiveState; label: string; code: string | null }
+
+export function liveChipFor(contractId: string, stepId: string, sessions: LiveSession[]): LiveChip | null {
+  const mine = sessions.filter((session) => session.contractId === contractId && session.stepId === stepId);
+  if (mine.length === 0) return null;
+  const newest = mine.reduce((best, session) => Date.parse(session.since) > Date.parse(best.since) ? session : best);
+  const label = newest.state === "drift" ? `drift at ${newest.at ?? "?"}`
+    : newest.state === "fail" ? `at step · fail · ${newest.code ?? "unknown"}`
+    : `at step · ${newest.state}`;
+  return { sessionId: newest.sessionId, state: newest.state, label, code: newest.code };
 }

@@ -473,3 +473,57 @@ fn http_and_mcp_list_like_the_cli_and_only_an_owner_session_sweeps() {
     assert_ne!(refused.status, 200);
     assert!(refused.body.contains("/workspaceRoot"), "{}", refused.body);
 }
+
+/// #380: the declared actor type is not a credential. The Runtime's agent session token
+/// (`events.agent.token`) cannot sweep over HTTP or through an MCP session that declares itself
+/// `owner`; the workspace stays. The same token still lists, as agents do.
+#[test]
+fn an_agent_session_token_cannot_sweep_whatever_type_it_declares() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "done");
+    release(root_s, "lane", "done");
+    let (_server, base, _owner) = serve(dir.path(), &["--workspace-root", root_s]);
+    let agent_file = dir.path().join("events.agent.token");
+    let agent = std::fs::read_to_string(&agent_file)
+        .expect("serve mints the agent session token beside the owner token");
+
+    let swept = post(&format!("{base}/v1/workspaces/sweep"), agent.trim());
+    assert_eq!(swept.status, 403, "{}", swept.body);
+    let spoofed = mcp_call(&base, &agent_file, "owner", "workspace_sweep");
+    assert!(
+        !spoofed["error"].is_null() || spoofed["result"]["isError"] == true,
+        "a self-declared owner holding the agent token swept: {spoofed}"
+    );
+    assert!(root.join("lane").join("done").join("wt").is_dir());
+
+    let listed =
+        support::raw_request(&format!("{base}/v1/workspaces"), Some(agent.trim())).unwrap();
+    assert_eq!(listed.status, 200, "{}", listed.body);
+}
+
+/// A bodyless `POST` with a bearer token, answered as `support::parse_response` reads it.
+fn post(url: &str, token: &str) -> support::RawResponse {
+    use std::io::{Read, Write};
+    let (host, port, path) = support::split_url(url);
+    let mut stream = std::net::TcpStream::connect((host.as_str(), port)).unwrap();
+    stream
+        .set_read_timeout(Some(support::REQUEST_TIMEOUT))
+        .unwrap();
+    write!(
+        stream,
+        "POST {path} HTTP/1.1
+Host: {host}
+Connection: close
+Content-Length: 0
+Authorization: Bearer {token}
+
+"
+    )
+    .unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    support::parse_response(&String::from_utf8_lossy(&raw)).unwrap()
+}

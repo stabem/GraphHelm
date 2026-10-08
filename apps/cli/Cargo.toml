@@ -41,6 +41,7 @@ graphhelm-host-adoption = { path = "../../adapters/host-adoption" }
 graphhelm-simulation = { path = "../../core/simulation" }
 keel-contract-index = { path = "../../tools/keel-contract-index" }
 semver.workspace = true
+regex = "=1.13.1"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

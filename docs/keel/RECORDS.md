@@ -7,10 +7,10 @@ works for (`tool:signal`, or `cli:execution signal` offline). The signals form o
 
 | Step | Skill | Signal `type` | `replyTo` |
 |---|---|---|---|
-| Journey | `journey-verifier` (from the `journey-contract` draft) | `jpd.journey` | none (thread root) |
-| Obligation | `journey-verifier` (one per promise) | `jpd.obligation` | the journey signal id |
+| Journey | `journey-prove` (#381; from the `journey-contract` draft) | `jpd.journey` | none (thread root) |
+| Obligation | `journey-prove` (#381; one per promise) | `jpd.obligation` | the journey signal id |
 | Card | `keel` | `keel.card` | the obligation it serves (or none for a change with no journey) |
-| Proof | `journey-verifier`, `keel` | `keel.proof` | the card signal id |
+| Proof | `journey-prove` (#381), `keel` | `keel.proof` | the card signal id |
 
 Rules:
 

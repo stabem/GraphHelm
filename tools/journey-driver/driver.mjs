@@ -8,7 +8,7 @@ import { lstat, mkdir } from 'node:fs/promises';
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, SNAPSHOT = 6144, TIMEOUT = 30000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed'], snapshot: ['expect'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed'], snapshot: ['expect','discover'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
 };
@@ -58,6 +58,7 @@ function validate(r) {
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
   } else if (r.op === 'snapshot') {
     if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => pair(v))) fail('driver.protocol_invalid');
+    if (Object.hasOwn(r,'discover') && typeof r.discover !== 'boolean') fail('driver.protocol_invalid');
   } else if (r.op === 'act') {
     if (!string(r.kind,64) || !string(r.role,64) || !string(r.name,256)) fail('driver.protocol_invalid');
     if (!['activate','submit','enter_text','navigate','wait_for','inspect'].includes(r.kind)) fail('driver.unsupported_act');
@@ -213,11 +214,41 @@ async function run(r) {
   if (!opened || closed) fail('driver.protocol_invalid');
   checkHost();
   if (r.op === 'snapshot') {
-    for (const expected of r.expect) await unique(page.getByRole(expected.role,{name:expected.name,exact:true}),'driver.expectation_failed');
-    const ariaYaml=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
+    for (const expected of r.expect) {
+      // A screen renders after its document loads; wait for the control, then require it unique.
+      const target=page.getByRole(expected.role,{name:expected.name,exact:true});
+      try { await target.first().waitFor({state:'visible',timeout:TIMEOUT}); } catch (err) { if (err.code) throw err; fail('driver.expectation_failed'); }
+      await unique(target,'driver.expectation_failed');
+    }
+    const mainAria=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
+    let ariaYaml=mainAria;
+    const expectations=[];
+    if (r.discover) {
+      const frames=page.frames();
+      if (frames.length>65) fail('driver.snapshot_too_large');
+      // Browser frame handles reach isolated/nested documents, unlike page text
+      // locators. Redact their text before any model-capable caller can receive it.
+      for(const frame of frames) if(frame!==page.mainFrame()) {
+        try { ariaYaml+='\n'+redacted(await frame.locator('body').ariaSnapshot({timeout:TIMEOUT})); }
+        catch { fail('driver.redaction_failed'); }
+        if(Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
+      }
+      const candidates=new Map();
+      for(const match of mainAria.matchAll(/^\s*- ([a-z]+) ("(?:[^"\\]|\\.)*")/gm)) {
+        let name;try{name=JSON.parse(match[2])}catch{fail('driver.protocol_invalid')}
+        if(roles.has(match[1])&&string(name,256)&&!name.includes('«secret:')) candidates.set(JSON.stringify([match[1],name]),{role:match[1],name});
+      }
+      const rank=role=>role==='heading'?0:role==='button'?1:role==='link'?2:3;
+      const ordered=[...candidates.values()].sort((a,b)=>rank(a.role)-rank(b.role)||(a.role<b.role?-1:a.role>b.role?1:0)||(a.name<b.name?-1:a.name>b.name?1:0));
+      for(const candidate of ordered) {
+        const locator=page.getByRole(candidate.role,{name:candidate.name,exact:true});
+        if(await locator.count()===1 && await locator.isVisible()) expectations.push(candidate);
+        if(expectations.length===8) break;
+      }
+    }
     if (Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
     checkHost();
-    return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml)});
+    return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
   }
   if (r.op === 'act') {
     const target=await locate(r), locator=await observedLocator(target,r);

@@ -4,7 +4,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 
 // Observer-owned static app. No production accounts, provider, or credential storage.
 export async function startFixture() {
-  let canaryCount = 0, modelCount = 0, fault=null;
+  let canaryCount = 0, modelCount = 0, deleteCount = 0, fault=null;
   const canary = createServer((req,res) => {
     canaryCount++;
     res.setHeader('Access-Control-Allow-Origin','*');
@@ -29,7 +29,9 @@ export async function startFixture() {
     if (u.pathname==='/cart' && fault?.kind==='rename-checkout') {
       res.end(shell(`<main><h1>Cart</h1><button onclick="location.href='/checkout'">Proceed</button></main>`));return;
     }
-    if(u.pathname==='/cart') res.end(shell('<main><h1>Cart</h1><button data-testid="checkout" onclick="location.href=\'/checkout\'">Checkout</button><a href="/guest">Guest checkout</a></main>'));
+    if(u.pathname==='/account/delete' && req.method==='POST') {deleteCount++;res.end(shell('<main><h1>Account deleted</h1></main>'));return;}
+    if(u.pathname==='/account') res.end(shell('<main><h1>Account</h1><form method="post" action="/account/delete"><button>Delete account</button></form></main>'));
+    else if(u.pathname==='/cart') res.end(shell('<main><h1>Cart</h1><button data-testid="checkout" onclick="location.href=\'/checkout\'">Checkout</button><a href="/guest">Guest checkout</a></main>'));
     else if(u.pathname==='/checkout') res.end(shell('<main><h1>Checkout</h1><label>Password<input aria-label="Password" type="password" oninput="document.getElementById(\'echo\').textContent=this.value"></label><div id="echo"></div><button style="display:block;margin-top:160px" onclick="location.href=\'/orders/42\'">Submit order</button></main>'));
     else if(u.pathname==='/guest') res.end(shell('<main><h1>Guest checkout</h1><button onclick="location.href=\'/orders/42\'">Place guest order</button></main>'));
     else if(u.pathname==='/orders/42') res.end(shell('<main><h1>Order 42</h1><button>Continue</button></main>'));
@@ -38,6 +40,7 @@ export async function startFixture() {
     else if(u.pathname==='/redirect-local') {res.writeHead(302,{Location:'/redirect'});res.end();}
     else if(u.pathname==='/redirect') {res.writeHead(302,{Location:canaryOrigin+'/redirected'});res.end();}
     else if(u.pathname==='/sw.js') {res.setHeader('Content-Type','application/javascript');res.end(`fetch('${canaryOrigin}/worker');`);}
+    else if(u.pathname==='/late') res.end(shell(`<main><h1 id="title">Loading</h1><script>setTimeout(()=>{document.getElementById('title').textContent='Ready';const b=document.createElement('button');b.textContent='Continue';document.querySelector('main').append(b);},1500)</script></main>`));
     else {res.writeHead(404);res.end(shell('<h1>Missing</h1>'));}
   });
   await new Promise(done=>app.listen(0,'127.0.0.1',done));
@@ -45,8 +48,8 @@ export async function startFixture() {
     base:`http://127.0.0.1:${app.address().port}`,canaryOrigin,
     modelOrigin:`http://127.0.0.1:${model.address().port}`,
     arm:value=>{fault=value;},
-    counts:()=>({canary:canaryCount,model:modelCount}),
-    reset:()=>{canaryCount=0;modelCount=0;},
+    counts:()=>({canary:canaryCount,model:modelCount,deletes:deleteCount}),
+    reset:()=>{canaryCount=0;modelCount=0;deleteCount=0;},
     close:async()=>{for(const server of [app,canary,model]) {server.closeAllConnections();await new Promise(done=>server.close(done));}},
   };
 }

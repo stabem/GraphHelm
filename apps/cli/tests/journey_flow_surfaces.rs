@@ -461,6 +461,71 @@ fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
     assert_eq!(stale["approvable"], true, "{stale}");
 }
 
+/// #380: the declared actor type is not a credential. The Runtime's agent session token
+/// (`events.agent.token`, minted beside the owner token) cannot approve a flow over HTTP or
+/// through an MCP session that declares itself `owner`; nothing is written.
+#[test]
+fn an_agent_session_token_cannot_approve_whatever_type_it_declares() {
+    let harness = prepared();
+    let (_server, base, _owner) = harness.serve(true);
+    let agent_token = std::fs::read_to_string(harness.events.with_extension("agent.token"))
+        .expect("serve mints the agent session token beside the owner token");
+    let agent_token = agent_token.trim();
+    let before = harness.flow_text("checkout");
+
+    let (status, refused) = http(
+        &base,
+        "POST",
+        "/v1/journey-flows/checkout/approve",
+        Some(agent_token),
+    );
+    assert_eq!(status, 403, "{refused}");
+    let (ok, over_mcp) = harness.mcp_as(
+        "owner",
+        &base,
+        agent_token,
+        "journey_approve",
+        &json!({"id": "checkout"}),
+    );
+    assert!(
+        !ok,
+        "a self-declared owner holding the agent token approved: {over_mcp}"
+    );
+    assert_eq!(harness.flow_text("checkout"), before);
+    assert_eq!(flow(&harness.flows(), "checkout")["status"], "draft");
+
+    // The same token still reads what agents read.
+    let (status, listed) = http(&base, "GET", "/v1/journey-flows", Some(agent_token));
+    assert_eq!(status, 200, "{listed}");
+    let (status, run) = http(
+        &base,
+        "GET",
+        &format!("/v1/executions/{RUN}"),
+        Some(agent_token),
+    );
+    assert_eq!(status, 200, "{run}");
+
+    // Not only the named owner actions: everything outside the agent allow-list is the owner's,
+    // so starting, approving or cancelling a run and rewriting the gateway routes are refused
+    // before any handler, and the run is untouched.
+    for (method, path) in [
+        ("POST", format!("/v1/executions/{RUN}/approve")),
+        ("POST", format!("/v1/executions/{RUN}/cancel")),
+        ("POST", format!("/v1/executions/{RUN}/start")),
+        ("PUT", "/v1/gateway/routes".to_owned()),
+    ] {
+        let (status, refused) = http(&base, method, &path, Some(agent_token));
+        assert_eq!(status, 403, "{method} {path}: {refused}");
+    }
+    let (_, after) = http(
+        &base,
+        "GET",
+        &format!("/v1/executions/{RUN}"),
+        Some(agent_token),
+    );
+    assert_eq!(after["data"]["status"], run["data"]["status"], "{after}");
+}
+
 #[test]
 fn the_flow_routes_without_a_project_refuse_naming_project() {
     let harness = prepared();

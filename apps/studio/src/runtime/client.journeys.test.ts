@@ -80,3 +80,33 @@ describe("RuntimeClient.readImage", () => {
     await expect(runtime.readImage("r", "e")).rejects.toBeInstanceOf(DisconnectedError);
   });
 });
+
+// #409 (journey-first spec §5 points 4-5): Open live, act, close and the session list go through
+// the public routes phase C (#398) ships, and nothing else. A refusal surfaces the Runtime's own
+// message; the Studio never fabricates a session from the open reply.
+describe("RuntimeClient live journey sessions", () => {
+  it("lists sessions from GET /v1/journeys/sessions", async () => {
+    const data = { sessions: [{ sessionId: "s-1", contractId: "checkout", flowId: "checkout", path: "main", stepId: "pay", state: "pass", code: null, at: "pay", screen: null, since: "2026-10-08T03:00:00Z", lastActAt: null, expiresAt: null }] };
+    const { seen, runtime } = client(() => json(data));
+    await expect(runtime.liveSessions()).resolves.toEqual(data);
+    expect(seen[0].url).toBe("/v1/journeys/sessions");
+  });
+  it("opens through POST /v1/journeys/{contractId}/open with the step, path and run", async () => {
+    const { seen, runtime } = client(() => json({ sessionId: "s-1", state: "pass" }));
+    await expect(runtime.openLive("checkout", { stepId: "pay", path: "main", executionId: "run-1" })).resolves.toMatchObject({ sessionId: "s-1" });
+    expect(seen[0].url).toBe("/v1/journeys/checkout/open");
+    await expect(runtime.openLive("../x", { stepId: "pay" })).rejects.toBeInstanceOf(RuntimeError);
+  });
+  it("acts through POST /v1/journeys/sessions/{id}/act and closes through DELETE", async () => {
+    const { seen, runtime } = client(() => json({ sessionId: "s-1", state: "pass", code: null }));
+    await runtime.actLive("s-1", { kind: "activate", role: "button", name: "Pay now" });
+    expect(seen[0].url).toBe("/v1/journeys/sessions/s-1/act");
+    const closed = client(() => json({ sessionId: "s-1", closed: true }));
+    await expect(closed.runtime.closeLive("s-1")).resolves.toEqual({ sessionId: "s-1", closed: true });
+    expect(closed.seen[0].url).toBe("/v1/journeys/sessions/s-1");
+  });
+  it("surfaces a refusal (drift, destructive act, gone session) as the Runtime's message", async () => {
+    const refusal = new Response(JSON.stringify({ ok: false, data: { sessionId: "s-1", state: "drift" }, diagnostics: [{ code: "drift.locator_missing", severity: "error", message: "the Checkout button is gone", path: "/paths/main/edges/cart.checkout/acts/0", source: "graphhelm" }] }), { status: 409, headers: { "content-type": "application/json" } });
+    await expect(client(() => refusal).runtime.openLive("checkout", { stepId: "pay" })).rejects.toThrow(/Checkout button is gone/);
+  });
+});

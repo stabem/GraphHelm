@@ -584,56 +584,6 @@
           "schema": "schemas/token-efficiency-evaluator.schema.json"
         },
         {
-          "id": "skill/code-contract",
-          "kind": "skill",
-          "path": "skills/code-contract/SKILL.md",
-          "sha256": "sha256:54ff82f47fa6aab2e53348371eea76c09746d7cc3aa98dcb107daf975efe03dd",
-          "effects": [
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read"
-          ],
-          "requires": {
-            "capabilities": [],
-            "observers": []
-          },
-          "surfaces": [
-            "tool:events",
-            "tool:status"
-          ],
-          "family": "development-contracts"
-        },
-        {
-          "id": "skill/context-retrieval",
-          "kind": "skill",
-          "path": "skills/context-retrieval/SKILL.md",
-          "sha256": "sha256:b7196350b28b513d75178e5ed45a402099266dba1e8b90a118e88985467c43fc",
-          "effects": [
-            "artifact.propose",
-            "runtime.connect",
-            "runtime.read"
-          ],
-          "permissions": [
-            "network.loopback",
-            "package.read",
-            "runtime.read"
-          ],
-          "requires": {
-            "capabilities": [],
-            "observers": []
-          },
-          "surfaces": [
-            "tool:routes",
-            "tool:status"
-          ],
-          "family": "development-contracts"
-        },
-        {
           "id": "skill/memory-curator",
           "kind": "skill",
           "path": "skills/memory-curator/SKILL.md",
@@ -677,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:a13271e93a18405b853f6623282f7949103b155cb6a64cc2fa82bbf32be95e14",
+      "sha256": "sha256:d0de4946d5343d40c1bebb89f49236aa6942be9f204253c6002dbed7bd3d39ba",
           "effects": [
             "host.discover"
           ],
@@ -968,7 +918,7 @@
           "id": "skill/keel-reference",
           "kind": "skill",
           "path": "skills/keel/REFERENCE.md",
-          "sha256": "sha256:f25551888272880abf654df442c604a0fb93aec68f2199c52a784b8dc772807c",
+          "sha256": "sha256:045030157f1806237c882b673ab5f51692795533d84748654c1b8762c8de3739",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -993,7 +943,7 @@
           "id": "skill/test-audit",
           "kind": "skill",
           "path": "skills/test-audit/SKILL.md",
-      "sha256": "sha256:3f35707c5aff59f5baee9a7cadbf0672ce251c709f781c1a585ba01c981601d2",
+      "sha256": "sha256:d10d9100ffc695889257b23b2fdd25eec29faec2633b1ad11a00cc5f2954c043",
           "effects": [],
           "permissions": [
             "package.read"
@@ -1002,6 +952,50 @@
             "capabilities": [],
             "observers": []
           },
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/task-plan",
+          "kind": "skill",
+          "path": "skills/task-plan/SKILL.md",
+          "sha256": "sha256:5e88cfac0024c0f974be2c83eb295f49090d586f866f2582ca987337d9ff27b4",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/implement",
+          "kind": "skill",
+          "path": "skills/implement/SKILL.md",
+          "sha256": "sha256:d81cb5be1923e24917dd302f4d836505bb5417a8dec261813c0671575f7dacaa",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/blind-review",
+          "kind": "skill",
+          "path": "skills/blind-review/SKILL.md",
+          "sha256": "sha256:54fd8f57f04805b7643b4135441390815d8a18b5269262ffca419fe484e6ea1c",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
+          "family": "development-contracts"
+        },
+        {
+          "id": "skill/merge",
+          "kind": "skill",
+          "path": "skills/merge/SKILL.md",
+          "sha256": "sha256:a5baeacf8744d20cde70a18f4524bfc3f42967239b499167270bae1890f04fe0",
+          "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
+          "permissions": ["network.loopback", "package.read", "runtime.read"],
+          "requires": {"capabilities": [], "observers": []},
+          "surfaces": ["tool:events", "tool:status"],
           "family": "development-contracts"
         },
         {

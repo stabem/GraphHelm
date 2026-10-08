@@ -1,6 +1,6 @@
 ---
 name: graphhelm-setup
-description: Use when the owner wants to inspect or adopt GraphHelm in a Claude Code or Codex host, asks about graphhelm setup, or invokes graphhelm-setup to review host configuration and recovery.
+description: Use when the owner wants to inspect or adopt GraphHelm in a Claude Code or Codex host, start GraphHelm for a project (Runtime and Studio), asks about graphhelm setup, or invokes graphhelm-setup to review host configuration and recovery.
 ---
 
 # GraphHelm setup
@@ -66,6 +66,20 @@ marketplace, keep the bundled skills current with `graphhelm skills sync --host 
 with `--dry-run`; `--home` defaults to `CODEX_HOME`, then `~/.codex`). Report its `foreign` and
 `modified` lists to the owner: those directories are not GraphHelm's to overwrite, and the command
 left them as they were.
+
+## Start GraphHelm for a project
+
+When the owner asks to start GraphHelm (bring up the environment, open the Studio) rather than to
+adopt it into a host, use the commands that exist and ask nothing unless something is broken:
+
+1. `graphhelm init --project <project>` provisions `.graphhelm/` (events, sealing key and keyring,
+   bearer token), registers the MCP server for the hosts it detects, and prints the next commands.
+   It is idempotent and never rotates an existing key or prints a secret.
+2. `graphhelm studio start` from the project directory brings the GraphHelm clone up to date and
+   opens the Studio for that project, starting its Runtime when none answers.
+3. Confirm with the Runtime itself (`mcp__graphhelm__status` or `graphhelm execution status`), not
+   with the start command's exit code. If the Runtime does not answer, report the exact refusal
+   (key, keyring, port) and stop; do not hand-edit `.graphhelm/` to force it.
 
 Prefer the GraphHelm MCP tools (`mcp__graphhelm__*`, or `mcp__plugin_graphhelm_graphhelm__*` from this plugin) for Runtime reads once they are connected; the adoption commands above stay CLI-only.
 

@@ -15,7 +15,7 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive'], snapshot: ['expect','discover'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], close: [],
 };
@@ -23,9 +23,10 @@ const roles = new Set(['banner','complementary','contentinfo','form','main','nav
 const landmarks = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search']);
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
-let requestId = 0, opened = false, closed = false, headed = false;
+let requestId = 0, opened = false, closed = false, headed = false, survive = false;
 // A headed (live) session survives an observation failure so the owner sees where the journey
-// broke (#398). Protocol, privacy and host failures still end it.
+// broke (#398); so does a healing replay's session, which repairs the broken edge in place
+// (#356). Protocol, privacy and host failures still end it.
 const SURVIVABLE = new Set(['driver.locator_missing','driver.locator_ambiguous','driver.expectation_failed','driver.action_failed','driver.timeout']);
 const secretInputs = [];
 const args = process.argv.slice(2);
@@ -61,6 +62,7 @@ function validate(r) {
   if (!exactKeys(r,['protocol','requestId','op'],fields[r.op])) fail('driver.protocol_invalid');
   if (r.op === 'open') {
     if (Object.hasOwn(r,'headed') && typeof r.headed !== 'boolean') fail('driver.protocol_invalid');
+    if (Object.hasOwn(r,'survive') && typeof r.survive !== 'boolean') fail('driver.protocol_invalid');
     if (!exactKeys(r.viewport,['width','height']) || ![r.viewport.width,r.viewport.height].every(n => Number.isInteger(n) && n > 0 && n <= 16384) || r.viewport.width*r.viewport.height > 16777216 || !Array.isArray(r.allowOrigins) || r.allowOrigins.length > 32) fail('driver.protocol_invalid');
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
   } else if (r.op === 'snapshot') {
@@ -170,7 +172,7 @@ function skeleton(aria) {
 async function run(r) {
   if (r.op === 'open') {
     if (opened) fail('driver.protocol_invalid');
-    headed = r.headed === true;
+    headed = r.headed === true; survive = headed || r.survive === true;
     const parsed=url(r.base,true); baseOrigin=parsed.origin;
     allowed = new Set([baseOrigin,...r.allowOrigins.map(o=>url(o,false,true).origin)]);
     let chromium;
@@ -308,7 +310,7 @@ async function reply(r) {
   let line=JSON.stringify(result)+'\n';
   if (Buffer.byteLength(line)>FRAME) line=JSON.stringify({protocol:PROTOCOL,requestId:result.requestId,ok:false,code:'driver.frame_too_large',path:'/'})+'\n';
   await new Promise(resolveWrite => process.stdout.write(line,resolveWrite));
-  if (!result.ok && headed && opened && SURVIVABLE.has(result.code)) return true;
+  if (!result.ok && survive && opened && SURVIVABLE.has(result.code)) return true;
   if (!result.ok) { await release().catch(()=>{}); process.exitCode=1; return false; }
   return !closed;
 }

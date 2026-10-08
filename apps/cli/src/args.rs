@@ -304,6 +304,15 @@ pub struct JourneyReplayArgs {
     /// Internal contained worker; the ordinary supervisor supplies its start handshake.
     #[arg(long, hide = true)]
     pub replay_worker: bool,
+    /// On drift, hand only the broken edge to the model door (at most eight acts) and keep the
+    /// repair only when the edge's original destination is observed. Needs a model source.
+    #[arg(long)]
+    pub heal: bool,
+    #[command(flatten)]
+    pub model: JourneyModelArgs,
+    /// Anchored action-name patterns a healing act may use for risky names (as in explore).
+    #[arg(long)]
+    pub allow_act: Vec<String>,
 }
 
 #[derive(Debug, Args)]

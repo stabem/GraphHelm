@@ -724,14 +724,16 @@ fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
     Some(files)
 }
 
-/// Ordinary replay found drift on an approved flow: persist it as a draft fact. The writer lock
-/// and a re-read of the replayed source refuse a concurrent edit instead of merging into it.
+/// Replay found drift on an approved flow: persist it as a draft fact, and with `repair` (heal)
+/// replace only that edge's acts. The writer lock and a re-read of the replayed source refuse a
+/// concurrent edit instead of merging into it; the result passes the agent-draft validator.
 pub(crate) fn record_drift(
     project: &Path,
     file: &Path,
     replayed: &Value,
     entry: Value,
-) -> Result<(), &'static str> {
+    repair: Option<&[Value]>,
+) -> Result<Value, &'static str> {
     let _lock = write_lock(project).map_err(|_| "replay.drift_unpersisted")?;
     let (_, mut flow) = read(file).map_err(|_| "replay.source_changed")?;
     if flow != *replayed {
@@ -739,8 +741,25 @@ pub(crate) fn record_drift(
     }
     flow["status"] = json!("draft");
     flow["approved"] = Value::Null;
+    if let Some(acts) = repair {
+        let edge = flow["edges"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|edge| edge["id"] == entry["edge"])
+            .ok_or("heal.repair_invalid")?;
+        edge["acts"] = acts.to_vec().into();
+    }
     flow["drift"].as_array_mut().unwrap().push(entry);
-    atomic_write(file, canonical(&flow, false).as_bytes()).map_err(|_| "replay.drift_unpersisted")
+    let text = draft_bytes(&flow, project).map_err(|_| {
+        if repair.is_some() {
+            "heal.repair_invalid"
+        } else {
+            "replay.drift_unpersisted"
+        }
+    })?;
+    atomic_write(file, text.as_bytes()).map_err(|_| "replay.drift_unpersisted")?;
+    Ok(flow)
 }
 
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {

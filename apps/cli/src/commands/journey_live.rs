@@ -120,6 +120,9 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
         key_id: args.key_id.clone(),
         allow_origin: args.allow_origin.clone(),
         replay_worker: false,
+        heal: false,
+        model: Default::default(),
+        allow_act: Vec::new(),
     }
 }
 

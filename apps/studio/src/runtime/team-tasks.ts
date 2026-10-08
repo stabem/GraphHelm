@@ -180,13 +180,17 @@ export interface TaskEventRecord {
  * record is refused, like the Runtime's admission). */
 function words(document: Record<string, unknown>): { title?: string; summary?: string } | false {
   const out: { title?: string; summary?: string } = {};
+  // Characters (code points), as the schema, the Runtime and the recipe count them: `.length`
+  // counts UTF-16 units, so an emoji would count twice (#486 review).
+  const characters = (value: unknown, maximum: number) =>
+    typeof value === "string" && Array.from(value).length <= maximum ? text(value, value.length) : null;
   if (document.title !== undefined) {
-    const title = text(document.title, 200);
+    const title = characters(document.title, 200);
     if (title === null) return false;
     out.title = title;
   }
   if (document.summary !== undefined) {
-    const summary = text(document.summary, 300);
+    const summary = characters(document.summary, 300);
     if (summary === null) return false;
     out.summary = summary;
   }

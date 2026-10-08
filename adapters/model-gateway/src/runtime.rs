@@ -443,35 +443,40 @@ impl CleanupSupervisor {
     }
 }
 
-/// Reap only after the non-reaping process-tree observer has confirmed the leader exited. A
-/// failed or exhausted observation transfers the child to a named background reaper, which keeps
-/// process ownership until the OS reports exit without blocking this adapter call.
+/// A self-updater's version folder name: 8 to 64 ASCII hex digits (Codex uses 16).
+fn is_version_folder(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|name| {
+        (8..=64).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
 /// The executable a native route spawns. A configured path that exists, or a bare program name
-/// (resolved by the OS search path), is used as is. When a configured path is missing because a
-/// self-updating CLI replaced its versioned folder (Codex installs `bin/<version>/codex.exe`
-/// and deletes the old folder, #370), the newest sibling `bin/*/<same file name>` is used instead.
-/// Nothing outside that `bin` folder is ever considered, and no sibling means the configured
-/// path is returned unchanged, so the spawn still fails as before.
+/// (resolved by the OS search path), is used as is. Only a missing path with the replaced-version
+/// shape `<install>/bin/<version>/<file>` (a self-updater such as Codex installs
+/// `bin/<16-hex>/codex.exe` and deletes the old folder, #370) falls back, to the newest
+/// `bin/<version>/<same file name>` whose folder has the same version shape. Any other missing
+/// path is returned unchanged, so the spawn fails and probe names it.
 pub fn resolve_program(program: &std::path::Path) -> std::path::PathBuf {
     let unchanged = || program.to_path_buf();
-    if program.is_file()
-        || program
-            .parent()
-            .is_none_or(|parent| parent.as_os_str().is_empty())
-    {
+    if program.is_file() {
         return unchanged();
     }
-    let (Some(name), Some(bin)) = (
-        program.file_name(),
-        program.parent().and_then(|v| v.parent()),
-    ) else {
+    let version = program.parent();
+    let bin = version.and_then(std::path::Path::parent);
+    let (Some(name), Some(version), Some(bin)) = (program.file_name(), version, bin) else {
         return unchanged();
     };
+    let shaped = version.file_name().is_some_and(is_version_folder)
+        && bin.file_name().is_some_and(|folder| folder == "bin");
+    if !shaped {
+        return unchanged();
+    }
     let Ok(entries) = std::fs::read_dir(bin) else {
         return unchanged();
     };
     entries
         .filter_map(Result::ok)
+        .filter(|entry| is_version_folder(&entry.file_name()))
         .map(|entry| entry.path().join(name))
         .filter(|candidate| candidate.is_file())
         .filter_map(|candidate| {
@@ -482,6 +487,9 @@ pub fn resolve_program(program: &std::path::Path) -> std::path::PathBuf {
         .map_or_else(unchanged, |(_, newest)| newest)
 }
 
+/// Reap only after the non-reaping process-tree observer has confirmed the leader exited. A
+/// failed or exhausted observation transfers the child to a named background reaper, which keeps
+/// process ownership until the OS reports exit without blocking this adapter call.
 fn reap_after_observed_exit(
     mut child: std::process::Child,
     deadline: Instant,

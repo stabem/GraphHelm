@@ -167,6 +167,14 @@ pub enum JourneyCommand {
     Act(JourneyActArgs),
     /// Close an open live session and its browser.
     Close(JourneyCloseArgs),
+    /// List the project's open live sessions and their current state.
+    Sessions(JourneySessionsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneySessionsArgs {
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args, Clone)]

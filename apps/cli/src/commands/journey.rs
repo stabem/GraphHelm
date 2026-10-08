@@ -40,6 +40,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Open(open) => super::journey_live::open(open),
         JourneyCommand::Act(act) => super::journey_live::act(act),
         JourneyCommand::Close(close) => super::journey_live::close(close),
+        JourneyCommand::Sessions(sessions) => super::journey_live::sessions(sessions),
         JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
 }

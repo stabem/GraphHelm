@@ -233,6 +233,18 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
     assert_eq!(opened["data"]["headed"], true);
     assert_eq!(opened["data"]["modelCalls"], 0);
     let session = opened["data"]["sessionId"].as_str().unwrap().to_owned();
+    // The session's state is readable without contacting the host (the Studio chip's source).
+    let (code, listed) = journey(&project, &["sessions"]);
+    assert_eq!(code, 0, "{listed}");
+    let row = &listed["data"]["sessions"][0];
+    assert_eq!(row["sessionId"], session.as_str(), "{listed}");
+    assert_eq!(row["contractId"], "checkout", "{listed}");
+    assert_eq!(row["stepId"], "pay", "{listed}");
+    assert_eq!(row["state"], "pass", "{listed}");
+    assert!(
+        row.get("port").is_none() && row.get("pid").is_none(),
+        "{listed}"
+    );
     // The owner or an agent continues from the open step through the same session.
     let (code, acted) = journey(
         &project,
@@ -284,6 +296,8 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
             .exists(),
         "close removes the session record"
     );
+    let (_, listed) = journey(&project, &["sessions"]);
+    assert_eq!(listed["data"]["sessions"], json!([]), "{listed}");
 
     // Rename the cart's button: the walk stops at the broken edge and the browser stays there.
     assert_eq!(app.control(r#"{"kind":"rename-checkout"}"#)["armed"], true);

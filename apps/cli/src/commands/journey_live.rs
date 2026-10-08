@@ -24,7 +24,9 @@ use super::journey_replay::{
     load_cache, observe, observer_ready, preflight, record, safe_directory, safe_environment,
     safe_node, url_matches,
 };
-use crate::args::{JourneyActArgs, JourneyCloseArgs, JourneyOpenArgs, JourneyReplayArgs};
+use crate::args::{
+    JourneyActArgs, JourneyCloseArgs, JourneyOpenArgs, JourneyReplayArgs, JourneySessionsArgs,
+};
 use crate::output::{CommandOutput, Outcome};
 
 const OPEN: &str = "journey.open";
@@ -288,6 +290,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value, detach_std: bool) -> Outcome 
 }
 
 struct Session {
+    record: Value,
     id: String,
     project: PathBuf,
     flow: Value,
@@ -531,10 +534,20 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         )?;
         data["liveCaptureSignalId"] = signal.into();
     }
+    data["code"] = step_failure
+        .as_ref()
+        .map_or(Value::Null, |(code, _, _)| Value::from(*code));
     let session = start_session(
         &project, args, flow, base, contract, visited, current, driver, output, recording, data,
     )?;
     Ok((session, step_failure))
+}
+
+fn save_record(path: &Path, record: &Value) -> Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(record).unwrap();
+    bytes.push(b'\n');
+    super::journey_flow::atomic_write(path, &bytes)
+        .map_err(|_| failure("live.session_unwritable", "/session", 1))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -566,15 +579,19 @@ fn start_session(
         .map_err(|_| failure("live.session_unwritable", "/session/port", 1))?
         .port();
     let expires = RUN_BUDGET.as_secs();
-    let record = json!({"sessionId":id,"flowId":args.id,"path":data["path"],"step":args.step,
-        "port":port,"pid":std::process::id(),"expiresInSeconds":expires});
-    let mut bytes = serde_json::to_vec_pretty(&record).unwrap();
-    bytes.push(b'\n');
-    super::journey_flow::atomic_write(&dir.join(format!("{id}.json")), &bytes)
-        .map_err(|_| failure("live.session_unwritable", "/session", 1))?;
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires as i64);
+    // The session's readable state (the Studio chip, #409, reads it through `journey
+    // sessions`): updated after every act, removed on close. Port and pid address the host.
+    let record = json!({"sessionId":id,"contractId":contract,"flowId":args.id,"path":data["path"],
+        "stepId":args.step,"state":data["state"],"code":data["code"],"at":data["at"],
+        "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,
+        "expiresAt":expires_at.to_rfc3339(),"port":port,"pid":std::process::id()});
+    save_record(&dir.join(format!("{id}.json")), &record)?;
     data["sessionId"] = id.clone().into();
+    data["contractId"] = contract.clone().into();
     data["expiresInSeconds"] = expires.into();
     Ok(Session {
+        record,
         id,
         project: project.to_path_buf(),
         flow,
@@ -763,7 +780,56 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
             }
         }
     }
+    session.record["state"] = reply["state"].clone();
+    session.record["code"] = reply["code"].clone();
+    session.record["screen"] = reply["screen"].clone();
+    session.record["at"] = reply["screen"].clone();
+    session.record["lastActAt"] = chrono::Utc::now().to_rfc3339().into();
+    let path = session
+        .project
+        .join(SESSIONS)
+        .join(format!("{}.json", session.id));
+    let _ = save_record(&path, &session.record);
     (reply, true)
+}
+
+/// `journey sessions` (#398; the Studio's live chip, #409, reads it): every live session record
+/// of the project whose run budget has not ended, newest first. Read-only; no host is contacted.
+pub(super) fn sessions(args: &JourneySessionsArgs) -> Outcome {
+    const SESSIONS_COMMAND: &str = "journey.sessions";
+    let project = match project_of(args.project.as_deref()) {
+        Ok(project) => project,
+        Err(failed) => return report(SESSIONS_COMMAND, json!({"sessions": []}), Some(failed)),
+    };
+    let now = chrono::Utc::now();
+    let mut sessions: Vec<Value> = std::fs::read_dir(project.join(SESSIONS))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_suffix(".json"))
+                .is_some_and(valid_session)
+                && safe_node(&entry.path())
+        })
+        .filter_map(|entry| {
+            let bytes = std::fs::read(entry.path()).ok()?;
+            let mut record: Value = serde_json::from_slice(&bytes).ok()?;
+            let expires =
+                chrono::DateTime::parse_from_rfc3339(record["expiresAt"].as_str()?).ok()?;
+            if expires < now {
+                return None;
+            }
+            let object = record.as_object_mut()?;
+            object.remove("port");
+            object.remove("pid");
+            Some(record)
+        })
+        .collect();
+    sessions.sort_by(|a, b| b["since"].as_str().cmp(&a["since"].as_str()));
+    Outcome::success(SESSIONS_COMMAND, json!({"sessions": sessions}))
 }
 
 /// The client half of `act` and `close`: one request to the session host, one reply.

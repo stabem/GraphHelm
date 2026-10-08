@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 40] = [
+const TOOLS: [ToolSpec; 41] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -155,6 +155,14 @@ const TOOLS: [ToolSpec; 40] = [
                       /v1/journeys/sessions/{sessionId}; exactly `graphhelm journey close`). \
                       Owner credential only.",
         schema: journey_close_schema,
+    },
+    ToolSpec {
+        name: "journey_sessions",
+        description: "List the Runtime project's open live journey sessions (GET \
+                      /v1/journeys/sessions; exactly `graphhelm journey sessions`): each \
+                      session's contract, step, state (pass, fail, drift, unknown), code, the \
+                      screen it is on and when it last acted. Read-only. Owner credential only.",
+        schema: no_arguments_schema,
     },
     ToolSpec {
         name: "events",
@@ -1619,6 +1627,13 @@ pub(crate) fn call(
                 None,
             )
         }),
+        "journey_sessions" => Ok(api.request(
+            "GET",
+            &url::segment_path(&["v1", "journeys", "sessions"]),
+            None,
+            None,
+            None,
+        )),
         "journey_close" => require(arguments, "sessionId").map(|session| {
             api.request(
                 "DELETE",

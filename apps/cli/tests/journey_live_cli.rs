@@ -152,6 +152,14 @@ fn a_step_no_path_reaches_and_a_partial_recording_bundle_are_refused() {
 #[test]
 fn act_and_close_without_a_live_session_are_refused() {
     let dir = approved();
+    let (code, listed) = cli(dir.path(), &["sessions"]);
+    assert_eq!(code, 0, "{listed}");
+    assert_eq!(listed["command"], "journey.sessions");
+    assert_eq!(
+        listed["data"]["sessions"],
+        serde_json::json!([]),
+        "{listed}"
+    );
     refuses(
         dir.path(),
         &[

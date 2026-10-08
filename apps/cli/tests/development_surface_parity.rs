@@ -149,7 +149,7 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 32] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 33] = [
     // #360. Agent workspaces are host filesystem housekeeping for lanes: a read and an
     // owner-only sweep, beside the Runtime verbs, not development-contract operations.
     "workspace_list",
@@ -171,6 +171,7 @@ const NON_DEVELOPMENT_TOOLS: [&str; 32] = [
     "journey_open",
     "journey_act",
     "journey_close",
+    "journey_sessions",
     "events",
     "evidence",
     "signal",

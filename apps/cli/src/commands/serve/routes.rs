@@ -1965,6 +1965,16 @@ pub(super) async fn act_journey(
     .await
 }
 
+/// `GET /v1/journeys/sessions` (#398): exactly `graphhelm journey sessions`.
+pub(super) async fn journey_sessions(State(state): State<ServeState>) -> Response {
+    flow_command(state, "journey.sessions", move |project| {
+        crate::commands::journey_live::sessions(&crate::args::JourneySessionsArgs {
+            project: Some(project),
+        })
+    })
+    .await
+}
+
 /// `DELETE /v1/journeys/sessions/{id}` (#398): exactly `graphhelm journey close`.
 pub(super) async fn close_journey(
     State(state): State<ServeState>,

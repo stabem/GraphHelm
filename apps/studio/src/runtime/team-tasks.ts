@@ -171,6 +171,26 @@ export interface TaskEventRecord {
   repo?: string;
   mergeSha?: string;
   closes?: number[];
+  /** #477: the issue's (claimed) or the PR's (pr_opened) title and one-line summary. */
+  title?: string;
+  summary?: string;
+}
+
+/** #477: optional words for the Team tab. Absent is `{}`; present but malformed is `false` (the
+ * record is refused, like the Runtime's admission). */
+function words(document: Record<string, unknown>): { title?: string; summary?: string } | false {
+  const out: { title?: string; summary?: string } = {};
+  if (document.title !== undefined) {
+    const title = text(document.title, 200);
+    if (title === null) return false;
+    out.title = title;
+  }
+  if (document.summary !== undefined) {
+    const summary = text(document.summary, 300);
+    if (summary === null) return false;
+    out.summary = summary;
+  }
+  return out;
 }
 
 function count(value: unknown): number | null {
@@ -206,7 +226,9 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const issue = count(document.issue);
       const lane = text(document.lane, 128);
       const branch = text(document.branch, 256);
-      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch, ...(repo === null ? {} : { repo }) } : null;
+      const said = words(document);
+      if (said === false) return null;
+      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch, ...said, ...(repo === null ? {} : { repo }) } : null;
     }
     case "task.pr_opened": {
       const repo = repository(document.repo);
@@ -215,7 +237,9 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const headSha = sha(document.headSha);
       const lane = text(document.lane, 128);
       const journeys = Array.isArray(document.journeys) && document.journeys.every((id) => taskIdentity(id) !== null) ? document.journeys as string[] : null;
-      return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys, ...(repo === null ? {} : { repo }) } : null;
+      const said = words(document);
+      if (said === false) return null;
+      return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys, ...said, ...(repo === null ? {} : { repo }) } : null;
     }
     case "task.review_assigned": {
       const pr = count(document.pr);
@@ -271,6 +295,11 @@ export interface TaskState {
    * no `pr_opened` has named yet (applied if that `pr_opened` arrives later, e.g. a back-fill), or an
    * older recorded head that a newer push superseded. Dropping them drew "no review" where one exists. */
   strayVerdicts: StrayVerdict[];
+  /** #477: the issue's title and summary (from `task.claimed`) and the PR's (from `task.pr_opened`). */
+  title: string | null;
+  summary: string | null;
+  prTitle: string | null;
+  prSummary: string | null;
   /** Every head a `pr_opened` named, in order. */
   recordedHeads: string[];
   lastSequence: number;
@@ -302,7 +331,7 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
     const slice: TaskState = {
       key: "", taskId: event.taskId, branch: null, issue: null, pr: event.kind === "task.claimed" ? null : event.pr ?? null,
       lane: null, headSha: null, journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null,
-      repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
+      repoUrl: null, title: null, summary: null, prTitle: null, prSummary: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
     };
     slices.push(slice);
     return slice;
@@ -339,6 +368,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     switch (event.kind) {
       case "task.claimed":
         state.branch = event.branch ?? state.branch;
+        state.title = event.title ?? state.title;
+        state.summary = event.summary ?? state.summary;
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
@@ -347,6 +378,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.pr = event.pr ?? state.pr;
         state.lane = event.lane ?? state.lane;
+        state.prTitle = event.title ?? state.prTitle;
+        state.prSummary = event.summary ?? state.prSummary;
         state.headSha = event.headSha ?? state.headSha;
         state.journeys = event.journeys ?? state.journeys;
         state.step = "review";

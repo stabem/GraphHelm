@@ -49,7 +49,7 @@ describe("TaskGraphs", () => {
   it("opens the Journey tab on a journey the PR named", () => {
     const onOpenJourney = vi.fn();
     render(<TaskGraphs tasks={twoTasks()} onOpenJourney={onOpenJourney} />);
-    fireEvent.click(screen.getByRole("button", { name: "studio-see-team" }));
+    fireEvent.click(screen.getByRole("link", { name: "studio-see-team" }));
     expect(onOpenJourney).toHaveBeenCalledWith("studio-see-team");
   });
 

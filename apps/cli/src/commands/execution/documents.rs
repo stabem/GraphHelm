@@ -193,6 +193,11 @@ pub(crate) fn validate_task_event(
             .get("repo")
             .is_none_or(|repo| repo.as_str().is_some_and(valid_repo))
     };
+    // #477: optional `title` / `summary` on claimed and pr_opened, the schema's `$defs` limits.
+    let words = || {
+        document.get("title").is_none_or(|_| short("title", 200))
+            && document.get("summary").is_none_or(|_| short("summary", 300))
+    };
     let numbers = |key: &str| {
         document[key]
             .as_array()
@@ -218,12 +223,18 @@ pub(crate) fn validate_task_event(
                 && is_actor("lane")
                 && short("branch", 256)
                 && (document.get("plan").is_none() || document["plan"].is_object())
-                && repo(),
-            &["issue", "lane", "branch", "plan", "repo"],
+                && repo()
+                && words(),
+            &["issue", "lane", "branch", "plan", "repo", "title", "summary"],
         ),
         "task.pr_opened" => (
-            count("pr") && sha("headSha") && ids("journeys") && is_actor("lane") && repo(),
-            &["pr", "headSha", "journeys", "lane", "repo"],
+            count("pr")
+                && sha("headSha")
+                && ids("journeys")
+                && is_actor("lane")
+                && repo()
+                && words(),
+            &["pr", "headSha", "journeys", "lane", "repo", "title", "summary"],
         ),
         "task.review_assigned" => (
             count("pr")

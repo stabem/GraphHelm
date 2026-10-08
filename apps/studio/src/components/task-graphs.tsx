@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import type { TaskState, TaskStep } from "../runtime/team-tasks";
 
 /* #391 (journey-first spec §7, Rule 5): one small graph per task, folded from the `task.*` records
@@ -20,7 +22,47 @@ export interface TaskGraphsProps {
 }
 
 function title(task: TaskState): string {
-  return task.issue !== null ? `Issue #${task.issue}` : task.pr !== null ? `PR #${task.pr}` : task.taskId;
+  const name = task.issue !== null ? `Issue #${task.issue}` : task.pr !== null ? `PR #${task.pr}` : task.taskId;
+  return task.title !== null ? `${name} · ${task.title}` : name;
+}
+
+/** #477: a PR title reads as what changes for the user; its conventional `type(area):` prefix is
+ * for the squash commit, not for the owner. */
+function plainTitle(text: string): string {
+  return text.replace(/^[a-z]+(\([^)]*\))?!?:\s*/, "");
+}
+
+/** #477 (owner): what needs a person first. Blocked, then in review (review or merge), then
+ * implementing; inside each, the newest activity first. Delivered tasks go last, collapsed. */
+function rank(task: TaskState): number {
+  return task.blockedBy !== null ? 0 : task.step === "review" || task.step === "merge" ? 1 : 2;
+}
+function ordered(tasks: TaskState[]): { open: TaskState[]; delivered: TaskState[] } {
+  const newest = (a: TaskState, b: TaskState) => b.lastSequence - a.lastSequence;
+  return {
+    open: tasks.filter((task) => task.step !== "merged").sort((a, b) => rank(a) - rank(b) || newest(a, b)),
+    delivered: tasks.filter((task) => task.step === "merged").sort(newest),
+  };
+}
+
+/** #477: the rows whose last record moved since the previous render, marked for a few seconds so
+ * the owner sees what just changed. The first render marks nothing. */
+function useChanged(tasks: TaskState[]): Set<string> {
+  const seen = useRef<Map<string, number> | null>(null);
+  const [changed, setChanged] = useState<Set<string>>(() => new Set());
+  const now = new Map(tasks.map((task) => [task.key, task.lastSequence]));
+  const fresh = seen.current === null ? [] : tasks.filter((task) => seen.current!.get(task.key) !== task.lastSequence).map((task) => task.key);
+  const signature = fresh.join("\u0000");
+  useEffect(() => {
+    seen.current = now;
+    if (fresh.length === 0) return;
+    setChanged(new Set(fresh));
+    const timer = setTimeout(() => setChanged(new Set()), 4000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+  if (seen.current === null) seen.current = now;
+  return fresh.length > 0 ? new Set(fresh) : changed;
 }
 
 function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, "merged">; label: string }) {
@@ -42,46 +84,30 @@ function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, 
   );
 }
 
-/** #481 (owner): what needs a person first. Blocked, then in review (review or merge), then
- * implementing, each newest activity first; delivered tasks last, collapsed. */
-function rank(task: TaskState): number {
-  return task.blockedBy !== null ? 0 : task.step === "review" || task.step === "merge" ? 1 : 2;
-}
-const newest = (a: TaskState, b: TaskState) => b.lastSequence - a.lastSequence;
-
-export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
-  if (tasks.length === 0) return null;
-  const active = tasks.filter((task) => task.step !== "merged").sort((a, b) => rank(a) - rank(b) || newest(a, b));
-  const delivered = tasks.filter((task) => task.step === "merged").sort(newest);
-  const graph = (task: TaskState) => <Graph key={task.key} task={task} onOpenJourney={onOpenJourney} />;
+function Graph({ task, changed, onOpenJourney }: { task: TaskState; changed: boolean; onOpenJourney: (contractId: string) => void }) {
   return (
-    <section className="task-graphs" aria-label="Tasks">
-      {active.map(graph)}
-      {delivered.length > 0 && (
-        <details className="task-graphs-delivered">
-          <summary>Delivered ({delivered.length})</summary>
-          {delivered.map(graph)}
-        </details>
-      )}
-    </section>
-  );
-}
-
-function Graph({ task, onOpenJourney }: { task: TaskState; onOpenJourney: (contractId: string) => void }) {
-  return (
-    <div className="task-graph" role="group" aria-label={title(task)}>
+    <div className={changed ? "task-graph task-graph-changed" : "task-graph"} role="group" aria-label={title(task)}>
       <div className="task-graph-head">
-        {task.repoUrl !== null && task.issue !== null
-          ? <a href={`${task.repoUrl}/issues/${task.issue}`} target="_blank" rel="noreferrer">{title(task)}</a>
-          : <strong>{title(task)}</strong>}
-        {task.pr !== null && (task.repoUrl !== null
-          ? <a href={`${task.repoUrl}/pull/${task.pr}`} target="_blank" rel="noreferrer">PR #{task.pr}</a>
-          : <span>PR #{task.pr}</span>)}
+        {task.issue !== null && (task.repoUrl !== null
+          ? <a href={`${task.repoUrl}/issues/${task.issue}`} target="_blank" rel="noreferrer">#{task.issue}</a>
+          : <strong>#{task.issue}</strong>)}
+        {task.issue === null && <strong>{title(task)}</strong>}
+        {task.title !== null && <span className="task-graph-title" title={task.title}>{task.title}</span>}
         {task.step === "merged" && <span className="task-graph-merged">merged</span>}
-        {task.journeys.map((journey) => (
-          <button key={journey} type="button" className="task-graph-journey" onClick={() => onOpenJourney(journey)}>{journey}</button>
-        ))}
       </div>
+      {task.summary !== null && <p className="task-graph-summary" title={task.summary}>{task.summary}</p>}
+      {task.pr !== null && (
+        <p className="task-graph-pr">
+          {task.repoUrl !== null
+            ? <a href={`${task.repoUrl}/pull/${task.pr}`} target="_blank" rel="noreferrer">PR #{task.pr}</a>
+            : <span>PR #{task.pr}</span>}
+          {task.prTitle !== null && <span className="task-graph-title" title={task.prTitle}>{plainTitle(task.prTitle)}</span>}
+          {task.journeys.map((journey) => (
+            <a key={journey} href={`#journey/${encodeURIComponent(journey)}`} className="task-graph-journey"
+              onClick={(event) => { event.preventDefault(); onOpenJourney(journey); }}>{journey}</a>
+          ))}
+        </p>
+      )}
       <ol className="task-graph-steps">
         {STEPS.map(({ step, label }) => <Node key={step} task={task} step={step} label={label} />)}
       </ol>
@@ -90,12 +116,34 @@ function Graph({ task, onOpenJourney }: { task: TaskState; onOpenJourney: (contr
             blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
           </a>
         : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
-      {task.strayVerdicts.map((stray, index) => (
-        <p key={index} className="task-graph-stray">
-          {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
-            ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
-        </p>
-      ))}
+      {task.strayVerdicts.length > 0 && (
+        <details className="task-graph-details">
+          <summary>Details</summary>
+          {task.strayVerdicts.map((stray, index) => (
+            <p key={index} className="task-graph-stray">
+              {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
+                ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
+            </p>
+          ))}
+        </details>
+      )}
     </div>
+  );
+}
+
+export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
+  const changed = useChanged(tasks);
+  if (tasks.length === 0) return null;
+  const { open, delivered } = ordered(tasks);
+  return (
+    <section className="task-graphs" aria-label="Tasks">
+      {open.map((task) => <Graph key={task.key} task={task} changed={changed.has(task.key)} onOpenJourney={onOpenJourney} />)}
+      {delivered.length > 0 && (
+        <details className="task-graphs-delivered">
+          <summary>Delivered ({delivered.length})</summary>
+          {delivered.map((task) => <Graph key={task.key} task={task} changed={changed.has(task.key)} onOpenJourney={onOpenJourney} />)}
+        </details>
+      )}
+    </section>
   );
 }

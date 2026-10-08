@@ -70,20 +70,49 @@ fn live_tickets(dir: &Path, mine: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(live)
 }
 
-/// The workspace's own package names, for `--clean-workspace` (`cargo metadata --no-deps`).
+/// The workspace's own package names, for `--clean-workspace` (`cargo metadata --no-deps`, run
+/// in the current directory). `None` when the directory is no cargo workspace or cargo fails.
 fn workspace_packages(cargo: &str) -> Option<Vec<String>> {
     let output = Command::new(cargo)
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .output()
         .ok()?;
+    if !output.status.success() {
+        return None;
+    }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    Some(
-        value["packages"]
-            .as_array()?
-            .iter()
-            .filter_map(|package| package["name"].as_str().map(str::to_owned))
-            .collect(),
-    )
+    let packages: Vec<String> = value["packages"]
+        .as_array()?
+        .iter()
+        .filter_map(|package| package["name"].as_str().map(str::to_owned))
+        .collect();
+    (!packages.is_empty()).then_some(packages)
+}
+
+/// `--clean-workspace` before the command: clean every workspace package out of the shared
+/// target. Fails closed (#417 review): a clean that cannot run or fails is a refusal, never a
+/// silent `cleaned: null` followed by a build against another lane's artifacts.
+fn clean_workspace_packages(cargo: &str, target: &Path) -> Result<serde_json::Value, String> {
+    let cwd = std::env::current_dir()
+        .map_or_else(|_| "<unknown>".to_owned(), |dir| dir.display().to_string());
+    let packages = workspace_packages(cargo).ok_or_else(|| {
+        format!("--clean-workspace: no cargo workspace at the current directory {cwd}; run the slot from the worktree root")
+    })?;
+    let mut clean = Command::new(cargo);
+    clean.arg("clean").env("CARGO_TARGET_DIR", target);
+    for package in &packages {
+        clean.args(["-p", package]);
+    }
+    match clean.status() {
+        Ok(status) if status.success() => Ok(json!({"packages": packages.len(), "ok": true})),
+        Ok(status) => Err(format!(
+            "--clean-workspace: cargo clean failed ({status}) in {cwd}"
+        )),
+        Err(error) => Err(format!(
+            "--clean-workspace: cargo clean could not start: {}",
+            error.kind()
+        )),
+    }
 }
 
 pub(crate) fn run_slot(
@@ -145,15 +174,15 @@ pub(crate) fn run_slot(
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cleaned = None;
     if clean_workspace {
-        cleaned = workspace_packages(&cargo).map(|packages| {
-            let mut clean = Command::new(&cargo);
-            clean.arg("clean").env("CARGO_TARGET_DIR", &target);
-            for package in &packages {
-                clean.args(["-p", package]);
+        match clean_workspace_packages(&cargo, &target) {
+            Ok(report) => cleaned = Some(report),
+            Err(reason) => {
+                drop(slot);
+                drop(ticket);
+                let _ = std::fs::remove_file(&mine);
+                return refuse(&reason, "/cleanWorkspace");
             }
-            let ok = clean.status().is_ok_and(|status| status.success());
-            json!({"packages": packages.len(), "ok": ok})
-        });
+        }
     }
     let status = Command::new(program)
         .args(arguments)

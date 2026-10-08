@@ -2118,6 +2118,31 @@ export default function App({
       setLiveOpening((current) => current.filter((entry) => entry.contractId !== contractId || entry.stepId !== stepId));
     }
   }, [selected]);
+  // #465: Watch plays a flow in a headed browser (#462); the call answers when the play ends, and
+  // the sessions read above lights the current step meanwhile.
+  const [watchingFlow, setWatchingFlow] = useState<string | null>(null);
+  const watchFlow = useCallback(async (flowId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected.");
+    setWatchingFlow(flowId);
+    try {
+      await client.watchFlow(flowId);
+    } finally {
+      setWatchingFlow(null);
+      setFlowsRevision((revision) => revision + 1);
+    }
+  }, []);
+  // While a play runs, read the sessions often enough for the lit step to follow the browser.
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null || watchingFlow === null) return undefined;
+    let cancelled = false;
+    const read = () => {
+      client.liveSessions().then((view) => { if (!cancelled) setLiveSessions(view.sessions); }, () => { /* the next tick retries */ });
+    };
+    const timer = window.setInterval(read, 700);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [watchingFlow]);
   const closeLive = useCallback(async (sessionId: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected.");
@@ -2947,7 +2972,8 @@ export default function App({
             )}
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
-            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract} />}
+            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract}
+              sessions={liveSessions} {...(liveSessions === null ? {} : { onWatch: watchFlow })} />}
             {canvasTab === "journey" && (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}

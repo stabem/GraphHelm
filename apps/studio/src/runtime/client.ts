@@ -1914,6 +1914,17 @@ export class RuntimeClient {
     return this.#request<{ sessionId: string; closed: boolean }>({ method: "DELETE", path: `/v1/journeys/sessions/${encodeURIComponent(id)}` });
   }
 
+  /** Watch a flow (#462): `POST /v1/journey-flows/{id}/watch`. A headed browser plays it on the
+   * owner's screen; the Runtime answers when the play ends, and the `mode: "watch"` row in
+   * `liveSessions()` carries the step being played meanwhile. Never proof; never approval. */
+  async watchFlow(flowId: string, path?: string): Promise<Record<string, unknown>> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<Record<string, unknown>>({
+      method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/watch`, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS,
+      body: path ? { path } : {},
+    });
+  }
+
   /** The project's journey-flow sources for review (#353): `GET /v1/journey-flows`. */
   async journeyFlows(): Promise<JourneyFlowsView> {
     return this.#request<JourneyFlowsView>({ method: "GET", path: "/v1/journey-flows", timeoutMs: RUNTIME_READ_TIMEOUT_MS });

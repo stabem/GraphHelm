@@ -410,12 +410,17 @@ export interface JourneyFlowScreen {
   id: string;
   url: string;
   state: string;
+  title?: string;
+  /** What the screen must show (role + accessible name), from the flow source. */
+  expect?: Array<{ role: string; name: string }>;
 }
 
 export interface JourneyFlowEdge {
   id: string;
   from: string;
   to: string;
+  /** What the user does on this edge, from the flow source (#465 reads them as Does). */
+  acts?: Array<{ kind: string; role: string; name: string }>;
 }
 
 export interface JourneyFlowView {
@@ -439,7 +444,7 @@ export interface JourneyFlowsView {
 /** One live journey session (#409, phase C #398): `GET /v1/journeys/sessions`. A closed or expired
  * session is simply absent from the list; `at` is the edge act (`cart.checkout/0`) on drift, else
  * the screen id. */
-export type LiveState = "pass" | "fail" | "drift" | "unknown";
+export type LiveState = "pass" | "fail" | "drift" | "unknown" | "playing";
 export interface LiveSession {
   sessionId: string;
   contractId: string;
@@ -453,6 +458,13 @@ export interface LiveSession {
   since: string;
   lastActAt: string | null;
   expiresAt: string | null;
+  /** A Watch run (#462): `"watch"`; the act about to run (`edge`, `actIndex`, null between edges)
+   * and the position on the path. Absent on ordinary live sessions. */
+  mode?: string;
+  edge?: string | null;
+  actIndex?: number | null;
+  stepIndex?: number;
+  stepCount?: number;
 }
 export interface LiveSessionsView { sessions: LiveSession[] }
 /** One act sent into a live session: `POST /v1/journeys/sessions/{id}/act`. */

@@ -2857,3 +2857,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-live-chip[data-state="fail"], .journey-live-chip[data-state="drift"] { color: var(--danger); border-color: var(--danger); }
 .journey-live-detail { display: grid; gap: 6px; font-size: 13px; }
 .journey-live-error { color: var(--danger); font-size: 12px; }
+
+/* #447: a flow's branch path reads as a sub-row of the flow above it. */
+.right-journey-branch { margin-left: 14px; }

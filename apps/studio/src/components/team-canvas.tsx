@@ -38,7 +38,7 @@ function NameBot({ bot, onSave }: { bot: Bot; onSave: (actorId: string, displayN
   const name = value.trim();
   return (
     <form className="team-bot-name-form" onSubmit={(event) => { event.preventDefault(); if (name.length === 0) return; void onSave(actorId, name); setOpen(false); setValue(""); }}>
-      <input aria-label={`Name for ${bot.name}`} maxLength={80} value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
+      <input aria-label={`Name for ${bot.name}`} placeholder="Display name" maxLength={80} value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
       <button type="submit" disabled={name.length === 0}>Save</button>
       <button type="button" onClick={() => { setOpen(false); setValue(""); }}>Cancel</button>
     </form>

@@ -1,5 +1,5 @@
 import type { BeforeAfterPair } from "../runtime/journeys";
-import { journeySummary } from "../runtime/journeys";
+import { journeyPath, journeySummary } from "../runtime/journeys";
 import type { ActivityLine } from "../runtime/threads";
 import type { JourneyView } from "../runtime/types";
 import { ago } from "./format";
@@ -23,6 +23,14 @@ function stepTitle(journeys: JourneyView[], pair: BeforeAfterPair): string {
   return step?.screen?.title ?? pair.stepId;
 }
 
+/** #447: each flow's branch paths right after the flow itself, so they read as its sub-rows. */
+function ordered(journeys: JourneyView[]): JourneyView[] {
+  const ids = journeys.map((journey) => journey.contractId);
+  const parentOf = (id: string) => journeyPath(ids, id)?.flow ?? id;
+  return [...journeys].sort((a, b) => ids.indexOf(parentOf(a.contractId)) - ids.indexOf(parentOf(b.contractId))
+    || Number(parentOf(a.contractId) !== a.contractId) - Number(parentOf(b.contractId) !== b.contractId));
+}
+
 /** Right panel (spec §4.6): journeys with their proven share, before/after pairs, recent activity. */
 export function RightPanel({ activity, onOpenActivity, journeys = [], beforeAfter = [], onOpenJourney, onOpenPair, botName = (id) => id,
   journeysLoading = false, pairsLoading = false }: RightPanelProps) {
@@ -32,13 +40,14 @@ export function RightPanel({ activity, onOpenActivity, journeys = [], beforeAfte
         <h2>Journeys</h2>
         {journeys.length === 0 ? <p className="right-empty">{journeysLoading ? "Loading journeys…" : "No journeys mapped yet."}</p> : (
           <ul className="right-journeys">
-            {journeys.map((journey) => {
+            {ordered(journeys).map((journey) => {
               const s = journeySummary(journey);
               const label = `${s.proven} of ${s.total} steps proven`;
+              const branch = journeyPath(journeys.map((j) => j.contractId), journey.contractId);
               return (
-                <li key={journey.contractId}>
+                <li key={journey.contractId} className={branch === null ? undefined : "right-journey-branch"}>
                   <button type="button" className="right-journey" onClick={() => onOpenJourney?.(journey.contractId)}>
-                    <span className="right-journey-title">{journey.title}</span>
+                    <span className="right-journey-title">{branch === null ? journey.title : `↳ ${branch.path} path`}</span>
                     <span className="right-bar" role="img" aria-label={label}>
                       {s.proven > 0 && <span className="right-bar-proven" style={{ flexGrow: s.proven }} />}
                       {s.stale > 0 && <span className="right-bar-stale" style={{ flexGrow: s.stale }} />}

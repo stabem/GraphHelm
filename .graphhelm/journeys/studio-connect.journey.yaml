@@ -3,7 +3,7 @@ id: studio-connect
 title: Owner connects the Studio to a Runtime with the bearer token
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: [studio_token]
 risks: [authentication, security]

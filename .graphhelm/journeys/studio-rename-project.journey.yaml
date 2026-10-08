@@ -3,26 +3,26 @@ id: studio-rename-project
 title: Owner renames the project's display label in this browser
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
   - id: renamed
     title: The rail shows the new label
-    url: /
+    url: /?session=studio-fixture
     state: success
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename Demo Studio}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
   - id: renaming
     title: Inline rename form in the rail
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: textbox, name: Project name}, {role: button, name: Save project name}, {role: button, name: Cancel rename}]
     scope: [apps/studio/src/components/rail.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename demo}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]

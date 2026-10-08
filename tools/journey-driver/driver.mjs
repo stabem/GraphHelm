@@ -209,7 +209,12 @@ async function run(r) {
   if (!opened || closed) fail('driver.protocol_invalid');
   checkHost();
   if (r.op === 'snapshot') {
-    for (const expected of r.expect) await unique(page.getByRole(expected.role,{name:expected.name,exact:true}),'driver.expectation_failed');
+    for (const expected of r.expect) {
+      // A screen renders after its document loads; wait for the control, then require it unique.
+      const target=page.getByRole(expected.role,{name:expected.name,exact:true});
+      try { await target.first().waitFor({state:'visible',timeout:TIMEOUT}); } catch (err) { if (err.code) throw err; fail('driver.expectation_failed'); }
+      await unique(target,'driver.expectation_failed');
+    }
     const mainAria=redacted(await page.locator('body').ariaSnapshot({timeout:TIMEOUT}));
     let ariaYaml=mainAria;
     const expectations=[];

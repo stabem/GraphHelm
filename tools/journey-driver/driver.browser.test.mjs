@@ -157,3 +157,20 @@ test('context network guard blocks popup, frame, fetch, redirect, websocket and 
   assert.equal((await act(allowed,'activate','button','Popup')).code,'driver.host_refused');assert.equal(f.counts().canary,1);
   const alias=await client(t);await open(alias,f.base.replace('127.0.0.1','fixture.graphhelm.test')+'/cart');assert.equal((await alias.send('snapshot',{expect:[{role:'heading',name:'Cart'}]})).ok,true);await alias.send('close');
 });
+
+// #381: a real app renders its screen after the document loads (the Studio reads the run over
+// HTTP before the team canvas exists). A screen expectation checked at the instant of
+// `domcontentloaded` refused every Studio flow at its first screen. The defect: snapshot counted
+// the control once instead of waiting for it. Cost: ~2 s for the late page; the absent control
+// still waits the driver timeout before refusing, as a contract's failure timeout would.
+test('a screen expectation waits for a control that renders after load, and still refuses one that never does',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/late');
+  const late=await c.send('snapshot',{expect:[{role:'heading',name:'Ready'},{role:'button',name:'Continue'}]});
+  assert.equal(late.ok,true,JSON.stringify(late));
+  assert.deepEqual(late.result.controls.filter(x=>x.role!=='main'),[{role:'button',name:'Continue'},{role:'heading',name:'Ready'}]);
+  await c.send('close');
+  const n=await client(t);await open(n,f.base+'/late');
+  const never=await n.send('snapshot',{expect:[{role:'heading',name:'Never'}]});
+  assert.equal(never.code,'driver.expectation_failed');
+});

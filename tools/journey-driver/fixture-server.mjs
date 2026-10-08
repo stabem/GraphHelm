@@ -36,6 +36,7 @@ export async function startFixture() {
     else if(u.pathname==='/redirect-local') {res.writeHead(302,{Location:'/redirect'});res.end();}
     else if(u.pathname==='/redirect') {res.writeHead(302,{Location:canaryOrigin+'/redirected'});res.end();}
     else if(u.pathname==='/sw.js') {res.setHeader('Content-Type','application/javascript');res.end(`fetch('${canaryOrigin}/worker');`);}
+    else if(u.pathname==='/late') res.end(shell(`<main><h1 id="title">Loading</h1><script>setTimeout(()=>{document.getElementById('title').textContent='Ready';const b=document.createElement('button');b.textContent='Continue';document.querySelector('main').append(b);},1500)</script></main>`));
     else {res.writeHead(404);res.end(shell('<h1>Missing</h1>'));}
   });
   await new Promise(done=>app.listen(0,'127.0.0.1',done));

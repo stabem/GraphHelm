@@ -100,5 +100,5 @@ review as `docs/process/DELIVERY.md` says.
 
 ## Hands off to
 
-`keel` for the card and the proof, `code-contract` when a record reveals a missing criterion, and
+`keel` for the card and the proof, `task-plan` when a record reveals a missing criterion, and
 `memory-curator` when a pattern here recurs.

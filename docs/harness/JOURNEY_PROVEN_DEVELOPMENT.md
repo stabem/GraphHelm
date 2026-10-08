@@ -76,52 +76,34 @@ Each contribution declares:
 Activation is explicit and atomic. A future loader must keep the previous good version active if a
 replacement fails validation. Capability increases require a new approval.
 
-## 4. The eight entry families
+## 4. The entry skills
 
-The bundle exposes eight discoverable entry skills. They are selection points, not an eight-stage
-workflow that always runs in full.
+Since #385 the JPD package exposes two entry skills (`journey-prove` arrives with #381), and the per-task steps live in the
+development-contracts package (`task-plan`, `implement`, `blind-review`, `merge`). The earlier
+families (observation compiler, plan council, defect bounty, skill synthesizer and evaluator,
+retry provenance, journey verifier) keep their schemas, policies and fixtures as contracts; their
+guidance was folded into the skills below.
 
-### 4.1 `journey-contract`
+### 4.1 `journey-map` and `journey-contract`
 
-Converts the request into actors, preconditions, semantic actions, visible states, success
-promises, failure contracts, recovery expectations, and out-of-scope behavior.
+`journey-map` maps an existing project's screens into draft journey flows and a first capture
+baseline. `journey-contract` turns one request into actors, preconditions, semantic actions,
+visible states, success promises, failure contracts, recovery expectations, and out-of-scope
+behavior.
 
-### 4.2 `observation-compiler`
+### 4.2 `journey-prove` (#381)
 
-Lowers promises into typed observations and matches them against the observer catalog and evidence
-strength lattice. It produces either a complete observation plan or `OBSERVER_MISSING`.
+Matches each promise to an observer that can see it (or stops with `OBSERVER_MISSING`; a weaker
+proxy is never upgraded), replays the approved journey at the head with `graphhelm journey
+replay`, records sealed captures and walked transitions, and reads their freshness. A retry keeps
+its first failure, its cause and what changed between attempts; the final result never rewrites
+the chain.
 
-### 4.3 `plan-council`
+### 4.3 Review and counterexamples
 
-Selects the smallest useful set of risk-specific personas. It preserves arguments and dissent and
-asks for a discriminating test when claims conflict. It never treats a vote as a gate.
-
-### 4.4 `defect-bounty`
-
-Accepts a typed `JourneyDefectClaim`, normalizes its semantic action trace, asks an advocate to
-falsify it, and preserves confirmed minimal counterexamples as regression candidates. Novelty does
-not outweigh severity or repeated evidence.
-
-### 4.5 `skill-synthesizer`
-
-Composes installed atomic capabilities into a task-local Skill Capsule. A capsule is a draft,
-immutable package version. It cannot activate itself or publish graph mutations.
-
-### 4.6 `skill-evaluator`
-
-Measures evidence coverage, error reduction, token overhead, generalization, freshness, and later
-regressions. Repeated strong evidence may create a promotion proposal; only governed explicit
-publication makes a Project Skill operational.
-
-### 4.7 `retry-provenance`
-
-Requires `journeyRunId`, `rootAttemptId`, `attemptId`, `retryOf`, a closed cause tag, and an evidence
-delta. It classifies the chain without laundering the first failure.
-
-### 4.8 `journey-verifier`
-
-Runs the compiled journey through available public surfaces and observers, captures evidence for
-each obligation, and reports the strongest justified result. It refuses unsupported observations.
+`blind-review` (development-contracts) is where a reproducible counterexample is sought and
+shrunk to its fewest steps. One severe, reproducible counterexample outweighs any number of
+favorable votes; agent votes never decide a gate.
 
 ## 5. Persona council
 
@@ -266,7 +248,7 @@ Issue #210 delivers the validated built-in data bundle, its public-surface-only 
 contract resources, deterministic package validation, and a contract-level dogfood graph with a
 deterministic simulation fixture. Together, `extension validate` and graph
 validate/lint/simulate prove package integrity and Graph DSL/simulation conformance; they do not
-execute the eight skill instruction files or an external observer end to end.
+execute the skill instruction files or an external observer end to end.
 
 The current Extension host supports validated local package installation and active-version
 switching. The adoption CLI adds reviewed backup/apply/restore for supported local configuration;

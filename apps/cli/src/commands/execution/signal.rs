@@ -326,6 +326,7 @@ fn execute_authenticated_inner(
         ));
     }
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
+    super::documents::validate_task_event(&envelope, &actor)?;
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")

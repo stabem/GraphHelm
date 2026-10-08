@@ -118,7 +118,18 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
     }
 }
 
+/// `journey open` from the CLI. The Runtime's route calls [`open_in_runtime`] instead.
 pub(super) fn open(args: &JourneyOpenArgs) -> Outcome {
+    open_with(args, true)
+}
+
+/// The Runtime's `POST /v1/journeys/{contractId}/open`: the same open, without touching the
+/// Runtime process's own standard handles.
+pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
+    open_with(args, false)
+}
+
+fn open_with(args: &JourneyOpenArgs, detach_std: bool) -> Outcome {
     let data = json!({"flowId":args.id,"step":args.step,"path":null,"sessionId":null,"state":"unobserved","at":null,"headed":true,"modelCalls":0,"liveCaptureSignalId":null});
     if !graphhelm_execution::valid_journey_id(&args.id) {
         return report(OPEN, data, Some(failure("replay.id_invalid", "/id", 3)));
@@ -147,11 +158,40 @@ pub(super) fn open(args: &JourneyOpenArgs) -> Outcome {
     if args.live_host {
         host(args, data);
     }
-    spawn_host(args, data)
+    spawn_host(args, data, detach_std)
 }
 
 /// The caller half: start the host, hand it the start frame, return its first envelope line.
-fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
+/// A CLI caller exits right after the host's first line, while the host lives on. On Windows a
+/// child inherits every inheritable handle, so the host would hold the CALLER's stdout open and
+/// whoever waits for its EOF would wait for the whole session. Mark this process's own std
+/// handles non-inheritable first; the host's stdio is set explicitly below.
+fn detach_std_handles() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: GetStdHandle has no preconditions; SetHandleInformation only clears the
+            // inherit flag of this process's own std handle, checked non-null and valid.
+            unsafe {
+                let handle = GetStdHandle(which);
+                if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
+fn spawn_host(args: &JourneyOpenArgs, data: Value, detach_std: bool) -> Outcome {
+    if detach_std {
+        detach_std_handles();
+    }
     let Ok(executable) = std::env::current_exe() else {
         return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
     };
@@ -177,14 +217,16 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
     for origin in &args.allow_origin {
         command.args(["--allow-origin", origin]);
     }
-    if args.events.is_some() {
+    if let (Some(events), Some(execution), Some(keyring), Some(key_id)) =
+        (&args.events, &args.execution, &args.keyring, &args.key_id)
+    {
         command
             .arg("--events")
-            .arg(args.events.as_ref().unwrap())
-            .args(["--execution", args.execution.as_ref().unwrap()])
+            .arg(events)
+            .args(["--execution", execution])
             .arg("--keyring")
-            .arg(args.keyring.as_ref().unwrap())
-            .args(["--key-id", args.key_id.as_ref().unwrap()]);
+            .arg(keyring)
+            .args(["--key-id", key_id]);
     }
     safe_environment(&mut command, args.events.is_some());
     command.env("GRAPHHELM_LIVE_HOST", "1");

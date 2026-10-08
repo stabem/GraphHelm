@@ -1915,7 +1915,7 @@ pub(super) async fn open_journey(
             ),
             None => (None, None, None),
         };
-        crate::commands::journey_live::open(&crate::args::JourneyOpenArgs {
+        crate::commands::journey_live::open_in_runtime(&crate::args::JourneyOpenArgs {
             id: flow,
             step,
             path,

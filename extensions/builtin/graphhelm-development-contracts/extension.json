@@ -991,7 +991,7 @@
           "id": "skill/merge",
           "kind": "skill",
           "path": "skills/merge/SKILL.md",
-          "sha256": "sha256:245da35b21318189cd32d16d675bbb15462cf8a2d2dafcd4a17e38793146ba73",
+          "sha256": "sha256:f6570de6ff7cdc951f426657d93aaf4cf60d978f213059d43571a8f4a0cc26bd",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

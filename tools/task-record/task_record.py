@@ -44,7 +44,8 @@ def parse(argv):
     p.add_argument("--verdict", choices=("APPROVE", "APPROVE-WITH-RISK", "BLOCK"))
     p.add_argument("--comment-url")
     p.add_argument("--merge-sha")
-    p.add_argument("--closes", type=int, nargs="*", help="issues the merge closed; defaults to --issue")
+    p.add_argument("--closes", type=int, nargs="*", default=[],
+                   help="exactly the issues the merge closed (what ci/closing-keywords.ps1 checked); none for a Refs PR")
     p.add_argument("--journeys", nargs="*", default=[])
     p.add_argument("--repo", default="stabem/GraphHelm",
                    help="owner/name; pass '' to omit it (a Runtime older than #420 refuses the field)")
@@ -80,7 +81,7 @@ def document(args, now):
                    commentUrl=args.comment_url)
     else:
         need(args, "pr", "merge-sha")
-        doc.update(pr=args.pr, mergeSha=args.merge_sha, closes=args.closes or [args.issue],
+        doc.update(pr=args.pr, mergeSha=args.merge_sha, closes=args.closes,
                    merger=args.lane)
     if args.repo and args.kind in ("claimed", "pr_opened"):
         doc["repo"] = args.repo

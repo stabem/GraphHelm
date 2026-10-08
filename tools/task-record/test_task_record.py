@@ -119,5 +119,23 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(FakeRuntime.seen, [])
 
 
+class ClosesAsGiven(unittest.TestCase):
+    """#464: `closes` is exactly the issues the merge closed. The default `[--issue]` recorded
+    "closes #356" for PR #456, a `Refs #356` merge, and `--closes` with no numbers could not say none."""
+
+    def closes(self, *extra):
+        args = task_record.parse(["--lane", "gh-claude-6", "merged", "--issue", "356", "--pr", "456",
+                                  "--merge-sha", "c" * 40, *extra])
+        return task_record.document(args, "2026-10-08T00:00:00Z")["closes"]
+
+    def test_a_merge_without_closes_closes_nothing(self):
+        self.assertEqual(self.closes(), [])
+        self.assertEqual(self.closes("--closes"), [])
+
+    def test_closes_lists_exactly_the_given_issues(self):
+        self.assertEqual(self.closes("--closes", "356"), [356])
+        self.assertEqual(self.closes("--closes", "457", "458"), [457, 458])
+
+
 if __name__ == "__main__":
     unittest.main()

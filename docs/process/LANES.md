@@ -36,9 +36,16 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       git -C F:/github/GraphHelm worktree add D:/gh/<lane>/wt-<issue> -b issue-<N>-<slug> origin/main
 
-- Remove a worktree **only** with `git worktree remove <path>`. Never `Remove-Item -Recurse` or
-  `rm -rf`: its `node_modules` can be a junction into the owner's copy, and a recursive delete
-  follows the junction and deletes the owner's files.
+- A worktree's `node_modules` (for example `apps\studio\node_modules`) can be a junction into the
+  owner's copy. `Remove-Item -Recurse`, `rm -rf` **and `git worktree remove --force`** all follow a
+  junction and delete the owner's files through it. Remove each junction first (`rmdir` removes the
+  link only), then the worktree, without `--force`:
+
+      cmd /c rmdir D:\gh\<lane>\wt-<issue>\apps\studio\node_modules
+      git -C F:/github/GraphHelm worktree remove D:/gh/<lane>/wt-<issue>
+
+  When git still refuses ("contains modified or untracked files"), find what is left and deal with
+  it by name. Never answer that refusal with `--force` while a junction is inside.
 - Remove only what you created, by name. Never touch another lane's worktree, branch or ticket, and
   never run `git worktree prune`.
 
@@ -84,7 +91,11 @@ records"). From a lane worktree the token path must be absolute:
 | Start a task | `$T --issue N claimed --branch B` |
 | Open a PR, and again after **every** push | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
-| As merger, only after `gh pr merge` exits 0 and `gh pr view P --json mergedBy` shows the merge is yours | `$T --issue N merged --pr P --merge-sha SHA` |
+| As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
+
+`--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
+`Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
+was; the exit code of the `gh pr merge` you ran is the evidence.
 
 `pr_opened --reviewer` is meant to record the reviewer in the same call. Until the change that does
 so lands, also run `$T --issue N review_assigned --pr P --head SHA --reviewer <reviewer>`.

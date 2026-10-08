@@ -358,7 +358,8 @@ export interface CaptureView {
   viewport: { width: number; height: number };
   observer: string;
   pr?: number;
-  phase?: "before" | "after";
+  /** `live` (#409): recorded by a live session at this step, never a freshness proof. */
+  phase?: "before" | "after" | "live";
   freshness: CaptureFreshness;
   changedFiles: string[];
   unknownCause?: CaptureUnknownCause;
@@ -434,6 +435,28 @@ export interface JourneyFlowView {
 export interface JourneyFlowsView {
   flows: JourneyFlowView[];
 }
+
+/** One live journey session (#409, phase C #398): `GET /v1/journeys/sessions`. A closed or expired
+ * session is simply absent from the list; `at` is the edge act (`cart.checkout/0`) on drift, else
+ * the screen id. */
+export type LiveState = "pass" | "fail" | "drift" | "unknown";
+export interface LiveSession {
+  sessionId: string;
+  contractId: string;
+  flowId: string;
+  path: string;
+  stepId: string;
+  state: LiveState;
+  code: string | null;
+  at: string | null;
+  screen: unknown;
+  since: string;
+  lastActAt: string | null;
+  expiresAt: string | null;
+}
+export interface LiveSessionsView { sessions: LiveSession[] }
+/** One act sent into a live session: `POST /v1/journeys/sessions/{id}/act`. */
+export interface LiveAct { kind: string; role: string; name: string; text?: string; secret?: string }
 
 export interface JourneysView {
   head: string | null;

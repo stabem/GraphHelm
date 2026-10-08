@@ -705,15 +705,24 @@ fn keel_plan_asks_jev_only_when_ambiguous_and_takes_a_confident_answer() {
     let repo = repository(&[]);
     let fixture = repo.path().join("jev.json");
     let ambiguous = [
-        "--task", "issue-2", "--paths", "docs/a.md", "--promise", "fix the permission check",
-        "--judge-fixture", fixture.to_str().unwrap(),
+        "--task",
+        "issue-2",
+        "--paths",
+        "docs/a.md",
+        "--promise",
+        "fix the permission check",
+        "--judge-fixture",
+        fixture.to_str().unwrap(),
     ];
     fs::write(&fixture, b"{\"answers\": {}}").unwrap();
     let (code, missing, _) = plan(repo.path(), &ambiguous);
     assert_eq!(code, 0, "{missing}");
     let record = &missing["data"]["plan"];
     assert_eq!(record["decidedBy"], "fallback_strict", "{record}");
-    assert!(record["jev"]["error"].is_string(), "a missing answer is recorded: {record}");
+    assert!(
+        record["jev"]["error"].is_string(),
+        "a missing answer is recorded: {record}"
+    );
     let digest = record["jev"]["requestSha256"].as_str().unwrap().to_owned();
 
     let reply = |choice: &str, confidence: f64| {
@@ -734,13 +743,26 @@ fn keel_plan_asks_jev_only_when_ambiguous_and_takes_a_confident_answer() {
 
     fs::write(&fixture, serde_json::to_vec(&reply("docs", 0.5)).unwrap()).unwrap();
     let (_, unsure, _) = plan(repo.path(), &ambiguous);
-    assert_eq!(unsure["data"]["plan"]["decidedBy"], "fallback_strict", "{unsure}");
+    assert_eq!(
+        unsure["data"]["plan"]["decidedBy"], "fallback_strict",
+        "{unsure}"
+    );
     assert_eq!(unsure["data"]["plan"]["delegation"]["tier"], "large");
 
     let (_, clear, _) = plan(
         repo.path(),
-        &["--task", "issue-3", "--paths", "src/lib.rs", "--judge-fixture", fixture.to_str().unwrap()],
+        &[
+            "--task",
+            "issue-3",
+            "--paths",
+            "src/lib.rs",
+            "--judge-fixture",
+            fixture.to_str().unwrap(),
+        ],
     );
     assert_eq!(clear["data"]["plan"]["decidedBy"], "rules", "{clear}");
-    assert!(clear["data"]["plan"]["jev"].is_null(), "Jev is not asked when the rules are clear");
+    assert!(
+        clear["data"]["plan"]["jev"].is_null(),
+        "Jev is not asked when the rules are clear"
+    );
 }

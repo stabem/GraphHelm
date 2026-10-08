@@ -1845,9 +1845,12 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
             &request.paths,
             &request.promise,
             None,
-            judge
-                .as_ref()
-                .map(|(judge, route)| (judge as &dyn graphhelm_architect::JudgeModel, route.as_str())),
+            judge.as_ref().map(|(judge, route)| {
+                (
+                    judge as &dyn graphhelm_architect::JudgeModel,
+                    route.as_str(),
+                )
+            }),
         )
     })
     .await

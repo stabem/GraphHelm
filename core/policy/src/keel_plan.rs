@@ -201,7 +201,11 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
     decide(
         &base,
         task,
-        if ambiguous { "fallback_strict" } else { "rules" },
+        if ambiguous {
+            "fallback_strict"
+        } else {
+            "rules"
+        },
         None,
         rules,
     )
@@ -272,18 +276,8 @@ pub fn decide(
             effort,
         },
         path: route,
-<<<<<<< HEAD
         decided_by: decided_by.to_owned(),
         jev,
         ..plan.clone()
-=======
-        decided_by: if ambiguous {
-            "fallback_strict"
-        } else {
-            "rules"
-        }
-        .to_owned(),
-        jev: None,
->>>>>>> issue-382-phase-b-keel-plan
     }
 }

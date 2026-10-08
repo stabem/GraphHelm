@@ -788,9 +788,18 @@ fn ask_jev(
     }
     let floor = keel_plan::rules_class(&planned);
     let criteria = [
-        ("docs", "only documentation or inert configuration; nothing executes it"),
-        ("code", "source code with no screen of a journey and no invariant class"),
-        ("user_visible", "changes what a user sees or does on a screen"),
+        (
+            "docs",
+            "only documentation or inert configuration; nothing executes it",
+        ),
+        (
+            "code",
+            "source code with no screen of a journey and no invariant class",
+        ),
+        (
+            "user_visible",
+            "changes what a user sees or does on a screen",
+        ),
         (
             "invariant",
             "security or permissions, persistence or journal integrity, concurrency, destructive \
@@ -834,7 +843,13 @@ fn ask_jev(
         }
     };
     let Some((choice, confidence)) = answer else {
-        return keel_plan::decide(&planned, TaskClass::Invariant, "fallback_strict", Some(record), rules);
+        return keel_plan::decide(
+            &planned,
+            TaskClass::Invariant,
+            "fallback_strict",
+            Some(record),
+            rules,
+        );
     };
     record["questions"] =
         serde_json::json!({"task_class": {"answer": choice, "probability": confidence}});
@@ -850,7 +865,13 @@ fn ask_jev(
         Some(class) if confidence >= threshold => {
             keel_plan::decide(&planned, class.max(floor), "jev", Some(record), rules)
         }
-        _ => keel_plan::decide(&planned, TaskClass::Invariant, "fallback_strict", Some(record), rules),
+        _ => keel_plan::decide(
+            &planned,
+            TaskClass::Invariant,
+            "fallback_strict",
+            Some(record),
+            rules,
+        ),
     }
 }
 

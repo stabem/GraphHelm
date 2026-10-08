@@ -53,6 +53,24 @@ describe("MainChat", () => {
     expect(screen.getByText("Request history (2)")).toBeInTheDocument();
   });
 
+  // #366: at 390x844 the composer took ~55% of the height and hid the conversation. jsdom has no
+  // layout, so this observes the structure that frees the space: on a narrow viewport the
+  // recipient picker and counter sit in a closed disclosure and the box starts at 2 rows; a wide
+  // viewport keeps both open. Cost: jsdom only, stubbed matchMedia, well under a second.
+  it("collapses the recipient options and shrinks the box on a narrow viewport only", () => {
+    for (const wide of [false, true]) {
+      vi.stubGlobal("matchMedia", (query: string) => ({ matches: wide, media: query }));
+      const view = render(<MainChat client={runtime()} executionId={`run-${wide}`} personas={personas} />);
+      const options = screen.getByLabelText("Main recipient").closest("details");
+      expect(options).not.toBeNull();
+      expect(options!.open).toBe(wide);
+      expect(within(options!).getByText(/To: Coordinator/)).toBeInTheDocument();
+      expect(screen.getByLabelText("Instruction")).toHaveAttribute("rows", wide ? "4" : "2");
+      view.unmount();
+    }
+    vi.unstubAllGlobals();
+  });
+
   it("switches its recipient to the thread the Chat column selected and fills an empty draft from a seed", async () => {
     const client = runtime();
     const view = render(<MainChat client={client} executionId="run-1" personas={personas} />);

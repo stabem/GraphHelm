@@ -29,6 +29,7 @@ import type {
   ReplySuggestions,
   GraphTopology,
   JourneysView,
+  JourneyFlowsView,
   ModelRouteSummary,
   NativeChatPage,
   NativeChatRequest,
@@ -1861,6 +1862,20 @@ export class RuntimeClient {
       path: `/v1/executions/${encodeURIComponent(id)}/journeys`,
       timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
+  }
+
+  /** The project's journey-flow sources for review (#353): `GET /v1/journey-flows`. */
+  async journeyFlows(): Promise<JourneyFlowsView> {
+    return this.#request<JourneyFlowsView>({ method: "GET", path: "/v1/journey-flows", timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /**
+   * The owner's Approve (#353): `POST /v1/journey-flows/{id}/approve`, exactly
+   * `graphhelm journey approve <id>`. A flow with validate findings is refused by the Runtime.
+   */
+  async approveJourneyFlow(flowId: string): Promise<{ id: string; status: string }> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<{ id: string; status: string }>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/approve` });
   }
 
   /**

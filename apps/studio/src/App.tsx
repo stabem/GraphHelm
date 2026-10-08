@@ -37,7 +37,8 @@ import { devSession, type DevSession } from "./runtime/session";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
-import { isClaudeTaskSignal, readClaudeTasks, type ClaudeTaskReadModel } from "./runtime/team-tasks";
+import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
+import { TaskGraphs } from "./components/task-graphs";
 import type {
   Briefing,
   ClaimEvidence,
@@ -83,7 +84,8 @@ import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneysView } from "./runtime/types";
+import type { JourneyFlowsView, JourneysView } from "./runtime/types";
+import { JourneyFlows } from "./components/journey-flows";
 import { ChatColumn } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
@@ -1625,6 +1627,8 @@ export default function App({
   );
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
   const [claudeTaskRead, setClaudeTaskRead] = useState<ClaudeTaskReadModel | null>(null);
+  // #391: the per-task graphs, folded from the run's `task.*` records.
+  const [taskGraphs, setTaskGraphs] = useState<{ executionId: string; tasks: TaskState[] } | null>(null);
   const subagentEvidenceCache = useRef(new Map<string, Promise<EvidenceContent>>());
   useEffect(() => { subagentEvidenceCache.current.clear(); }, [selected]);
   useEffect(() => {
@@ -1650,6 +1654,9 @@ export default function App({
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
+    void readTaskEvents({ executionId: run, events: eventList, readEvidence })
+      .then((tasks) => { if (!cancelled) setTaskGraphs({ executionId: run, tasks }); })
+      .catch(() => { if (!cancelled) setTaskGraphs({ executionId: run, tasks: [] }); });
     return () => { cancelled = true; };
   }, [selected, events, eventList, openEvidence]);
 
@@ -1792,7 +1799,7 @@ export default function App({
     return workMessages.some((message) => message.provenance === "stored" && agentSequences.has(message.sequence));
   }, [eventList, workMessages]);
   const recentActivity = useMemo(() => eventList
-    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isRunTeamSignal(event))
+    .filter((event) => event.kind === "signal_recorded" && !isSubagentLifecycleSignal(event) && !isClaudeTaskSignal(event) && !isTaskEventSignal(event) && !isRunTeamSignal(event))
     .slice(-5)
     .reverse()
     .map((event) => ({
@@ -1996,6 +2003,30 @@ export default function App({
   }, [eventList]);
   // Journeys are a project property (#332): one map folded from every run, read from
   // `GET /v1/journeys` and kept across run switches. A run switch or a new jpd record re-reads it.
+  // Journey-flow review (#353): the flow sources and the owner's Approve. An approval bumps
+  // `flowsRevision`, which re-reads the flows and the journey map its compiled contracts feed.
+  const [flowsRevision, setFlowsRevision] = useState(0);
+  const [flowsRead, setFlowsRead] = useState<{ view: JourneyFlowsView | null; failure: string | null }>({ view: null, failure: null });
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => client.journeyFlows()).then((view) => {
+      if (!cancelled) setFlowsRead({ view, failure: null });
+    }, (reason: unknown) => {
+      if (!cancelled) setFlowsRead((prior) => ({ view: prior.view, failure: prior.view === null ? messageOf(reason, "") : null }));
+    });
+    return () => { cancelled = true; };
+  }, [selected, lastJpdSequence, flowsRevision]);
+  const approveFlow = useCallback(async (flowId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected to the Runtime.");
+    try {
+      await client.approveJourneyFlow(flowId);
+    } finally {
+      setFlowsRevision((revision) => revision + 1);
+    }
+  }, []);
   const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
@@ -2008,7 +2039,7 @@ export default function App({
       if (!cancelled) setJourneysRead((prior) => prior !== null ? { ...prior, failed: prior.view === null, failure } : { view: null, failed: true, failure });
     });
     return () => { cancelled = true; };
-  }, [selected, lastJpdSequence]);
+  }, [selected, lastJpdSequence, flowsRevision]);
   const journeysView = journeysRead?.view ?? null;
   const journeysFailure = journeysRead?.failure ?? null;
   const journeysFailed = journeysRead?.failed ?? false;
@@ -2835,6 +2866,10 @@ export default function App({
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}
             >
             <div id="studio-panel-team" role="tabpanel" aria-labelledby="studio-tab-team" hidden={canvasTab !== "team"}>
+            {canvasTab === "team" && taskGraphs?.executionId === selected && (
+              <TaskGraphs tasks={taskGraphs.tasks}
+                onOpenJourney={(contractId) => { setJourneyContract(contractId); setJourneyDetail(null); chooseCanvas("journey"); }} />
+            )}
             {canvasTab === "team" && (
               <TeamCanvas storageKey={`graphhelm.team-positions:${projectKey}:${selected}`} bots={team.bots} otherRecorders={team.otherRecorders}
                 links={links} unassignedSteps={unassignedSteps} selectedBot={thread.startsWith("direct:") ? thread.slice(7) : null}
@@ -2850,6 +2885,7 @@ export default function App({
             )}
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
+            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} />}
             {canvasTab === "journey" && (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}

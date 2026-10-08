@@ -102,19 +102,23 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
         };
         (base_url.clone(), token)
     };
-    let (actor, actor_from_env) = match &args.actor {
-        Some(name) => (name.clone(), false),
-        None => (
-            std::env::var("GRAPHHELM_ACTOR").map_err(|_| {
-                refuse(
-                    "no actor: supply --actor <id> or the GRAPHHELM_ACTOR environment variable \
-                     (one .mcp.json is shared by every session, so a literal there makes them all \
-                     one actor)",
-                    "/actor",
-                )
-            })?,
-            true,
-        ),
+    // #389: the environment wins. One registration (`--actor agent-chat`, written by `init` and
+    // the host adoption) is shared by every session, so the literal must not override the name a
+    // lane exports for itself; it stays the fallback for every session that sets nothing.
+    let from_env = std::env::var("GRAPHHELM_ACTOR")
+        .ok()
+        .filter(|name| !name.is_empty());
+    let (actor, actor_from_env) = match (from_env, &args.actor) {
+        (Some(name), _) => (name, true),
+        (None, Some(name)) => (name.clone(), false),
+        (None, None) => {
+            return Err(refuse(
+                "no actor: supply --actor <id> or the GRAPHHELM_ACTOR environment variable \
+                 (one .mcp.json is shared by every session, so a literal there makes them all \
+                 one actor)",
+                "/actor",
+            ));
+        }
     };
     if graphhelm_protocols::ActorId::parse(actor.clone()).is_err() {
         return Err(refuse(

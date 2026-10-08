@@ -364,11 +364,21 @@ export interface CaptureView {
   unknownCause?: CaptureUnknownCause;
 }
 
+/** What the user does on a step (#379): the contract's semantic action, without its typed input. */
+export interface StepAction {
+  kind: string;
+  target: string;
+  strategy: string;
+}
+
 export interface StepView {
   stepId: string;
   screen?: { screenId: string; title: string; scopePaths: string[] } | null;
   capture?: CaptureView | null;
   promises: string[];
+  /** #379: absent from older Runtimes. */
+  action?: StepAction | null;
+  expectedStates?: string[];
 }
 
 export interface ArrowView {
@@ -383,6 +393,46 @@ export interface JourneyView {
   title: string;
   steps: StepView[];
   arrows: ArrowView[];
+}
+
+/** `GET /v1/journey-flows` (#353): `graphhelm journey flows`, one entry per `.journey.yaml`. */
+export type JourneyFlowStatus = "draft" | "approved" | "approval_stale" | "unreadable";
+
+export interface JourneyFlowFinding {
+  code: string;
+  pointer: string;
+  message: string;
+  severity: "error" | "warning";
+}
+
+export interface JourneyFlowScreen {
+  id: string;
+  url: string;
+  state: string;
+}
+
+export interface JourneyFlowEdge {
+  id: string;
+  from: string;
+  to: string;
+}
+
+export interface JourneyFlowView {
+  id: string;
+  title: string | null;
+  status: JourneyFlowStatus;
+  approved: { revision: string; digest: string } | null;
+  drift: unknown[];
+  findings: JourneyFlowFinding[];
+  /** `journey approve` would accept it and change something (not an already-settled approval). */
+  approvable: boolean;
+  screens: JourneyFlowScreen[];
+  edges: JourneyFlowEdge[];
+  paths: Record<string, string[]>;
+}
+
+export interface JourneyFlowsView {
+  flows: JourneyFlowView[];
 }
 
 export interface JourneysView {

@@ -38,6 +38,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
         JourneyCommand::Replay(replay) => super::journey_replay::run(replay),
         JourneyCommand::Explore(explore) => super::journey_explore::run(explore),
+        JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
 }
 

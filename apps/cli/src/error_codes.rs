@@ -58,6 +58,16 @@ pub const GHCLI032_STUDIO_REFUSED: &str = "GHCLI032_STUDIO_REFUSED";
 /// `graphhelm journey validate` found a contract that journeys cannot use as written (#328).
 pub const GHCLI033_JOURNEY_CONTRACT_INVALID: &str = "GHCLI033_JOURNEY_CONTRACT_INVALID";
 pub const GHCLI034_JOURNEY_FLOW_INVALID: &str = "GHCLI034_JOURNEY_FLOW_INVALID";
+/// `graphhelm skills sync` could not read the bundle, the host home or its manifest (#355).
+pub const GHCLI035_SKILLS_SYNC_REFUSED: &str = "GHCLI035_SKILLS_SYNC_REFUSED";
+/// A workspace claim or release was refused: the workspace exists, is not claimed, or git failed
+/// (#360).
+pub const GHCLI037_WORKSPACE_REFUSED: &str = "GHCLI037_WORKSPACE_REFUSED";
+/// An agent-typed MCP session asked to approve a journey flow; only the owner approves (#353).
+pub const GHCLI036_JOURNEY_APPROVE_OWNER_ONLY: &str = "GHCLI036_JOURNEY_APPROVE_OWNER_ONLY";
+/// A `task.*` record names another actor than the one that recorded it: a lane cannot record a
+/// step under another lane's name (#386).
+pub const GHCLI038_ACTOR_MISMATCH: &str = "GHCLI038_ACTOR_MISMATCH";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -101,6 +111,10 @@ pub const ALL: &[&str] = &[
     GHCLI032_STUDIO_REFUSED,
     GHCLI033_JOURNEY_CONTRACT_INVALID,
     GHCLI034_JOURNEY_FLOW_INVALID,
+    GHCLI035_SKILLS_SYNC_REFUSED,
+    GHCLI037_WORKSPACE_REFUSED,
+    GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
+    GHCLI038_ACTOR_MISMATCH,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

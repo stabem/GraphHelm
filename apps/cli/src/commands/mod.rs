@@ -27,11 +27,13 @@ mod schema;
 mod secret_file;
 mod serve;
 mod simulate;
+mod skills;
 mod studio;
 mod tool;
 mod topology;
 mod validate;
 mod wake_wait;
+mod workspace;
 
 use std::sync::Arc;
 
@@ -574,9 +576,17 @@ pub fn run(command: TopLevel) -> Outcome {
             )
         }
         TopLevel::Journey(args) => journey::run(&args),
+        TopLevel::Workspace(args) => workspace::run(&args),
         TopLevel::Update(args) => studio::update_cli(&args),
         TopLevel::Studio(args) => match args.command {
             crate::args::StudioCommand::Start(start) => studio::start(&start),
+        },
+        TopLevel::Skills(args) => match args.command {
+            crate::args::SkillsCommand::Sync {
+                host: crate::args::SkillsHost::Codex,
+                home,
+                dry_run,
+            } => skills::sync(home.as_deref(), dry_run),
         },
         TopLevel::Setup(args) => adoption::run(&args),
         TopLevel::Backup(args) => adoption::backup(&args),

@@ -85,6 +85,8 @@ fn step(id: &str, screen: Option<ScreenInput>) -> StepInput {
         step_id: id.into(),
         screen,
         promises: Vec::new(),
+        action: None,
+        expected_states: Vec::new(),
     }
 }
 

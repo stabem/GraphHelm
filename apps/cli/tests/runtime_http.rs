@@ -4449,6 +4449,121 @@ fn issue178_reply_suggestions_refuse_truncated_candidates_before_judgment() {
     assert_eq!(reply["data"]["suggestions"], serde_json::json!([]));
 }
 
+// #369: on ml-saas the chat route pinned a Codex binary its updater had deleted, and the reply said
+// only "model or Jev could not produce valid suggestions", so a dead chat route read the same as a
+// judge failure. Existing coverage never makes the chat call itself fail. Cost: one CLI fixture
+// start and a local serve with a native_runtime route whose program does not exist; no model call.
+#[test]
+fn issue369_reply_suggestions_name_the_failing_chat_route() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-dead-chat-route";
+    let graph = agent_chain_graph(directory.path(), execution);
+    let fixtures = write_json(
+        directory.path(),
+        "fixtures.json",
+        &serde_json::json!({"nodeOutcomes":{"step_one":"unknown"}}),
+    );
+    let start = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "execution",
+            "start",
+            "--file",
+            graph.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+            "--fixtures",
+            fixtures.to_str().unwrap(),
+            "--mode",
+            "autopilot",
+            "--execution",
+            execution,
+        ])
+        .output()
+        .unwrap();
+    let started: Value = serde_json::from_slice(&start.stdout).unwrap();
+    assert_eq!(
+        started["data"]["nodeStateCounts"]["waiting_input"], 1,
+        "{started}"
+    );
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let mut credential = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "gateway",
+            "credential",
+            "set",
+            "--broker",
+            broker.to_str().unwrap(),
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "suggest-key",
+            "--ref",
+            "judge-credential",
+            "--provider",
+            "typesafe",
+            "--usable-by",
+            "judge_route",
+        ])
+        .env("GRAPHHELM_GATEWAY_KEY", gateway_key())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    credential
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"fixture-judge-key")
+        .unwrap();
+    assert!(credential.wait_with_output().unwrap().status.success());
+    let missing = directory
+        .path()
+        .join("deleted-by-updater")
+        .join("codex.exe");
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion":1,"routes":[
+                {"id":"chat_route","provider":"openai","transport":"native_runtime","runtime":"codex","authentication":"account_subscription","billingMode":"subscription_quota","command":{"program":missing.to_str().unwrap(),"args":["exec","-"]},"profiles":[],"enabled":true},
+                {"id":"judge_route","provider":"typesafe","transport":"direct_api","authentication":"api_key","billingMode":"per_token","baseUrl":"http://127.0.0.1:9","model":"jev-latest","credentialRef":"judge-credential","profiles":[],"enabled":true}
+            ]
+        }),
+    );
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            "suggest-key".into(),
+            "--route".into(),
+            "chat_route".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".into(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".into(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let reply = get_json(
+        &format!("{base}/v1/executions/{execution}/reply-suggestions?judgeRoute=judge_route"),
+        Some(&token),
+    );
+    assert_eq!(reply["data"]["state"], "unavailable", "{reply}");
+    let reason = reply["data"]["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains("chat route `chat_route`"),
+        "the reason must name the failing chat route: {reply}"
+    );
+}
+
 // #343: the first operations race at the public HTTP boundary, with no warm-up storage call.
 // Existing pause coverage can miss this bootstrap race or hide its refusal while polling.
 // Cost: 64 cold fixture Runtime processes per case, loopback requests and fresh CLI reopens.

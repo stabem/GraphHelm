@@ -73,12 +73,46 @@ pub enum TopLevel {
     /// project's current git revision, or `walked` one transition between two captured,
     /// consecutive steps.
     Journey(JourneyArgs),
+    /// Agent workspaces (#360): `claim` a worktree with its own cargo target, temp and log
+    /// directories under one root, `release` it when the task is done, `list` them, and `sweep`
+    /// (the owner's) removes released workspaces that are still clean at the released commit.
+    Workspace(WorkspaceArgs),
     /// The Studio: `graphhelm studio start` brings the GraphHelm clone up to date and opens the
     /// Studio for the project in the current directory, starting its Runtime when none answers.
     Studio(StudioArgs),
     /// Update GraphHelm itself: fast-forward the clone this binary comes from to `origin/main`
     /// (only a clean `main`), then reinstall the CLI from it with `cargo install`.
     Update(UpdateArgs),
+    /// Install and keep current the bundled GraphHelm skills in a host's own skills directory.
+    Skills(SkillsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsArgs {
+    #[command(subcommand)]
+    pub command: SkillsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillsCommand {
+    /// Install or update the bundled skills under `<home>/skills/` (#355). Idempotent; records
+    /// what it wrote in `<home>/skills/.graphhelm-skills.json` and never writes a skill directory
+    /// it did not install, nor one edited by hand since.
+    Sync {
+        #[arg(long, value_enum)]
+        host: SkillsHost,
+        /// The host home. Defaults to `CODEX_HOME`, then `~/.codex`.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        /// Report what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SkillsHost {
+    Codex,
 }
 
 #[derive(Debug, Args)]
@@ -120,6 +154,9 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// List every flow source for review: status, drift, validate findings, whether Approve
+    /// would be accepted, and its screens, edges and paths.
+    Flows(JourneyFlowsArgs),
     /// Replay every approved path with the explicitly installed browser observer, without a model.
     Replay(JourneyReplayArgs),
     /// Observe a local app through a selected model route and publish an unapproved draft flow.
@@ -194,6 +231,12 @@ pub struct JourneyReplayArgs {
     /// Internal contained worker; the ordinary supervisor supplies its start handshake.
     #[arg(long, hide = true)]
     pub replay_worker: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyFlowsArgs {
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -714,8 +757,9 @@ pub struct McpArgs {
     pub project: Option<PathBuf>,
     /// The actor every mutation is attributed to (the serve layer's actor id rules).
     /// OPTIONAL because one `.mcp.json` is shared by every session in a repository, so a
-    /// literal here makes every session the same actor (#1058). Falls back to
-    /// `GRAPHHELM_ACTOR`; absent from both doors is a refusal, never a default.
+    /// literal here makes every session the same actor (#1058). A non-empty `GRAPHHELM_ACTOR`
+    /// wins over this flag (#389), so a lane can sign as itself under the shared registration;
+    /// absent from both doors is a refusal, never a default.
     #[arg(long)]
     pub actor: Option<String>,
     /// `agent` (the chat is an agent) or `owner` for an owner-driven chat.
@@ -852,6 +896,11 @@ pub struct ServeArgs {
     /// consults it there); given without it, it is accepted but silently unused.
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// The agent workspace root (#360) that `GET /v1/workspaces` lists and the owner's
+    /// `POST /v1/workspaces/sweep` sweeps. Nothing in a request names a path; without this flag
+    /// both routes refuse naming it.
+    #[arg(long)]
+    pub workspace_root: Option<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
     /// `SweepCaller::Tick`.
     ///
@@ -1776,4 +1825,69 @@ pub enum DraftCommand {
         #[arg(long)]
         events: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceArgs {
+    #[command(subcommand)]
+    pub command: WorkspaceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkspaceCommand {
+    /// Create `<root>/<lane>/<task>/` with a git worktree (`wt`) and `target`, `tmp` and `logs`
+    /// directories, record the claim, and print the environment to use.
+    Claim(WorkspaceClaimArgs),
+    /// Declare the task done: records the worktree's HEAD. Deletes nothing.
+    Release(WorkspaceTaskArgs),
+    /// Every recorded workspace with its state, size and live git facts. Read-only.
+    List(WorkspaceRootArgs),
+    /// Remove released workspaces that are clean and still at the released commit, ignored files
+    /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
+    /// never follows a link, and keeps any workspace whose worktree contains one.
+    Sweep(WorkspaceSweepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceClaimArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    #[arg(long)]
+    pub lane: String,
+    #[arg(long)]
+    pub task: String,
+    /// The git repository the worktree is added to.
+    #[arg(long)]
+    pub repo: PathBuf,
+    /// The commit-ish the new branch starts from. Defaults to `origin/main`.
+    #[arg(long)]
+    pub base: Option<String>,
+    /// The branch to create. Defaults to `issue-<task>-<lane>`.
+    #[arg(long)]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceTaskArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    #[arg(long)]
+    pub lane: String,
+    #[arg(long)]
+    pub task: String,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceRootArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceSweepArgs {
+    #[arg(long)]
+    pub root: PathBuf,
+    /// Remove what the dry run lists. Without it nothing is changed.
+    #[arg(long)]
+    pub apply: bool,
 }

@@ -159,6 +159,57 @@ pub enum JourneyCommand {
     Flows(JourneyFlowsArgs),
     /// Replay every approved path with the explicitly installed browser observer, without a model.
     Replay(JourneyReplayArgs),
+    /// Observe a local app through a selected model route and publish an unapproved draft flow.
+    Explore(JourneyExploreArgs),
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct JourneyModelArgs {
+    #[arg(long, conflicts_with_all = ["manifest", "route", "broker", "gateway_keyring", "gateway_key_id"])]
+    pub fixture: Option<PathBuf>,
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    #[arg(long)]
+    pub route: Option<String>,
+    #[arg(long)]
+    pub broker: Option<PathBuf>,
+    #[arg(long)]
+    pub gateway_keyring: Option<PathBuf>,
+    #[arg(long)]
+    pub gateway_key_id: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct JourneyExploreArgs {
+    #[arg(long)]
+    pub id: String,
+    #[arg(long)]
+    pub base: String,
+    #[arg(long)]
+    pub goal: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[command(flatten)]
+    pub model: JourneyModelArgs,
+    #[arg(long)]
+    pub secret: Vec<String>,
+    #[arg(long)]
+    pub allow_act: Vec<String>,
+    #[arg(long)]
+    pub allow_origin: Vec<String>,
+    #[arg(long, default_value_t = 40)]
+    pub max_steps: u16,
+    #[arg(long)]
+    pub events: Option<PathBuf>,
+    #[arg(long)]
+    pub execution: Option<String>,
+    #[arg(long)]
+    pub keyring: Option<PathBuf>,
+    #[arg(long)]
+    pub key_id: Option<String>,
+    /// Internal contained worker, entered only after the supervisor's start handshake.
+    #[arg(long, hide = true)]
+    pub explore_worker: bool,
 }
 
 #[derive(Debug, Args, Clone)]

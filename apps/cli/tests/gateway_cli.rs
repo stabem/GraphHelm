@@ -1201,3 +1201,38 @@ fn keyring_init_refuses_a_non_empty_0755_directory_naming_the_0700_rule() {
         & 0o7777;
     assert_eq!(mode, 0o755);
 }
+
+// ---------------------------------------------------------------------------
+// #370: a native route whose program no longer exists (and has no versioned sibling) is
+// reported unavailable with the missing path named, instead of a bare `ok: false`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn probe_names_the_missing_native_program() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory
+        .path()
+        .join("bin")
+        .join("0a1b2c3d4e5f6071")
+        .join("codex.exe");
+    let mut manifest_value = valid_manifest_value();
+    for route in manifest_value["routes"].as_array_mut().unwrap() {
+        if route["id"] == "native_probe" {
+            route["command"]["program"] = missing.to_string_lossy().into_owned().into();
+        }
+    }
+    let manifest = write_manifest(directory.path(), &manifest_value);
+
+    let output = probe(&manifest, "native_probe", None, None, None, None);
+    let value = json(&output.stdout);
+    assert_eq!(value["data"]["health"], "unavailable", "{value}");
+    assert_eq!(
+        value["data"]["checks"],
+        serde_json::json!([{
+            "name": "runtime",
+            "ok": false,
+            "missingProgram": missing.to_string_lossy()
+        }]),
+        "{value}"
+    );
+}

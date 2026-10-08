@@ -32,7 +32,7 @@ a graph, approve work, activate a skill, or claim that the journey passed. A fil
 inside the user-approved workspace and remains a proposal until normal GraphHelm governance accepts
 it.
 
-This skill stays read-only on the Runtime. Inside a GraphHelm execution, `journey-verifier` records
+This skill stays read-only on the Runtime. Inside a GraphHelm execution, `journey-prove` (#381) records
 the accepted contract on its node as one `jpd.journey` signal and one `jpd.obligation` signal per
 promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
 
@@ -82,7 +82,7 @@ any later mutation. Never switch surfaces to retry an uncertain mutation.
 Complete when `cli:journey validate` passes on the saved file (it applies
 `../../schemas/journey-contract.schema.json` and the checks above), every promise has a
 stable id and observable fact, failure and recovery behavior are explicit, and no proxy has been
-described as stronger evidence. Hand the contract to `observation-compiler`; do not call it proof.
+described as stronger evidence. Hand the contract to `journey-prove` (#381); do not call it proof.
 
 ## Missing capability
 

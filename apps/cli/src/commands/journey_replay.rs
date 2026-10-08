@@ -21,12 +21,16 @@ const CACHE_SCHEMA: &str = "https://p50.dev/schemas/journey-replay-cache.schema.
 const FRAME: usize = 64 * 1024;
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024;
 const OP_BUDGET: Duration = Duration::from_secs(30);
+// How long a caller waits for OwnedChild::cleanup to report. Cleanup runs the process-tree
+// terminate first and only then its own one-second reap window, so this wait must outlast
+// both; an equal one-second wait raced the terminate and reported cleanup_uncertain.
+const CLEANUP_OBSERVE: Duration = Duration::from_secs(5);
 // The independent supervisor bounds waiting, including startup and the worker's
 // blocking storage/Git/record calls. Kill/reap gets a separate one-second observer.
 // OS scheduler failure and an inconclusive cleanup are reported uncertain, not success.
 const RUN_BUDGET: Duration = Duration::from_secs(180);
-type Failure = (&'static str, String, i32);
-type Result<T> = std::result::Result<T, Failure>;
+pub(super) type Failure = (&'static str, String, i32);
+pub(super) type Result<T> = std::result::Result<T, Failure>;
 
 fn failure(code: &'static str, path: impl Into<String>, exit: i32) -> Failure {
     (code, path.into(), exit)
@@ -65,7 +69,7 @@ fn report(data: Value, failed: Option<Failure>) -> Outcome {
     }
 }
 
-fn safe_environment(command: &mut Command, recording: bool) {
+pub(super) fn safe_environment(command: &mut Command, recording: bool) {
     command.env_clear();
     for key in [
         "PATH",
@@ -172,6 +176,15 @@ fn spawn_owned(mut command: Command, deadline: Instant) -> Result<OwnedChild> {
         .map_err(|_| failure("replay.timeout", "/startup", 1))?
 }
 
+/// Reads a child's stderr to the end and discards it. A receiver nobody reads lets the
+/// pipe either fill (the child blocks) or close early (the child's next write fails), so
+/// diagnostics output must be drained for the whole life of the child, never echoed.
+fn drain(pipe: impl Read + Send + 'static) {
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut BufReader::new(pipe), &mut std::io::sink());
+    });
+}
+
 fn frames(pipe: impl Read + Send + 'static, limit: usize) -> Receiver<Result<Option<Vec<u8>>>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -215,7 +228,7 @@ fn write_frame(
     }
 }
 
-fn child_output(
+pub(super) fn child_output(
     command: Command,
     input: Vec<u8>,
     budget: Duration,
@@ -225,7 +238,7 @@ fn child_output(
     let mut owned = spawn_owned(command, deadline)?;
     let child = owned.child.as_mut().unwrap();
     let replies = frames(child.stdout.take().unwrap(), limit);
-    let _stderr = frames(child.stderr.take().unwrap(), 8192);
+    drain(child.stderr.take().unwrap());
     supervise_owned(owned, input, deadline, replies)
 }
 
@@ -265,13 +278,13 @@ fn supervise_owned(
     // observer. No error path silently drops a live pipe-owning group.
     let status = owned
         .cleanup()
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(CLEANUP_OBSERVE)
         .map_err(|_| failure("replay.cleanup_uncertain", "/worker", 1))?
         .map_err(|()| failure("replay.cleanup_uncertain", "/worker", 1))?;
     result.map(|bytes| (status, bytes))
 }
 
-struct Driver {
+pub(super) struct Driver {
     owned: Option<OwnedChild>,
     writer: mpsc::SyncSender<(Vec<u8>, mpsc::SyncSender<bool>)>,
     replies: Receiver<Result<Option<Vec<u8>>>>,
@@ -279,10 +292,10 @@ struct Driver {
     secrets: Vec<String>,
 }
 
-struct TemporaryOutput(PathBuf);
+pub(super) struct TemporaryOutput(PathBuf);
 
 impl TemporaryOutput {
-    fn create() -> Result<Self> {
+    pub(super) fn create() -> Result<Self> {
         let root = std::env::temp_dir()
             .canonicalize()
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
@@ -291,7 +304,7 @@ impl TemporaryOutput {
             .map_err(|_| failure("replay.output_unavailable", "/observer/output", 3))?;
         Ok(Self(path))
     }
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -307,7 +320,11 @@ impl Drop for TemporaryOutput {
 }
 
 impl Driver {
-    fn start(project: &Path, output: &Path, secrets: &BTreeMap<String, String>) -> Result<Self> {
+    pub(super) fn start(
+        project: &Path,
+        output: &Path,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         // Node's main-module resolver rejects Windows canonical drive prefixes.
         // Change only the external spelling, and verify it still identifies the
         // same directory before sending it to an observer.
@@ -342,7 +359,7 @@ impl Driver {
         let mut owned = spawn_owned(command, Instant::now() + OP_BUDGET)?;
         let child = owned.child.as_mut().unwrap();
         let replies = frames(child.stdout.take().unwrap(), FRAME);
-        let _stderr = frames(child.stderr.take().unwrap(), 8192);
+        drain(child.stderr.take().unwrap());
         let mut stdin = child.stdin.take().unwrap();
         let (tx, rx) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
         std::thread::spawn(move || {
@@ -363,14 +380,14 @@ impl Driver {
         })
     }
 
-    fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
+    pub(super) fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
         let result = self.call_inner(op, request, path);
         if result.is_err()
             && let Some(owned) = self.owned.take()
         {
             owned
                 .cleanup()
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(CLEANUP_OBSERVE)
                 .map_err(|_| failure("replay.cleanup_uncertain", path, 1))?
                 .map_err(|()| failure("replay.cleanup_uncertain", path, 1))?;
         }
@@ -403,7 +420,7 @@ impl Driver {
             .replies
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .map_err(|_| failure("replay.timeout", format!("{path}/read"), 1))??
-            .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
+            .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/eof"), 1))?;
         if self.secrets.iter().any(|secret| {
             !secret.is_empty() && {
                 let encoded = serde_json::to_vec(secret).unwrap();
@@ -413,11 +430,13 @@ impl Driver {
         }) {
             return Err(failure("driver.redaction_failed", path, 1));
         }
+        // Each malformed-frame check names itself under the call's pointer, so a refused
+        // frame says which check refused it without echoing driver-controlled text.
         let reply: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| failure("replay.driver_frame_invalid", path, 1))?;
+            .map_err(|_| failure("replay.driver_frame_invalid", format!("{path}/json"), 1))?;
         let success = reply["ok"]
             .as_bool()
-            .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
+            .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/ok"), 1))?;
         let keys = if success {
             &["protocol", "requestId", "ok", "result"][..]
         } else {
@@ -429,7 +448,11 @@ impl Driver {
                 v.len() == keys.len() && v.keys().all(|k| keys.contains(&k.as_str()))
             })
         {
-            return Err(failure("replay.driver_frame_invalid", path, 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                format!("{path}/envelope"),
+                1,
+            ));
         }
         if !success {
             let code = match reply["code"].as_str().unwrap_or("") {
@@ -446,7 +469,13 @@ impl Driver {
                 "driver.redaction_failed" => "driver.redaction_failed",
                 "driver.capture_refused" => "driver.capture_refused",
                 "driver.action_failed" => "driver.action_failed",
-                _ => "replay.driver_frame_invalid",
+                _ => {
+                    return Err(failure(
+                        "replay.driver_frame_invalid",
+                        format!("{path}/code"),
+                        1,
+                    ));
+                }
             };
             return Err(failure(
                 code,
@@ -461,6 +490,9 @@ impl Driver {
         let result = &reply["result"];
         let fields: &[&str] = match op {
             "open" => &["url"],
+            "snapshot" if request["discover"] == true => {
+                &["url", "ariaYaml", "controls", "fingerprint", "expectations"]
+            }
             "snapshot" => &["url", "ariaYaml", "controls", "fingerprint"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
@@ -477,7 +509,16 @@ impl Driver {
             && match op {
                 "open" => text(&result["url"], 4096),
                 "snapshot" => {
-                    text(&result["url"], 4096)
+                    (request["discover"] != true
+                        || result["expectations"].as_array().is_some_and(|pairs| {
+                            pairs.len() <= 8
+                                && pairs.iter().all(|pair| {
+                                    closed(pair, &["role", "name"])
+                                        && text(&pair["role"], 64)
+                                        && text(&pair["name"], 256)
+                                })
+                        }))
+                        && text(&result["url"], 4096)
                         && text(&result["ariaYaml"], 6144)
                         && result["fingerprint"].as_str().is_some_and(|value| {
                             value.strip_prefix("sha256:").is_some_and(|hash| {
@@ -522,31 +563,40 @@ impl Driver {
                 _ => false,
             };
         if !valid {
-            return Err(failure("replay.driver_frame_invalid", path, 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                format!("{path}/result"),
+                1,
+            ));
         }
         Ok(result.clone())
     }
 
-    fn close(mut self) -> Result<()> {
+    pub(super) fn close(mut self) -> Result<()> {
         self.call("close", json!({}), "/observer/close")?;
+        // Each step after the close reply names itself, so a failed close says which one.
         let trailing = self
             .replies
             .recv_timeout(OP_BUDGET)
-            .map_err(|_| failure("replay.timeout", "/observer/close", 1))??;
+            .map_err(|_| failure("replay.timeout", "/observer/close/eof", 1))??;
         if trailing.is_some() {
-            return Err(failure("replay.driver_frame_invalid", "/observer/close", 1));
+            return Err(failure(
+                "replay.driver_frame_invalid",
+                "/observer/close/trailing",
+                1,
+            ));
         }
         let owned = self.owned.take().unwrap();
         owned
             .cleanup()
-            .recv_timeout(Duration::from_secs(1))
-            .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close", 1))?
-            .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close", 1))?;
+            .recv_timeout(CLEANUP_OBSERVE)
+            .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?
+            .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?;
         Ok(())
     }
 }
 
-fn safe_node(path: &Path) -> bool {
+pub(super) fn safe_node(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| {
         #[cfg(windows)]
         {
@@ -559,7 +609,7 @@ fn safe_node(path: &Path) -> bool {
     })
 }
 
-fn safe_directory(path: &Path, create: bool) -> Result<()> {
+pub(super) fn safe_directory(path: &Path, create: bool) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && safe_node(path) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => {
@@ -569,7 +619,7 @@ fn safe_directory(path: &Path, create: bool) -> Result<()> {
     }
 }
 
-fn cache_valid(cache: &Value, flow: &Value) -> bool {
+pub(super) fn cache_valid(cache: &Value, flow: &Value) -> bool {
     let schema = serde_json::from_str(include_str!(
         "../../../../schemas/journey-replay-cache.schema.json"
     ))
@@ -733,7 +783,7 @@ fn preflight(flow: &Value) -> Result<BTreeMap<String, String>> {
     Ok(secrets)
 }
 
-fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
+pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
     let Ok(expected_url) =
         format!("{}{}", base.trim_end_matches('/'), pattern).parse::<axum::http::Uri>()
     else {
@@ -787,7 +837,12 @@ fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
         })
 }
 
-fn observe(driver: &mut Driver, screen: &Value, base: &str, path: &str) -> Result<Value> {
+pub(super) fn observe(
+    driver: &mut Driver,
+    screen: &Value,
+    base: &str,
+    path: &str,
+) -> Result<Value> {
     let snapshot = driver.call("snapshot", json!({"expect":screen["expect"]}), path)?;
     let url = snapshot["url"]
         .as_str()
@@ -824,7 +879,12 @@ fn record_command(args: &JourneyReplayArgs, kind: &str, contract: &str) -> Resul
     Ok(command)
 }
 
-fn record(args: &JourneyReplayArgs, contract: &str, step: &str, image: &Path) -> Result<String> {
+pub(super) fn record(
+    args: &JourneyReplayArgs,
+    contract: &str,
+    step: &str,
+    image: &Path,
+) -> Result<String> {
     let mut capture = record_command(args, "capture", contract)?;
     capture.args(["--step", step, "--image"]).arg(image);
     // Blocking store/record calls are inside the independently supervised worker.
@@ -843,7 +903,7 @@ fn record(args: &JourneyReplayArgs, contract: &str, step: &str, image: &Path) ->
     Ok(signal)
 }
 
-fn walked(
+pub(super) fn walked(
     args: &JourneyReplayArgs,
     contract: &str,
     from: &str,

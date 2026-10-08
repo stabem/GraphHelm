@@ -1169,7 +1169,7 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 members.0, members.1
             )
         });
-        return drain_terminated_job(&members, || job_member_ids(group).map(|fresh| fresh.1));
+        return drain_terminated_job(&members);
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
     if !handle.is_null() {
@@ -1283,12 +1283,9 @@ fn job_member_ids(group: ProcessGroup) -> Option<(Vec<u32>, usize)> {
 /// flake was unchanged and the fix looked applied. Two instruments disagreeing about the same
 /// instant; the one that decides is the one a caller can observe.
 #[cfg(windows)]
-fn drain_terminated_job(
-    members: &(Vec<u32>, usize),
-    refresh_unlisted: impl Fn() -> Option<usize>,
-) -> TerminationOutcome {
+fn drain_terminated_job(members: &(Vec<u32>, usize)) -> TerminationOutcome {
     let mut ids = members.0.clone();
-    let mut unlisted = members.1;
+    let unlisted = members.1;
     let started = std::time::Instant::now();
     let mut passes: u32 = 0;
     let mut direct_kill_sent = false;
@@ -1296,38 +1293,14 @@ fn drain_terminated_job(
         passes = passes.saturating_add(1);
         ids.retain(|id| process_is_running(*id));
         if ids.is_empty() {
-            // #454: the pre-kill `assigned - listed` is not a count of survivors. A member that had
-            // EXITED while another member still held its handle is assigned and unlisted until the
-            // holder goes, and the holder was just killed with the job: re-read the count now,
-            // and keep waiting (inside the same ceiling) while it drains, rather than answering
-            // `BoundReached { remaining: 1 }` for a process that was dead before the kill.
-            unlisted = refresh_unlisted().unwrap_or(unlisted);
-            if passes == 1 || passes.is_multiple_of(1000) {
-                trace(|| {
-                    format!(
-                        "drain pass={passes} listed_running=0 unlisted={unlisted} elapsed_ms={}",
-                        started.elapsed().as_millis()
-                    )
-                });
-            }
             if unlisted == 0 {
                 return TerminationOutcome::Complete;
             }
-            if started.elapsed() >= JOB_DRAIN_CEILING {
-                trace(|| {
-                    format!(
-                        "bound: unlisted={unlisted} after {} ms; {}",
-                        started.elapsed().as_millis(),
-                        snapshot_of(&members.0)
-                    )
-                });
-                return TerminationOutcome::BoundReached {
-                    passes,
-                    remaining: unlisted,
-                };
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            continue;
+            trace(|| format!("bound: unlisted={unlisted}; {}", snapshot_of(&members.0)));
+            return TerminationOutcome::BoundReached {
+                passes,
+                remaining: unlisted,
+            };
         }
         // #454: a member the job kill has not ended after a second is ended directly, once. The
         // job's termination is one request for every member; under load a Chromium process was
@@ -1379,8 +1352,9 @@ fn terminate_member(process_id: u32) -> String {
     format!("open=true accepted={accepted} error={error}")
 }
 
-/// `GRAPHHELM_PTREE_TRACE=1` (#454 instrument): one stderr line per observation while a job
-/// drains. Off by default; nothing here is read by code.
+/// `GRAPHHELM_PTREE_TRACE=<file>` (#454 instrument): one line per observation while a job drains,
+/// appended to that file (the replay worker forwards the variable). Off by default; nothing here
+/// is read by code.
 #[cfg(windows)]
 fn trace(line: impl FnOnce() -> String) {
     use std::io::Write;
@@ -1578,80 +1552,29 @@ mod post_enumeration_join_window {
     /// process still holding `graphhelm_process_tree-*.exe`). So the arrangement below happens before
     /// any assertion that can fail, and everything that can panic is wrapped so the two fixture
     /// processes and the job handle are always ended, panic or not.
-    /// The leader a cell below spawns into a job (#454): it starts a grandchild that exits at
-    /// once, keeps the grandchild's handle open, reports through the marker file named by
-    /// `GH_PTREE_HOLD_MARKER`, and lingers until it is terminated. Without that variable it is an
-    /// ordinary empty test. The replay driver's Node holds an exited Chromium exactly like this.
+    /// #454: the direct request the drain sends to a member the job kill left running is a real
+    /// `TerminateProcess` that ends that process, and its answer says so. The mechanism's other
+    /// half (a member still running a second after `TerminateJobObject`) is a load condition this
+    /// cell cannot stage; it is measured by the replay browser cell under a CPU hog in the PR.
     #[test]
-    fn hold_an_exited_grandchild() {
-        let Some(marker) = std::env::var_os("GH_PTREE_HOLD_MARKER") else {
-            return;
-        };
-        let mut grandchild = std::process::Command::new("cmd")
-            .args(["/c", "exit 0"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("HELPER: grandchild spawns");
-        // `try_wait` observes the exit and keeps the handle; only dropping `grandchild` closes it.
-        while grandchild.try_wait().expect("HELPER: try_wait").is_none() {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        std::fs::write(&marker, b"exited").expect("HELPER: marker");
-        std::thread::sleep(std::time::Duration::from_secs(120));
-        drop(grandchild);
-    }
-
-    /// #454, measured mechanism of `replay.cleanup_uncertain`: a member that has EXITED but whose
-    /// handle another member still holds is counted by the job as assigned and is no longer
-    /// listed. A drain that reads the PRE-KILL `assigned - listed` as "members still alive"
-    /// answers `BoundReached { remaining: 1 }` the instant the listed members are gone, although
-    /// the holder died with the kill and the count dropped with it. `terminate` must re-read the
-    /// count after the kill. The arrangement is asserted first: if the job does not count an
-    /// exited, handle-held member this way, this cell says so instead of proving nothing.
-    #[test]
-    fn an_exited_member_whose_handle_a_dying_member_holds_is_not_a_survivor() {
-        let marker = std::env::temp_dir().join(format!("gh-ptree-hold-{}.txt", std::process::id()));
-        let _ = std::fs::remove_file(&marker);
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command
-            .args([
-                "--exact",
-                "post_enumeration_join_window::hold_an_exited_grandchild",
-                "--nocapture",
-            ])
-            .env("GH_PTREE_HOLD_MARKER", &marker)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        super::configure(&mut command);
-        let mut leader = command.spawn().expect("ARRANGEMENT: leader spawns");
-        let mut group = super::create(&leader).expect("ARRANGEMENT: the leader is contained");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while std::fs::read(&marker).ok().as_deref() != Some(b"exited") {
+    fn a_direct_member_kill_ends_the_member_and_reports_it() {
+        let mut member = Some(spawn_suspended_member());
+        let id = member.as_ref().unwrap().id();
+        assert!(
+            process_is_running(id),
+            "ARRANGEMENT: the member runs (suspended) before the kill"
+        );
+        let answer = super::terminate_member(id);
+        assert_eq!(answer, "open=true accepted=true error=0");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while process_is_running(id) {
             assert!(
                 std::time::Instant::now() < deadline,
-                "ARRANGEMENT: the leader did not report its grandchild's exit"
+                "the member outlived its direct kill"
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let before = job_member_ids(group).expect("ARRANGEMENT: the job's membership can be read");
-        assert_eq!(
-            (before.0.clone(), before.1),
-            (vec![leader.id()], 1),
-            "ARRANGEMENT: an exited member whose handle the leader holds must be assigned-but-unlisted \
-             (listed = the leader alone, unlisted = 1), or the mechanism this cell names is not real"
-        );
-        let outcome = super::terminate(leader.id(), group);
-        super::close(&mut group);
-        let _ = leader.wait();
-        let _ = std::fs::remove_file(&marker);
-        assert_eq!(
-            outcome,
-            TerminationOutcome::Complete,
-            "the exited grandchild's handle died with the leader; nothing survived the kill"
-        );
+        let _ = member.take().unwrap().wait();
     }
 
     #[test]
@@ -1701,7 +1624,7 @@ mod post_enumeration_join_window {
             // wait for it.
             terminate_directly(enumerated_id);
 
-            let drain = std::thread::spawn(move || drain_terminated_job(&stale, || Some(0)));
+            let drain = std::thread::spawn(move || drain_terminated_job(&stale));
 
             // EXPLICIT SYNCHRONIZATION, NOT A WALL-CLOCK RACE (Codex, second pass): a bounded poll
             // here would compare THIS thread's elapsed time against a margin over

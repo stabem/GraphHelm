@@ -13,6 +13,11 @@ Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approvin
 - Emits: the squash merge, and the record `task.merged` after reading what landed, signed as
   your own lane: `python tools/task-record/task_record.py --lane <you> merged --issue <N> --pr <P> --merge-sha <sha> --closes <N>...` (exactly the issues the squash closed; leave `--closes` out for a `Refs` PR)
   (from a GraphHelm checkout; token and defaults: `docs/process/DELIVERY.md` "Task records").
+  Record it only after **your own** `gh pr merge` exited 0 without "already merged", and
+  `gh pr view <N> --json mergeCommit` names the commit you then read. Never chain the record after
+  `gh pr merge` with `&&`: "already merged" (another lane merged first) does not stop the chain, and
+  a wrong record cannot be retracted. All lanes share one GitHub account, so `mergedBy` cannot
+  name the lane (#469).
 
 ## Method
 

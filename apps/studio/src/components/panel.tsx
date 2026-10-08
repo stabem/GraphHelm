@@ -22,6 +22,7 @@ import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
+import { SaidText } from "./said";
 import type { ClaimEvidence, EvidenceContent, ExecutionStatus, NativeChatSummary, ReplySuggestion, ReplySuggestions, RuntimeEvent } from "../runtime/types";
 import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { isClaudeTaskSignal } from "../runtime/team-tasks";
@@ -277,101 +278,6 @@ export function pinnedToLatest(scrollHeight: number, scrollTop: number, clientHe
  * causes - the Runtime holds no key for it, the store refused it, the reference outlived its
  * content - and every one of them matters more to the person reading than an empty line would.
  */
-/**
- * The sealed words, opened into READING. Agents write plain text with the shapes people write:
- * blank-line paragraphs, dash or numbered lists, backticked identifiers. This renders exactly
- * those three shapes and nothing else - built as React nodes, so a message can never smuggle
- * markup, and a text with none of the shapes falls through as the single paragraph it is.
- */
-function inlineOf(text: string): React.ReactNode[] {
-  const parts = text.split(/`([^`\n]{1,120})`/g);
-  return parts.map((part, index) =>
-    index % 2 === 1 ? <code key={index}>{part}</code> : part,
-  );
-}
-
-const LIST_MARK = /^\s*(?:[-*]|\(\d{1,3}\)|\d{1,3}[.)])\s+/;
-
-/* An inline enumeration mid-sentence: "... nesta ordem: (1) isto; (2) aquilo". Two or more of
- * these in one paragraph and the paragraph is a list that never got its line breaks. */
-const INLINE_ENUM = /\s*\((\d{1,2})\)\s+/g;
-
-/** Agents write without blank lines, so a paragraph has to be FOUND, not just split: a long
- * unbroken run is chunked at sentence ends into readable lengths. Presentation only - every
- * character of the message survives, in order. */
-function sentencesOf(text: string): string[] {
-  const parts = text.split(/(?<=[.!?:])\s+(?=[A-Z\u00c0-\u00dc(\u2018\u201c"'\`\d])/);
-  const TARGET = 240;
-  const chunks: string[] = [];
-  let current = "";
-  for (const part of parts) {
-    if (current.length > 0 && current.length + part.length > TARGET) {
-      chunks.push(current);
-      current = part;
-    } else {
-      current = current.length > 0 ? current + " " + part : part;
-    }
-  }
-  if (current.length > 0) chunks.push(current);
-  return chunks;
-}
-
-function paragraphsOf(block: string, keyBase: string): React.ReactNode[] {
-  // An inline (1) (2) (3) enumeration becomes the numbered list it always wanted to be.
-  const enumMatches = [...block.matchAll(INLINE_ENUM)];
-  if (enumMatches.length >= 2) {
-    const first = enumMatches[0];
-    const lead = block.slice(0, first.index).trim();
-    const items: string[] = [];
-    for (let index = 0; index < enumMatches.length; index += 1) {
-      const from = enumMatches[index].index! + enumMatches[index][0].length;
-      const to = index + 1 < enumMatches.length ? enumMatches[index + 1].index! : block.length;
-      items.push(block.slice(from, to).trim());
-    }
-    return [
-      ...(lead.length > 0 ? [<p key={keyBase + "-lead"}>{inlineOf(lead)}</p>] : []),
-      <ol key={keyBase + "-enum"}>
-        {items.map((item, itemIndex) => (
-          <li key={itemIndex}>{inlineOf(item)}</li>
-        ))}
-      </ol>,
-    ];
-  }
-  return sentencesOf(block).map((chunk, chunkIndex) => (
-    <p key={keyBase + "-" + chunkIndex}>{inlineOf(chunk)}</p>
-  ));
-}
-
-function formatSaid(text: string): React.ReactNode {
-  const blocks = text.replace(/\r\n/g, "\n").split(/\n{2,}/);
-  return blocks.flatMap((block, blockIndex): React.ReactNode[] => {
-    const lines = block.split("\n");
-    const listy = lines.length > 1 && lines.filter((line) => LIST_MARK.test(line)).length >= 2;
-    if (listy) {
-      // Lines before the first marker stay a lead-in paragraph; marked lines become items, and
-      // an unmarked continuation line belongs to the item above it.
-      const lead: string[] = [];
-      const items: string[] = [];
-      for (const line of lines) {
-        if (LIST_MARK.test(line)) items.push(line.replace(LIST_MARK, ""));
-        else if (items.length === 0) lead.push(line);
-        else items[items.length - 1] += "\n" + line;
-      }
-      return [
-        <React.Fragment key={blockIndex}>
-          {lead.length > 0 && <p>{inlineOf(lead.join("\n"))}</p>}
-          <ul>
-            {items.map((item, itemIndex) => (
-              <li key={itemIndex}>{inlineOf(item)}</li>
-            ))}
-          </ul>
-        </React.Fragment>,
-      ];
-    }
-    return paragraphsOf(block, String(blockIndex));
-  });
-}
-
 function Said({
   executionId,
   evidenceId,
@@ -466,7 +372,7 @@ function Said({
       {state.text.trim().length === 0 ? (
         <p className="turn-said shut">opened — the sealed record is empty</p>
       ) : (
-        <div className="turn-said">{formatSaid(state.text)}</div>
+        <div className="turn-said"><SaidText text={state.text} /></div>
       )}
     </>
   );

@@ -1392,6 +1392,26 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 .turn-said li { white-space: pre-wrap; }
 .turn-said li::marker { color: var(--faint); }
+/* #479: who signed the message is a small chip, not body text; the first line is the headline;
+   shas, paths and codes are dimmed so the sentence reads first; links go to GitHub or a journey. */
+.said-identity { display: inline-flex; gap: 4px; align-items: baseline; margin-bottom: 6px; padding: 1px 8px; border-radius: var(--r-pill); border: 1px solid var(--edge); color: var(--dim); font-size: 11px; line-height: 1.6; }
+.said-identity code { color: var(--faint); background: none; padding: 0; }
+.said-headline { font-size: 13.5px; }
+.turn-said .said-headline + p, .turn-said .said-headline + ul, .turn-said .said-headline + ol { margin-top: 6px; }
+.turn-said code.said-dim { color: var(--dim); opacity: 0.85; }
+.turn-said a { color: var(--signal); text-decoration: underline; text-underline-offset: 2px; }
+.said-journey { font: inherit; color: var(--signal); background: none; border: 0; padding: 0; text-decoration: underline dotted; cursor: pointer; }
+.turn-said > .show-more { margin-top: 6px; }
+/* #479: the room thread renders the same reading shapes as the panel bubbles. */
+.said-body p { margin: 0; }
+.said-body p + p, .said-body p + ul, .said-body p + ol, .said-body ul + p, .said-body ol + p { margin-top: 6px; }
+.said-body ul, .said-body ol { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.said-body li::marker { color: var(--faint); }
+.said-body code { font-family: var(--mono); font-size: 0.86em; padding: 0 3px; border-radius: var(--r-sm); background: var(--raised); }
+.said-body code.said-dim, .said-body .said-identity code { color: var(--dim); background: none; padding: 0; }
+.said-body a { color: var(--signal); text-decoration: underline; text-underline-offset: 2px; }
+.said-body > .show-more { margin-top: 4px; }
+.said-body .said-identity { display: flex; width: fit-content; }
 /* Inline, whatever `.turn code` (the payload dump) says: a backticked identifier lives
    INSIDE its sentence. */
 .turn-said code {

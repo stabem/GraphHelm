@@ -2847,12 +2847,23 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #465: a draft has no proof map below; its journey takes the whole panel. */
 #studio-panel-journeys > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
 #studio-panel-journeys > .journey-canvas { flex: 1 1 auto; height: auto; }
+/* #481 (owner: "n deixa rolar a pagina"): the Team tab is the same kind of column. The task list
+   scrolled with the page and was clipped under Run actions after ~11 rows; it now scrolls in its
+   own box, the team canvas keeps the rest, and the dock's cover is reserved below both. */
+#studio-panel-team { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
+#studio-panel-team[hidden] { display: none; }
+#studio-panel-team > .task-graphs { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
+#studio-panel-team > .task-graphs:last-child { max-height: none; flex: 1 1 auto; }
+#studio-panel-team > .team-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 .cited-records { z-index: 20; }
 
 .chat-tabpanel { display: contents; }
 
 /* #391: one small graph per task in the Team tab, folded from task.* records. */
 .task-graphs { display: grid; gap: 8px; padding: 8px 12px; }
+/* #481: delivered tasks fold away below the active ones. */
+.task-graphs-delivered { display: grid; gap: 8px; }
+.task-graphs-delivered > summary { cursor: pointer; color: var(--dim); font-size: 13px; padding: 4px 0; }
 .task-graph { border: 1px solid var(--edge); border-radius: var(--r); padding: 8px 12px; background: var(--raised); display: grid; gap: 6px; }
 .task-graph-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
 .task-graph-merged { color: var(--live); font-weight: 600; }

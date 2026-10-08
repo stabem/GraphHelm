@@ -263,3 +263,37 @@ fn watch_plays_a_draft_past_the_gates_that_refuse_open() {
         "watch.path_unknown",
     );
 }
+
+/// The owner only clicks Watch, so an app under test that is down is started from the project's
+/// launcher, and with none declared watch says what is missing instead of failing in the browser.
+/// A declaration that points outside the project is refused before anything runs. Uses a real
+/// observer file so the gates before the browser are all passed. Cost: seconds, no browser (the
+/// flow's base is a closed local port).
+#[test]
+fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
+    let dir = draft();
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/journey_driver.mjs"),
+        include_bytes!("../../../tools/journey-driver/driver.mjs"),
+    )
+    .unwrap();
+    refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        2,
+        "watch.app_down",
+    );
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"../outside.sh"}"#,
+    )
+    .unwrap();
+    refuses(
+        dir.path(),
+        &["watch", "checkout"],
+        "journey.watch",
+        2,
+        "watch.launcher_invalid",
+    );
+}

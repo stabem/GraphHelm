@@ -72,6 +72,17 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "live.act_refused_destructive" => {
             "a destructive-looking act is refused on a live session unless the approved flow has it on an edge leaving the current screen"
         }
+        "watch.app_down" => {
+            "the app under test does not answer on the flow's base, and the project declares no launcher (.graphhelm/journey-fixture.json); start it, then watch again"
+        }
+        "watch.launcher_invalid" => {
+            "the project's launcher (.graphhelm/journey-fixture.json) is not a graphhelm-journey-fixture/1 file naming a script inside the project"
+        }
+        "watch.launch_failed" => {
+            "the project's launcher did not bring the app under test up on the flow's base in time"
+        }
+        "watch.pace_invalid" => "paceMs must be between 0 and 10000",
+        "watch.path_unknown" => "the flow has no path with that name",
         "live.recording_incomplete" => {
             "supply all of --events, --execution, --keyring and --key-id, or none"
         }
@@ -447,6 +458,8 @@ struct Session {
     token: Vec<u8>,
     listener: TcpListener,
     deadline: Instant,
+    /// The app under test this watch started (and stops when the host ends), if it had to.
+    launched: Option<Launched>,
 }
 
 /// The host half. Never returns: it prints its one envelope line, serves, and exits.
@@ -507,6 +520,9 @@ fn host(args: &JourneyOpenArgs, mut data: Value) -> ! {
     let _ = std::fs::remove_file(dir.join(format!("{}.json", session.id)));
     let _ = std::fs::remove_file(dir.join(format!("{}.token", session.id)));
     let _ = session.driver.close();
+    if let Some(launched) = session.launched.take() {
+        launched.stop();
+    }
     std::process::exit(0);
 }
 
@@ -620,8 +636,25 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     let secrets = preflight(&flow)?;
     observer_ready(&project)?;
     let output = TemporaryOutput::create()?;
-    let mut driver = Driver::start(&project, output.path(), &secrets)?;
     let base = flow["base"].as_str().unwrap().to_owned();
+    // The owner only clicks Watch: when the app under test is down, the project's declared
+    // launcher brings it up (and the host stops it when the watch ends).
+    let launched = if args.watch && !base_reachable(&base) {
+        let launched = launch(&project, &base)?;
+        data["launched"] = true.into();
+        Some(launched)
+    } else {
+        None
+    };
+    let mut driver = match Driver::start(&project, output.path(), &secrets) {
+        Ok(driver) => driver,
+        Err(failed) => {
+            if let Some(launched) = launched {
+                launched.stop();
+            }
+            return Err(failed);
+        }
+    };
     let entry = format!(
         "{}{}",
         base.trim_end_matches('/'),
@@ -756,6 +789,8 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         &project, args, flow, base, contract, visited, current, driver, output, recording, data,
         session_id,
     )?;
+    let mut session = session;
+    session.launched = launched;
     Ok((session, step_failure))
 }
 
@@ -789,6 +824,130 @@ fn sweep_expired(dir: &Path) {
             }
         }
     }
+}
+
+/// The project's declaration of how to start the app its journey flows are written against
+/// (`.graphhelm/journey-fixture.json`, schema `graphhelm-journey-fixture/1`): a POSIX shell
+/// script run from the project root with `up <dir>` and `down <dir>`, `<dir>` a fresh directory
+/// outside the checkout. Read only by `journey watch`, which is owner-only; it is the project's
+/// own code, run as `npm test` would be.
+const FIXTURE_FILE: &str = ".graphhelm/journey-fixture.json";
+const FIXTURE_SCHEMA: &str = "graphhelm-journey-fixture/1";
+/// How long a launched app may take to answer on the flow's base.
+const LAUNCH_READY: Duration = Duration::from_secs(120);
+
+struct Launched {
+    project: PathBuf,
+    script: String,
+    dir: PathBuf,
+}
+
+impl Launched {
+    fn stop(self) {
+        let _ = posix_shell()
+            .arg(&self.script)
+            .arg("down")
+            .arg(&self.dir)
+            .current_dir(&self.project)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// `host:port` of an `http://` base, the port defaulting to 80.
+fn base_address(base: &str) -> Option<String> {
+    let rest = base.strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    Some(if authority.contains(':') {
+        authority.to_owned()
+    } else {
+        format!("{authority}:80")
+    })
+}
+
+fn base_reachable(base: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    base_address(base)
+        .and_then(|address| address.to_socket_addrs().ok())
+        .into_iter()
+        .flatten()
+        .any(|address| TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok())
+}
+
+/// A POSIX shell: `GRAPHHELM_POSIX_SHELL`, else Git for Windows' bash on Windows, else `sh`.
+fn posix_shell() -> Command {
+    if let Some(shell) = std::env::var_os("GRAPHHELM_POSIX_SHELL") {
+        return Command::new(shell);
+    }
+    #[cfg(windows)]
+    {
+        let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
+        if git_bash.is_file() {
+            return Command::new(git_bash);
+        }
+    }
+    Command::new("sh")
+}
+
+/// Starts the declared app under test and waits until the flow's base answers.
+fn launch(project: &Path, base: &str) -> Result<Launched> {
+    let declared = project.join(FIXTURE_FILE);
+    if !safe_node(&declared) {
+        return Err(failure("watch.app_down", "/base", 2));
+    }
+    let fixture: Value = std::fs::read(&declared)
+        .ok()
+        .filter(|bytes| bytes.len() <= FRAME)
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or_else(|| failure("watch.launcher_invalid", "/launcher", 2))?;
+    let script = fixture["script"]
+        .as_str()
+        .filter(|script| {
+            fixture["schema"] == FIXTURE_SCHEMA
+                && !script.is_empty()
+                && !Path::new(script).is_absolute()
+                && !script.split(['/', '\\']).any(|part| part == "..")
+                && safe_node(&project.join(script))
+        })
+        .ok_or_else(|| failure("watch.launcher_invalid", "/launcher", 2))?
+        .to_owned();
+    let dir = std::env::temp_dir().join(format!(
+        "graphhelm-watch-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    let mut command = posix_shell();
+    command
+        .arg(&script)
+        .arg("up")
+        .arg(&dir)
+        .current_dir(project)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Ok(executable) = std::env::current_exe() {
+        command.env("GRAPHHELM_BIN", executable);
+    }
+    let launched = Launched {
+        project: project.to_path_buf(),
+        script,
+        dir,
+    };
+    let started = command.status().map(|status| status.success());
+    let ready = Instant::now() + LAUNCH_READY;
+    while started.as_ref().is_ok_and(|ok| *ok) && !base_reachable(base) && Instant::now() < ready {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    if !started.is_ok_and(|ok| ok) || !base_reachable(base) {
+        launched.stop();
+        return Err(failure("watch.launch_failed", "/launcher", 1));
+    }
+    Ok(launched)
 }
 
 /// The session record a `journey watch` keeps current while it plays (the Studio's "current
@@ -877,6 +1036,7 @@ fn start_session(
         token: token.into_bytes(),
         listener,
         deadline: Instant::now() + RUN_BUDGET,
+        launched: None,
     })
 }
 

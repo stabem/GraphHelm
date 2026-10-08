@@ -637,7 +637,11 @@ fn plan(repo: &Path, args: &[&str]) -> (i32, Value, Vec<u8>) {
 fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
     let args = [
-        "--task", "issue-382", "--paths", "src/lib.rs", "core/events/src/journal.rs",
+        "--task",
+        "issue-382",
+        "--paths",
+        "src/lib.rs",
+        "core/events/src/journal.rs",
     ];
     let (code, first, first_bytes) = plan(repo.path(), &args);
     assert_eq!(code, 0, "{first}");
@@ -645,10 +649,20 @@ fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     assert_eq!(first_bytes, second_bytes, "two runs must be byte-identical");
     let record = &first["data"]["plan"];
     assert_eq!(record["schema"], "graphhelm-task-plan-v1");
-    assert_eq!(record["classes"], serde_json::json!(["code", "invariant"]), "{record}");
-    assert_eq!(record["invariantClasses"], serde_json::json!(["persistence"]));
+    assert_eq!(
+        record["classes"],
+        serde_json::json!(["code", "invariant"]),
+        "{record}"
+    );
+    assert_eq!(
+        record["invariantClasses"],
+        serde_json::json!(["persistence"])
+    );
     assert_eq!(record["proof"], "tests");
-    assert_eq!(record["reviews"], 1, "one review for every class (owner decision)");
+    assert_eq!(
+        record["reviews"], 1,
+        "one review for every class (owner decision)"
+    );
     assert_eq!(
         record["delegation"],
         serde_json::json!({"kind": "implementer", "tier": "large", "effort": "high"})
@@ -659,13 +673,23 @@ fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     let (code, docs) = {
         let (code, reply, _) = plan(
             repo.path(),
-            &["--task", "issue-1", "--paths", "docs/a.md", "--promise", "fix the permission check"],
+            &[
+                "--task",
+                "issue-1",
+                "--paths",
+                "docs/a.md",
+                "--promise",
+                "fix the permission check",
+            ],
         );
         (code, reply)
     };
     assert_eq!(code, 0, "{docs}");
     assert_eq!(docs["data"]["plan"]["classes"], serde_json::json!(["docs"]));
-    assert_eq!(docs["data"]["plan"]["decidedBy"], "fallback_strict", "{docs}");
+    assert_eq!(
+        docs["data"]["plan"]["decidedBy"], "fallback_strict",
+        "{docs}"
+    );
     assert_eq!(docs["data"]["plan"]["delegation"]["tier"], "large");
     let (code, bad, _) = plan(repo.path(), &["--task", "issue-1", "--paths", "../etc"]);
     assert_eq!(code, 3, "{bad}");

@@ -1755,11 +1755,10 @@ pub(super) async fn briefing(
     let events = state.events.clone();
     // #382 phase B: the plan copy needs the sealed keyring; without one the briefing omits it.
     let keyring = state.sealing.clone();
-    let Some(result) =
-        off_reactor(move || {
-            execution::briefing::budgeted(&events, Some(&execution_id), keyring.as_deref())
-        })
-        .await
+    let Some(result) = off_reactor(move || {
+        execution::briefing::budgeted(&events, Some(&execution_id), keyring.as_deref())
+    })
+    .await
     else {
         return respond(
             StatusCode::INTERNAL_SERVER_ERROR,

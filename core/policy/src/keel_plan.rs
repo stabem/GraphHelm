@@ -203,7 +203,11 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
     let [tier, effort] = rules.delegation.get(task).clone();
     let mut route = vec!["card".to_owned(), "change".to_owned()];
     if matches!(proof, "journey" | "both") {
-        route.extend(journeys.iter().map(|id| format!("graphhelm journey replay {id}")));
+        route.extend(
+            journeys
+                .iter()
+                .map(|id| format!("graphhelm journey replay {id}")),
+        );
     }
     if matches!(proof, "tests" | "both") {
         route.push("a test that names the defect and fails on the parent".to_owned());
@@ -228,7 +232,12 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
             effort,
         },
         path: route,
-        decided_by: if ambiguous { "fallback_strict" } else { "rules" }.to_owned(),
+        decided_by: if ambiguous {
+            "fallback_strict"
+        } else {
+            "rules"
+        }
+        .to_owned(),
         jev: None,
     }
 }

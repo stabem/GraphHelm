@@ -163,6 +163,10 @@ pub enum JourneyCommand {
     /// edges in a visible browser, without a model, reports the step's state, and keeps the
     /// browser open for `journey act` / `journey close` until the replay run budget ends.
     Open(JourneyOpenArgs),
+    /// Play a flow, draft or approved, from its entry to its last screen in a visible browser,
+    /// paced for a person to follow (about 1.5 s per act), without a model. A look at what the
+    /// flow does before approving it: never proof, never a capture, never an approval.
+    Watch(JourneyWatchArgs),
     /// Send one act to an open live session and report the screen it lands on.
     Act(JourneyActArgs),
     /// Close an open live session and its browser.
@@ -205,6 +209,29 @@ pub struct JourneyOpenArgs {
     /// Internal long-lived session host; `journey open` supplies its start handshake.
     #[arg(long, hide = true)]
     pub live_host: bool,
+    /// Internal: the host plays the flow (`journey watch`) instead of opening it at a step.
+    #[arg(long, hide = true)]
+    pub watch: bool,
+    /// Internal: milliseconds a `watch` waits before each act.
+    #[arg(long, hide = true, default_value_t = 1500)]
+    pub pace_ms: u64,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct JourneyWatchArgs {
+    /// The flow id (`<id>.journey.yaml`); a draft is accepted.
+    pub id: String,
+    /// The named path to play; defaults to `main`, else the first path.
+    #[arg(long)]
+    pub path: Option<String>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// Milliseconds to wait before each act (0 to 10000).
+    #[arg(long, default_value_t = 1500)]
+    pub pace_ms: u64,
+    /// Exact extra subresource origin; never permits navigation away from the local base.
+    #[arg(long)]
+    pub allow_origin: Vec<String>,
 }
 
 #[derive(Debug, Args)]

@@ -26,12 +26,16 @@ use super::journey_replay::{
 };
 use crate::args::{
     JourneyActArgs, JourneyCloseArgs, JourneyOpenArgs, JourneyReplayArgs, JourneySessionsArgs,
+    JourneyWatchArgs,
 };
 use crate::output::{CommandOutput, Outcome};
 
 const OPEN: &str = "journey.open";
 const ACT: &str = "journey.act";
 const CLOSE: &str = "journey.close";
+const WATCH: &str = "journey.watch";
+/// The slowest pace a watch accepts; slower would not finish inside the run budget.
+const MAX_PACE_MS: u64 = 10_000;
 const HANDSHAKE: &[u8] = b"{\"protocol\":\"graphhelm-live-host/1\",\"start\":true}\n";
 const SESSIONS: &str = ".graphhelm/journey-sessions";
 const FRAME: usize = 64 * 1024;
@@ -68,6 +72,23 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "live.act_refused_destructive" => {
             "a destructive-looking act is refused on a live session unless the approved flow has it on an edge leaving the current screen"
         }
+        "watch.app_down" => {
+            "the app under test does not answer on the flow's base, and the project declares no launcher (.graphhelm/journey-fixture.json); start it, then watch again"
+        }
+        "watch.launcher_invalid" => {
+            "the project's launcher (.graphhelm/journey-fixture.json) is not a graphhelm-journey-fixture/1 file naming a script inside the project"
+        }
+        "watch.launch_failed" => {
+            "the project's launcher did not bring the app under test up on the flow's base in time"
+        }
+        "watch.pace_invalid" => "paceMs must be between 0 and 10000",
+        "watch.pace_too_slow" => {
+            "this path's acts at this pace would wait longer than half the run budget; choose a shorter paceMs"
+        }
+        "watch.budget_exceeded" => {
+            "the play reached the run budget before its last act; the app it launched has been stopped"
+        }
+        "watch.path_unknown" => "the flow has no path with that name",
         "live.recording_incomplete" => {
             "supply all of --events, --execution, --keyring and --key-id, or none"
         }
@@ -126,6 +147,30 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
     }
 }
 
+/// The open arguments a `journey watch` plays with: no step (the path's last screen), no
+/// recording, paced.
+pub(crate) fn watch_args(args: &JourneyWatchArgs) -> JourneyOpenArgs {
+    JourneyOpenArgs {
+        id: args.id.clone(),
+        step: String::new(),
+        path: args.path.clone(),
+        project: args.project.clone(),
+        events: None,
+        execution: None,
+        keyring: None,
+        key_id: None,
+        allow_origin: args.allow_origin.clone(),
+        live_host: false,
+        watch: true,
+        pace_ms: args.pace_ms,
+    }
+}
+
+/// `journey watch` from the CLI: play the flow in a visible browser (see `JourneyCommand::Watch`).
+pub(super) fn watch(args: &JourneyWatchArgs) -> Outcome {
+    open_with(&watch_args(args))
+}
+
 /// `journey open` from the CLI. The Runtime's route calls [`open_in_runtime`] instead.
 pub(super) fn open(args: &JourneyOpenArgs) -> Outcome {
     open_with(args)
@@ -142,8 +187,14 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
         return report(OPEN, data, Some(failure("live.host_invalid", "/host", 3)));
     };
     let mut command = Command::new(executable);
+    if args.watch {
+        command
+            .args(["--json", "journey", "watch", &args.id])
+            .args(["--pace-ms", &args.pace_ms.to_string()]);
+    } else {
+        command.args(["--json", "journey", "open", &args.id, "--step", &args.step]);
+    }
     command
-        .args(["--json", "journey", "open", &args.id, "--step", &args.step])
         .arg("--project")
         .arg(args.project.as_deref().unwrap_or(Path::new(".")))
         .stdin(Stdio::null())
@@ -179,7 +230,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
     });
-    let Ok(Ok(output)) = rx.recv_timeout(RUN_BUDGET + Duration::from_secs(5)) else {
+    let Ok(Ok(output)) = rx.recv_timeout(caller_wait(args) + Duration::from_secs(5)) else {
         return report(OPEN, data, Some(failure("live.timeout", "/host", 1)));
     };
     let Ok(envelope) = serde_json::from_slice::<Value>(&output.stdout) else {
@@ -190,7 +241,7 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
     Outcome {
         output: CommandOutput {
             ok: envelope["ok"] == true,
-            command: OPEN,
+            command: if args.watch { WATCH } else { OPEN },
             data: Some(envelope["data"].clone()),
             diagnostics,
         },
@@ -199,17 +250,34 @@ pub(super) fn open_in_runtime(args: &JourneyOpenArgs) -> Outcome {
 }
 
 fn open_with(args: &JourneyOpenArgs) -> Outcome {
-    let data = json!({"flowId":args.id,"step":args.step,"path":null,"sessionId":null,"state":"unobserved","at":null,"headed":true,"modelCalls":0,"liveCaptureSignalId":null});
-    if !graphhelm_execution::valid_journey_id(&args.id) {
-        return report(OPEN, data, Some(failure("replay.id_invalid", "/id", 3)));
+    let command = if args.watch { WATCH } else { OPEN };
+    let mut data = json!({"flowId":args.id,"step":args.step,"path":null,"sessionId":null,"state":"unobserved","at":null,"headed":true,"modelCalls":0,"liveCaptureSignalId":null});
+    if args.watch {
+        data["mode"] = "watch".into();
+        data["proof"] = false.into();
+        data["step"] = Value::Null;
     }
-    if !graphhelm_execution::valid_journey_id(&args.step)
+    if !graphhelm_execution::valid_journey_id(&args.id) {
+        return report(command, data, Some(failure("replay.id_invalid", "/id", 3)));
+    }
+    if args.watch && args.pace_ms > MAX_PACE_MS {
+        return report(
+            command,
+            data,
+            Some(failure("watch.pace_invalid", "/paceMs", 3)),
+        );
+    }
+    if !(args.watch && args.step.is_empty()) && !graphhelm_execution::valid_journey_id(&args.step)
         || args
             .path
             .as_deref()
             .is_some_and(|p| !graphhelm_execution::valid_journey_id(p))
     {
-        return report(OPEN, data, Some(failure("replay.id_invalid", "/step", 3)));
+        return report(
+            command,
+            data,
+            Some(failure("replay.id_invalid", "/step", 3)),
+        );
     }
     let bundle = [
         args.events.is_some(),
@@ -273,6 +341,15 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
             &args.step,
             "--live-host",
         ])
+        .args(if args.watch {
+            vec![
+                "--watch".to_owned(),
+                "--pace-ms".to_owned(),
+                args.pace_ms.to_string(),
+            ]
+        } else {
+            Vec::new()
+        })
         .arg("--project")
         .arg(args.project.as_deref().unwrap_or(Path::new(".")))
         .stdin(Stdio::piped())
@@ -323,7 +400,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
             .read_until(b'\n', &mut line);
         let _ = tx.send(read.map(|_| line));
     });
-    let line = match rx.recv_timeout(RUN_BUDGET) {
+    let line = match rx.recv_timeout(caller_wait(args)) {
         Ok(Ok(line)) if !line.is_empty() => line,
         // An empty first line is the host's stdout closing: it exited before its envelope.
         // Name its exit status, so nobody has to bisect a bare timeout (#416 review).
@@ -364,7 +441,7 @@ fn spawn_host(args: &JourneyOpenArgs, data: Value) -> Outcome {
     Outcome {
         output: CommandOutput {
             ok,
-            command: OPEN,
+            command: if args.watch { WATCH } else { OPEN },
             data: Some(output["data"].clone()),
             diagnostics,
         },
@@ -387,6 +464,8 @@ struct Session {
     token: Vec<u8>,
     listener: TcpListener,
     deadline: Instant,
+    /// The app under test this watch started (and stops when the host ends), if it had to.
+    launched: Option<Launched>,
 }
 
 /// The host half. Never returns: it prints its one envelope line, serves, and exits.
@@ -415,14 +494,26 @@ fn host(args: &JourneyOpenArgs, mut data: Value) -> ! {
             Some(failure("live.host_invalid", "/host", 3)),
         ));
     }
+    let command = if args.watch { WATCH } else { OPEN };
     let (mut session, outcome) = match walk(args, &mut data) {
         Ok(walked) => walked,
-        Err(failed) => emit(report(OPEN, data, Some(failed))),
+        Err(failed) => {
+            // A watch that failed before the host could serve leaves no record behind.
+            let dir = project_of(args.project.as_deref())
+                .map(|p| p.join(SESSIONS))
+                .ok();
+            if args.watch
+                && let (Some(dir), Some(id)) = (dir, data["sessionId"].as_str())
+            {
+                let _ = std::fs::remove_file(dir.join(format!("{id}.json")));
+            }
+            emit(report(command, data, Some(failed)))
+        }
     };
     // One envelope line, then the host serves. Nothing else is ever written to stdout.
     {
         let mut line =
-            serde_json::to_value(&report(OPEN, data, outcome).output).unwrap_or(Value::Null);
+            serde_json::to_value(&report(command, data, outcome).output).unwrap_or(Value::Null);
         let exit = if line["ok"] == true { 0 } else { 1 };
         line["exitCode"] = exit.into();
         let mut stdout = std::io::stdout().lock();
@@ -435,6 +526,9 @@ fn host(args: &JourneyOpenArgs, mut data: Value) -> ! {
     let _ = std::fs::remove_file(dir.join(format!("{}.json", session.id)));
     let _ = std::fs::remove_file(dir.join(format!("{}.token", session.id)));
     let _ = session.driver.close();
+    if let Some(launched) = session.launched.take() {
+        launched.stop();
+    }
     std::process::exit(0);
 }
 
@@ -468,7 +562,12 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     if !safe_node(&file) {
         return Err(failure("replay.flow_invalid", "/flow", 2));
     }
-    let flow = super::journey_flow::read_for_replay(&file, &project).map_err(|findings| {
+    let read = if args.watch {
+        super::journey_flow::read_for_watch(&file, &project)
+    } else {
+        super::journey_flow::read_for_replay(&file, &project)
+    };
+    let flow = read.map_err(|findings| {
         let finding = findings.into_iter().find(|f| !f.is_warning()).unwrap();
         failure(finding.code, finding.pointer, 2)
     })?;
@@ -501,10 +600,40 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     let (name, path_edges) = paths
         .into_iter()
         .filter(|(name, _)| args.path.as_deref().is_none_or(|p| p == name.as_str()))
-        .find(|(_, path_edges)| visited_of(path_edges).contains(&args.step))
-        .ok_or_else(|| failure("live.step_unreachable", "/step", 2))?;
+        .find(|(_, path_edges)| args.watch || visited_of(path_edges).contains(&args.step))
+        .ok_or_else(|| {
+            if args.watch {
+                failure("watch.path_unknown", "/path", 2)
+            } else {
+                failure("live.step_unreachable", "/step", 2)
+            }
+        })?;
     let visited = visited_of(path_edges);
-    let target = visited.iter().position(|s| *s == args.step).unwrap();
+    // A watch plays the whole path; an open stops at its step.
+    let step = if args.watch {
+        visited.last().unwrap().clone()
+    } else {
+        args.step.clone()
+    };
+    let target = visited.iter().position(|s| *s == step).unwrap();
+    data["step"] = step.clone().into();
+    if args.watch {
+        let acts: u64 = path_edges
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| {
+                edges[id.as_str().unwrap()]["acts"]
+                    .as_array()
+                    .unwrap()
+                    .len() as u64
+            })
+            .sum();
+        // Half the run budget for waiting leaves the other half for the browser's own work.
+        if acts.saturating_mul(args.pace_ms) > RUN_BUDGET.as_millis() as u64 / 2 {
+            return Err(failure("watch.pace_too_slow", "/paceMs", 3));
+        }
+    }
     data["path"] = name.as_str().into();
     let contract = if name == "main" {
         args.id.clone()
@@ -512,31 +641,74 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         format!("{}.{}", args.id, name)
     };
 
-    // The walk is deterministic only through a current cache: absent or void, refuse.
-    let cache_file = project
-        .join(".graphhelm/journey-cache")
-        .join(format!("{}.json", args.id));
-    let cache = load_cache(&cache_file, &flow)?
-        .ok_or_else(|| failure("replay.cache_missing", "/cache", 2))?;
-    if cache["flowDigest"] != super::journey_flow::approval_digest(&flow) {
-        return Err(failure("replay.cache_missing", "/cache/flowDigest", 2));
-    }
+    // An open is deterministic only through a current cache: absent or void, refuse. A watch
+    // plays the flow's own role/name acts, so a draft that was never replayed can be watched.
+    let cache = if args.watch {
+        json!({"viewport":{"width":1280,"height":720},"edges":{}})
+    } else {
+        let cache_file = project
+            .join(".graphhelm/journey-cache")
+            .join(format!("{}.json", args.id));
+        let cache = load_cache(&cache_file, &flow)?
+            .ok_or_else(|| failure("replay.cache_missing", "/cache", 2))?;
+        if cache["flowDigest"] != super::journey_flow::approval_digest(&flow) {
+            return Err(failure("replay.cache_missing", "/cache/flowDigest", 2));
+        }
+        cache
+    };
     let secrets = preflight(&flow)?;
     observer_ready(&project)?;
     let output = TemporaryOutput::create()?;
-    let mut driver = Driver::start(&project, output.path(), &secrets)?;
     let base = flow["base"].as_str().unwrap().to_owned();
+    // The owner only clicks Watch: when the app under test is down, the project's declared
+    // launcher brings it up (and the host stops it when the watch ends).
+    let launched = if args.watch && !base_reachable(&base) {
+        let launched = launch(&project, &base)?;
+        data["launched"] = true.into();
+        Some(launched)
+    } else {
+        None
+    };
+    let mut driver = Driver::start(&project, output.path(), &secrets)?;
     let entry = format!(
         "{}{}",
         base.trim_end_matches('/'),
         screens[&visited[0]]["url"].as_str().unwrap()
     );
-    driver.call(
-        "open",
-        json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true}),
-        "/entry",
-    )?;
+    let open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true});
+    match driver.call("open", open.clone(), "/entry") {
+        Ok(_) => {}
+        // A just-launched app (a dev server) builds its first page on the first request, which
+        // can outlast one request budget. The browser ended with that request; one fresh browser
+        // tries the now-built entry again. Only after a launch, and only once.
+        Err((code, _, _))
+            if launched.is_some() && matches!(code, "replay.timeout" | "driver.timeout") =>
+        {
+            data["entryRetried"] = true.into();
+            driver = Driver::start(&project, output.path(), &secrets)?;
+            driver.call("open", open, "/entry")?;
+        }
+        Err(failed) => return Err(failed),
+    }
     let recording = args.events.is_some().then(|| replay_args(args, &project));
+    // A watch is visible to the Studio from its first act: the session record exists while it
+    // plays (`state: playing`) and names the screen and the act it is at.
+    let session_id = format!("live-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    let progress = Progress {
+        dir: project.join(SESSIONS),
+        id: session_id.clone(),
+        base: json!({"sessionId":session_id,"contractId":contract,"flowId":args.id,"path":name,
+            "stepId":step,"mode":"watch","proof":false,"state":"playing","code":null,"at":null,
+            "since":chrono::Utc::now().to_rfc3339(),"stepCount":visited.len(),
+            "expiresAt":(chrono::Utc::now() + chrono::Duration::seconds(RUN_BUDGET.as_secs() as i64)).to_rfc3339()}),
+    };
+    if args.watch {
+        safe_directory(&progress.dir, true)?;
+        progress.show(&visited[0], 0, None, None);
+        data["sessionId"] = session_id.clone().into();
+    }
+    let pace = Duration::from_millis(args.pace_ms);
+    let play_deadline = Instant::now() + RUN_BUDGET;
     let mut current = Some(visited[0].clone());
     let mut step_failure = None;
     for (index, screen_id) in visited.iter().enumerate().take(target + 1) {
@@ -545,8 +717,22 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
             let edge = &edges[edge_id];
             for (act_index, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
                 let at = format!("{edge_id}/{act_index}");
-                let mut request = json!({"kind":act["kind"],"role":act["role"],"name":act["name"],
-                    "locator":cache["edges"][edge_id][act_index]});
+                if args.watch {
+                    if Instant::now() + pace >= play_deadline {
+                        return Err(failure("watch.budget_exceeded", format!("/edges/{at}"), 1));
+                    }
+                    progress.show(
+                        &visited[index - 1],
+                        index - 1,
+                        Some(edge_id),
+                        Some(act_index),
+                    );
+                    std::thread::sleep(pace);
+                }
+                let mut request = json!({"kind":act["kind"],"role":act["role"],"name":act["name"]});
+                if !args.watch {
+                    request["locator"] = cache["edges"][edge_id][act_index].clone();
+                }
                 if let Some(text) = act.get("text") {
                     request["text"] = text.clone();
                 }
@@ -571,7 +757,12 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         }
         let pointer = format!("/screens/{screen_id}");
         match observe(&mut driver, &screens[screen_id], &base, &pointer) {
-            Ok(_) => current = Some(screen_id.clone()),
+            Ok(_) => {
+                current = Some(screen_id.clone());
+                if args.watch {
+                    progress.show(screen_id, index, None, None);
+                }
+            }
             Err((code, _, _)) if survivable(code) => {
                 if index == target {
                     data["state"] = "fail".into();
@@ -605,7 +796,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     if data["state"] != "drift"
         && let Some(recording) = &recording
     {
-        let image = format!("live-{}.png", args.step);
+        let image = format!("live-{step}.png");
         driver.call(
             "capture",
             json!({"path":image,"maskSecrets":true}),
@@ -614,7 +805,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         let signal = record(
             recording,
             &contract,
-            &args.step,
+            &step,
             &output.path().join(&image),
             Some("live"),
         )?;
@@ -625,7 +816,10 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         .map_or(Value::Null, |(code, _, _)| Value::from(*code));
     let session = start_session(
         &project, args, flow, base, contract, visited, current, driver, output, recording, data,
+        session_id,
     )?;
+    let mut session = session;
+    session.launched = launched;
     Ok((session, step_failure))
 }
 
@@ -661,6 +855,171 @@ fn sweep_expired(dir: &Path) {
     }
 }
 
+/// The project's declaration of how to start the app its journey flows are written against
+/// (`.graphhelm/journey-fixture.json`, schema `graphhelm-journey-fixture/1`): a POSIX shell
+/// script run from the project root with `up <dir>` and `down <dir>`, `<dir>` a fresh directory
+/// outside the checkout. Read only by `journey watch`, which is owner-only; it is the project's
+/// own code, run as `npm test` would be.
+const FIXTURE_FILE: &str = ".graphhelm/journey-fixture.json";
+const FIXTURE_SCHEMA: &str = "graphhelm-journey-fixture/1";
+/// How long a launched app may take to answer on the flow's base.
+const LAUNCH_READY: Duration = Duration::from_secs(120);
+
+/// How long a caller waits for the host's first line (#462 review). An open answers within the
+/// run budget. A watch may first launch the app (`LAUNCH_READY`), retry a cold entry once (two
+/// request budgets), then play inside the run budget, which the host enforces itself before every
+/// act, so the host always ends (and stops what it launched) before any caller gives up on it.
+fn caller_wait(args: &JourneyOpenArgs) -> Duration {
+    if args.watch {
+        LAUNCH_READY + OP_BUDGET * 2 + RUN_BUDGET + Duration::from_secs(10)
+    } else {
+        RUN_BUDGET
+    }
+}
+
+struct Launched {
+    project: PathBuf,
+    script: String,
+    dir: PathBuf,
+}
+
+impl Launched {
+    fn stop(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Launched {
+    /// A launched app is stopped however the watch ends: the host's own end calls `stop`, and
+    /// any failure between the launch and the session drops it here (#462: a cold first page
+    /// that timed out left the app running).
+    fn drop(&mut self) {
+        let _ = posix_shell()
+            .arg(&self.script)
+            .arg("down")
+            .arg(&self.dir)
+            .current_dir(&self.project)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// `host:port` of an `http://` base, the port defaulting to 80.
+fn base_address(base: &str) -> Option<String> {
+    let rest = base.strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    Some(if authority.contains(':') {
+        authority.to_owned()
+    } else {
+        format!("{authority}:80")
+    })
+}
+
+fn base_reachable(base: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    base_address(base)
+        .and_then(|address| address.to_socket_addrs().ok())
+        .into_iter()
+        .flatten()
+        .any(|address| TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok())
+}
+
+/// A POSIX shell: `GRAPHHELM_POSIX_SHELL`, else Git for Windows' bash on Windows, else `sh`.
+fn posix_shell() -> Command {
+    if let Some(shell) = std::env::var_os("GRAPHHELM_POSIX_SHELL") {
+        return Command::new(shell);
+    }
+    #[cfg(windows)]
+    {
+        let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
+        if git_bash.is_file() {
+            return Command::new(git_bash);
+        }
+    }
+    Command::new("sh")
+}
+
+/// Starts the declared app under test and waits until the flow's base answers.
+fn launch(project: &Path, base: &str) -> Result<Launched> {
+    let declared = project.join(FIXTURE_FILE);
+    if !safe_node(&declared) {
+        return Err(failure("watch.app_down", "/base", 2));
+    }
+    let fixture: Value = std::fs::read(&declared)
+        .ok()
+        .filter(|bytes| bytes.len() <= FRAME)
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or_else(|| failure("watch.launcher_invalid", "/launcher", 2))?;
+    let script = fixture["script"]
+        .as_str()
+        .filter(|script| {
+            fixture["schema"] == FIXTURE_SCHEMA
+                && !script.is_empty()
+                && !Path::new(script).is_absolute()
+                && !script.split(['/', '\\']).any(|part| part == "..")
+                && safe_node(&project.join(script))
+        })
+        .ok_or_else(|| failure("watch.launcher_invalid", "/launcher", 2))?
+        .to_owned();
+    let dir = std::env::temp_dir().join(format!(
+        "graphhelm-watch-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    let mut command = posix_shell();
+    command
+        .arg(&script)
+        .arg("up")
+        .arg(&dir)
+        .current_dir(project)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Ok(executable) = std::env::current_exe() {
+        command.env("GRAPHHELM_BIN", executable);
+    }
+    let launched = Launched {
+        project: project.to_path_buf(),
+        script,
+        dir,
+    };
+    let started = command.status().map(|status| status.success());
+    let ready = Instant::now() + LAUNCH_READY;
+    while started.as_ref().is_ok_and(|ok| *ok) && !base_reachable(base) && Instant::now() < ready {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    if !started.is_ok_and(|ok| ok) || !base_reachable(base) {
+        launched.stop();
+        return Err(failure("watch.launch_failed", "/launcher", 1));
+    }
+    Ok(launched)
+}
+
+/// The session record a `journey watch` keeps current while it plays (the Studio's "current
+/// step" signal, read through `journey sessions`). It has no port until the play ends and the
+/// host starts serving, so `act` and `close` answer `live.session_gone` during the play.
+struct Progress {
+    dir: PathBuf,
+    id: String,
+    base: Value,
+}
+
+impl Progress {
+    fn show(&self, screen: &str, index: usize, edge: Option<&str>, act: Option<usize>) {
+        let mut record = self.base.clone();
+        record["screen"] = screen.into();
+        record["stepIndex"] = index.into();
+        record["edge"] = edge.map_or(Value::Null, Value::from);
+        record["actIndex"] = act.map_or(Value::Null, Value::from);
+        let _ = save_record(&self.dir.join(format!("{}.json", self.id)), &record);
+    }
+}
+
 fn save_record(path: &Path, record: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(record).unwrap();
     bytes.push(b'\n');
@@ -681,11 +1040,11 @@ fn start_session(
     output: TemporaryOutput,
     recording: Option<JourneyReplayArgs>,
     data: &mut Value,
+    id: String,
 ) -> Result<Session> {
     let dir = project.join(SESSIONS);
     safe_directory(&dir, true)?;
     sweep_expired(&dir);
-    let id = format!("live-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
     let (_, token) = crate::commands::secret_file::ensure(
         &dir.join(format!("{id}.token")),
         "live session token",
@@ -702,7 +1061,10 @@ fn start_session(
     // The session's readable state (the Studio chip, #409, reads it through `journey
     // sessions`): updated after every act, removed on close. Port and pid address the host.
     let record = json!({"sessionId":id,"contractId":contract,"flowId":args.id,"path":data["path"],
-        "stepId":args.step,"state":data["state"],"code":data["code"],"at":data["at"],
+        "stepId":data["step"],"mode":if args.watch {"watch"} else {"open"},"proof":false,
+        "stepIndex":visited.iter().position(|s| Some(s) == current.as_ref()),"stepCount":visited.len(),
+        "edge":null,"actIndex":null,
+        "state":data["state"],"code":data["code"],"at":data["at"],
         "screen":current,"since":chrono::Utc::now().to_rfc3339(),"lastActAt":null,"lastActState":null,"lastActCode":null,
         "expiresAt":expires_at.to_rfc3339(),"port":port,"pid":std::process::id()});
     save_record(&dir.join(format!("{id}.json")), &record)?;
@@ -724,6 +1086,7 @@ fn start_session(
         token: token.into_bytes(),
         listener,
         deadline: Instant::now() + RUN_BUDGET,
+        launched: None,
     })
 }
 

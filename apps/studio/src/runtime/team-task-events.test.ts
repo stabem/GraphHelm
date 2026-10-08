@@ -87,3 +87,35 @@ describe("task links from the record's own repo", () => {
     }
   });
 });
+
+/* #460: an issue worked in two PRs (#356: issue-356-heal as PR #456, then issue-356-explore-faults)
+ * folded into one task, so the first PR's merge hid the second slice for its whole life. Each PR is
+ * its own slice: a lane's claim on a new branch is a new slice, joined by its next pr_opened, and a
+ * merge ends only its own slice. The records are #356's order on gh-team (seq 3252..3279). */
+describe("foldTaskEvents slices (#460)", () => {
+  const issue = { taskId: "issue-356" };
+  const records = [
+    record(1, "task.claimed", "gh-claude-4", { ...issue, issue: 356, lane: "gh-claude-4", branch: "issue-356-heal" }),
+    record(2, "task.pr_opened", "gh-claude-4", { ...issue, pr: 456, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),
+    record(3, "task.review_assigned", "gh-claude-4", { ...issue, pr: 456, headSha: "aaaaaaaa", reviewer: "gh-claude-6", ordinal: 1 }),
+    record(4, "task.claimed", "gh-claude-4", { ...issue, issue: 356, lane: "gh-claude-4", branch: "issue-356-explore-faults" }),
+    record(5, "task.review_verdict", "gh-claude-6", { ...issue, pr: 456, headSha: "aaaaaaaa", reviewer: "gh-claude-6", verdict: "APPROVE", commentUrl: "https://github.com/stabem/GraphHelm/pull/456#c1" }),
+    record(6, "task.merged", "gh-claude-6", { ...issue, pr: 456, mergeSha: "cccccccc", closes: [], merger: "gh-claude-6" }),
+    record(7, "task.pr_opened", "gh-claude-4", { ...issue, pr: 461, headSha: "dddddddd", journeys: [], lane: "gh-claude-4" }),
+  ];
+
+  it("keeps the second slice visible, with its own PR, after the first one merged", () => {
+    const tasks = foldTaskEvents(records);
+    expect(tasks.map((task) => [task.taskId, task.pr, task.step, task.issue])).toEqual([
+      ["issue-356", 456, "merged", 356],
+      ["issue-356", 461, "review", 356],
+    ]);
+    expect(new Set(tasks.map((task) => task.key)).size).toBe(2);
+    expect(tasks[1].headSha).toBe("dddddddd");
+  });
+
+  it("shows the second claim as its own slice before it has a PR", () => {
+    const tasks = foldTaskEvents(records.slice(0, 4));
+    expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "implement"]]);
+  });
+});

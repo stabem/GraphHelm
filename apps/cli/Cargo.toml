@@ -58,7 +58,9 @@ libc = "=0.2.189"
 [target.'cfg(windows)'.dependencies]
 # `Win32_System_Console`: `gateway setup`'s hidden key prompt (#1139) turns console echo off
 # through `GetConsoleMode`/`SetConsoleMode`; the Unix half uses `libc`'s termios.
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
+# `Win32_Foundation`: `journey open` (#398) marks its own std handles non-inheritable before
+# spawning the long-lived session host, so the host does not hold the caller's pipes open.
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
 
 [dev-dependencies]
 toml.workspace = true

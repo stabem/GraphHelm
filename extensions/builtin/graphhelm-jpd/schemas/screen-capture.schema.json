@@ -67,7 +67,8 @@
     "phase": {
       "enum": [
         "before",
-        "after"
+        "after",
+        "live"
       ]
     }
   },

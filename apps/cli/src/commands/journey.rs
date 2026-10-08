@@ -37,6 +37,10 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
         JourneyCommand::Replay(replay) => super::journey_replay::run(replay),
+        JourneyCommand::Open(open) => super::journey_live::open(open),
+        JourneyCommand::Act(act) => super::journey_live::act(act),
+        JourneyCommand::Close(close) => super::journey_live::close(close),
+        JourneyCommand::Sessions(sessions) => super::journey_live::sessions(sessions),
         JourneyCommand::Explore(explore) => super::journey_explore::run(explore),
         JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
@@ -180,8 +184,9 @@ fn run_capture(args: &JourneyCaptureArgs) -> Result<serde_json::Value, Failure> 
     if let Some(phase) = args.phase.as_deref()
         && phase != "before"
         && phase != "after"
+        && phase != "live"
     {
-        return Err(argument("--phase must be before or after", "/phase"));
+        return Err(argument("--phase must be before, after or live", "/phase"));
     }
     let given_viewport = match args.viewport.as_deref() {
         Some(text) => Some(parse_viewport(text).ok_or_else(|| {

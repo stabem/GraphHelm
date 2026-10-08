@@ -21,6 +21,10 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'act', kind: 'select', role: 'combobox', name: 'Country' }, 'driver.unsupported_act'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost.evil.test.example/cart', viewport: {width:1280,height:720}, allowOrigins: [] }, 'driver.host_refused'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://user:password@localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [] }, 'driver.host_refused'],
+    // #398: `headed` is a boolean open field; true passes validation and reaches the browser
+    // load (no Playwright in this cwd), a non-boolean is refused before it.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: 'yes' }, 'driver.protocol_invalid'],
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];

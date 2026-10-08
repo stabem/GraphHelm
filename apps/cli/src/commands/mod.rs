@@ -12,6 +12,7 @@ mod init;
 mod journey;
 mod journey_explore;
 mod journey_flow;
+mod journey_live;
 mod journey_replay;
 mod journey_validate;
 mod journeys;

@@ -856,6 +856,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 images
                     .get(id)
                     .ok_or_else(|| refused("explore.capture_missing", "/recording", 1))?,
+                None,
             )?;
             data["capturedSignalIds"]
                 .as_array_mut()

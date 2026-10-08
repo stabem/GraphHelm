@@ -646,6 +646,13 @@ fn build_router(state: ServeState) -> Router {
             "/v1/journey-flows/{id}/approve",
             post(routes::approve_journey_flow),
         )
+        .route("/v1/journeys/sessions", get(routes::journey_sessions))
+        .route("/v1/journeys/{contractId}/open", post(routes::open_journey))
+        .route(
+            "/v1/journeys/sessions/{id}",
+            axum::routing::delete(routes::close_journey),
+        )
+        .route("/v1/journeys/sessions/{id}/act", post(routes::act_journey))
         .route("/v1/executions/{id}/events", get(routes::events))
         .route(
             "/v1/executions/{id}/evidence/{evidenceId}",

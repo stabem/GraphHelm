@@ -23,7 +23,7 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 
 | `op` | Additional request fields | `result` on success |
 |---|---|---|
-| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []` | `url` |
+| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
 | `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; optional `locator` | `url`, `locator` |
 | `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
@@ -33,6 +33,10 @@ Success is `{protocol,requestId,ok:true,result}`. Failure is
 `{protocol,requestId,ok:false,code,path:"/"}`. Rust maps that failure to the approved action's
 stable path. EOF without `close` is a protocol failure and releases the browser. A failed
 operation terminates the session; it cannot be retried as if an action had not happened.
+Exception (#398, `journey open`): a session opened with `headed: true` survives
+`driver.locator_missing`, `driver.locator_ambiguous`, `driver.expectation_failed`,
+`driver.action_failed` and `driver.timeout`, so the visible browser stays where the journey
+broke. Every other failure (protocol, privacy, host, capture) still ends a headed session.
 
 Codes include `driver.protocol_invalid`, `driver.frame_too_large`, `driver.observer_missing`,
 `driver.secret_missing`, `driver.secret_literal`, `driver.redaction_failed`,

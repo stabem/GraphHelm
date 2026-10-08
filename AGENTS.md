@@ -230,6 +230,9 @@ and nothing else. It replaces the old `.factory/` protocol and the `superpowers`
   the change reaches, names them, and merges (squash, head pinned, closing check). No gate, no separate presser.
 - Every comment, review and commit body starts with `Session: <ListAgents name [ref]> · Head: <sha8>`,
   because every session pushes under one GitHub account.
+- A session working as a lane beside others on one machine follows
+  [docs/process/LANES.md](docs/process/LANES.md): its own folder and worktrees, the single build
+  slot, task records, and a reviewer assigned only by the coordinator.
 - Each session exports `GRAPHHELM_ACTOR=<ListAgents name>` before starting the MCP server, and the
   steps that write an identity line also record their `task.*` signal (DELIVERY.md, "Task
   records"); the Runtime refuses a task record signed by another actor.

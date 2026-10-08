@@ -105,7 +105,8 @@ fn claim_lays_out_the_workspace_and_refuses_a_second_claim() {
     assert_eq!(reply["data"]["branch"], "issue-360-lane-a");
     assert_eq!(
         Path::new(reply["data"]["env"]["CARGO_TARGET_DIR"].as_str().unwrap()),
-        ws.join("target")
+        root.join("target-shared"),
+        "claimed workspaces build in the root's one shared target (#360 phase 2)"
     );
     let (code, again) = run(&[
         "claim",
@@ -337,6 +338,106 @@ fn an_unreadable_folder_in_the_worktree_keeps_the_workspace() {
         "{swept}"
     );
     assert!(hidden.is_dir(), "the unreadable folder was removed");
+}
+
+/// A command that appends `<tag> start <CARGO_TARGET_DIR> <CARGO_BUILD_JOBS>` to `log`, waits
+/// `millis`, then appends `<tag> end`.
+fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
+    let log = log.to_str().unwrap().to_owned();
+    if cfg!(windows) {
+        vec![
+            "powershell".into(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "Add-Content -LiteralPath '{log}' \"{tag} start $env:CARGO_TARGET_DIR $env:CARGO_BUILD_JOBS\"; \
+                 Start-Sleep -Milliseconds {millis}; Add-Content -LiteralPath '{log}' '{tag} end'"
+            ),
+        ]
+    } else {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                "echo \"{tag} start $CARGO_TARGET_DIR $CARGO_BUILD_JOBS\" >> '{log}'; \
+                 sleep {}; echo '{tag} end' >> '{log}'",
+                millis as f64 / 1000.0
+            ),
+        ]
+    }
+}
+
+fn slot(root: &str, lane: &str, command: &[String]) -> std::process::Child {
+    Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "workspace",
+            "slot",
+            "--root",
+            root,
+            "--lane",
+            lane,
+            "--jobs",
+            "3",
+            "--",
+        ])
+        .args(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+/// #360 phase 2: the shared build slot serves one command at a time, in arrival order, with the
+/// root's shared target and the job count, and a waiter that died does not hold the queue.
+/// Credible regressions: two builds overlap in the shared target (the stale-artifact and
+/// lock-contention failure), a later waiter overtakes, or a dead waiter's ticket blocks everyone
+/// (the lost-ticket failure of the script this replaces). Cost: three short child commands.
+#[test]
+fn the_slot_serves_one_command_at_a_time_in_order_and_skips_dead_waiters() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    // A dead waiter: a ticket older than everyone, whose lock nobody holds.
+    let tickets = root.join(".graphhelm-workspaces").join("slot");
+    std::fs::create_dir_all(&tickets).unwrap();
+    std::fs::write(tickets.join(format!("{:024}-ghost-1.ticket", 1)), "").unwrap();
+    let log = dir.path().join("log.txt");
+    let first = slot(root_s, "lane-a", &marker_command(&log, "a", 1500));
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let second = slot(root_s, "lane-b", &marker_command(&log, "b", 100));
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    assert!(
+        first.status.success() && second.status.success(),
+        "{first:?} {second:?}"
+    );
+    let reply: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(reply["data"]["exitCode"], 0, "{reply}");
+    let text = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[0].starts_with("a start"), "{text}");
+    assert_eq!(
+        lines[1], "a end",
+        "the second command ran inside the first: {text}"
+    );
+    assert!(lines[2].starts_with("b start"), "{text}");
+    assert_eq!(lines[3], "b end");
+    let shared = root.join("target-shared");
+    assert!(
+        lines[0].contains(shared.to_str().unwrap()) && lines[0].ends_with(" 3"),
+        "the command gets the shared target and the job count: {text}"
+    );
+    let left: Vec<_> = std::fs::read_dir(&tickets)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ticket"))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "every ticket, the dead one included, is gone: {left:?}"
+    );
 }
 
 mod support;

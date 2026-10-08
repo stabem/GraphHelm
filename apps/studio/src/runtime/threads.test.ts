@@ -4,7 +4,7 @@ import type { Bot } from "./team";
 import type { TaskState } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 import type { WorkMessage } from "./work-conversation";
-import { chatThreads, describeActivity, namesOf, parseMention, sealedNotesPending, unreadCounts } from "./threads";
+import { autoThread, chatThreads, describeActivity, namesOf, parseMention, sealedNotesPending, unreadCounts } from "./threads";
 
 const bot = (key: string, name: string): Bot => ({ key, actorId: key, name, hue: 0, role: null, doingNow: "", lastRecordAt: null,
   lastSequence: 0, state: "working", quietMinutes: null, shared: false, native: false, tasks: [] });
@@ -108,5 +108,23 @@ describe("describeActivity", () => {
     expect(describeActivity({ sequence: 1, actorId: "kit-1", occurredAt: null, text: capture }, names, {}, "studio-operator", title).text).toBe("loja kit 1 captured Cart");
     expect(describeActivity({ sequence: 2, actorId: "kit-1", occurredAt: null, text: walked }, names, {}, "studio-operator", title).text).toBe("loja kit 1 walked Home → Kit page");
     expect(describeActivity({ sequence: 3, actorId: "kit-1", occurredAt: null, text: capture.replace("cart", "pay") }, names, {}, "studio-operator").text).toBe("loja kit 1 captured pay");
+  });
+});
+
+/* #414: which thread the chat should move to on its own. The cells catch the two defects named on
+ * #413: a card arriving mid-read pulling the owner away a second time, and the thread state
+ * staying on Needs you after the last card settled. Cost: a pure function, microseconds. */
+describe("autoThread", () => {
+  it("lands on Needs you once, only while the owner has not chosen a thread", () => {
+    expect(autoThread({ thread: "everyone", chosen: false, landed: false, cards: 1 })).toBe("needs-you");
+    expect(autoThread({ thread: "everyone", chosen: false, landed: true, cards: 2 })).toBeNull();
+    expect(autoThread({ thread: "everyone", chosen: true, landed: false, cards: 1 })).toBeNull();
+    expect(autoThread({ thread: "everyone", chosen: false, landed: false, cards: 0 })).toBeNull();
+  });
+
+  it("leaves Needs you for Everyone when the last card settles", () => {
+    expect(autoThread({ thread: "needs-you", chosen: false, landed: true, cards: 0 })).toBe("everyone");
+    expect(autoThread({ thread: "needs-you", chosen: true, landed: true, cards: 0 })).toBe("everyone");
+    expect(autoThread({ thread: "needs-you", chosen: false, landed: true, cards: 1 })).toBeNull();
   });
 });

@@ -3,28 +3,28 @@ id: studio-name-bot
 title: Owner gives a bot a display name
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
   - id: named
-    title: The alias is recorded; the bot reads by its new name everywhere
-    url: /
+    title: "The alias is recorded; the bot reads by its new name (demo: Planny)"
+    url: /?session=studio-fixture
     state: success
-    expect: [{role: region, name: Team}, {role: heading, name: Planny asks}]
+    expect: [{role: region, name: Team}, {role: button, name: Move Planny}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts, apps/studio/src/components/beacon.tsx]
   - id: naming
     title: Inline name form under the bot
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: textbox, name: Name for planner}, {role: button, name: Save}, {role: button, name: Cancel}]
     scope: [apps/studio/src/components/team-canvas.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
-    url: /
+    url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: heading, name: planner asks}]
+    expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: button, name: Move planner}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
 edges:
   - id: naming.save

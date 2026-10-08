@@ -23,3 +23,6 @@ target/
 # manifest is scratch and never committed.
 /.factory/
 **/evals/results/
+
+# Playwright for `graphhelm journey replay` is installed at the repository root with --no-save (#381).
+/node_modules/

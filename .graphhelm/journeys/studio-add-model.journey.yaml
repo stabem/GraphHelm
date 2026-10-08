@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-add-model
+title: "Owner adds a model route (draft: the fixture Runtime has no gateway manifest, so Add model is disabled there)"
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [security, authentication]
+screens:
+  - id: edit-route
+    title: Edit route form for a new model
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: form, name: Edit route}, {role: textbox, name: Route id}, {role: combobox, name: Wire format}, {role: textbox, name: Base URL}, {role: textbox, name: Model}, {role: checkbox, name: Enabled}, {role: button, name: apply}, {role: button, name: cancel}]
+    scope: [apps/studio/src/components/models.tsx]
+  - id: models
+    title: "Models panel: routes, probes, Add model"
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Models}, {role: heading, name: Models}, {role: button, name: Add model}, {role: button, name: Close models}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
+edges:
+  - id: models.add
+    from: models
+    to: edit-route
+    acts:
+      - {kind: activate, role: button, name: Add model}
+paths:
+  main: [models.add]
+drift: []

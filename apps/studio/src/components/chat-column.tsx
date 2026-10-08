@@ -34,8 +34,8 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
-  /** #396: how many cards are open. When above zero, a "Needs you" thread (key `needs-you`)
-   * shows the cards alone, with no conversation under them. */
+  /** #396/#402: how many cards are open. When given, the cards live only in the "Needs you"
+   * thread (key `needs-you`), alone, instead of above whichever thread is open (spec §8). */
   cardCount?: number;
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
@@ -231,7 +231,7 @@ export function ChatColumn(props: ChatColumnProps) {
           );
         })}
       </ol>
-      {props.cards}
+      {(props.cardCount === undefined || props.selected === NEEDS_YOU) && props.cards}
       {(props.jev.loading || suggestion !== undefined || props.jev.issue !== null) && mode !== "none" && (
         <section className="jev-card" aria-label="Jev suggests">
           {props.jev.loading ? <p role="status">Jev is preparing a suggestion…</p> : suggestion ? <>

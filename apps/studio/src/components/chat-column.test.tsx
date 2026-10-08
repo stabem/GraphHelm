@@ -97,6 +97,13 @@ describe("ChatColumn", () => {
     expect(screen.queryByText("Plan ready")).toBeNull();
   });
 
+  // #402 (spec §8): the cards live only in Needs you, never above another thread.
+  it("keeps the open cards out of every other thread", () => {
+    render(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, selected: "everyone" })} />);
+    expect(screen.queryByText("Which region?")).toBeNull();
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+  });
+
   it("keeps sealed records counted while they open", () => {
     render(<ChatColumn {...props({ openingCount: 3 })} />);
     expect(screen.getByText("Opening 3 sealed records…")).toBeInTheDocument();

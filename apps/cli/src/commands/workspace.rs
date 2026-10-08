@@ -18,7 +18,7 @@ use crate::args::{WorkspaceArgs, WorkspaceCommand};
 use crate::output::Outcome;
 
 pub(crate) const SCHEMA: &str = "graphhelm.workspace/1";
-const LEDGER: &str = ".graphhelm-workspaces";
+pub(crate) const LEDGER: &str = ".graphhelm-workspaces";
 const PARTS: [&str; 3] = ["target", "tmp", "logs"];
 
 pub fn run(args: &WorkspaceArgs) -> Outcome {
@@ -36,6 +36,14 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
         }
         WorkspaceCommand::List(list) => run_list(&list.root),
         WorkspaceCommand::Sweep(sweep) => run_sweep(&sweep.root, sweep.apply),
+        WorkspaceCommand::Slot(slot) => super::workspace_slot::run_slot(
+            &slot.root,
+            &slot.lane,
+            &slot.label,
+            slot.jobs,
+            slot.clean_workspace,
+            &slot.command,
+        ),
     }
 }
 
@@ -60,7 +68,7 @@ fn input(command: &'static str, message: &str, path: &str) -> Outcome {
 
 /// Lane and task ids name directories and ledger files, so they are bounded like journey ids and
 /// may not contain `--`, the ledger file name's separator.
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 64
@@ -126,10 +134,12 @@ fn read_record(file: &Path) -> Option<Value> {
     .then_some(value)
 }
 
-fn env_of(dir: &Path) -> Value {
+/// The environment a claimed workspace builds with: its own temp directory, and the root's one
+/// shared cargo target (#360 phase 2), which `workspace slot` serves one build at a time.
+fn env_of(root: &Path, dir: &Path) -> Value {
     let show = |p: PathBuf| p.to_string_lossy().into_owned();
     json!({
-        "CARGO_TARGET_DIR": show(dir.join("target")),
+        "CARGO_TARGET_DIR": show(super::workspace_slot::shared_target(root)),
         "TEMP": show(dir.join("tmp")),
         "TMP": show(dir.join("tmp")),
     })
@@ -217,7 +227,7 @@ fn run_claim(
         COMMAND,
         json!({"lane": lane, "task": task, "branch": branch,
             "path": dir.to_string_lossy(), "worktree": worktree.to_string_lossy(),
-            "env": env_of(&dir)}),
+            "env": env_of(root, &dir)}),
     )
 }
 

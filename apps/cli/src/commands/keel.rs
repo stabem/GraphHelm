@@ -334,8 +334,8 @@ fn journey_reader_findings(
                 rule: "keel.journey.flow_draft".to_owned(),
                 path: Some(path.clone()),
                 detail: format!(
-                    "{flow}: this change touches a screen of a draft flow; it proves nothing \
-                     until `graphhelm journey approve {flow}`"
+                    "{flow}: journey exists, not yet approved by the owner; this change touches \
+                     its screen, and it proves nothing until `graphhelm journey approve {flow}`"
                 ),
                 blocking: false,
             })

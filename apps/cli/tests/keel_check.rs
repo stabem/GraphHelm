@@ -919,6 +919,23 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
         codes(&reply).iter().any(|c| c == "keel.journey.flow_draft"),
         "a touched draft flow is named: {reply}"
     );
+    let draft = reply["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "keel.journey.flow_draft")
+        .unwrap();
+    assert!(
+        draft["message"]
+            .as_str()
+            .unwrap()
+            .contains("browse: journey exists, not yet approved by the owner"),
+        "a draft is a journey awaiting approval, never no journey: {draft}"
+    );
+    assert!(
+        !codes(&reply).iter().any(|c| c == "keel.journey.none"),
+        "{reply}"
+    );
 
     let (code, reply) = run(root, None);
     assert_eq!(code, 0, "{reply}");

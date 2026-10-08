@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: region, name: Team}, {role: button, name: Move Planny}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts, apps/studio/src/components/beacon.tsx]
+    scope: [apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts, apps/studio/src/components/beacon.tsx]
   - id: naming
     title: Inline name form under the bot
     url: /?session=studio-fixture
@@ -25,7 +25,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Team}, {role: button, name: Name this bot}, {role: button, name: Move planner}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
+    scope: [apps/studio/src/components/team-canvas.tsx, apps/studio/src/runtime/team.ts]
 edges:
   - id: naming.save
     from: naming

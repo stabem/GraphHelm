@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: complementary, name: Project document editor}, {role: textbox, name: File content}, {role: textbox, name: Why are you changing this?}, {role: button, name: Save project file}, {role: button, name: Close document editor}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/document-editor.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/document-editor.tsx, apps/studio/src/runtime/client.ts]
   - id: node
     title: Node window with recorded deliveries
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Deliveries}, {role: heading, name: Deliveries}, {role: button, name: Close this node}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/deliveries.tsx, apps/studio/src/runtime/client.ts]
   - id: saved
     title: The file is saved to the main project folder and the change notice is recorded
     url: /?session=studio-fixture

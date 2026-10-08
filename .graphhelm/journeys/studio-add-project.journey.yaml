@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Add project folder}, {role: heading, name: Add project folder}, {role: textbox, name: Folder}, {role: button, name: copy PowerShell command}, {role: button, name: copy POSIX command}, {role: button, name: Close}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/addproject.tsx]
+    scope: [apps/studio/src/components/addproject.tsx]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: add project folder}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx]
+    scope: [apps/studio/src/components/rail.tsx]
 edges:
   - id: run.add-project
     from: run

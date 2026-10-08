@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Run demo}, {role: heading, name: Conversation}, {role: button, name: Close this panel}, {role: region, name: Shared conversation}, {role: textbox, name: Say something into this run}, {role: button, name: send}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/runtime/work-conversation.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/runtime/work-conversation.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture
@@ -25,7 +25,7 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: region, name: Shared conversation}, {role: textbox, name: Say something into this run}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/panel.tsx, apps/studio/src/runtime/client.ts]
 edges:
   - id: conversation.say
     from: conversation

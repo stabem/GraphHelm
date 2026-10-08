@@ -13,13 +13,13 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: complementary, name: Chat}, {role: tablist, name: Threads}, {role: tab, name: Everyone}, {role: textbox, name: Message}, {role: button, name: Send}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
+    scope: [apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
   - id: chat.sent
     title: The message is recorded in the Everyone thread
     url: /?session=studio-fixture
     state: success
     expect: [{role: complementary, name: Chat}, {role: tabpanel, name: Everyone}, {role: textbox, name: Message}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
+    scope: [apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts, apps/studio/src/runtime/client.ts, apps/studio/src/graph/ledger.ts]
 edges:
   - id: chat.send
     from: chat

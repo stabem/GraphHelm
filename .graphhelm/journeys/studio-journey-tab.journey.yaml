@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: empty
     expect: [{role: region, name: Journey}, {role: tab, name: Journey}, {role: region, name: Journeys}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
+    scope: [apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture

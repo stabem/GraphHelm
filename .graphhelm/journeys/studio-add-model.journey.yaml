@@ -19,7 +19,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Models}, {role: heading, name: Models}, {role: button, name: Add model}, {role: button, name: Close models}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
 edges:
   - id: models.add
     from: models

@@ -13,19 +13,19 @@ screens:
     url: /?session=studio-fixture
     state: success
     expect: [{role: tabpanel, name: planner}, {role: textbox, name: Message}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
   - id: answering
     title: "Direct thread with the asker, composer marked Answering"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: button, name: Clear}, {role: textbox, name: Message}, {role: button, name: Send}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts]
+    scope: [apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/threads.ts]
   - id: asked
     title: "A question card waits in Needs you (demo asker: planner)"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
 edges:
   - id: answering.send
     from: answering

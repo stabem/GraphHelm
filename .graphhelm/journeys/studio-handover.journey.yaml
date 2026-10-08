@@ -13,7 +13,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: dialog, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
+    scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
     url: /?session=studio-fixture

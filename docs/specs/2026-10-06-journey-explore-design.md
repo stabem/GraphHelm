@@ -166,7 +166,8 @@ Every request has `protocol`, consecutive `requestId` starting at 1, and `op`. O
 text?, secretEnv?, locator?}`, `capture {path, maskSecrets:true}`, and `close {}`.
 Success is `{protocol,requestId,ok:true,result}`; failure is
 `{protocol,requestId,ok:false,code,path:"/"}`. Request/reply frames are at most 64 KiB;
-ARIA is at most 6 KiB, never silently truncated. Unknown fields, mismatched sequence,
+ARIA is at most 6 KiB for a `discover` snapshot (the model's budget) and 32 KiB for a replay
+snapshot (#434), never silently truncated. Unknown fields, mismatched sequence,
 partial EOF, and invalid UTF-8 fail. Result fields and locator/privacy limits are described
 in the [driver contract](../../tools/journey-driver/README.md).
 The installed companion is `<project>/.graphhelm/observers/journey_driver.mjs`.

@@ -6,7 +6,11 @@ import { resolve, relative, isAbsolute, dirname } from 'node:path';
 import { lstat, mkdir } from 'node:fs/promises';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
-const FRAME = 65536, SNAPSHOT = 6144, TIMEOUT = 30000;
+const FRAME = 65536, TIMEOUT = 30000;
+// A replay snapshot (expect check) may carry a real page: 32 KiB, well inside the 64 KiB frame (#434:
+// a Studio Journey tab listing 21 flows is 13.8 KiB). A discover snapshot feeds a model, so it keeps
+// the explore design's 6 KiB budget.
+const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // The supervisor gives each request 30 s (Rust OP_BUDGET). A screen wait that used the whole
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
@@ -234,7 +238,7 @@ async function run(r) {
       for(const frame of frames) if(frame!==page.mainFrame()) {
         try { ariaYaml+='\n'+redacted(await frame.locator('body').ariaSnapshot({timeout:TIMEOUT})); }
         catch { fail('driver.redaction_failed'); }
-        if(Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
+        if(Buffer.byteLength(ariaYaml)>SNAPSHOT_DISCOVER) fail('driver.snapshot_too_large');
       }
       const candidates=new Map();
       for(const match of mainAria.matchAll(/^\s*- ([a-z]+) ("(?:[^"\\]|\\.)*")/gm)) {
@@ -249,7 +253,7 @@ async function run(r) {
         if(expectations.length===8) break;
       }
     }
-    if (Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
+    if (Buffer.byteLength(ariaYaml)>(r.discover?SNAPSHOT_DISCOVER:SNAPSHOT)) fail('driver.snapshot_too_large');
     checkHost();
     return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
   }

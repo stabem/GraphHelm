@@ -84,7 +84,8 @@ If the enumerated browser frames do not match the frame hosts reachable by page 
 (for example, nested documents or closed shadow roots), capture refuses with
 `driver.capture_refused` rather than claiming `masked: true`.
 
-ARIA is limited to 6 KiB without truncation. Fingerprints hash compact JSON
+ARIA is limited without truncation: 32 KiB for a replay snapshot (a real page, well inside the
+64 KiB frame; #434), 6 KiB for a `discover` snapshot, which feeds a model. Fingerprints hash compact JSON
 `{"controls":[...],"lists":[...]}`: sorted unique landmark/heading/interactive role/name
 pairs, free text discarded, number runs replaced by `#`, and repeated list sizes bucketed as
 `1`, `2–5`, `6+`. Exact names remain separate locator facts. No similarity/drift/healing

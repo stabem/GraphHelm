@@ -117,3 +117,26 @@ describe("last seen storage", () => {
     expect(() => writeLastSeen("ml-saas", "run-a", 1)).not.toThrow();
   });
 });
+
+// #445: a `task.merged` record (#388) in the gap is shipped work. The observer walk of #301 saw
+// "Shipped: Nothing" beside a task header that said "merged".
+describe("buildHandover task.merged", () => {
+  const merged = (sequence: number, minutes: number, actor = "kit-2"): RuntimeEvent =>
+    ev(sequence, minutes, "signal_recorded", actor, { kind: "task.merged", signalId: `m${sequence}` });
+  const doc = (merger: string) => ({ to: null, replyTo: null, text: JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-501",
+    revision: 1, at: at(100), pr: 77, mergeSha: "b".repeat(40), closes: [501], merger }) });
+  const shippedOf = (extra: RuntimeEvent[], envelopes: Record<number, ReturnType<typeof doc>>, fromSeq = 10) => buildHandover({
+    events: [...events, ...extra], bots: [bot("kit-2")], model: null, claudeTasks: null, openItems: [], fromSeq, toSeq: 50, envelopes,
+  }).shipped.filter((line) => line.text.includes("merged"));
+
+  it("lists a merge in the gap with its PR, merger and closed issues, citing its sequence", () => {
+    expect(shippedOf([merged(41, 100)], { 41: doc("kit-2") })).toEqual([{ text: "PR #77 merged by kit 2 · closes #501", sequences: [41] }]);
+  });
+  it("still counts a merge whose envelope is not opened yet, without inventing its PR", () => {
+    expect(shippedOf([merged(41, 100)], {})).toEqual([{ text: "kit 2 merged a task", sequences: [41] }]);
+  });
+  it("ignores a merge before the gap and a document naming another merger", () => {
+    expect(shippedOf([merged(41, 100)], { 41: doc("kit-2") }, 41)).toEqual([]);
+    expect(shippedOf([merged(41, 100, "kit-9")], { 41: doc("kit-2") })).toEqual([]);
+  });
+});

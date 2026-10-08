@@ -13,7 +13,10 @@ From the changed paths and the workspace graph (`cargo metadata --no-deps`, no b
 - a changed file that some crate embeds (`include_str!` / `include_bytes!`, e.g. an extension's
   skill or schema) reaches the crates that embed it;
 - a changed file some test reads at run time (`RUNTIME_READERS`: the extension packages) reaches
-  those tests, and an extension package change adds `graphhelm extension validate <package>`;
+  those tests, and an extension package change adds `graphhelm extension validate <package>`; a
+  committed journey flow reaches `journey_scope_guard` and `graphhelm journey validate --all`;
+- a change to the journey driver, replay, explore or live play prints the `#[ignore]` browser
+  observers' command (`BROWSER_OBSERVERS`) for a lane with a browser to run;
 - a changed file under `tools/<tool>/` reaches that tool's `test_*.py` / `*.test.mjs` (not browser);
 - changed Studio files reach `npx vitest related <files>` and `npx tsc -b`;
 - any reached Rust crate adds `cargo fmt --check`, clippy on the reached crates, and the
@@ -36,7 +39,18 @@ GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-protocols --test authored
 RUNTIME_READERS = {
     "extensions/": [("graphhelm-host-adoption", "release_packages"), ("graphhelm-cli", "development_plugin"),
                     ("graphhelm-cli", "jpd_plugin"), ("graphhelm-cli", "extension_cli")],
+    # The committed journey flows: the scope guard reads them, and `journey validate --all` checks them.
+    ".graphhelm/journeys/": [("graphhelm-cli", "journey_scope_guard")],
 }
+# The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
+# journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
+BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
+                     "cargo +1.97.1 test --locked -p graphhelm-cli --test journey_replay_browser "
+                     "--test journey_explore_browser --test journey_live_browser -- --ignored")
+BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
+                    "apps/cli/src/commands/journey_explore.rs", "apps/cli/src/commands/journey_live.rs",
+                    "apps/cli/tests/journey_replay_browser.rs", "apps/cli/tests/journey_explore_browser.rs",
+                    "apps/cli/tests/journey_live_browser.rs")
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
 BUNDLE_MOD = re.compile(r'#\[path\s*=\s*"([^"]+)\.rs"\]\s*mod\s+(\w+)\s*;')
 
@@ -134,7 +148,11 @@ def reach(changed, packages, embedded, repo=None):
                 parts = path.split("/")
                 if prefix == "extensions/" and len(parts) > 2 and parts[1] in ("builtin",):
                     validate.add("/".join(parts[:3]))
+                if prefix == ".graphhelm/journeys/":
+                    tools.add("graphhelm --json journey validate --all")
                 hit = True
+        if path.startswith(BROWSER_REACHERS):
+            tools.add(BROWSER_OBSERVERS)
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))

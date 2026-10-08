@@ -17,7 +17,7 @@ PACKAGES = [
     {"name": "graphhelm-cli", "dir": "apps/cli", "deps": ["graphhelm-execution"],
      "tests": [{"name": "development", "src": "apps/cli/tests/bundle_development.rs"}, {"name": "extension_cli", "src": "apps/cli/tests/extension_cli.rs"},
                {"name": "jpd_plugin", "src": "apps/cli/tests/jpd_plugin.rs"}],
-     "bundles": {"keel_check": "development", "development_plugin": "development"}},
+     "bundles": {"keel_check": "development", "development_plugin": "development", "journey_scope_guard": "journeys"}},
     {"name": "graphhelm-host-adoption", "dir": "adapters/host-adoption", "deps": [],
      "tests": [{"name": "release_packages", "src": "adapters/host-adoption/tests/release_packages.rs"}], "bundles": {}},
 ]
@@ -29,6 +29,22 @@ def reach(*changed, repo=None):
 
 
 class Reach(unittest.TestCase):
+    def test_a_journey_flow_file_reaches_the_scope_guard_and_journey_validate(self):
+        # #504 review: a flows-only diff (#430-style) printed no test, only "unmapped".
+        whole, single, studio, tools, validate, other = reach(".graphhelm/journeys/checkout.journey.yaml")
+        self.assertEqual(other, [])
+        self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
+        self.assertIn("graphhelm --json journey validate --all", tools)
+
+    def test_a_journey_runtime_change_prints_the_ignored_browser_observers(self):
+        # #504 review: the #[ignore] browser cells are the real proof of a driver or replay change.
+        for path in ("tools/journey-driver/driver.mjs", "apps/cli/src/commands/journey_replay.rs",
+                     "apps/cli/tests/journey_live_browser.rs"):
+            *_, tools, _, _ = reach(path)
+            self.assertIn(rt.BROWSER_OBSERVERS, tools, path)
+        *_, tools, _, _ = reach("core/policy/src/lib.rs")
+        self.assertNotIn(rt.BROWSER_OBSERVERS, tools)
+
     def test_a_test_file_in_a_bundle_reaches_only_its_module(self):
         whole, single, *_ = reach("apps/cli/tests/keel_check.rs")
         self.assertEqual(whole, set())

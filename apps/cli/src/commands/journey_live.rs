@@ -675,7 +675,11 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         base.trim_end_matches('/'),
         screens[&visited[0]]["url"].as_str().unwrap()
     );
-    let open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true});
+    let mut open = json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":true});
+    if args.watch {
+        // #491: maximized, real window size, for the owner to read.
+        open["show"] = true.into();
+    }
     match driver.call("open", open.clone(), "/entry") {
         Ok(_) => {}
         // A just-launched app (a dev server) builds its first page on the first request, which
@@ -726,6 +730,13 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                         index - 1,
                         Some(edge_id),
                         Some(act_index),
+                    );
+                    // #491: caption the step and outline its control, then wait the pace.
+                    let caption = caption_bounded(format!("{edge_id}: {}", act_caption(act)));
+                    let _ = driver.call(
+                        "show",
+                        json!({"caption":caption,"role":act["role"],"name":act["name"]}),
+                        &format!("/edges/{at}/show"),
                     );
                     std::thread::sleep(pace);
                 }
@@ -998,6 +1009,36 @@ fn launch(project: &Path, base: &str) -> Result<Launched> {
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
     Ok(launched)
+}
+
+/// The words a watch shows for an act (#491), the way the Studio's journey cards say it.
+fn act_caption(act: &Value) -> String {
+    let name = act["name"].as_str().unwrap_or_default();
+    let verb = match act["kind"].as_str().unwrap_or_default() {
+        "activate" => "Clicks",
+        "submit" => "Submits",
+        "enter_text" => "Types into",
+        "navigate" => "Opens",
+        "wait_for" => "Waits for",
+        _ => "Checks",
+    };
+    format!("{verb} \"{name}\"")
+}
+
+/// The driver refuses a caption over 200 bytes (`show`, a protocol error that ends the session),
+/// and a schema-valid control name reaches 256 bytes: cut on a character boundary, with an
+/// ellipsis, never above the bound (#497 review).
+const CAPTION_LIMIT: usize = 200;
+
+fn caption_bounded(caption: String) -> String {
+    if caption.len() <= CAPTION_LIMIT {
+        return caption;
+    }
+    let mut end = CAPTION_LIMIT - '…'.len_utf8();
+    while !caption.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &caption[..end])
 }
 
 /// The session record a `journey watch` keeps current while it plays (the Studio's "current
@@ -1422,4 +1463,24 @@ pub(super) fn close(args: &JourneyCloseArgs) -> Outcome {
         args.project.as_deref(),
         json!({"op":"close"}),
     )
+}
+
+#[cfg(test)]
+mod caption_tests {
+    /// #497 review: a long control name must not end a watch at the act that names it. The
+    /// caption stays within the driver's bound, on a character boundary, for ASCII and for
+    /// multi-byte names. Cost: microseconds.
+    #[test]
+    fn a_long_caption_is_cut_within_the_driver_bound_on_a_char_boundary() {
+        for name in ["x".repeat(256), "ç".repeat(128), "日本".repeat(43)] {
+            let caption = super::caption_bounded(format!("cart.checkout: Clicks \"{name}\""));
+            assert!(
+                caption.len() <= super::CAPTION_LIMIT,
+                "{} bytes",
+                caption.len()
+            );
+            assert!(caption.ends_with('…'));
+        }
+        assert_eq!(super::caption_bounded("short".into()), "short");
+    }
 }

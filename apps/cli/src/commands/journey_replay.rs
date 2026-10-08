@@ -519,6 +519,7 @@ impl Driver {
             "snapshot" => &["url", "ariaYaml", "controls", "fingerprint"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
+            "show" => &["shown"],
             "close" => &["closed"],
             _ => return Err(failure("replay.driver_frame_invalid", path, 1)),
         };
@@ -589,6 +590,7 @@ impl Driver {
                             .as_u64()
                             .is_some_and(|n| (1..=16384).contains(&n))
                 }
+                "show" => result["shown"].is_boolean(),
                 "close" => result["closed"] == true,
                 _ => false,
             };

@@ -1146,6 +1146,12 @@ pub fn terminate(process_id: u32, group: ProcessGroup) -> TerminationOutcome {
                 remaining: 0,
             };
         };
+        trace(|| {
+            format!(
+                "terminate leader={process_id} members={:?} unlisted={}",
+                members.0, members.1
+            )
+        });
         return drain_terminated_job(&members, || job_member_ids(group).map(|fresh| fresh.1));
     }
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
@@ -1278,10 +1284,25 @@ fn drain_terminated_job(
             // and keep waiting (inside the same ceiling) while it drains, rather than answering
             // `BoundReached { remaining: 1 }` for a process that was dead before the kill.
             unlisted = refresh_unlisted().unwrap_or(unlisted);
+            if passes == 1 || passes % 1000 == 0 {
+                trace(|| {
+                    format!(
+                        "drain pass={passes} listed_running=0 unlisted={unlisted} elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    )
+                });
+            }
             if unlisted == 0 {
                 return TerminationOutcome::Complete;
             }
             if started.elapsed() >= JOB_DRAIN_CEILING {
+                trace(|| {
+                    format!(
+                        "bound: unlisted={unlisted} after {} ms; {}",
+                        started.elapsed().as_millis(),
+                        snapshot_of(&members.0)
+                    )
+                });
                 return TerminationOutcome::BoundReached {
                     passes,
                     remaining: unlisted,
@@ -1291,6 +1312,13 @@ fn drain_terminated_job(
             continue;
         }
         if started.elapsed() >= JOB_DRAIN_CEILING {
+            trace(|| {
+                format!(
+                    "bound: listed_running={ids:?} unlisted={unlisted} after {} ms; {}",
+                    started.elapsed().as_millis(),
+                    snapshot_of(&members.0)
+                )
+            });
             return TerminationOutcome::BoundReached {
                 passes,
                 remaining: ids.len() + unlisted,
@@ -1298,6 +1326,53 @@ fn drain_terminated_job(
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
+
+/// `GRAPHHELM_PTREE_TRACE=1` (#454 instrument): one stderr line per observation while a job
+/// drains. Off by default; nothing here is read by code.
+#[cfg(windows)]
+fn trace(line: impl FnOnce() -> String) {
+    if std::env::var_os("GRAPHHELM_PTREE_TRACE").is_some() {
+        eprintln!("ptree-trace {}", line());
+    }
+}
+
+/// Every process that is a pre-kill member or the child of one, from a toolhelp snapshot, with
+/// whether its process object still reads as running (#454 instrument).
+#[cfg(windows)]
+fn snapshot_of(members: &[u32]) -> String {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return "snapshot unavailable".to_owned();
+    }
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap(),
+        ..unsafe { std::mem::zeroed() }
+    };
+    let mut rows = Vec::new();
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while more {
+        let pid = entry.th32ProcessID;
+        let parent = entry.th32ParentProcessID;
+        if members.contains(&pid) || members.contains(&parent) {
+            let name_len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
+            let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
+            rows.push(format!(
+                "{{pid={pid} parent={parent} exe={name} running={}}}",
+                process_is_running(pid)
+            ));
+        }
+        more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    format!("toolhelp members-and-children: [{}]", rows.join(", "))
 }
 
 #[cfg(all(test, windows))]

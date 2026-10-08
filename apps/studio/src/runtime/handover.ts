@@ -8,7 +8,7 @@ import type { GraphModel } from "../graph/model";
 import { captureDocuments } from "./journeys";
 import type { NeedsYouItem } from "./needs-you";
 import { firstLine, timeOf, type Bot } from "./team";
-import type { ClaudeTaskReadModel } from "./team-tasks";
+import { parseTaskEvent, type ClaudeTaskReadModel } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 
 export const HANDOVER_MIN_GAP_MS = 15 * 60 * 1000;
@@ -54,6 +54,18 @@ export function buildHandover(input: HandoverInput): Handover {
     else if (event.kind === "signal_recorded" && payload.kind === "agent_task_completed") {
       const task = input.claudeTasks?.tasks.find((candidate) => candidate.completedSequence === event.sequence);
       shipped.push({ text: task ? `${botName(event.actorId)} finished “${task.taskSubject}”` : `${botName(event.actorId)} finished a task`, sequences: [event.sequence] });
+    } else if (event.kind === "signal_recorded" && payload.kind === "task.merged" && event.actorId !== null) {
+      // #445: a merged task (#388) is shipped work. An envelope not opened yet still counts, without
+      // its PR; an opened one that is not a well-formed record by its own merger counts as nothing.
+      const envelope = input.envelopes?.[event.sequence];
+      if (envelope === undefined) {
+        shipped.push({ text: `${botName(event.actorId)} merged a task`, sequences: [event.sequence] });
+        continue;
+      }
+      const merge = parseTaskEvent("task.merged", event.actorId, envelope.text);
+      if (merge === null || merge.pr === undefined) continue;
+      const closes = merge.closes?.length ? ` · closes ${merge.closes.map((issue) => `#${issue}`).join(", ")}` : "";
+      shipped.push({ text: `PR #${merge.pr} merged by ${botName(event.actorId)}${closes}`, sequences: [event.sequence] });
     }
   }
 

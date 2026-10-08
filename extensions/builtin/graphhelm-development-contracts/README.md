@@ -10,8 +10,10 @@ The inventory is declared in [extension.json](extension.json). Entry skills have
 
 | skill | what it produces | what it may never do |
 |---|---|---|
-| [`code-contract`](skills/code-contract/SKILL.md) | a proposed contract: scope as a file list, acceptance criteria naming their instrument, one refusal per failure mode | enforce any of it |
-| [`context-retrieval`](skills/context-retrieval/SKILL.md) | a proposed context capsule and a result that cites it by stable item identity | decide what is true, or drop required evidence to fit a budget |
+| [`task-plan`](skills/task-plan/SKILL.md) | the task's `keel.plan`: paths, promise, proof kind, review count, skills | write code |
+| [`implement`](skills/implement/SKILL.md) | the change inside the card, with cited context and the reached tests run | add surface the promise does not need |
+| [`blind-review`](skills/blind-review/SKILL.md) | one blind verdict on a pinned head, with commands and results | review a change it helped write |
+| [`merge`](skills/merge/SKILL.md) | a pinned squash merge, read back, and a released workspace | merge a head the approval did not name |
 | [`memory-curator`](skills/memory-curator/SKILL.md) | advisory candidates for durable lessons | record anything directly |
 | [`keel`](skills/keel/SKILL.md) | a scoped contract card, measured write surface, and named proof | enforce its own rules or activate the penalty ladder |
 | [`test-audit`](skills/test-audit/SKILL.md) | an authoring gate, suite audit, or deletion record naming the covering observer | enforce rules or remove a test without a covering-observer record |

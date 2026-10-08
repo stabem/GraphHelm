@@ -261,6 +261,10 @@ fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refuse
         for (case, title, summary, accepted) in [
             ("ok", json!("Studio: Team tab shows task titles"), json!("The owner reads each task's title."), true),
             ("unicode", json!("Studio: título da tarefa"), json!("O dono lê o título."), true),
+            // Limits count characters, as the schema and the script do, not UTF-8 bytes (#486
+            // review): 200 accented characters are 220+ bytes and must still be accepted.
+            ("accented-200", json!("Correção ".repeat(22).chars().take(200).collect::<String>()), json!("ção".repeat(100)), true),
+            ("accented-201", json!("ç".repeat(201)), json!("x"), false),
             ("empty", json!(""), json!("x"), false),
             ("long", json!("t".repeat(201)), json!("x"), false),
             ("newline", json!("a\nb"), json!("x"), false),

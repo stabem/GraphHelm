@@ -175,6 +175,15 @@ describe("TaskGraphs titles (#477)", () => {
     expect(within(row).getByText("The owner gets thing 477.")).toBeInTheDocument();
   });
 
+  it("accepts a title of 200 characters even when accents or emoji make it longer in bytes or UTF-16 units", () => {
+    const title = Array.from("Correção 🚀 ".repeat(20)).slice(0, 200).join("");
+    expect(Array.from(title)).toHaveLength(200);
+    const tasks = foldTaskEvents([record(1, "issue-9", "task.claimed", "gh-claude-2", { issue: 9, lane: "gh-claude-2", branch: "b", repo, title })]);
+    expect(tasks[0].title).toBe(title);
+    expect(parseTaskEvent("task.claimed", "gh-claude-2", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-9", revision: 1,
+      at: "2026-10-08T00:00:00Z", issue: 9, lane: "gh-claude-2", branch: "b", title: "ç".repeat(201) }))).toBeNull();
+  });
+
   it("falls back to the number when no title was recorded", () => {
     const tasks = foldTaskEvents([record(1, "issue-5", "task.claimed", "gh-claude-2", { issue: 5, lane: "gh-claude-2", branch: "b", repo })]);
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);

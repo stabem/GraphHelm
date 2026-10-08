@@ -91,7 +91,7 @@ import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
-import { EVERYONE, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
+import { EVERYONE, autoThread, chatThreads, describeActivity, namesOf, sealedNotesPending, unreadCounts } from "./runtime/threads";
 import { ProjectRail } from "./components/rail";
 import { Composer, type RouteChoice } from "./components/compose";
 import { Models, type KeyDraft, type ProbeState, type RouteDraft, type SaveOutcome } from "./components/models";
@@ -2063,8 +2063,14 @@ export default function App({
   useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
   // #410: the landing is real thread state, so unread tracking marks the thread actually shown.
   const needsCount = needs.items.length;
+  // #414: land once per run (a card arriving mid-read does not pull the owner away again), and
+  // leave Needs you for Everyone when the last card settles.
+  const landedRef = useRef(false);
+  useEffect(() => { landedRef.current = false; }, [selected]);
   useEffect(() => {
-    if (!threadChosen && thread === EVERYONE && needsCount > 0) setThread(NEEDS_YOU);
+    const next = autoThread({ thread, chosen: threadChosen, landed: landedRef.current, cards: needsCount });
+    if (next === NEEDS_YOU) landedRef.current = true;
+    if (next !== null) setThread(next);
   }, [threadChosen, thread, needsCount]);
   useEffect(() => {
     const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;

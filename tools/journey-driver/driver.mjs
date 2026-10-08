@@ -147,6 +147,23 @@ async function observedLocator(target,r) {
   });
   return clean({role:r.role,name:r.name,exact:true,testId:testId && Buffer.byteLength(testId)<=128 ? redacted(testId) : null,context:ancestry && Buffer.byteLength(ancestry)<=512 ? redacted(ancestry) : null,nth:null});
 }
+/** A page over the model's budget as its outline (#356): landmarks, headings and controls in page
+ * order, without their text, cut at whole lines and ending with a note saying so. */
+function summarized(aria, budget) {
+  if (Buffer.byteLength(aria) <= budget) return aria;
+  const lines = aria.split('\n');
+  const outline = lines.filter(line => { const m = /^\s*- ([a-z]+)/.exec(line); return m !== null && roles.has(m[1]); })
+    .map(line => line.replace(/:\s.*$/, '').replace(/:$/, ''));
+  const kept = [];
+  let size = 0;
+  for (const line of outline) {
+    const next = Buffer.byteLength(line) + 1;
+    if (size + next > budget - 96) break;
+    kept.push(line); size += next;
+  }
+  kept.push(`- note "page summarized: ${kept.length} of ${lines.length} lines, text left out"`);
+  return kept.join('\n');
+}
 function skeleton(aria) {
   const controlMap = new Map(), listCounts = [], listStack = [];
   for (const line of aria.split('\n')) {
@@ -240,7 +257,7 @@ async function run(r) {
       for(const frame of frames) if(frame!==page.mainFrame()) {
         try { ariaYaml+='\n'+redacted(await frame.locator('body').ariaSnapshot({timeout:TIMEOUT})); }
         catch { fail('driver.redaction_failed'); }
-        if(Buffer.byteLength(ariaYaml)>SNAPSHOT_DISCOVER) fail('driver.snapshot_too_large');
+        if(Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
       }
       const candidates=new Map();
       for(const match of mainAria.matchAll(/^\s*- ([a-z]+) ("(?:[^"\\]|\\.)*")/gm)) {
@@ -255,9 +272,10 @@ async function run(r) {
         if(expectations.length===8) break;
       }
     }
-    if (Buffer.byteLength(ariaYaml)>(r.discover?SNAPSHOT_DISCOVER:SNAPSHOT)) fail('driver.snapshot_too_large');
+    if (Buffer.byteLength(ariaYaml)>SNAPSHOT) fail('driver.snapshot_too_large');
     checkHost();
-    return clean({url:redacted(page.url()),ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
+    // Identity reads the whole page; the model gets the page within its budget (#356).
+    return clean({url:redacted(page.url()),ariaYaml:r.discover?summarized(ariaYaml,SNAPSHOT_DISCOVER):ariaYaml,...skeleton(ariaYaml),...(r.discover?{expectations}:{})});
   }
   if (r.op === 'act') {
     const target=await locate(r), locator=await observedLocator(target,r);

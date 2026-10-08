@@ -57,6 +57,12 @@ describe("the shared ledger of unanswered questions", () => {
     ]);
   });
 
+  it("carries the task a question named, so its answer lands in the same thread (#402)", () => {
+    const events = [signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" })];
+    const envelopes = { 5: { to: OPERATOR, replyTo: null, task: "issue-384", text: "which region?" } };
+    expect(openQuestions(events, envelopes, OPERATOR)[0].task).toBe("issue-384");
+  });
+
   it("settles a debt only when the OPERATOR answers it", () => {
     const events = [
       signal(5, { id: "codex", type: "agent" }, { signalId: "sig-5" }),

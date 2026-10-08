@@ -2076,7 +2076,7 @@ export default function App({
   const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
   const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
   const [graphFileOpen, setGraphFileOpen] = useState(false);
-  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null } | null>(null);
+  const [answering, setAnswering] = useState<{ asker: string; signalId: string | null; task?: string | null } | null>(null);
   const [composerFocus, setComposerFocus] = useState(0);
   const [highlight, setHighlight] = useState<number | null>(null);
   const [mainChatSeed, setMainChatSeed] = useState<{ text: string; nonce: number } | null>(null);
@@ -2127,10 +2127,10 @@ export default function App({
     setMobileTab(canvasTab === "team" ? "team" : "journeys");
     setCitedRecords({ executionId: selected, sequences });
   };
-  const answerQuestion = (asker: string, signalId: string | null) => {
+  const answerQuestion = (asker: string, signalId: string | null, task: string | null = null) => {
     const key = botKeyOf(team.bots, asker) ?? asker;
     setThread(`direct:${key}`);
-    setAnswering({ asker, signalId });
+    setAnswering({ asker, signalId, ...(task ? { task } : {}) });
     setComposerFocus((nonce) => nonce + 1);
     setMobileTab("chat");
   };
@@ -2756,8 +2756,8 @@ export default function App({
               bots={team.bots} names={botNames} openingCount={openingCount}
               cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
-                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
-                onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
+                onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId, "operator_note", item.kind === "question" ? item.task ?? null : null)}
+                onAnswer={(item) => answerQuestion(item.asker, item.signalId, item.kind === "question" ? item.task ?? null : null)}
                 onRefuse={(item) => void refuse(item)}
                 onCheck={() => setNativeRefresh((nonce) => nonce + 1)}
                 stepActions={stepActions} />}

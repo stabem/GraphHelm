@@ -121,6 +121,16 @@ describe("ChatColumn", () => {
     expect(p.onSend).toHaveBeenCalledWith("Wait for review", "kit-1", "sig-q");
   });
 
+  // #402 (spec §8): an answer keeps replyTo and adds the question's task when it had one.
+  it("answers a question that named a task with that task", async () => {
+    const p = props({ selected: "direct:kit-1", threads: [...THREADS, { key: "direct:kit-1", kind: "direct", label: "loja kit 1", participants: ["kit-1"], messages: [] }],
+      answering: { asker: "kit-1", signalId: "sig-q", task: "issue-384" } });
+    render(<ChatColumn {...p} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "Ship it");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(p.onSend).toHaveBeenCalledWith("Ship it", "kit-1", "sig-q", "issue-384");
+  });
+
   it("keeps one draft per thread so text typed for one bot never follows to another", async () => {
     const threads = [...THREADS, { key: "direct:kit-1", kind: "direct" as const, label: "loja kit 1", participants: ["kit-1"], messages: [] },
       { key: "direct:kit-2", kind: "direct" as const, label: "loja kit 2", participants: ["kit-2"], messages: [] }];

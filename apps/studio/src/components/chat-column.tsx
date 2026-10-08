@@ -44,7 +44,7 @@ export interface ChatColumnProps {
   onSend: (text: string, to: string | null, replyTo: string | null, task?: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
-  answering: { asker: string; signalId: string | null } | null;
+  answering: { asker: string; signalId: string | null; task?: string | null } | null;
   onClearAnswer: () => void;
   composerFocus: number;
   highlight: number | null;
@@ -95,7 +95,12 @@ export function ChatColumn(props: ChatColumnProps) {
     if (text === "" || props.sending) return;
     const key = draftKey;
     let ok: boolean;
-    if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
+    if (props.answering !== null) {
+      // #402: an answer keeps the question's task, so it lands in the question's thread.
+      ok = props.answering.task
+        ? await props.onSend(text, props.answering.asker, props.answering.signalId, props.answering.task)
+        : await props.onSend(text, props.answering.asker, props.answering.signalId);
+    }
     else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
     else if (thread?.kind === "task") { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null, thread.key.slice("task:".length)); }
     else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }

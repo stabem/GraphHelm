@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: Owner opens the Journey tab of a run
+title: Open the Journey tab of a run
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,13 +9,13 @@ secrets: []
 risks: [critical_ux]
 screens:
   - id: journey
-    title: Journey canvas (empty until a contract has captures)
+    title: The Journey tab (empty until a journey has screenshots)
     url: /?session=studio-fixture
     state: empty
     expect: [{role: region, name: Journey}, {role: tab, name: Journey}, {role: region, name: Journeys}]
     scope: [apps/studio/src/components/journey-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/journeys.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: tablist, name: Canvas views}, {role: tab, name: Team (live)}, {role: tab, name: Journey}, {role: region, name: Journeys}]

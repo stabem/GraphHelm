@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-connect
-title: Owner connects the Studio to a Runtime with the bearer token
+title: Connect the Studio with the access token
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,13 +9,13 @@ secrets: [studio_token]
 risks: [authentication, security]
 screens:
   - id: gate
-    title: Connect gate
+    title: The connect screen
     url: /
     state: empty
     expect: [{role: heading, name: Your agents are one token away}, {role: textbox, name: Bearer token}, {role: button, name: Connect}]
     scope: [apps/studio/src/components/Connect.tsx, apps/studio/src/runtime/session.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /
     state: stable
     expect: [{role: navigation, name: Projects}, {role: region, name: Canvas}, {role: tab, name: Team (live)}, {role: region, name: Team}, {role: complementary, name: Run side panel}]

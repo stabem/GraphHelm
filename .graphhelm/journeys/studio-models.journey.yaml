@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-models
-title: Owner opens the Models panel
+title: Open the Models panel
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,13 +9,13 @@ secrets: []
 risks: [security, authentication]
 screens:
   - id: models
-    title: "Models panel: routes, probes, Add model"
+    title: "The Models panel, with the Add model button"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Models}, {role: heading, name: Models}, {role: button, name: Add model}, {role: button, name: Close models}]
     scope: [apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: models}]

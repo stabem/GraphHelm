@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-connect-existing-chat
-title: "Owner connects an existing native chat as the team's coordinator (draft: the node window exceeds the driver snapshot cap (driver.snapshot_too_large))"
+title: "Make an existing chat the team's coordinator (draft: the step's window is too big for the replay tool to read)"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,13 +9,13 @@ secrets: []
 risks: [security, multiple_components]
 screens:
   - id: native
-    title: Node window with the Connect existing chat block open
+    title: "The step's window, with Connect existing chat open"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Connect existing chat}, {role: heading, name: Connect existing chat}, {role: textbox, name: Search chats}, {role: list, name: Existing native chats}, {role: button, name: Add persona to activity}]
     scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/native-chats.tsx, apps/studio/src/runtime/client.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Main chat}, {role: heading, name: Main chat}, {role: button, name: Connect existing chat}]

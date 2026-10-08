@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-rename-project
-title: Owner renames the project's display label in this browser
+title: Rename the project in this browser
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,19 +9,19 @@ secrets: []
 risks: [critical_ux]
 screens:
   - id: renamed
-    title: The rail shows the new label
+    title: The rail shows the new name
     url: /?session=studio-fixture
     state: success
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename Demo Studio}]
     scope: [apps/studio/src/components/rail.tsx, apps/studio/src/studio-preferences.ts]
   - id: renaming
-    title: Inline rename form in the rail
+    title: The rename box in the rail
     url: /?session=studio-fixture
     state: stable
     expect: [{role: textbox, name: Project name}, {role: button, name: Save project name}, {role: button, name: Cancel rename}]
     scope: [apps/studio/src/components/rail.tsx]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: Rename demo}]

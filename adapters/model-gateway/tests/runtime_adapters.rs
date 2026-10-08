@@ -904,6 +904,10 @@ fn a_missing_non_versioned_program_never_resolves_to_a_sibling() {
     let missing = root.path().join("tools").join("codex-install").join(name);
     assert_eq!(resolve_program(&missing), missing);
     // Missing, version-shaped folder but the grandparent is not `bin`.
-    let not_bin = root.path().join("tools").join("0a1b2c3d4e5f6071").join(name);
+    let not_bin = root
+        .path()
+        .join("tools")
+        .join("0a1b2c3d4e5f6071")
+        .join(name);
     assert_eq!(resolve_program(&not_bin), not_bin);
 }

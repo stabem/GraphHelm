@@ -25,6 +25,9 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     // load (no Playwright in this cwd), a non-boolean is refused before it.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: 'yes' }, 'driver.protocol_invalid'],
+    // #356: `survive` (a healing replay keeps its session at the broken edge) is boolean too.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: true }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], survive: 1 }, 'driver.protocol_invalid'],
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];

@@ -845,6 +845,9 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
             key_id: args.key_id.clone(),
             allow_origin: args.allow_origin.clone(),
             replay_worker: false,
+            heal: false,
+            model: Default::default(),
+            allow_act: Vec::new(),
         };
         let mut prior: Option<(String, String)> = None;
         for screen in flow["screens"].as_array().unwrap() {

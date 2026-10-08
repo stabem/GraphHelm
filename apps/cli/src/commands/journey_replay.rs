@@ -396,7 +396,7 @@ impl Driver {
     }
 
     pub(super) fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
-        if op == "open" && request["headed"] == true {
+        if op == "open" && (request["headed"] == true || request["survive"] == true) {
             self.headed = true;
         }
         let result = self.call_inner(op, request, path);
@@ -1005,44 +1005,166 @@ pub(super) fn walked(
         .ok_or_else(|| failure("replay.record_uncertain", "/recording/walked", 1))
 }
 
-/// Map an observed refusal to its drift code and persist it on the flow (draft, no approval).
-/// Without a drift code the refusal passes through unchanged. No model is involved.
+/// The drift code (design §6) an observed refusal stands for; other refusals are not drift.
+fn drift_code(refusal: &Failure) -> Option<&'static str> {
+    match refusal.0 {
+        "driver.locator_missing" => Some("drift.locator_missing"),
+        "driver.locator_ambiguous" => Some("drift.locator_ambiguous"),
+        "replay.wrong_screen" => Some("drift.wrong_screen"),
+        "replay.screen_changed" => Some("drift.screen_changed"),
+        "driver.expectation_failed" => Some("drift.expect_failed"),
+        _ => None,
+    }
+}
+
+/// Persist one drift fact (and, when healed, the edge's repaired acts) on the flow this run
+/// last wrote. `disk` follows each write, so a later fact compares against this run's own
+/// edit and a concurrent edit by anyone else is refused, never merged.
 #[allow(clippy::too_many_arguments)]
-fn drifted(
-    refusal: Failure,
+fn persist(
     data: &mut Value,
     project: &Path,
     file: &Path,
-    flow: &Value,
+    disk: &mut Value,
     edge: &str,
     act: usize,
+    code: &str,
     seen: &str,
-) -> Failure {
-    let code = match refusal.0 {
-        "driver.locator_missing" => "drift.locator_missing",
-        "driver.locator_ambiguous" => "drift.locator_ambiguous",
-        "replay.wrong_screen" => "drift.wrong_screen",
-        "replay.screen_changed" => "drift.screen_changed",
-        "driver.expectation_failed" => "drift.expect_failed",
-        _ => return refusal,
-    };
-    let Ok(at) = super::journey::head(project) else {
-        return failure("replay.drift_unpersisted", "/drift", 1);
-    };
-    let entry = json!({"edge":edge,"act":act,"code":code,"seen":seen,"at":at});
-    if let Err(code) = super::journey_flow::record_drift(project, file, flow, entry.clone()) {
-        return failure(
-            code,
-            "/drift",
-            if code == "replay.source_changed" {
-                2
-            } else {
-                1
-            },
-        );
+    repair: Option<&[Value]>,
+) -> Result<()> {
+    let at = super::journey::head(project)
+        .map_err(|_| failure("replay.drift_unpersisted", "/drift", 1))?;
+    let mut entry = json!({"edge":edge,"act":act,"code":code,"seen":seen,"at":at});
+    if repair.is_some() {
+        entry["healed"] = true.into();
     }
-    data["drift"] = entry;
-    failure(code, format!("/edges/{edge}/acts/{act}"), 1)
+    *disk = super::journey_flow::record_drift(project, file, disk, entry.clone(), repair).map_err(
+        |code| {
+            failure(
+                code,
+                "/drift",
+                if code == "replay.source_changed" {
+                    2
+                } else {
+                    1
+                },
+            )
+        },
+    )?;
+    if repair.is_some() {
+        data["healed"].as_array_mut().unwrap().push(entry);
+    } else {
+        data["drift"] = entry;
+    }
+    Ok(())
+}
+
+/// What `--heal` hands the model door: the failing edge only, never the rest of the flow.
+struct Healer {
+    model: Box<dyn graphhelm_architect::DraftModel>,
+    allow: Vec<regex::Regex>,
+    declared: Vec<String>,
+    private: Vec<String>,
+    repaired: BTreeMap<String, Vec<Value>>,
+}
+
+/// The original destination is observed: its URL pattern and every original expectation.
+fn arrived(driver: &mut Driver, to: &Value, base: &str) -> Result<bool> {
+    let page = driver.call("snapshot", json!({"expect":[]}), "/heal/destination")?;
+    if !page["url"]
+        .as_str()
+        .is_some_and(|url| url_matches(base, to["url"].as_str().unwrap(), url))
+    {
+        return Ok(false);
+    }
+    match driver.call(
+        "snapshot",
+        json!({"expect":to["expect"]}),
+        "/heal/destination",
+    ) {
+        Ok(_) => Ok(true),
+        Err(refusal) if refusal.0 == "driver.expectation_failed" => Ok(false),
+        Err(refusal) => Err(refusal),
+    }
+}
+
+/// Repair one broken edge in the browser still standing at it (§6). The completed prefix is
+/// kept and never repeated; the model may only append acts, at most eight in all, and the
+/// repair counts only once the edge's original destination is observed.
+#[allow(clippy::too_many_arguments)]
+fn heal(
+    healer: &Healer,
+    driver: &mut Driver,
+    edge: &Value,
+    prefix: &[Value],
+    mut locators: Vec<Value>,
+    to: &Value,
+    base: &str,
+    code: &str,
+    data: &mut Value,
+) -> Result<(Vec<Value>, Vec<Value>)> {
+    let mut acts = prefix.to_vec();
+    let mut recent = Vec::new();
+    let intent = json!({"id":edge["id"],"from":edge["from"],"to":edge["to"],"toUrl":to["url"],"expect":to["expect"],"acts":edge["acts"],"drift":code,"kept":prefix});
+    let goal = format!(
+        "Repair only journey edge {}: reach its original destination screen {} again.",
+        edge["id"].as_str().unwrap(),
+        to["id"].as_str().unwrap()
+    );
+    loop {
+        if acts.len() >= 8 {
+            return Err(failure("heal.edge_budget", "/heal/acts", 1));
+        }
+        let snapshot = driver.call(
+            "snapshot",
+            json!({"expect":[],"discover":true}),
+            "/heal/snapshot",
+        )?;
+        let question = super::journey_explore::prompt(
+            &goal,
+            &json!({"screens":[]}),
+            &snapshot,
+            &recent,
+            &healer.private,
+            Some(&intent),
+        )?;
+        data["modelCalls"] = (data["modelCalls"].as_u64().unwrap() + 1).into();
+        let reply = healer.model.draft(&question).map_err(|error| {
+            let error = super::architect::refused(&error);
+            (error.code, "/heal/model".to_owned(), 1)
+        })?;
+        let proposal =
+            super::journey_explore::proposal(&reply.text, &healer.declared, &healer.private)?;
+        if let Some(act) = proposal.get("act") {
+            super::journey_explore::permitted(act, &healer.allow)?;
+            let mut request = act.clone();
+            if let Some(secret) = request.as_object_mut().unwrap().remove("secret") {
+                request["secretEnv"] =
+                    format!("GRAPHHELM_SECRET_{}", secret.as_str().unwrap()).into();
+            }
+            let observed = driver.call("act", request, "/heal/act")?;
+            acts.push(act.clone());
+            locators.push(observed["locator"].clone());
+            recent.push(act.clone());
+            if arrived(driver, to, base)? {
+                return Ok((acts, locators));
+            }
+        } else if proposal["done"] == true {
+            if !acts.is_empty() && arrived(driver, to, base)? {
+                return Ok((acts, locators));
+            }
+            return Err(failure("heal.destination_unobserved", "/heal", 1));
+        } else {
+            return Err(failure("heal.gave_up", "/heal", 1));
+        }
+    }
+}
+
+fn acts_len(healer: &Option<Healer>, edge_id: &str, edge: &Value) -> usize {
+    healer
+        .as_ref()
+        .and_then(|h| h.repaired.get(edge_id))
+        .map_or_else(|| edge["acts"].as_array().unwrap().len(), Vec::len)
 }
 
 fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
@@ -1070,6 +1192,31 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
     let target = directory.join(format!("{}.json", args.id));
     let previous = load_cache(&target, &flow)?;
     let secrets = preflight(&flow)?;
+    let mut disk = flow.clone();
+    let mut healer = if args.heal {
+        let model =
+            super::architect::build_model(&super::journey_explore::model_source(&args.model)?)
+                .map_err(|error| (error.code, error.pointer, 3))?;
+        let mut private: Vec<String> = secrets.values().cloned().collect();
+        if let Ok(key) = std::env::var("GRAPHHELM_GATEWAY_KEY") {
+            private.push(key);
+        }
+        data["healed"] = json!([]);
+        Some(Healer {
+            model,
+            allow: super::journey_explore::permissions(&args.allow_act)?,
+            declared: flow["secrets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_owned())
+                .collect(),
+            private,
+            repaired: BTreeMap::new(),
+        })
+    } else {
+        None
+    };
     if let Some(cache) = &previous {
         let bytes = serde_json::to_vec(cache).unwrap();
         if secrets.values().any(|secret| {
@@ -1160,14 +1307,22 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         data["paths"][index] = path_data.clone();
         let mut driver = Driver::start(&project, temporary.path(), &secrets)?;
         let base = flow["base"].as_str().unwrap();
-        driver.call("open",json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin}),&format!("/paths/{name}/entry"))?;
+        driver.call("open",json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),&format!("/paths/{name}/entry"))?;
         let mut last_capture: Option<String> = None;
         for (step_index, screen_id) in visited.iter().enumerate() {
             if step_index > 0 {
                 let edge_id = path_edges[step_index - 1].as_str().unwrap();
                 let edge = edges[edge_id];
+                // An edge healed earlier in this run replays its repair, without stale locators.
+                let repaired = healer
+                    .as_ref()
+                    .and_then(|h| h.repaired.get(edge_id))
+                    .cloned();
+                let acts = repaired
+                    .clone()
+                    .unwrap_or_else(|| edge["acts"].as_array().unwrap().clone());
                 let mut locators = Vec::new();
-                for (act_index, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
+                for (act_index, act) in acts.iter().enumerate() {
                     let pointer = format!("/paths/{name}/edges/{edge_id}/acts/{act_index}");
                     let mut request =
                         json!({"kind":act["kind"],"role":act["role"],"name":act["name"]});
@@ -1177,7 +1332,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                     if let Some(secret) = act["secret"].as_str() {
                         request["secretEnv"] = format!("GRAPHHELM_SECRET_{secret}").into();
                     }
-                    if let Some(cached) = reused {
+                    if let Some(cached) = reused.filter(|_| repaired.is_none()) {
                         request["locator"] = cached["edges"][edge_id][act_index].clone();
                     }
                     let seen = format!(
@@ -1185,9 +1340,59 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                         act["role"].as_str().unwrap(),
                         serde_json::to_string(&act["name"]).unwrap()
                     );
-                    let result = driver.call("act", request, &pointer).map_err(|f| {
-                        drifted(f, data, &project, &file, &flow, edge_id, act_index, &seen)
-                    })?;
+                    let result = match driver.call("act", request, &pointer) {
+                        Ok(result) => result,
+                        Err(refusal) => {
+                            let Some(code) = drift_code(&refusal) else {
+                                return Err(refusal);
+                            };
+                            if let Some(h) = healer.as_ref() {
+                                let to = screens[edge["to"].as_str().unwrap()];
+                                match heal(
+                                    h,
+                                    &mut driver,
+                                    edge,
+                                    &acts[..act_index],
+                                    locators.clone(),
+                                    to,
+                                    base,
+                                    code,
+                                    data,
+                                ) {
+                                    Ok((healed, observed)) => {
+                                        persist(
+                                            data,
+                                            &project,
+                                            &file,
+                                            &mut disk,
+                                            edge_id,
+                                            act_index,
+                                            code,
+                                            &seen,
+                                            Some(&healed),
+                                        )?;
+                                        healer
+                                            .as_mut()
+                                            .unwrap()
+                                            .repaired
+                                            .insert(edge_id.to_owned(), healed);
+                                        locators = observed;
+                                        break;
+                                    }
+                                    Err(failed) => data["healFailure"] = failed.0.into(),
+                                }
+                            }
+                            persist(
+                                data, &project, &file, &mut disk, edge_id, act_index, code, &seen,
+                                None,
+                            )?;
+                            return Err(failure(
+                                code,
+                                format!("/edges/{edge_id}/acts/{act_index}"),
+                                1,
+                            ));
+                        }
+                    };
                     locators.push(result["locator"].clone());
                     // Observe the actual post-act state even before a multi-act edge is complete.
                     driver.call("snapshot", json!({"expect":[]}), &pointer)?;
@@ -1199,7 +1404,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
             if step_index > 0 {
                 // A destination failure belongs to the edge that should have reached it.
                 let edge_id = path_edges[step_index - 1].as_str().unwrap();
-                let last = edges[edge_id]["acts"].as_array().unwrap().len() - 1;
+                let last = acts_len(&healer, edge_id, edges[edge_id]) - 1;
                 let observed = observed.and_then(|value| match reused {
                     Some(cached)
                         if !super::journey_explore::similar(
@@ -1211,10 +1416,80 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                     }
                     _ => Ok(value),
                 });
-                cache["screens"][*screen_id] = observed.map_err(|f| {
-                    let seen = format!("screen {screen_id}");
-                    drifted(f, data, &project, &file, &flow, edge_id, last, &seen)
-                })?;
+                cache["screens"][*screen_id] = match observed {
+                    Ok(value) => value,
+                    Err(refusal) => {
+                        let Some(code) = drift_code(&refusal) else {
+                            return Err(refusal);
+                        };
+                        let seen = format!("screen {screen_id}");
+                        let edge = edges[edge_id];
+                        let acts = healer
+                            .as_ref()
+                            .and_then(|h| h.repaired.get(edge_id))
+                            .cloned()
+                            .unwrap_or_else(|| edge["acts"].as_array().unwrap().clone());
+                        let mut value = None;
+                        // A changed screen at the right URL is not repaired by more acts.
+                        if code != "drift.screen_changed"
+                            && let Some(h) = healer.as_ref()
+                        {
+                            let locators = cache["edges"][edge_id].as_array().unwrap().clone();
+                            match heal(
+                                h,
+                                &mut driver,
+                                edge,
+                                &acts,
+                                locators,
+                                screens[screen_id],
+                                base,
+                                code,
+                                data,
+                            ) {
+                                Ok((healed, observed)) => {
+                                    persist(
+                                        data,
+                                        &project,
+                                        &file,
+                                        &mut disk,
+                                        edge_id,
+                                        last,
+                                        code,
+                                        &seen,
+                                        Some(&healed),
+                                    )?;
+                                    healer
+                                        .as_mut()
+                                        .unwrap()
+                                        .repaired
+                                        .insert(edge_id.to_owned(), healed);
+                                    cache["edges"][edge_id] = observed.into();
+                                    value = Some(observe(
+                                        &mut driver,
+                                        screens[screen_id],
+                                        base,
+                                        &screen_path,
+                                    )?);
+                                }
+                                Err(failed) => data["healFailure"] = failed.0.into(),
+                            }
+                        }
+                        match value {
+                            Some(value) => value,
+                            None => {
+                                persist(
+                                    data, &project, &file, &mut disk, edge_id, last, code, &seen,
+                                    None,
+                                )?;
+                                return Err(failure(
+                                    code,
+                                    format!("/edges/{edge_id}/acts/{last}"),
+                                    1,
+                                ));
+                            }
+                        }
+                    }
+                };
             } else {
                 cache["screens"][*screen_id] = observed?;
             }
@@ -1267,6 +1542,11 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         driver.close()?;
         path_data["outcome"] = "passed".into();
         data["paths"][index] = path_data;
+    }
+    // A healed flow is a new draft: the cache stays bound to the approved flow it was read
+    // with, and the owner's approval of the repair comes before any cache for it.
+    if healer.as_ref().is_some_and(|h| !h.repaired.is_empty()) {
+        return Ok(());
     }
     // Unreachable screens/edges are not invented cache observations.
     if !cache_valid(&cache, &flow) {
@@ -1394,6 +1674,36 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     }
     for origin in &args.allow_origin {
         command.args(["--allow-origin", origin]);
+    }
+    if args.heal {
+        command.arg("--heal");
+        for (flag, value) in [
+            ("--fixture", args.model.fixture.as_deref()),
+            ("--manifest", args.model.manifest.as_deref()),
+            ("--broker", args.model.broker.as_deref()),
+            ("--gateway-keyring", args.model.gateway_keyring.as_deref()),
+        ] {
+            if let Some(value) = value {
+                command.arg(flag).arg(value);
+            }
+        }
+        for (flag, value) in [
+            ("--route", args.model.route.as_deref()),
+            ("--gateway-key-id", args.model.gateway_key_id.as_deref()),
+        ] {
+            if let Some(value) = value {
+                command.args([flag, value]);
+            }
+        }
+        for pattern in &args.allow_act {
+            command.args(["--allow-act", pattern]);
+        }
+        if let Some(key) = std::env::var_os("GRAPHHELM_GATEWAY_KEY") {
+            if let Some(value) = key.to_str().filter(|v| !v.is_empty()) {
+                secrets.push(value.to_owned());
+            }
+            command.env("GRAPHHELM_GATEWAY_KEY", key);
+        }
     }
     if bundle[0] {
         command

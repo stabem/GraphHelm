@@ -619,7 +619,7 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         "source-edit fault was not reached"
     );
     assert_eq!(std::fs::read(&cache).unwrap(), previous_bytes);
-    std::fs::write(&flow_path, approved_bytes).unwrap();
+    std::fs::write(&flow_path, &approved_bytes).unwrap();
     assert_eq!(app.control("reset")["reset"], true);
     #[cfg(windows)]
     {
@@ -715,4 +715,127 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         }
     }
     assert_eq!(app.control("counts")["model"], 0);
+
+    // #356 heal: `--heal` hands only the broken edge to a recorded model (real subprocess I/O
+    // through a native-runtime route), keeps the repair only once the edge's original
+    // destination is observed, and leaves a draft that only `journey approve` makes trusted.
+    const HEAL_MODEL: &str = r#"
+const fs=require('node:fs');
+let input=''; process.stdin.setEncoding('utf8');
+process.stdin.on('data',chunk=>input+=chunk);
+process.stdin.on('end',()=>{
+  const match=/<observation>([\s\S]*)<\/observation>/.exec(input);
+  if(!match)process.exit(1);
+  const d=JSON.parse(match[1]), mode=fs.readFileSync(process.argv[3],'utf8').trim();
+  const proposal=mode==='repair' && d.current.includes('button "Proceed"')
+    ? {act:{kind:'activate',role:'button',name:'Proceed'}}
+    : mode==='elsewhere' && d.current.includes('link "Guest checkout"')
+    ? {act:{kind:'navigate',role:'link',name:'Guest checkout'}} : {giveUp:'goal_unreachable'};
+  const text=JSON.stringify(proposal);
+  fs.appendFileSync(process.argv[2],JSON.stringify({prompt:input,reply:text})+'\n');
+  process.stdout.write(JSON.stringify({subtype:'success',result:text,usage:{input_tokens:1,output_tokens:1}}));
+});
+"#;
+    std::fs::write(&flow_path, &approved_bytes).unwrap();
+    let approved: Value = serde_yaml_ng::from_slice(&approved_bytes).unwrap();
+    let heal_model = scratch.path().join("heal-model.cjs");
+    let transcript = scratch.path().join("heal-transcript.jsonl");
+    let mode = scratch.path().join("heal-mode");
+    std::fs::write(&heal_model, HEAL_MODEL).unwrap();
+    let manifest = scratch.path().join("routes.json");
+    std::fs::write(&manifest,serde_json::to_vec(&json!({"manifestVersion":1,"routes":[{
+        "id":"heal_observer","provider":"anthropic","transport":"native_runtime","runtime":"claude_code",
+        "authentication":"account_subscription","billingMode":"subscription_quota",
+        "command":{"program":"node","args":[heal_model,transcript,mode]},
+        "profiles":["software_execution"],"enabled":true,"timeoutSeconds":10}]})).unwrap()).unwrap();
+    let heal = |project: &Path| {
+        reply(
+            cli()
+                .args(["journey", "replay", "checkout", "--heal", "--project"])
+                .arg(project)
+                .arg("--manifest")
+                .arg(&manifest)
+                .args(["--route", "heal_observer"])
+                .env("GRAPHHELM_SECRET_shopper_password", SECRET),
+        )
+    };
+    let flow_now =
+        || -> Value { serde_yaml_ng::from_slice(&std::fs::read(&flow_path).unwrap()).unwrap() };
+    // A model that gives up leaves the broken edge and its unhealed drift, exit 1.
+    std::fs::write(&mode, "give-up").unwrap();
+    assert_eq!(app.control(r#"{"kind":"rename-checkout"}"#)["armed"], true);
+    let (code, result) = heal(&project);
+    assert_eq!(code, 1, "{result}");
+    assert_eq!(result["data"]["healFailure"], "heal.gave_up", "{result}");
+    assert_eq!(result["data"]["modelCalls"], 1, "{result}");
+    assert_eq!(result["data"]["healed"], json!([]), "{result}");
+    let failed = flow_now();
+    assert_eq!(failed["edges"], approved["edges"]);
+    assert_eq!(
+        failed["drift"],
+        json!([{"edge":"cart.checkout","act":0,"code":"drift.locator_missing","seen":"button \"Checkout\"","at":revision}])
+    );
+    std::fs::write(&flow_path, &approved_bytes).unwrap();
+    // An act that lands on another screen is not a repair: the destination is never weakened.
+    std::fs::write(&mode, "elsewhere").unwrap();
+    let (code, result) = heal(&project);
+    assert_eq!(code, 1, "{result}");
+    assert_eq!(result["data"]["healFailure"], "heal.gave_up", "{result}");
+    assert_eq!(result["data"]["modelCalls"], 2, "{result}");
+    assert_eq!(result["data"]["healed"], json!([]), "{result}");
+    assert_eq!(flow_now()["edges"], approved["edges"]);
+    std::fs::write(&flow_path, &approved_bytes).unwrap();
+    // A model that reaches the unchanged destination repairs only that edge.
+    std::fs::write(&mode, "repair").unwrap();
+    let (code, result) = heal(&project);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["data"]["modelCalls"], 1, "{result}");
+    assert_eq!(
+        result["data"]["healed"],
+        json!([{"edge":"cart.checkout","act":0,"code":"drift.locator_missing","seen":"button \"Checkout\"","at":revision,"healed":true}]),
+        "{result}"
+    );
+    assert_eq!(result["data"]["cachePublished"], false, "{result}");
+    let healed = flow_now();
+    assert_eq!(healed["status"], "draft");
+    assert_eq!(healed["approved"], Value::Null);
+    assert_eq!(healed["drift"], result["data"]["healed"]);
+    assert_eq!(healed["screens"], approved["screens"]);
+    assert_eq!(healed["paths"], approved["paths"]);
+    for (now, before) in healed["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(approved["edges"].as_array().unwrap())
+    {
+        if now["id"] == "cart.checkout" {
+            assert_eq!(
+                now["acts"],
+                json!([{"kind":"activate","role":"button","name":"Proceed"}])
+            );
+            assert_eq!((&now["from"], &now["to"]), (&before["from"], &before["to"]));
+        } else {
+            assert_eq!(now, before, "only the failing edge may change");
+        }
+    }
+    // The model saw the failing edge and the current page, never another edge or a secret.
+    let prompts = std::fs::read_to_string(&transcript).unwrap();
+    assert!(!prompts.contains(SECRET));
+    assert!(!prompts.contains("pay.submit") && !prompts.contains("guest.submit"));
+    assert!(prompts.contains("cart.checkout"));
+    // The healed draft is not trusted by replaying itself; approval alone clears the drift.
+    let (code, result) = replay(&project, &events, &keys, false);
+    assert_ne!(code, 0, "{result}");
+    assert_eq!(result["data"]["modelCalls"], 0);
+    let (code, value) = reply(
+        cli()
+            .args(["journey", "approve", "checkout", "--project"])
+            .arg(&project),
+    );
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(flow_now()["drift"], json!([]));
+    let (code, result) = replay(&project, &events, &keys, false);
+    assert_eq!(code, 0, "approved repair replays with no model: {result}");
+    assert_eq!(result["data"]["modelCalls"], 0);
+    assert_eq!(app.control("reset")["reset"], true);
 }

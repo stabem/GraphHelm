@@ -27,7 +27,7 @@ export async function startFixture() {
     }
     // #398: the cart's Checkout control renamed (no test id), so its cached locator drifts.
     if (u.pathname==='/cart' && fault?.kind==='rename-checkout') {
-      res.end(shell(`<main><h1>Cart</h1><button onclick="location.href='/checkout'">Proceed</button></main>`));return;
+      res.end(shell(`<main><h1>Cart</h1><button onclick="location.href='/checkout'">Proceed</button><a href="/guest">Guest checkout</a></main>`));return;
     }
     // #356 drift variants: a wrong destination and a changed destination.
     if (u.pathname==='/cart' && fault?.kind==='wrong-url') {

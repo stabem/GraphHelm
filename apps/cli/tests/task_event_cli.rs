@@ -305,7 +305,8 @@ fn an_opening_record_may_carry_a_title_and_summary_and_a_malformed_one_is_refuse
 fn a_planned_record_outside_the_schema_bounds_is_refused() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());
-    let cases: [(&str, fn(&mut Value)); 9] = [
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit); 9] = [
         ("class", |d| d["classes"] = json!(["frontend"])),
         ("no-class", |d| d["classes"] = json!([])),
         ("twice", |d| d["classes"] = json!(["code", "code"])),
@@ -322,7 +323,14 @@ fn a_planned_record_outside_the_schema_bounds_is_refused() {
         let mut document = as_actor(package_fixture("planned"));
         edit(&mut document);
         let id = format!("planned-{case}");
-        let reply = signal(scratch.path(), &events, &id, "task.planned", ACTOR, &document);
+        let reply = signal(
+            scratch.path(),
+            &events,
+            &id,
+            "task.planned",
+            ACTOR,
+            &document,
+        );
         assert_eq!(reply["ok"], json!(false), "{case}: {reply}");
         assert_eq!(
             reply["diagnostics"][0]["code"],

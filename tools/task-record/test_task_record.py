@@ -23,13 +23,19 @@ HEAD_B = "b" * 40
 class FakeRuntime(http.server.BaseHTTPRequestHandler):
     keys = {}
     seen = []
+    # #498: a Runtime built before #486 refuses the opening records' title/summary keys.
+    old = False
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         key = self.headers["Idempotency-Key"]
         FakeRuntime.seen.append((key, body))
         identity = json.dumps(body, sort_keys=True)  # a retry carries a new emittedAt: a different body
-        if key in FakeRuntime.keys and FakeRuntime.keys[key] != identity:
+        described = json.loads(body["signal"]["description"])
+        if FakeRuntime.old and ("title" in described or "summary" in described):
+            status, reply = 400, {"ok": False, "diagnostics": [{"code": "GHCLI003_SIGNAL_INVALID", "severity": "error",
+                                                                  "path": "/signal/description", "message": "one document for its kind"}]}
+        elif key in FakeRuntime.keys and FakeRuntime.keys[key] != identity:
             status, reply = 409, {"ok": False, "diagnostics": [{"code": "GHE003_IDEMPOTENCY_CONFLICT", "severity": "error",
                                                                   "path": "/idempotencyKey", "message": "already committed"}]}
         else:
@@ -64,6 +70,7 @@ class TaskRecordTest(unittest.TestCase):
     def setUp(self):
         FakeRuntime.keys.clear()
         FakeRuntime.seen.clear()
+        FakeRuntime.old = False
         # #477: opening records read their title from GitHub; these cells are about the wire.
         self.github = task_record.github_words
         task_record.github_words = lambda *_: (None, None)
@@ -117,6 +124,26 @@ class TaskRecordTest(unittest.TestCase):
                                       "--head", HEAD_A, "--verdict", verdict,
                                       "--comment-url", f"https://github.com/o/r/pull/19#{comment}")
             self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
+
+    def test_an_older_runtime_still_gets_the_opening_record_and_the_lane_is_told(self):
+        # #498: on gh-team's 8793 (built before #486) every claimed/pr_opened was refused and lost.
+        FakeRuntime.old = True
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b",
+                                      "--title", "Studio: x", "--summary", "The owner gets y.")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("recorded "), out)
+        self.assertIn("without title/summary", err.getvalue())
+        sent = [json.loads(body["signal"]["description"]) for _, body in FakeRuntime.seen]
+        self.assertEqual([("title" in doc) for doc in sent], [True, False])
+
+    def test_a_kind_without_words_is_sent_once_to_an_older_runtime(self):
+        FakeRuntime.old = True
+        code, out = self.run_step("--lane", "lane-a", "review_assigned", "--issue", "9", "--pr", "19",
+                                  "--head", HEAD_A, "--reviewer", "lane-b")
+        self.assertEqual(code, 0, out)  # no title on this kind: the old Runtime accepts it as before
+        self.assertEqual(len(FakeRuntime.seen), 1)
 
     def test_a_non_loopback_url_is_refused_before_the_token_is_read_or_sent(self):
         with self.assertRaises(SystemExit) as refused:

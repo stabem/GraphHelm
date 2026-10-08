@@ -122,13 +122,15 @@ function useChanged(tasks: TaskState[]): Set<string> {
   return fresh.length > 0 ? new Set(fresh) : changed;
 }
 
-type NodeState = "done" | "current" | "next" | "blocked";
+type NodeState = "done" | "current" | "next" | "blocked" | "unrecorded";
 interface StepNode {
   key: string; label: string; who: ReactNode; state: NodeState; reason: string | null; review: boolean;
   /** #502: the step whose typical time this node is measured against (Fix and Re-review: none), and
    * when the node was entered (the Runtime's append time of the record that lit it). */
   timed: TimedStep | null;
   since: string | null;
+  /** #480: the plan's one line, shown on hover over Plan. */
+  hint?: string;
 }
 
 /** #514 (owner: "a node for it: re-review and the agent working"): the row grows one Fix and one
@@ -143,15 +145,29 @@ function nodesOf(task: TaskState): StepNode[] {
     : task.mergeSha.slice(0, 8);
   const reviewers = task.reviewers.length > 0 ? task.reviewers.join(", ") : null;
   const rounds = task.rounds;
+  // #480: every task starts with Plan, lit until its `task.planned`; a design plan (#467) adds
+  // Critic before Implement. A task past Plan with no recorded plan says so, never "done".
+  const plan = task.plan ?? null;
+  const planning = task.step === "plan";
+  const critiquing = task.step === "critic";
   const nodes: StepNode[] = [
-    { key: "implement", label: "Implement", who: task.lane, state: task.step === "implement" ? "current" : "done", reason: null, review: false,
-      timed: "implement", since: task.clock.since },
+    { key: "plan", label: "Plan", who: !planning && plan === null ? "not recorded" : null, review: false, reason: null, timed: "plan",
+      since: task.clock.since, state: planning ? "current" : plan === null ? "unrecorded" : "done", ...(plan === null ? {} : { hint: plan.summary }) },
+  ];
+  if (plan?.critic.mode === "design") {
+    nodes.push({ key: "critic", label: "Critic", who: `pass ${plan.critic.passScore}/10 · ${plan.critic.maxRounds} rounds`, review: false,
+      reason: null, timed: "critic", since: task.clock.since, state: critiquing ? "current" : planning ? "next" : "done" });
+  }
+  nodes.push(
+    { key: "implement", label: "Implement", who: task.lane, review: false, reason: null, timed: "implement", since: task.clock.since,
+      state: task.step === "implement" ? "current" : planning || critiquing ? "next" : "done" },
     {
       key: "review", label: "Review", who: rounds.length > 0 ? rounds[0].reviewer : reviewers, review: true,
-      state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current" : task.step === "implement" ? "next" : "done",
+      state: rounds.length > 0 ? "blocked" : task.step === "review" ? "current"
+        : task.step === "implement" || planning || critiquing ? "next" : "done",
       reason: rounds[0]?.commentUrl ?? null, timed: "review", since: task.clock.since,
     },
-  ];
+  );
   rounds.forEach((round, index) => {
     const next = rounds[index + 1];
     const last = next === undefined;
@@ -175,7 +191,8 @@ function nodesOf(task: TaskState): StepNode[] {
 /** #502: the lit node's time and, for a step with a typical time, a bar against it; a step the
  * slice left shows what it spent there. */
 function StepTime({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
-  if (node.state === "done") {
+  // #480: an unrecorded Plan still spent the time from the claim to the next step.
+  if (node.state === "done" || node.state === "unrecorded") {
     const spent = node.timed === null ? undefined : task.clock.spent[node.timed];
     return spent === undefined ? null : <span className="task-node-time">{duration(spent)}</span>;
   }
@@ -200,7 +217,7 @@ function StepTime({ task, node, timing }: { task: TaskState; node: StepNode; tim
 
 function Node({ task, node, timing }: { task: TaskState; node: StepNode; timing: Timing }) {
   return (
-    <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined}>
+    <li className={`task-node task-node-${node.state}`} aria-current={node.state === "current" ? "step" : undefined} title={node.hint}>
       <span className="task-node-label">{node.label}{node.state === "blocked" && <span className="task-node-cross" aria-label="blocked"> ✗</span>}</span>
       {node.who !== null && <span className="task-node-agent">{node.who}</span>}
       {node.state === "blocked" && node.reason !== null && GITHUB_URL.test(node.reason) && (
@@ -320,7 +337,7 @@ export function TaskGraphs({ tasks, onOpenJourney, now: fixedNow }: TaskGraphsPr
   const unclaimed = tasks.filter(isUnclaimedCritic);
   const { open, delivered } = orderedCards(tasks.filter((task) => !isUnclaimedCritic(task)));
   const clocks = tasks.filter((task) => task.step === "merged").map((task) => task.clock);
-  const steps: TimedStep[] = ["implement", "review", "merge"];
+  const steps: TimedStep[] = ["plan", "critic", "implement", "review", "merge"];
   const timing: Timing = {
     now,
     typical: Object.fromEntries(steps.map((step) => [step, typicalStep(clocks, step)])) as Timing["typical"],

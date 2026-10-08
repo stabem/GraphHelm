@@ -23,7 +23,9 @@ const head = "a".repeat(40);
 const url = "https://github.com/o/r/pull/19#c1";
 
 describe("step clock in the fold (#502)", () => {
-  it("starts Implement at the claim, moves to Review at pr_opened and to Merge at the APPROVE", () => {
+  // #480: a claim starts Plan (Implement starts at `task.planned`); with no plan recorded, the time
+  // to the PR is Plan's.
+  it("starts Plan at the claim, moves to Review at pr_opened and to Merge at the APPROVE", () => {
     const records = [
       record(1, 0, "task.claimed", "l1", { issue: 9, lane: "l1", branch: "b" }),
       record(2, 30, "task.pr_opened", "l1", { pr: 19, headSha: head, journeys: [], lane: "l1" }),
@@ -33,9 +35,9 @@ describe("step clock in the fold (#502)", () => {
     ];
     const at = (n: number) => foldTaskEvents(records.slice(0, n))[0].clock;
     expect(at(1)).toEqual({ since: "2026-10-08T10:00:00.000Z", spent: {} });
-    expect(at(3)).toEqual({ since: "2026-10-08T10:30:00.000Z", spent: { implement: 30 * 60_000 } });
-    expect(at(4)).toEqual({ since: "2026-10-08T10:50:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000 } });
-    expect(at(5)).toEqual({ since: "2026-10-08T10:55:00.000Z", spent: { implement: 30 * 60_000, review: 20 * 60_000, merge: 5 * 60_000 } });
+    expect(at(3)).toEqual({ since: "2026-10-08T10:30:00.000Z", spent: { plan: 30 * 60_000 } });
+    expect(at(4)).toEqual({ since: "2026-10-08T10:50:00.000Z", spent: { plan: 30 * 60_000, review: 20 * 60_000 } });
+    expect(at(5)).toEqual({ since: "2026-10-08T10:55:00.000Z", spent: { plan: 30 * 60_000, review: 20 * 60_000, merge: 5 * 60_000 } });
   });
 
   it("keeps a BLOCK and a new head inside Review instead of restarting the clock", () => {

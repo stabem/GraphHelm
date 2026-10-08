@@ -4,7 +4,8 @@
  * a lane cannot write), never from the lane's `at`. Pure functions: the fold calls `clockStep` after
  * each record; the view compares the time in step with the run's typical time for that step. */
 
-export type TimedStep = "implement" | "review" | "merge";
+/** #480 added Plan and Critic: a claimed task now plans before it implements. */
+export type TimedStep = "plan" | "critic" | "implement" | "review" | "merge";
 
 export interface StepClock {
   /** When the slice entered its current step (ISO), or null when no record carried a time. */
@@ -32,7 +33,7 @@ export function clockStep(clock: StepClock, before: string, after: string, at: s
     return;
   }
   const since = millis(clock.since);
-  if (since !== null && now !== null && now >= since && (before === "implement" || before === "review" || before === "merge")) {
+  if (since !== null && now !== null && now >= since && (before === "plan" || before === "critic" || before === "implement" || before === "review" || before === "merge")) {
     clock.spent[before] = (clock.spent[before] ?? 0) + (now - since);
   }
   clock.since = now === null ? null : at!;

@@ -42,9 +42,37 @@ describe("TaskGraphs", () => {
     expect(within(blocked).getByRole("link", { name: "PR #388" })).toHaveAttribute("href", "https://github.com/stabem/GraphHelm/pull/388");
 
     const other = screen.getByRole("group", { name: /issue #380/i });
-    expect(within(other).getByRole("listitem", { current: "step" })).toHaveTextContent(/implement/i);
+    // #480: claimed with no plan recorded yet: the lane is planning.
+    expect(within(other).getByRole("listitem", { current: "step" })).toHaveTextContent(/plan/i);
     expect(within(other).getByText("gh-claude-2")).toBeInTheDocument();
     expect(within(other).queryByRole("link", { name: /blocked by/i })).toBeNull();
+  });
+
+  /* #480: every graph starts with Plan; a design plan adds Critic before Implement. Catches a graph
+   * with no Plan node, a Critic drawn for a plan that asked for none, and a task that went past Plan
+   * without a recorded plan drawn as if it had one. */
+  it("draws Plan first, Critic only for a design plan, and an unrecorded plan as not recorded", () => {
+    const plan = (mode: "none" | "design") => ({ lane: "gh-claude-1", classes: ["user_visible"], reviews: 1, proof: "both",
+      critic: { mode, passScore: 8, maxRounds: 3 }, summary: "Record the plan; light Plan." });
+    const tasks = foldTaskEvents([
+      record(1, "issue-480", "task.claimed", "gh-claude-1", { issue: 480, lane: "gh-claude-1", branch: "issue-480-plan-step" }),
+      record(2, "issue-480", "task.planned", "gh-claude-1", plan("design")),
+      record(3, "issue-481", "task.claimed", "gh-claude-3", { issue: 481, lane: "gh-claude-3", branch: "issue-481-x" }),
+      record(4, "issue-481", "task.planned", "gh-claude-3", { ...plan("none"), lane: "gh-claude-3" }),
+      record(5, "issue-482", "task.pr_opened", "gh-claude-5", { pr: 482, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-5" }),
+    ]);
+    render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} />);
+    const steps = (name: RegExp) => within(screen.getByRole("group", { name })).getAllByRole("listitem").map((node) => node.querySelector(".task-node-label")?.textContent);
+    expect(steps(/issue #480/i)).toEqual(["Plan", "Critic", "Implement", "Review", "Merge"]);
+    const design = screen.getByRole("group", { name: /issue #480/i });
+    expect(within(design).getByRole("listitem", { current: "step" })).toHaveTextContent("Critic");
+    expect(within(design).getByRole("listitem", { current: "step" })).toHaveTextContent("pass 8/10 · 3 rounds");
+    expect(within(design).getAllByRole("listitem")[0]).toHaveAttribute("title", "Record the plan; light Plan.");
+    expect(steps(/issue #481/i)).toEqual(["Plan", "Implement", "Review", "Merge"]);
+    expect(within(screen.getByRole("group", { name: /issue #481/i })).getByRole("listitem", { current: "step" })).toHaveTextContent("Implement");
+    const unplanned = within(screen.getByRole("group", { name: /PR #482/i })).getAllByRole("listitem")[0];
+    expect(unplanned).toHaveClass("task-node-unrecorded");
+    expect(unplanned).toHaveTextContent("not recorded");
   });
 
   it("opens the Journey tab on a journey the PR named", () => {
@@ -357,11 +385,11 @@ describe("TaskGraphs review rounds (#514)", () => {
   };
 
   it("grows Fix and Re-review per BLOCK round and lights the right one at each step", () => {
-    expect(nodes(3)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:current", "Re-review · round 1:next", "Merge:next"]);
-    expect(nodes(4)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1:current", "Merge:next"]);
-    expect(nodes(5)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
+    expect(nodes(3)).toEqual(["Plan:unrecorded", "Implement:done", "Review ✗:blocked", "Fix · round 1:current", "Re-review · round 1:next", "Merge:next"]);
+    expect(nodes(4)).toEqual(["Plan:unrecorded", "Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1:current", "Merge:next"]);
+    expect(nodes(5)).toEqual(["Plan:unrecorded", "Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
       "Fix · round 2:current", "Re-review · round 2:next", "Merge:next"]);
-    expect(nodes(7)).toEqual(["Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
+    expect(nodes(7)).toEqual(["Plan:unrecorded", "Implement:done", "Review ✗:blocked", "Fix · round 1:done", "Re-review · round 1 ✗:blocked",
       "Fix · round 2:done", "Re-review · round 2:done", "Merge:current"]);
   });
 
@@ -424,7 +452,7 @@ describe("TaskGraphs step timer (#502)", () => {
     render(<TaskGraphs tasks={tasks} onOpenJourney={vi.fn()} now={T0 + 999 * 60_000} />);
     const row = screen.getByRole("group", { name: /issue #1\b/i });
     const nodes = within(row).getAllByRole("listitem");
-    expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["10 min", "20 min", "2 min"]);
+    expect(nodes.map((node) => node.querySelector(".task-node-time")?.textContent ?? "")).toEqual(["10 min", "", "20 min", "2 min"]); // #480: no plan recorded, so the time to the PR is Plan's
   });
 });
 

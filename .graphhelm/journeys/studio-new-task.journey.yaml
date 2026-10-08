@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-new-task
-title: Owner starts a new task in the project
+title: Start a new task in the project
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,13 +9,13 @@ secrets: []
 risks: [critical_ux, external_delivery]
 screens:
   - id: compose
-    title: New task composer
+    title: The box to write a new task
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: New task}, {role: heading, name: New task}, {role: textbox, name: What should this task do?}, {role: combobox, name: Model}, {role: button, name: start this task}, {role: button, name: Discard this task}]
     scope: [apps/studio/src/components/compose.tsx, apps/studio/src/components/board.tsx]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: New task in demo}]

@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-answer-node
-title: "Owner answers a node that waits for input, with or without evidence (draft: needs a waiting_input node and a graph file path the fixture does not seed)"
+title: "Answer a step that is waiting for you (draft: the test setup has no waiting step and no graph file to point at)"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,19 +9,19 @@ secrets: []
 risks: [irreversible_effect, ambiguous_behavior]
 screens:
   - id: node
-    title: Node window of the waiting step with the Answer block (graph file path set)
+    title: "The waiting step's window, with the Answer box"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: heading, name: This node is waiting for you}, {role: textbox, name: Kind of proof}, {role: button, name: Answer with no evidence}]
     scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
   - id: released
-    title: The claim is countersigned and the node is released
+    title: Your answer is signed and the step moves on
     url: /?session=studio-fixture
     state: success
     expect: [{role: alert, name: Answered. The node is released.}]
     scope: [apps/studio/src/components/answer.tsx, apps/studio/src/runtime/client.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Needs you}, {role: button, name: Answer in chat}]

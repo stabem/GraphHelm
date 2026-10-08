@@ -1,6 +1,6 @@
 schema: graphhelm.journey-flow/1
 id: studio-run-actions
-title: "Owner pauses a run, or cancels it behind a confirmation (draft: Run actions is a <summary> with no ARIA role (driver.locator_missing))"
+title: "Pause a run, or cancel it after confirming (draft: the replay tool cannot find the Run actions control)"
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,31 +9,31 @@ secrets: []
 risks: [irreversible_effect, critical_ux]
 screens:
   - id: actions
-    title: Run actions open in the dock
+    title: Run actions is open
     url: /?session=studio-fixture
     state: stable
     expect: [{role: button, name: pause · finish in-flight}, {role: button, name: pause now · interrupt}, {role: button, name: resume}, {role: button, name: sweep}, {role: button, name: Cancel execution}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
   - id: cancel-confirm
-    title: Cancel asks for confirmation in place
+    title: Cancel asks you to confirm
     url: /?session=studio-fixture
     state: stable
     expect: [{role: button, name: "yes, cancel it"}, {role: button, name: keep running}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
   - id: cancelled
-    title: "The run is cancelled; nothing is left to pause, resume or cancel"
+    title: The run is cancelled and has no actions left
     url: /?session=studio-fixture
     state: success
     expect: [{role: button, name: sweep}, {role: region, name: Team}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
   - id: paused
-    title: The pause is read back from the log
+    title: The run shows as paused
     url: /?session=studio-fixture
     state: success
     expect: [{role: button, name: resume}, {role: button, name: sweep}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
   - id: run
-    title: "A run is open: rail, chat, team canvas, side panel"
+    title: "A run is open, with its chat and its team on screen"
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Canvas}, {role: region, name: Team}]

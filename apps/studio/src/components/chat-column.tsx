@@ -34,11 +34,14 @@ export interface ChatColumnProps {
   names: Record<string, string>;
   openingCount: number;
   cards: ReactNode;
+  /** #396: how many cards are open. When above zero, a "Needs you" thread (key `needs-you`)
+   * shows the cards alone, with no conversation under them. */
+  cardCount?: number;
   jev: { suggestions: ReplySuggestion[]; loading: boolean; issue: string | null; older?: boolean; onRetry?: () => void };
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
   /** Resolves true only once the Runtime confirmed the message; the draft is kept otherwise. */
-  onSend: (text: string, to: string | null, replyTo: string | null) => Promise<boolean>;
+  onSend: (text: string, to: string | null, replyTo: string | null, task?: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
   answering: { asker: string; signalId: string | null } | null;
@@ -48,10 +51,13 @@ export interface ChatColumnProps {
   onUseSuggestion: (text: string) => void;
 }
 
+/** The key of the one thread that holds every open question card (#396). */
+export const NEEDS_YOU = "needs-you";
+
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
-  // #393: a task thread is read here; speaking into it (tagging the task) arrives with H2.
-  if (thread.kind === "task") return "none";
+  // #396: speaking inside a task thread records a message tagged with that task.
+  if (thread.kind === "task") return "record";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
 }
 
@@ -91,6 +97,7 @@ export function ChatColumn(props: ChatColumnProps) {
     let ok: boolean;
     if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
     else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
+    else if (thread?.kind === "task") { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null, thread.key.slice("task:".length)); }
     else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }
     // A refused or unconfirmed send keeps its words; only a delivered one clears its own thread.
     if (ok) setDraftFor(key, "");
@@ -128,7 +135,11 @@ export function ChatColumn(props: ChatColumnProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [unseen, setUnseen] = useState(false);
-  const messages = thread?.messages ?? [];
+  // #396: an agent filter on any thread; "" shows every line. Reset when the thread changes.
+  const [onlyFrom, setOnlyFrom] = useState("");
+  useEffect(() => { setOnlyFrom(""); }, [thread?.key]);
+  const speakers = [...new Set((thread?.messages ?? []).map((message) => message.sender))];
+  const messages = props.selected === NEEDS_YOU ? [] : (thread?.messages ?? []).filter((message) => onlyFrom === "" || message.sender === onlyFrom);
   const lastId = messages.at(-1)?.id ?? "";
   const toBottom = useCallback((smooth: boolean) => {
     const el = scroller.current;
@@ -179,6 +190,10 @@ export function ChatColumn(props: ChatColumnProps) {
             </button>
           );
         })}
+        {(props.cardCount ?? 0) > 0 && (
+          <button type="button" role="tab" aria-selected={props.selected === NEEDS_YOU} className="chat-tab-needs"
+            onClick={() => props.onSelect(NEEDS_YOU)}>Needs you ({props.cardCount})</button>
+        )}
         {olderCount > 0 && (
           <button type="button" className="chat-older-toggle" aria-expanded={showOlder} onClick={() => setShowOlder((open) => !open)}>
             {showOlder ? "Hide older" : `older (${olderCount})`}
@@ -187,6 +202,14 @@ export function ChatColumn(props: ChatColumnProps) {
       </div>
       <div className="chat-principal-history" ref={setHistorySlot} hidden={!showPrincipal} />
       {thread?.kind === "task" && <p className="chat-recorded-note">Recorded messages about this task: what the agents recorded through the Runtime, not their native chats.</p>}
+      {speakers.length > 1 && (
+        <label className="chat-agent-filter">Lines from
+          <select value={onlyFrom} onChange={(event) => setOnlyFrom(event.target.value)}>
+            <option value="">everyone</option>
+            {speakers.map((sender) => <option key={sender} value={sender}>{props.names[sender] ?? (sender === "studio-operator" ? "You" : sender)}</option>)}
+          </select>
+        </label>
+      )}
       <ol className="chat-messages" role="tabpanel" aria-label={thread?.label ?? "Everyone"}>
         {thread?.key === EVERYONE && props.openingCount > 0 && <li className="chat-opening">Opening {props.openingCount} sealed records…</li>}
         {messages.map((message) => {

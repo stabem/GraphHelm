@@ -2738,6 +2738,20 @@ describe("round-2: the ledger settles debts honestly", () => {
     expect(client.getReplySuggestions).toHaveBeenCalledTimes(1);
   });
 
+  /** #396 (spec §8): a Runtime with no Jev model is a state, not an error. The chat shows no Jev
+   * card and no Retry (nothing can be retried), and run details says so in one line. */
+  it("shows no Jev card when the Runtime has no Jev model, only a line in run details", async () => {
+    const client = stubClient({
+      getStatus: vi.fn(async () => ({ ...STATUS, attentionReasons: [{ kind: "waiting_input_node", node: "implementation" }] })),
+      listRoutes: vi.fn(async () => ({ configured: true, routes: [] })),
+    });
+    await open(client);
+    await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+    expect(await screen.findByText("No Jev model: suggested replies are off (Models → Add model)")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Jev suggests" })).toBeNull();
+    expect(client.getReplySuggestions).not.toHaveBeenCalled();
+  });
+
   /** #327: an unavailable answer is a visible state with a Retry button, never "preparing"
    * forever, and nothing asks again until the owner presses Retry. */
   it("shows why Jev could not prepare a suggestion and retries only when asked", async () => {

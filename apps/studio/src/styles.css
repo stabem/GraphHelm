@@ -2829,3 +2829,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #393: task threads that are merged or quiet sit under "older". */
 .chat-tab-older { opacity: 0.7; }
 .chat-older-toggle { font: inherit; font-size: 12px; color: var(--dim); background: none; border: 1px dashed var(--edge); border-radius: var(--r-pill); padding: 2px 10px; cursor: pointer; }
+.jev-absent-note { margin: 4px 0; font-size: 12px; color: var(--dim); }
+.chat-agent-filter { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); padding: 4px 12px; }
+.chat-tab-needs { color: var(--signal); font-weight: 600; }

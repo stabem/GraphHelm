@@ -39,6 +39,7 @@ import { isSubagentLifecycleSignal } from "./runtime/subagents";
 import { isRunTeamSignal, readRunTeam, type RunTeamReadModel } from "./runtime/run-team";
 import { isClaudeTaskSignal, isTaskEventSignal, readClaudeTasks, readTaskEvents, type ClaudeTaskReadModel, type TaskState } from "./runtime/team-tasks";
 import { TaskGraphs } from "./components/task-graphs";
+import { JEV_ABSENT_NOTE, jevAvailability } from "./runtime/jev";
 import type {
   Briefing,
   ClaimEvidence,
@@ -1695,6 +1696,7 @@ export default function App({
       via: string = "run",
       replyTo: string | null = null,
       kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
+      task: string | null = null,
     ): Promise<boolean> => {
       const client = clientRef.current;
       if (!client || selected === "") return false;
@@ -1716,6 +1718,7 @@ export default function App({
           // The receipt the ledger settles by. Without it, an answer sent through the banner's
           // own button never retired the question it answered.
           ...(replyTo === null ? {} : { replyTo }),
+          ...(task === null ? {} : { task }),
           ...(kind === "operator_note" ? {} : { kind }),
         });
         if (evidence.result === "refused") {
@@ -1859,10 +1862,11 @@ export default function App({
       setCurrentIssue("Checking the available model routes…");
       return;
     }
+    // #396: no judge route is a state, not an error. The chat shows no Jev card (there is
+    // nothing to retry); run details carries JEV_ABSENT_NOTE instead.
+    if (jevAvailability(judgeRoutes.length) === "absent") return;
     if (activeJudgeRoute === null) {
-      setCurrentIssue(judgeRoutes.length === 0
-        ? "Suggested replies aren't available because this Runtime has no Jev model set up. You can still send your own message."
-        : "Choose a Jev model to prepare suggested replies.");
+      setCurrentIssue("Choose a Jev model to prepare suggested replies.");
       return;
     }
     const client = clientRef.current;
@@ -2582,6 +2586,7 @@ export default function App({
           <details className="topbar-menu">
             <summary>Run details</summary>
             <div className="topbar-menu-body">
+            {routes !== null && jevAvailability(judgeRoutes.length) === "absent" && <p className="jev-absent-note">{JEV_ABSENT_NOTE}</p>}
             {effectiveVerdict && <span className={`tag ${recordedWorkBehindGraphWait || needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "calm" : status?.status === "completed" && (unverifiedResults > 0 || status.executor === "fixture") ? "needs" : effectiveVerdict.key}`}>{recordedWorkBehindGraphWait ? "agent work recorded · graph step waiting" : status?.status === "completed" && status.executor === "fixture" ? "demonstration completed · scripted outcomes" : unverifiedResults > 0 && status?.status === "completed" ? `execution completed · ${unverifiedResults} results need review` : needsDirection && !pendingOwnerReview && !blockedAttentionNode ? "graph waiting; no request recorded" : stalledAfterFailure ? "blocked · retry decision" : <>{status?.status && `${readable(status.status)} · `}{effectiveVerdict.label}</>}</span>}
             {webmcp === "available" ? (
               <span className="toolchips">
@@ -2749,6 +2754,7 @@ export default function App({
             <ChatColumn
               threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
+              cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
                 onChoose={(item, choice) => void say(choice, item.asker, "chat", item.signalId)}
                 onAnswer={(item) => answerQuestion(item.asker, item.signalId)}
@@ -2766,9 +2772,9 @@ export default function App({
                     if (first) setFocus({ kind: "node", id: first.id });
                   }} />
               </aside>}
-              onSend={async (text, to, replyTo) => {
+              onSend={async (text, to, replyTo, task) => {
                 // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
-                const ok = await say(text, to, "chat", replyTo);
+                const ok = await say(text, to, "chat", replyTo, "operator_note", task ?? null);
                 if (ok) setAnswering(null);
                 return ok;
               }}

@@ -36,7 +36,7 @@ describe("composerMode", () => {
   it("routes each tab to the right composer", () => {
     expect(composerMode(THREADS[0], new Set())).toBe("record+principal");
     expect(composerMode(THREADS[0], new Set(["t-1"]))).toBe("native");
-    expect(composerMode(THREADS[1], new Set())).toBe("none");
+    expect(composerMode(THREADS[1], new Set())).toBe("record");
     expect(composerMode({ key: "direct:t-1", kind: "direct", label: "x", participants: ["t-1"], messages: [] }, new Set(["t-1"]))).toBe("native");
     expect(composerMode({ key: "direct:kit-1", kind: "direct", label: "x", participants: ["kit-1"], messages: [] }, new Set())).toBe("record");
   });
@@ -54,7 +54,15 @@ describe("ChatColumn", () => {
   it("explains that a task tab shows recorded messages, not native chats", () => {
     render(<ChatColumn {...props({ selected: "task:issue-384" })} />);
     expect(screen.getByText(/recorded messages/i)).toHaveTextContent("not their native chats");
-    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  // #396 (spec §8): speaking inside a task thread tags the message with that task.
+  it("sends what is written in a task thread tagged with its task", async () => {
+    const p = props({ selected: "task:issue-384", onSend: vi.fn(async () => true) });
+    render(<ChatColumn {...p} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "@loja kit 2 rebase please");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(p.onSend).toHaveBeenCalledWith("rebase please", "kit-2", null, "issue-384");
   });
 
   it("folds a merged or quiet task thread under older until asked", async () => {
@@ -63,6 +71,30 @@ describe("ChatColumn", () => {
     expect(screen.queryByRole("tab", { name: /^Issue #384/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "older (1)" }));
     expect(screen.getByRole("tab", { name: /^Issue #384/ })).toBeInTheDocument();
+  });
+
+  // #396 (spec §8): an agent filter on any thread shows only one agent's lines.
+  it("filters a thread down to one agent's lines", async () => {
+    const threads = chatThreads([msg(1, "coordinator", null, "Plan ready"), msg(2, "kit-1", null, "Taking the cart"), msg(3, "coordinator", null, "Next")],
+      BOTS, "studio-operator");
+    render(<ChatColumn {...props({ threads })} />);
+    expect(screen.getByText("Taking the cart")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Lines from" }), "coordinator");
+    expect(screen.queryByText("Taking the cart")).toBeNull();
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+    expect(screen.getByText("Next")).toBeInTheDocument();
+  });
+
+  // #396 (spec §8): one Needs you thread gathers every open card, with no conversation under it.
+  it("offers a Needs you thread that shows the open cards alone", async () => {
+    const onSelect = vi.fn();
+    const view = render(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, onSelect })} />);
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Needs you (1)" }));
+    expect(onSelect).toHaveBeenCalledWith("needs-you");
+    view.rerender(<ChatColumn {...props({ cards: <p>Which region?</p>, cardCount: 1, selected: "needs-you" })} />);
+    expect(screen.getByText("Which region?")).toBeInTheDocument();
+    expect(screen.queryByText("Plan ready")).toBeNull();
   });
 
   it("keeps sealed records counted while they open", () => {

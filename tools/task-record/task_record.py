@@ -114,7 +114,8 @@ def main(argv):
     ok = reply.get("ok") is True
     print(f"{'recorded' if ok else 'REFUSED'} {signal_id}")
     for d in reply.get("diagnostics", []):
-        print(f"  {d.get('code')} {d.get('path')}: {d.get('message')}")
+        if d.get("severity") == "error":
+            print(f"  {d.get('code')} {d.get('path')}: {d.get('message')}")
     return 0 if ok else 1
 
 

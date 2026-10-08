@@ -451,6 +451,11 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                         code
                     };
                     step_failure = Some(failure(code, pointer, 1));
+                } else if index == 0 {
+                    // The entry screen itself does not match: there is no edge to blame yet.
+                    data["state"] = "drift".into();
+                    data["at"] = screen_id.clone().into();
+                    step_failure = Some(failure(drift_code(code), pointer, 1));
                 } else {
                     let edge_id = path_edges[index - 1].as_str().unwrap();
                     data["state"] = "drift".into();

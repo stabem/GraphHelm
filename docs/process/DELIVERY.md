@@ -159,12 +159,38 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 
 `taskId` is `issue-<N>` for the whole life of the task. `repo` is the GitHub `owner/name` (here
-`stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`. Record through the MCP `signal` tool or
-`graphhelm execution signal --signal <file>`. The Runtime refuses a `task.*` signal whose
-`source.id`, or whose `lane` / `reviewer` (on a verdict) / `merger`, is not the actor recording it
-(`GHCLI038_ACTOR_MISMATCH`), so each lane needs its own actor: export `GRAPHHELM_ACTOR=<your
-ListAgents name>` before the MCP server starts; it wins over the shared `--actor agent-chat`
-registration (#389).
+`stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
+The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
+verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).
+
+**The lane recipe: one command per step, the actor set per command.** Lanes share one MCP
+registration, so a per-lane `GRAPHHELM_ACTOR` on the MCP server is not practical. Record each step
+with `tools/task-record/task_record.py` (Python 3 standard library), which POSTs
+`/v1/executions/<execution>/signal` with `X-GraphHelm-Actor: <lane>`:
+
+```sh
+python tools/task-record/task_record.py --lane <you> claimed         --issue <N> --branch <branch>
+python tools/task-record/task_record.py --lane <you> pr_opened       --issue <N> --pr <P> --head <sha>
+python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>
+python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N> --pr <P> --head <sha> --verdict APPROVE --comment-url <url>
+python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>
+```
+
+- **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory
+  (here `.graphhelm/events.agent.token` in the checkout the `gh-team` Runtime serves, the default
+  `--token-file`). A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
+  has none until it restarts. Never use the owner's `events.token` for a lane record.
+- **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
+  `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.
+  `--dry-run` prints the request without sending it.
+- **Output.** `recorded <signal id>` and exit 0, or `REFUSED <signal id> <code>` and exit 1.
+- **Limit.** The agent token proves the caller holds an agent credential on this machine, not
+  which lane it is; the actor is the lane's own claim, checked only for consistency with the
+  document. Signing as another lane is a protocol violation, not something the Runtime can stop.
+
+The MCP `signal` tool remains a door (same envelope) for a session whose MCP server was started
+with its own `GRAPHHELM_ACTOR`; `graphhelm execution signal` writes to a store directly as
+`owner-cli` and is not a lane door.
 
 ## 6. Housekeeping
 

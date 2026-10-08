@@ -16,10 +16,9 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
 - Emits: one PR comment whose first line is `Session: <name> · Head: <sha8>` (add
   `(blind subagent)` after the name for a subagent) and whose verdict word is `APPROVE`,
   `APPROVE-WITH-RISK` (name the risk) or `BLOCK` (name the defect); and the record
-  `task.review_verdict` (`pr`, `headSha`, `reviewer`, `verdict`, `commentUrl`). Record it as a signal whose `type` is the kind and whose `description` is one
-  `graphhelm-task-event-v1` document, with your own actor (`GRAPHHELM_ACTOR=<lane>`): the
-  Runtime refuses a lane that is not the recorder (`GHCLI038_ACTOR_MISMATCH`). Fields and
-  doors: `docs/process/DELIVERY.md` "Task records".
+  `task.review_verdict`, signed as your own lane once the comment is posted:
+  `python tools/task-record/task_record.py --lane <you> review_verdict --issue <N> --pr <P> --head <sha> --verdict <WORD> --comment-url <url>`
+  (from a GraphHelm checkout; token and defaults: `docs/process/DELIVERY.md` "Task records").
 
 ## Method
 

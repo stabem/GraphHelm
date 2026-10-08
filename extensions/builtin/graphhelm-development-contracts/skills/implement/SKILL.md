@@ -13,11 +13,13 @@ adds what to do around them.
 - Reads the task's `keel.plan` record (or the card in the PR body): paths, promise, proof, skills.
 - Records the Keel card as a `keel.card` signal (shape: `docs/keel/RECORDS.md`) when working in a
   GraphHelm execution; outside one, `.graphhelm/keel-card.json`.
-- After `gh pr create` succeeds, records `task.pr_opened` (`pr`, `headSha`, `journeys`, `lane`).
-  Record it as a signal whose `type` is the kind and whose `description` is one
-  `graphhelm-task-event-v1` document, with your own actor (`GRAPHHELM_ACTOR=<lane>`): the
-  Runtime refuses a lane that is not the recorder (`GHCLI038_ACTOR_MISMATCH`). Fields and
-  doors: `docs/process/DELIVERY.md` "Task records".
+- Records the task steps it owns, one command each, signed as your own lane (from a GraphHelm
+  checkout; `docs/process/DELIVERY.md` "Task records" has the token and the defaults):
+  - on taking the issue: `python tools/task-record/task_record.py --lane <you> claimed --issue <N> --branch <branch>`
+  - after `gh pr create`: `python tools/task-record/task_record.py --lane <you> pr_opened --issue <N> --pr <P> --head <sha>`
+  - on asking the reviewer: `python tools/task-record/task_record.py --lane <you> review_assigned --issue <N> --pr <P> --head <sha> --reviewer <reviewer>`
+
+  The Runtime refuses a record whose lane is not the recorder (`GHCLI038_ACTOR_MISMATCH`).
 
 ## Method
 

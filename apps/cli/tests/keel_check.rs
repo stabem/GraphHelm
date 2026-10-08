@@ -695,6 +695,78 @@ fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     assert_eq!(code, 3, "{bad}");
 }
 
+/// #382 B2: on an ambiguous task (a promise naming a permission, docs-only paths) the planner asks
+/// Jev `task_class`; an answer at or above the threshold decides, below it the plan stays strict,
+/// and a missing answer is recorded, never invented. Credible regressions: Jev consulted when the
+/// rules were clear, a low-confidence answer lowering the route, or a judge failure dropped
+/// silently. Cost: one temp repository, a recorded judge file, four CLI runs, no network.
+#[test]
+fn keel_plan_asks_jev_only_when_ambiguous_and_takes_a_confident_answer() {
+    let repo = repository(&[]);
+    let fixture = repo.path().join("jev.json");
+    let ambiguous = [
+        "--task",
+        "issue-2",
+        "--paths",
+        "docs/a.md",
+        "--promise",
+        "fix the permission check",
+        "--judge-fixture",
+        fixture.to_str().unwrap(),
+    ];
+    fs::write(&fixture, b"{\"answers\": {}}").unwrap();
+    let (code, missing, _) = plan(repo.path(), &ambiguous);
+    assert_eq!(code, 0, "{missing}");
+    let record = &missing["data"]["plan"];
+    assert_eq!(record["decidedBy"], "fallback_strict", "{record}");
+    assert!(
+        record["jev"]["error"].is_string(),
+        "a missing answer is recorded: {record}"
+    );
+    let digest = record["jev"]["requestSha256"].as_str().unwrap().to_owned();
+
+    let reply = |choice: &str, confidence: f64| {
+        serde_json::json!({"answers": {digest.clone(): {
+            "model": "jev-latest",
+            "answers": {"task_class": {"type": "choice", "choice": choice,
+                "probabilities": {choice: confidence}, "confidence": confidence}},
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        }}})
+    };
+    fs::write(&fixture, serde_json::to_vec(&reply("docs", 0.95)).unwrap()).unwrap();
+    let (_, confident, _) = plan(repo.path(), &ambiguous);
+    let record = &confident["data"]["plan"];
+    assert_eq!(record["decidedBy"], "jev", "{record}");
+    assert_eq!(record["jev"]["questions"]["task_class"]["answer"], "docs");
+    assert_eq!(record["delegation"]["tier"], "small", "{record}");
+    assert_eq!(record["proof"], "none");
+
+    fs::write(&fixture, serde_json::to_vec(&reply("docs", 0.5)).unwrap()).unwrap();
+    let (_, unsure, _) = plan(repo.path(), &ambiguous);
+    assert_eq!(
+        unsure["data"]["plan"]["decidedBy"], "fallback_strict",
+        "{unsure}"
+    );
+    assert_eq!(unsure["data"]["plan"]["delegation"]["tier"], "large");
+
+    let (_, clear, _) = plan(
+        repo.path(),
+        &[
+            "--task",
+            "issue-3",
+            "--paths",
+            "src/lib.rs",
+            "--judge-fixture",
+            fixture.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(clear["data"]["plan"]["decidedBy"], "rules", "{clear}");
+    assert!(
+        clear["data"]["plan"]["jev"].is_null(),
+        "Jev is not asked when the rules are clear"
+    );
+}
+
 /// Review of #405 (gh-claude-5's BLOCK): a path that is no invariant, no screen and no source file
 /// is not plainly docs. A policy (`keel.yaml`) or a schema was planned as docs with proof `none`
 /// and no keel; spec §6 calls that ambiguous and takes the stricter answer. Also: a promise word
@@ -731,4 +803,47 @@ fn keel_plan_treats_unclassified_non_prose_paths_as_ambiguous() {
         ],
     );
     assert_eq!(traced["data"]["plan"]["decidedBy"], "rules", "{traced}");
+}
+
+/// Review of #406 (coordinator decision): Jev may choose among the strict classes but never below
+/// the floor the paths set. A non-prose path (here `keel.yaml`) cannot become docs with proof
+/// `none`, whatever Jev answers; the clamp is recorded in `keel.plan`. Credible regression: a
+/// confident "docs" reply turning a policy edit into an unreviewed, unproven change. Cost: one
+/// temp repository, two CLI runs, no network.
+#[test]
+fn keel_plan_never_lets_jev_lower_a_non_prose_path_to_docs() {
+    let repo = repository(&[]);
+    let fixture = repo.path().join("jev.json");
+    let args = [
+        "--task",
+        "issue-406",
+        "--paths",
+        "extensions/builtin/graphhelm-development-contracts/policies/keel.yaml",
+        "--judge-fixture",
+        fixture.to_str().unwrap(),
+    ];
+    fs::write(&fixture, b"{\"answers\": {}}").unwrap();
+    let (_, first, _) = plan(repo.path(), &args);
+    let digest = first["data"]["plan"]["jev"]["requestSha256"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{first}"))
+        .to_owned();
+    let reply = serde_json::json!({"answers": {digest: {
+        "model": "jev-latest",
+        "answers": {"task_class": {"type": "choice", "choice": "docs",
+            "probabilities": {"docs": 0.99}, "confidence": 0.99}},
+        "usage": {"input_tokens": 1, "output_tokens": 1}
+    }}});
+    fs::write(&fixture, serde_json::to_vec(&reply).unwrap()).unwrap();
+    let (code, clamped, _) = plan(repo.path(), &args);
+    assert_eq!(code, 0, "{clamped}");
+    let record = &clamped["data"]["plan"];
+    assert_eq!(record["decidedBy"], "jev", "{record}");
+    assert_ne!(record["proof"], "none", "{record}");
+    assert_ne!(record["delegation"]["tier"], "small", "{record}");
+    assert_eq!(
+        record["jev"]["clamp"],
+        serde_json::json!({"from": "docs", "to": "code"}),
+        "the clamp is recorded: {record}"
+    );
 }

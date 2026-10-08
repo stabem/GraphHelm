@@ -628,6 +628,7 @@ pub(crate) fn plan_value(
     task: &str,
     paths: &[String],
     promise: &str,
+    judge: Option<(&dyn graphhelm_architect::JudgeModel, &str)>,
 ) -> Result<serde_json::Value, Outcome> {
     if !valid_journey_id(task) {
         return Err(input_error(
@@ -678,8 +679,129 @@ pub(crate) fn plan_value(
         promise: promise.to_owned(),
         journeys,
     };
-    serde_json::to_value(keel_plan::plan(&input, &policy, &rules))
+    let mut planned = keel_plan::plan(&input, &policy, &rules);
+    if let Some((judge, route)) = judge {
+        planned = ask_jev(planned, promise, judge, route, &rules);
+    }
+    serde_json::to_value(planned)
         .map_err(|error| Outcome::internal(PLAN_COMMAND, error.to_string()))
+}
+
+/// Spec #382 §6 (B2): only when the rules were ambiguous (`fallback_strict`), ask Jev the closed
+/// question `task_class` with the paths, the promise and the class the paths alone give. An answer
+/// at or above `jevThresholdPercent` decides (`decidedBy: jev`), never below the paths' own class;
+/// a lower answer or a judge failure keeps `fallback_strict`. Either way `jev` records the route,
+/// the request digest (the key a recorded fixture is looked up under) and what Jev said.
+fn ask_jev(
+    planned: keel_plan::TaskPlan,
+    promise: &str,
+    judge: &dyn graphhelm_architect::JudgeModel,
+    route: &str,
+    rules: &keel_plan::PlanRules,
+) -> keel_plan::TaskPlan {
+    use graphhelm_gateway::judgment::{Answer, JEV_LATEST, JudgeRequest, Question, request_sha256};
+    use keel_plan::TaskClass;
+    if planned.decided_by != "fallback_strict" {
+        return planned;
+    }
+    let floor = keel_plan::rules_class(&planned);
+    let criteria = [
+        (
+            "docs",
+            "only documentation or inert configuration; nothing executes it",
+        ),
+        (
+            "code",
+            "source code with no screen of a journey and no invariant class",
+        ),
+        (
+            "user_visible",
+            "changes what a user sees or does on a screen",
+        ),
+        (
+            "invariant",
+            "security or permissions, persistence or journal integrity, concurrency, destructive \
+             operations, or wire compatibility",
+        ),
+    ]
+    .into_iter()
+    .map(|(class, rubric)| (class.to_owned(), Some(rubric.to_owned())))
+    .collect();
+    let request = JudgeRequest {
+        state: serde_json::json!({
+            "paths": planned.paths,
+            "promise": promise,
+            "rulesClass": floor,
+        }),
+        model: JEV_LATEST.to_owned(),
+        questions: [(
+            "task_class".to_owned(),
+            Question::Choice {
+                instructions: "Which class does this task belong to, judged by what its promise \
+                               and paths can break?"
+                    .to_owned(),
+                criteria,
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let digest = request_sha256(&request);
+    let mut record = serde_json::json!({"route": route, "requestSha256": digest});
+    let answer = match judge.judge(&request) {
+        Ok(reply) => match reply.answers.get("task_class") {
+            Some(Answer::Choice {
+                choice, confidence, ..
+            }) => Some((choice.clone(), *confidence)),
+            _ => None,
+        },
+        Err(refusal) => {
+            record["error"] = refusal.to_string().into();
+            None
+        }
+    };
+    let Some((choice, confidence)) = answer else {
+        return keel_plan::decide(
+            &planned,
+            TaskClass::Invariant,
+            "fallback_strict",
+            Some(record),
+            rules,
+        );
+    };
+    record["questions"] =
+        serde_json::json!({"task_class": {"answer": choice, "probability": confidence}});
+    let class = match choice.as_str() {
+        "docs" => Some(TaskClass::Docs),
+        "code" => Some(TaskClass::Code),
+        "user_visible" => Some(TaskClass::UserVisible),
+        "invariant" => Some(TaskClass::Invariant),
+        _ => None,
+    };
+    let threshold = f64::from(rules.jev_threshold_percent) / 100.0;
+    match class {
+        Some(class) if confidence >= threshold => {
+            // Review of #406: Jev chooses among the strict classes, never below the floor the
+            // paths set. A path that is not plain prose cannot become docs with proof `none`.
+            let floor = if planned.paths.iter().any(|path| !keel_plan::is_prose(path)) {
+                floor.max(TaskClass::Code)
+            } else {
+                floor
+            };
+            let decided = class.max(floor);
+            if decided != class {
+                record["clamp"] = serde_json::json!({"from": choice, "to": decided});
+            }
+            keel_plan::decide(&planned, decided, "jev", Some(record), rules)
+        }
+        _ => keel_plan::decide(
+            &planned,
+            TaskClass::Invariant,
+            "fallback_strict",
+            Some(record),
+            rules,
+        ),
+    }
 }
 
 /// `graphhelm keel plan`: print the plan; with records, also record it as one `keel.plan` signal.
@@ -689,8 +811,9 @@ pub fn plan(
     paths: &[String],
     promise: &str,
     records: Option<JourneyRecords>,
+    judge: Option<(&dyn graphhelm_architect::JudgeModel, &str)>,
 ) -> Outcome {
-    let value = match plan_value(repo, task, paths, promise) {
+    let value = match plan_value(repo, task, paths, promise, judge) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
@@ -726,6 +849,32 @@ pub fn plan(
         ),
         Err(failure) => failure.into_outcome(PLAN_COMMAND),
     }
+}
+
+/// `graphhelm keel plan`, with the recorded Jev `--judge-fixture` names when one is given.
+pub fn plan_with_fixture(
+    repo: &Path,
+    task: &str,
+    paths: &[String],
+    promise: &str,
+    records: Option<JourneyRecords>,
+    judge_fixture: Option<&Path>,
+) -> Outcome {
+    let judge = match judge_fixture.map(graphhelm_architect::RecordedJudgeModel::from_file) {
+        None => None,
+        Some(Ok(judge)) => Some(judge),
+        Some(Err(refusal)) => return input_error(refusal.to_string(), "/judgeFixture"),
+    };
+    plan(
+        repo,
+        task,
+        paths,
+        promise,
+        records,
+        judge
+            .as_ref()
+            .map(|judge| (judge as &dyn graphhelm_architect::JudgeModel, "fixture")),
+    )
 }
 
 #[cfg(test)]

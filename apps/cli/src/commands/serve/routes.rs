@@ -1805,6 +1805,9 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
         paths: Vec<String>,
         #[serde(default)]
         promise: String,
+        /// #382 B2: a direct_api typesafe route Jev is asked on, only when the rules are ambiguous.
+        #[serde(default, rename = "judgeRoute")]
+        judge_route: Option<String>,
     }
     let Ok(request) = serde_json::from_slice::<PlanRequest>(&body) else {
         return respond_failure(
@@ -1821,6 +1824,20 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
             ),
         );
     };
+    let judge = match request.judge_route.as_deref() {
+        None => None,
+        Some(route) => {
+            let Some(model_wiring) = state.runtime.as_ref().and_then(|w| w.model.as_ref()) else {
+                return bad_request(COMMAND, "no model routes are configured", "/judgeRoute");
+            };
+            let wiring = state.runtime.as_ref().expect("checked above");
+            match resolve_judge_route(wiring, model_wiring, COMMAND, route).await {
+                Ok(judge) => Some((judge, route.to_owned())),
+                Err(MutationError::Prepared(response)) => return response,
+                Err(MutationError::Command(failure)) => return respond_failure(COMMAND, failure),
+            }
+        }
+    };
     match off_reactor(move || {
         crate::commands::keel::plan(
             &project,
@@ -1828,6 +1845,12 @@ pub(super) async fn keel_plan(State(state): State<ServeState>, body: Bytes) -> R
             &request.paths,
             &request.promise,
             None,
+            judge.as_ref().map(|(judge, route)| {
+                (
+                    judge as &dyn graphhelm_architect::JudgeModel,
+                    route.as_str(),
+                )
+            }),
         )
     })
     .await

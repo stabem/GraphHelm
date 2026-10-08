@@ -393,6 +393,33 @@ pub enum KeelCommand {
         #[arg(long, requires = "events")]
         key_id: Option<String>,
     },
+    /// Plan one task (#382 phase B): classify the paths it names under the shipped `keel.yaml`
+    /// (invariant class, user-visible screen, code, docs), and print the `graphhelm-task-plan-v1`
+    /// record: review count, proof type, skills, delegation and the shortest path to done.
+    /// Deterministic. With `--events` (and `--execution`, `--keyring`, `--key-id`) it also records
+    /// the plan as one `keel.plan` signal on that run, where the briefing reads it.
+    Plan {
+        /// The task id the record carries, e.g. `issue-382`.
+        #[arg(long)]
+        task: String,
+        /// The paths the task names (its card scope, or a diff's paths).
+        #[arg(long, num_args = 1.., required = true)]
+        paths: Vec<String>,
+        /// The task's promise in one line; read only to detect an invariant the paths do not touch.
+        #[arg(long, default_value = "")]
+        promise: String,
+        /// The repository whose `.graphhelm/journeys/` and HEAD the plan reads.
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, requires_all = ["execution", "keyring", "key_id"])]
+        events: Option<PathBuf>,
+        #[arg(long, requires = "events")]
+        execution: Option<String>,
+        #[arg(long, requires = "events")]
+        keyring: Option<PathBuf>,
+        #[arg(long, requires = "events")]
+        key_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -986,6 +1013,11 @@ pub enum ExecutionCommand {
         events: PathBuf,
         #[arg(long)]
         execution: Option<String>,
+        /// With `--key-id`: open the newest `keel.plan` record and carry it as `plan` (#382).
+        #[arg(long, requires = "key_id")]
+        keyring: Option<PathBuf>,
+        #[arg(long, requires = "keyring")]
+        key_id: Option<String>,
     },
     /// Admits a Graph Signal envelope and reports the governance verdict for the mode in
     /// force.

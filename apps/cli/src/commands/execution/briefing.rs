@@ -17,8 +17,14 @@ const COMMAND: &str = "execution.briefing";
 pub(crate) fn budgeted(
     events: &Path,
     execution: Option<&str>,
+    keyring: Option<&super::signal::SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
-    execute_within(events, execution, crate::commands::status_read_budget())
+    execute_within(
+        events,
+        execution,
+        crate::commands::status_read_budget(),
+        keyring,
+    )
 }
 
 /// The shared body, with the budget supplied rather than read from the wall clock - the seam
@@ -27,15 +33,28 @@ pub(crate) fn execute_within(
     events: &Path,
     execution: Option<&str>,
     budget: graphhelm_events::ReadBudget,
+    keyring: Option<&super::signal::SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
     let read = super::status::read_known_within(events, execution, budget)?;
     let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
-    let briefing = graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
+    let mut briefing =
+        graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
+    if let Some(keyring) = keyring {
+        briefing.plan = crate::commands::journeys::newest_plan(
+            events,
+            read.projection.execution_id.as_str(),
+            keyring,
+        );
+    }
     Ok(serde_json::to_value(briefing)
         .expect("a view built from already-serializable fold types serializes"))
 }
 
-pub fn run(events: &Path, execution: Option<&str>) -> Outcome {
+pub fn run(
+    events: &Path,
+    execution: Option<&str>,
+    keyring: Option<&super::signal::SignalKeyring>,
+) -> Outcome {
     // The operator is waiting on this one, so it is the call that declares the budget (#750).
-    finish(COMMAND, budgeted(events, execution), |value| value)
+    finish(COMMAND, budgeted(events, execution, keyring), |value| value)
 }

@@ -133,6 +133,155 @@
           "pattern": "^[^/\\][^\\]*$"
         }
       }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviews",
+        "delegation",
+        "jevThresholdPercent"
+      ],
+      "description": "1.5.0 (#382 phase B): the task planner's per-class review count, delegation tier/effort and Jev threshold.",
+      "properties": {
+        "reviews": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "docs",
+            "code",
+            "user_visible",
+            "invariant"
+          ],
+          "properties": {
+            "docs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "code": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "user_visible": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "invariant": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
+          }
+        },
+        "delegation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "docs",
+            "code",
+            "user_visible",
+            "invariant"
+          ],
+          "properties": {
+            "docs": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "enum": [
+                    "small",
+                    "standard",
+                    "large"
+                  ]
+                },
+                {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              ],
+              "items": false
+            },
+            "code": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "enum": [
+                    "small",
+                    "standard",
+                    "large"
+                  ]
+                },
+                {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              ],
+              "items": false
+            },
+            "user_visible": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "enum": [
+                    "small",
+                    "standard",
+                    "large"
+                  ]
+                },
+                {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              ],
+              "items": false
+            },
+            "invariant": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "enum": [
+                    "small",
+                    "standard",
+                    "large"
+                  ]
+                },
+                {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                }
+              ],
+              "items": false
+            }
+          }
+        },
+        "jevThresholdPercent": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 100
+        }
+      }
     }
   },
   "$defs": {

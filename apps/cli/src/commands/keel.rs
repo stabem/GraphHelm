@@ -7,6 +7,7 @@ use graphhelm_execution::{
     valid_journey_id,
 };
 use graphhelm_policy::keel::{self as policy_keel, Card, Finding, JourneyScreen, KeelPolicy};
+use graphhelm_policy::keel_plan;
 use graphhelm_policy::keel_prove::{self, ProveOptions};
 use graphhelm_protocols::Diagnostic;
 
@@ -683,5 +684,118 @@ mod tests {
             ([1], 0),
             "the real pipe holder must start and then exit during bounded cleanup"
         );
+    }
+}
+
+/// The `keel.plan` signal kind and its description protocol (#382 phase B).
+pub(crate) const PLAN_KIND: &str = "keel.plan";
+const PLAN_COMMAND: &str = "keel.plan";
+
+/// The repository's HEAD commit, or an empty revision outside git.
+fn head_of(repo: &Path) -> String {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// The plan a task's paths get under the shipped policy, as JSON (`graphhelm-task-plan-v1`).
+pub(crate) fn plan_value(
+    repo: &Path,
+    task: &str,
+    paths: &[String],
+    promise: &str,
+) -> Result<serde_json::Value, Outcome> {
+    if !valid_journey_id(task) {
+        return Err(input_error(
+            "--task must match ^[a-z0-9][a-z0-9._-]{0,127}$ without `..`",
+            "/task",
+        ));
+    }
+    if let Some(bad) = paths.iter().position(|path| {
+        path.is_empty() || path.starts_with('/') || path.contains('\\') || path.split('/').any(|part| part == "..")
+    }) {
+        return Err(input_error(
+            "paths are repository-relative, forward slashes, without `..`",
+            &format!("/paths/{bad}"),
+        ));
+    }
+    let policy: KeelPolicy = serde_yaml_ng::from_str(KEEL_POLICY)
+        .map_err(|error| Outcome::internal(PLAN_COMMAND, format!("shipped keel.yaml unreadable: {error}")))?;
+    let Some(rules) = policy.plan.clone() else {
+        return Err(Outcome::internal(PLAN_COMMAND, "shipped keel.yaml has no plan section"));
+    };
+    let (contracts, _) = super::journeys::contracts(repo);
+    let journeys = contracts
+        .into_iter()
+        .map(|contract| {
+            let scopes = contract
+                .steps
+                .into_iter()
+                .filter_map(|step| step.screen)
+                .flat_map(|screen| screen.scope_paths)
+                .collect();
+            (contract.contract_id, scopes)
+        })
+        .collect();
+    let input = keel_plan::PlanInput {
+        task_id: task.to_owned(),
+        revision: head_of(repo),
+        paths: paths.to_vec(),
+        promise: promise.to_owned(),
+        journeys,
+    };
+    serde_json::to_value(keel_plan::plan(&input, &policy, &rules))
+        .map_err(|error| Outcome::internal(PLAN_COMMAND, error.to_string()))
+}
+
+/// `graphhelm keel plan`: print the plan; with records, also record it as one `keel.plan` signal.
+pub fn plan(
+    repo: &Path,
+    task: &str,
+    paths: &[String],
+    promise: &str,
+    records: Option<JourneyRecords>,
+) -> Outcome {
+    let value = match plan_value(repo, task, paths, promise) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let Some(records) = records else {
+        return Outcome::success(PLAN_COMMAND, serde_json::json!({"plan": value}));
+    };
+    let signal = serde_json::json!({
+        "id": super::execution::idempotency_key("keel-plan").as_str(),
+        "type": PLAN_KIND,
+        "source": {"type": "test", "id": "keel-planner"},
+        "severity": "low",
+        "description": value.to_string(),
+        "evidence": [format!("graphhelm keel plan --task {task}")],
+        "emittedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    let keyring = super::execution::signal::SignalKeyring {
+        directory: records.keyring.clone(),
+        key_id: records.key_id.clone(),
+    };
+    match super::execution::signal::execute(
+        &records.events,
+        Some(&records.execution),
+        &serde_json::to_vec(&signal).expect("a JSON value serializes"),
+        None,
+        super::execution::owner_actor(),
+        super::execution::idempotency_key("keel-plan-recorded"),
+        Some(&keyring),
+        &[],
+    ) {
+        Ok(recorded) => Outcome::success(
+            PLAN_COMMAND,
+            serde_json::json!({"plan": value, "recorded": recorded}),
+        ),
+        Err(failure) => failure.into_outcome(PLAN_COMMAND),
     }
 }

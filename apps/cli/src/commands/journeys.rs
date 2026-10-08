@@ -180,6 +180,30 @@ pub(crate) fn project_records(events: &Path, keyring: &SignalKeyring) -> Result<
     Ok(out)
 }
 
+/// The newest `keel.plan` record on one execution (#382 phase B): the description of the last
+/// such signal that opens and parses as a `graphhelm-task-plan-v1` object. `None` when there is
+/// none or the keyring cannot open it; the briefing then omits `plan`.
+pub(crate) fn newest_plan(
+    events: &Path,
+    execution: &str,
+    keyring: &SignalKeyring,
+) -> Option<serde_json::Value> {
+    let store = event_store(events).ok()?;
+    let (scope, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
+    let reader = Reader::new(keyring).ok()?;
+    history.iter().rev().find_map(|event| {
+        let EventKind::SignalRecorded(record) = &event.kind else {
+            return None;
+        };
+        if record.kind != super::keel::PLAN_KIND {
+            return None;
+        }
+        let text = reader.description(&store, &scope, event, record.signal_id.as_str(), 1)?;
+        let plan: serde_json::Value = serde_json::from_str(&text).ok()?;
+        (plan["schema"] == graphhelm_policy::keel_plan::PLAN_SCHEMA).then_some(plan)
+    })
+}
+
 fn empty() -> Records {
     Records {
         captures: Vec::new(),
@@ -204,6 +228,36 @@ impl Reader {
         Ok(Self { opener, runtime })
     }
 
+    /// The `description` text of one recorded signal's sealed envelope, when its evidence refs
+    /// have the expected shape and the envelope opens.
+    fn description(
+        &self,
+        store: &graphhelm_events::LocalEventRepository,
+        scope: &graphhelm_protocols::RepositoryScope,
+        event: &graphhelm_protocols::EventEnvelope,
+        signal_id: &str,
+        expected_refs: usize,
+    ) -> Option<String> {
+        let envelope_id = format!("signal-{signal_id}");
+        if event.evidence_refs.len() != expected_refs
+            || event.evidence_refs[0].evidence_id().as_str() != envelope_id
+        {
+            return None;
+        }
+        let id = EvidenceId::parse(&envelope_id).ok()?;
+        let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, &id).ok()? else {
+            return None;
+        };
+        let plaintext = self
+            .runtime
+            .block_on(self.opener.open(scope.clone(), &sealed))
+            .ok()?;
+        let value: serde_json::Value = plaintext
+            .expose(|bytes| serde_json::from_slice(bytes))
+            .ok()?;
+        Some(value.get("description")?.as_str()?.to_owned())
+    }
+
     fn decode(
         &self,
         store: &graphhelm_events::LocalEventRepository,
@@ -222,28 +276,7 @@ impl Reader {
             }
             let signal_id = record.signal_id.as_str();
             let expected_refs = if is_capture { 2 } else { 1 };
-            let envelope_id = format!("signal-{signal_id}");
-            let decoded = (|| {
-                if event.evidence_refs.len() != expected_refs
-                    || event.evidence_refs[0].evidence_id().as_str() != envelope_id
-                {
-                    return None;
-                }
-                let id = EvidenceId::parse(&envelope_id).ok()?;
-                let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, &id).ok()?
-                else {
-                    return None;
-                };
-                let plaintext = self
-                    .runtime
-                    .block_on(self.opener.open(scope.clone(), &sealed))
-                    .ok()?;
-                let value: serde_json::Value = plaintext
-                    .expose(|bytes| serde_json::from_slice(bytes))
-                    .ok()?;
-                let text = value.get("description")?.as_str()?.to_owned();
-                Some(text)
-            })();
+            let decoded = self.description(store, scope, event, signal_id, expected_refs);
             let Some(text) = decoded else {
                 out.ignored += 1;
                 continue;

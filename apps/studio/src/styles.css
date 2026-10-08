@@ -2744,7 +2744,18 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .topbar-menu { position: relative; font-size: 12px; }
 .topbar-menu > summary { cursor: pointer; color: var(--dim); }
 .topbar-menu[open] > .topbar-menu-body { position: absolute; right: 0; top: 28px; z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--edge); border-radius: 10px; }
-.studio-columns { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.studio-columns { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; container: studio-columns / inline-size; }
+/* #492: the right column is the one panel that can go. With the Projects rail open (~270 px), the
+   chat (~400 px) and a direct conversation (~300 px), the 280 px right panel left the canvas ~0 px
+   wide and its tabs, toolbar and dock painted over the Journeys list (owner, 1290x800). Measured
+   on the space the columns really have, not the viewport, so the rail counts: below these widths
+   the canvas would drop under ~360 px, and the right panel steps aside instead. */
+@container studio-columns (max-width: 1340px) {
+  .studio-columns:has(> .chat-col:not([hidden]), > .node-col:not([hidden])) > .right-panel { display: none; }
+}
+@container studio-columns (max-width: 1040px) {
+  .studio-columns > .right-panel { display: none; }
+}
 .mobile-tabs { display: none; }
 .canvas-column { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .canvas-column > .scene { flex: 1; }

@@ -19,7 +19,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: region, name: Canvas}, {role: tab, name: Team (live)}, {role: region, name: Team}, {role: complementary, name: Run side panel}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx]
 edges:
   - id: handover.dismiss
     from: handover

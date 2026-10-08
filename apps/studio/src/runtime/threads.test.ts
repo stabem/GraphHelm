@@ -109,6 +109,24 @@ describe("describeActivity", () => {
     expect(describeActivity({ sequence: 2, actorId: "kit-1", occurredAt: null, text: walked }, names, {}, "studio-operator", title).text).toBe("loja kit 1 walked Home → Kit page");
     expect(describeActivity({ sequence: 3, actorId: "kit-1", occurredAt: null, text: capture.replace("cart", "pay") }, names, {}, "studio-operator").text).toBe("loja kit 1 captured pay");
   });
+
+  // #442: the #301 observer saw an owner alias and capture documents printed as raw JSON.
+  it("describes owner records in words and never prints a JSON document", () => {
+    const names = namesOf(BOTS);
+    const alias = JSON.stringify({ protocol: "graphhelm-actor-alias-v1", displayName: "Loja kit 1" });
+    const refusal = JSON.stringify({ protocol: "graphhelm-owner-refusal-v1", reason: "not now" });
+    const env = { 1: { to: "kit-1", replyTo: null, text: alias }, 2: { to: "kit-1", replyTo: "sig-q", text: refusal } };
+    expect(describeActivity({ sequence: 1, actorId: "studio-operator", occurredAt: null, text: alias }, names, env, "studio-operator").text)
+      .toBe("You named kit-1 “Loja kit 1”");
+    expect(describeActivity({ sequence: 2, actorId: "studio-operator", occurredAt: null, text: refusal }, names, env, "studio-operator").text)
+      .toBe("You refused a question from loja kit 1");
+    const unknown = JSON.stringify({ schema: "graphhelm-something-v1", value: 1 });
+    expect(describeActivity({ sequence: 3, actorId: "kit-1", occurredAt: null, text: unknown }, names, {}, "studio-operator").text)
+      .toBe("loja kit 1 recorded a graphhelm-something-v1 record");
+    const cut = JSON.stringify({ protocol: "graphhelm-screen-capture-v1", contractId: "kit", stepId: "cart", observer: "x".repeat(300) }).slice(0, 220);
+    expect(describeActivity({ sequence: 4, actorId: "kit-1", occurredAt: null, text: cut }, names, {}, "studio-operator").text)
+      .toBe("loja kit 1 recorded a record");
+  });
 });
 
 /* #414: which thread the chat should move to on its own. The cells catch the two defects named on

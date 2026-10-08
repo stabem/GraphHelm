@@ -18,6 +18,7 @@ export const WORKING_MS = 15 * 60 * 1000;
 export const LIVE_LINK_MS = 60 * 1000;
 const OPERATOR = "studio-operator";
 const SETTLED = new Set(["succeeded", "waived", "skipped"]);
+const OPENING = "Opening…";
 const COORDINATOR = /coordinat|orchestrat|\blead\b/i;
 
 export type BotState = "working" | "waiting_for_you" | "quiet" | "done";
@@ -72,8 +73,11 @@ export function teamModel(input: TeamInput): TeamModel {
     }
     tallies.set(event.actorId, tally);
     if (signalKind(event) === "operator_note") {
-      const text = input.envelopes[event.sequence]?.text?.trim();
+      // #446: a sealed note not opened yet exists; it reads as opening, never as "no note".
+      const envelope = input.envelopes[event.sequence];
+      const text = envelope?.text?.trim();
       if (text) notes.set(event.actorId, firstLine(text));
+      else if (envelope === undefined && event.evidenceRefs.length > 0) notes.set(event.actorId, OPENING);
     }
   }
 

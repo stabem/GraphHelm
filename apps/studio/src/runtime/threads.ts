@@ -117,11 +117,42 @@ function journeyWords(text: string, stepTitle: (contractId: string, stepId: stri
   return null;
 }
 
+function documentOf(text: string): Record<string, unknown> | null {
+  try {
+    const doc: unknown = JSON.parse(text);
+    return doc !== null && typeof doc === "object" && !Array.isArray(doc) ? doc as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
+/** #442: the owner's own records (spec #301 section 5.2, 5.3) said in words. */
+function ownerRecordWords(text: string, envelope: EnvelopeRecord[number] | undefined, names: Record<string, string>): string | null {
+  const doc = text.trimStart().startsWith("{") ? documentOf(text) : null;
+  if (doc === null) return null;
+  const to = envelope?.to ?? null;
+  if (doc.protocol === "graphhelm-actor-alias-v1" && typeof doc.displayName === "string" && to !== null) {
+    return `named ${to} “${firstLine(doc.displayName, 80)}”`;
+  }
+  if (doc.protocol === "graphhelm-owner-refusal-v1") return to !== null ? `refused a question from ${names[to] ?? to}` : "refused a question";
+  return null;
+}
+
+function documentKind(text: string): string {
+  const doc = documentOf(text);
+  const kind = doc === null ? null : [doc.protocol, doc.schema].find((value) => typeof value === "string" && /^[a-z0-9.-]{1,64}$/.test(value));
+  return typeof kind === "string" ? `a ${kind} record` : "a record";
+}
+
 export function describeActivity(item: ActivityItem, names: Record<string, string>, envelopes: EnvelopeRecord, operatorId: string,
   stepTitle: (contractId: string, stepId: string) => string = (_contractId, stepId) => stepId): ActivityLine {
   const who = item.actorId === operatorId ? "You" : names[item.actorId ?? ""] ?? item.actorId ?? "Someone";
   const journey = journeyWords(item.text ?? "", stepTitle);
   if (journey !== null) return { sequence: item.sequence, text: `${who} ${journey}`, at: item.occurredAt };
+  const owner = ownerRecordWords(item.text ?? "", envelopes[item.sequence], names);
+  if (owner !== null) return { sequence: item.sequence, text: `${who} ${owner}`, at: item.occurredAt };
+  // #442: any other document (or one cut short) is named by its kind, never printed as JSON.
+  if ((item.text ?? "").trimStart().startsWith("{")) {
+    return { sequence: item.sequence, text: `${who} recorded ${documentKind(item.text ?? "")}`, at: item.occurredAt };
+  }
   const words = firstLine(item.text ?? "", 80);
   const to = envelopes[item.sequence]?.to ?? null;
   const text = words === ""

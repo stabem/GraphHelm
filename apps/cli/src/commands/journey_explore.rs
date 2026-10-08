@@ -290,7 +290,28 @@ pub(super) fn proposal(text: &str, declared: &[String], values: &[String]) -> Re
     Ok(value)
 }
 
+/// The overlays a state shows: dialogs, and side windows without a name (an opened panel), as the
+/// driver reports them. Named landmarks are the page's own furniture and come and go with content.
+fn overlays(state: &Value) -> BTreeSet<String> {
+    state["controls"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|control| {
+            matches!(control["role"].as_str(), Some("dialog" | "alertdialog"))
+                || (control["role"] == "complementary"
+                    && control["name"].as_str().is_none_or(str::is_empty))
+        })
+        .map(|control| serde_json::to_string(control).unwrap())
+        .collect()
+}
+
+/// One screen: the same overlays open (#356 calibration: a panel or dialog opened in a single-URL
+/// app kept 84-95 % of the controls), then the control-set threshold.
 pub(super) fn similar(left: &Value, right: &Value) -> bool {
+    if overlays(left) != overlays(right) {
+        return false;
+    }
     let pairs = |v: &Value| {
         v["controls"]
             .as_array()
@@ -1101,6 +1122,56 @@ mod tests {
         assert_eq!(
             permitted(&act("Pay and delete all"), &allow).unwrap_err().0,
             "explore.action_denied"
+        );
+    }
+
+    /// Contract (#356 calibration on the Studio): an opened side window or dialog is another screen
+    /// even when it keeps most controls, while switching content (a chat thread) that adds or drops
+    /// NAMED landmarks stays one screen. Regression: 0.8 merged "panel open" into the page
+    /// (Jaccard 0.84-0.95 on the real app). Cost: microseconds, pure function.
+    #[test]
+    fn an_opened_panel_or_dialog_is_another_screen_but_content_switches_are_not() {
+        let control = |role: &str, name: &str| json!({"role":role,"name":name});
+        let base: Vec<Value> = (0..30)
+            .map(|i| control("button", &format!("b{i}")))
+            .chain([
+                control("complementary", "Chat"),
+                control("region", "Main chat"),
+            ])
+            .collect();
+        let state = |extra: Vec<Value>, drop: &[&str]| {
+            let mut controls: Vec<Value> = base
+                .iter()
+                .filter(|c| !drop.contains(&c["name"].as_str().unwrap()))
+                .cloned()
+                .collect();
+            controls.extend(extra);
+            json!({"controls":controls,"fingerprint":"x"})
+        };
+        let page = state(vec![], &[]);
+        let panel = state(
+            vec![
+                control("complementary", ""),
+                control("button", "Close planner"),
+                control("heading", "planner"),
+            ],
+            &[],
+        );
+        let dialog = state(
+            vec![control("dialog", "Rename"), control("textbox", "Name")],
+            &[],
+        );
+        let thread = state(vec![control("tab", "planner")], &["Main chat", "b0"]);
+        assert!(similar(&page, &state(vec![], &[])));
+        assert!(
+            !similar(&page, &panel),
+            "an opened side window is another screen"
+        );
+        assert!(!similar(&page, &dialog), "an open dialog is another screen");
+        assert!(!similar(&panel, &dialog));
+        assert!(
+            similar(&page, &thread),
+            "a content switch dropping a named region stays one screen"
         );
     }
 

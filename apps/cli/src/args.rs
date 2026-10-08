@@ -411,6 +411,10 @@ pub enum KeelCommand {
         /// The repository whose `.graphhelm/journeys/` and HEAD the plan reads.
         #[arg(long, default_value = ".")]
         repo: PathBuf,
+        /// A recorded Jev (`{"answers": {<request sha256>: <reply>}}`) asked only when the rules
+        /// are ambiguous. The Runtime route takes a live `judgeRoute` instead.
+        #[arg(long)]
+        judge_fixture: Option<PathBuf>,
         #[arg(long, requires_all = ["execution", "keyring", "key_id"])]
         events: Option<PathBuf>,
         #[arg(long, requires = "events")]

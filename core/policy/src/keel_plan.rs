@@ -177,7 +177,54 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
     if ambiguous {
         task = TaskClass::Invariant;
     }
-    let user_visible = classes.contains(&TaskClass::UserVisible);
+    let base = TaskPlan {
+        schema: PLAN_SCHEMA.to_owned(),
+        task_id: input.task_id.clone(),
+        revision: input.revision.clone(),
+        paths,
+        classes,
+        invariant_classes,
+        journeys,
+        proof: String::new(),
+        reviews: 0,
+        skills: Vec::new(),
+        tools: Vec::new(),
+        delegation: Delegation {
+            kind: String::new(),
+            tier: String::new(),
+            effort: String::new(),
+        },
+        path: Vec::new(),
+        decided_by: String::new(),
+        jev: None,
+    };
+    decide(
+        &base,
+        task,
+        if ambiguous { "fallback_strict" } else { "rules" },
+        None,
+        rules,
+    )
+}
+
+/// The class the paths alone give: the highest class of any path (never lowered by a judge).
+#[must_use]
+pub fn rules_class(plan: &TaskPlan) -> TaskClass {
+    plan.classes.last().copied().unwrap_or(TaskClass::Docs)
+}
+
+/// Re-derive a plan's proof, reviews, skills, tools, delegation and route for `task`, keeping its
+/// paths, classes and journeys. Used by the rules and, on ambiguity, by a Jev answer (#382 B2).
+#[must_use]
+pub fn decide(
+    plan: &TaskPlan,
+    task: TaskClass,
+    decided_by: &str,
+    jev: Option<serde_json::Value>,
+    rules: &PlanRules,
+) -> TaskPlan {
+    let journeys = &plan.journeys;
+    let user_visible = plan.classes.contains(&TaskClass::UserVisible);
     let proof = match (task, user_visible) {
         (TaskClass::Docs, _) => "none",
         (TaskClass::Invariant, true) => "both",
@@ -211,13 +258,6 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
     route.push(format!("review x{reviews}"));
     route.push("merge".to_owned());
     TaskPlan {
-        schema: PLAN_SCHEMA.to_owned(),
-        task_id: input.task_id.clone(),
-        revision: input.revision.clone(),
-        paths,
-        classes,
-        invariant_classes,
-        journeys,
         proof: proof.to_owned(),
         reviews,
         skills,
@@ -228,7 +268,8 @@ pub fn plan(input: &PlanInput, policy: &KeelPolicy, rules: &PlanRules) -> TaskPl
             effort,
         },
         path: route,
-        decided_by: if ambiguous { "fallback_strict" } else { "rules" }.to_owned(),
-        jev: None,
+        decided_by: decided_by.to_owned(),
+        jev,
+        ..plan.clone()
     }
 }

@@ -670,3 +670,53 @@ fn keel_plan_is_deterministic_and_takes_the_highest_class() {
     let (code, bad, _) = plan(repo.path(), &["--task", "issue-1", "--paths", "../etc"]);
     assert_eq!(code, 3, "{bad}");
 }
+
+/// #382 B2: on an ambiguous task (a promise naming a permission, docs-only paths) the planner asks
+/// Jev `task_class`; an answer at or above the threshold decides, below it the plan stays strict,
+/// and a missing answer is recorded, never invented. Credible regressions: Jev consulted when the
+/// rules were clear, a low-confidence answer lowering the route, or a judge failure dropped
+/// silently. Cost: one temp repository, a recorded judge file, four CLI runs, no network.
+#[test]
+fn keel_plan_asks_jev_only_when_ambiguous_and_takes_a_confident_answer() {
+    let repo = repository(&[]);
+    let fixture = repo.path().join("jev.json");
+    let ambiguous = [
+        "--task", "issue-2", "--paths", "docs/a.md", "--promise", "fix the permission check",
+        "--judge-fixture", fixture.to_str().unwrap(),
+    ];
+    fs::write(&fixture, b"{\"answers\": {}}").unwrap();
+    let (code, missing, _) = plan(repo.path(), &ambiguous);
+    assert_eq!(code, 0, "{missing}");
+    let record = &missing["data"]["plan"];
+    assert_eq!(record["decidedBy"], "fallback_strict", "{record}");
+    assert!(record["jev"]["error"].is_string(), "a missing answer is recorded: {record}");
+    let digest = record["jev"]["requestSha256"].as_str().unwrap().to_owned();
+
+    let reply = |choice: &str, confidence: f64| {
+        serde_json::json!({"answers": {digest.clone(): {
+            "model": "jev-latest",
+            "answers": {"task_class": {"type": "choice", "choice": choice,
+                "probabilities": {choice: confidence}, "confidence": confidence}},
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        }}})
+    };
+    fs::write(&fixture, serde_json::to_vec(&reply("docs", 0.95)).unwrap()).unwrap();
+    let (_, confident, _) = plan(repo.path(), &ambiguous);
+    let record = &confident["data"]["plan"];
+    assert_eq!(record["decidedBy"], "jev", "{record}");
+    assert_eq!(record["jev"]["questions"]["task_class"]["answer"], "docs");
+    assert_eq!(record["delegation"]["tier"], "small", "{record}");
+    assert_eq!(record["proof"], "none");
+
+    fs::write(&fixture, serde_json::to_vec(&reply("docs", 0.5)).unwrap()).unwrap();
+    let (_, unsure, _) = plan(repo.path(), &ambiguous);
+    assert_eq!(unsure["data"]["plan"]["decidedBy"], "fallback_strict", "{unsure}");
+    assert_eq!(unsure["data"]["plan"]["delegation"]["tier"], "large");
+
+    let (_, clear, _) = plan(
+        repo.path(),
+        &["--task", "issue-3", "--paths", "src/lib.rs", "--judge-fixture", fixture.to_str().unwrap()],
+    );
+    assert_eq!(clear["data"]["plan"]["decidedBy"], "rules", "{clear}");
+    assert!(clear["data"]["plan"]["jev"].is_null(), "Jev is not asked when the rules are clear");
+}

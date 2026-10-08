@@ -101,7 +101,7 @@ const TOOLS: [ToolSpec; 38] = [
                       `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
                       screen, code, docs) and returns the graphhelm-task-plan-v1 record with the \
                       review count, proof type, skills, delegation and shortest path to done. \
-                      Read-only; record it with the signal tool as kind keel.plan.",
+                      With judgeRoute, Jev decides a task the rules find \n                      ambiguous. Read-only; record it with the signal tool as kind keel.plan.",
         schema: keel_plan_schema,
     },
     ToolSpec {
@@ -457,7 +457,8 @@ fn keel_plan_schema() -> serde_json::Value {
         serde_json::json!({
             "task": {"type": "string"},
             "paths": {"type": "array", "items": {"type": "string"}},
-            "promise": {"type": "string"}
+            "promise": {"type": "string"},
+            "judgeRoute": {"type": "string"}
         }),
         &["task", "paths"],
     )
@@ -1496,6 +1497,10 @@ pub(crate) fn call(
                 "paths": arguments.get("paths").cloned().unwrap_or(serde_json::Value::Null),
                 "promise": arguments.get("promise").cloned().unwrap_or_else(|| "".into()),
             });
+            let mut body = body;
+            if let Some(route) = arguments.get("judgeRoute").cloned() {
+                body["judgeRoute"] = route;
+            }
             Ok(api.request(
                 "POST",
                 &url::segment_path(&["v1", "keel", "plan"]),

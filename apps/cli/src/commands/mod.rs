@@ -646,11 +646,12 @@ pub fn run(command: TopLevel) -> Outcome {
                 paths,
                 promise,
                 repo,
+                judge_fixture,
                 events,
                 execution,
                 keyring,
                 key_id,
-            } => keel::plan(
+            } => keel::plan_with_fixture(
                 &repo,
                 &task,
                 &paths,
@@ -661,6 +662,7 @@ pub fn run(command: TopLevel) -> Outcome {
                     keyring: keyring.unwrap_or_default(),
                     key_id: key_id.unwrap_or_default(),
                 }),
+                judge_fixture.as_deref(),
             ),
         },
         TopLevel::Quality(args) => match args.command {

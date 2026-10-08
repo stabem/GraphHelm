@@ -8,7 +8,7 @@ project; the output shown is real, trimmed with `…`. Paths are relative to the
 commits has only `capture`, `walked` and `validate`. Check yours:
 
 ```sh
-graphhelm journey --help    # must list: capture walked validate compile approve replay
+graphhelm journey --help    # must list: capture walked validate compile approve replay (and explore, for section 10)
 ```
 
 If `compile` is missing, run `graphhelm update` (it reinstalls from `origin/main`). The output
@@ -283,13 +283,115 @@ Capture the same step with `--pr <N> --phase before` on the base and `--phase af
 branch. The Studio pairs, per `(contractId, stepId, pr)`, the newest `before` with the newest
 `after` and shows them side by side; a step with only one phase shows no pair.
 
-## 10. Coming next (not on `main`; do not rely on it)
+## 10. Explore, drift and heal (phase 3)
 
-- **Phase 3, agentic explore:** a model drafts and extends flows by exploring the running app,
-  with redacted model input and deduplication. Plan:
-  [`docs/superpowers/plans/2026-10-07-journey-explore-phase-3.md`](../superpowers/plans/2026-10-07-journey-explore-phase-3.md).
-- Later phases: persisted drift and edge-local healing, Studio graph and approval routes,
-  source-scope discovery. Design: [`docs/specs/2026-10-06-journey-explore-design.md`](../specs/2026-10-06-journey-explore-design.md).
+These commands use a **model**. Ordinary `journey replay` (section 4) never does. Each one works
+on a draft or reports a refusal; none of them approves anything. Only `journey approve` (owner)
+turns a draft into a trusted flow.
+
+### Explore: draft a new flow from the running app
+
+```sh
+graphhelm journey explore --id checkout --base http://localhost:3000/cart   --goal "Reach the order screen" --project .   --manifest <routes.json> --route <route-id>   [--secret shopper_password] [--allow-act "Pay"] [--allow-origin https://cdn.example.com]   [--max-steps 40] [--events ... --execution ... --keyring ... --key-id ...]
+```
+
+- **Model source:** exactly one of `--fixture <recorded replies>` or `--manifest` + `--route`
+  (plus `--broker` / `--gateway-keyring` / `--gateway-key-id` when the route leases a key).
+  Anything else is refused with `GHCLI009_GATEWAY_INVALID` before any browser starts.
+- **What the model sees:** the goal, the screens visited so far, the last three acts and the
+  current page's accessibility snapshot, with every declared secret value and the gateway/events
+  keys replaced by `«secret:<name>»`. A prompt that would still contain one is refused
+  (`driver.redaction_failed`).
+- **What it may answer:** one closed JSON object: `act` (kind, role, name, and `text` or a
+  *declared* `secret` name), `newScreen` (id, title), `done: true`, or `giveUp`. Anything else is
+  `explore.proposal_invalid`. A second invalid reply in a row ends the run. Every proposal counts as
+  one of `--max-steps` turns.
+- **Risky actions:** an act whose name contains `delete`, `remove`, `pay`, `purchase`, `transfer`
+  or `send` is refused (`explore.action_denied`) unless an `--allow-act` pattern matches the
+  **whole** name. Patterns are anchored, so `Pay` permits "Pay" and not "Pay and delete all".
+- **Secrets:** `--secret <name>` reads the value from `GRAPHHELM_SECRET_<name>`. The draft stores
+  only the name.
+- **Output:**
+  - The flow is written to `.graphhelm/journeys/<id>.journey.yaml` with `status: draft`,
+    `approved: null`, `drift: []` and every screen's `scope: unknown`. The replay cache is written
+    to `.graphhelm/journey-cache/<id>.json`.
+  - An existing id is refused before any effect (`explore.id_conflict`), and a second writer gets
+    `explore.writer_busy`.
+  - `data.outcome` is `draft_completed`, or `partial_draft` when the run stopped early and only a
+    valid prefix was published. `data.goalCertification` is always `unresolved`: `done` means the
+    model stopped, not that the goal is proven.
+  - With the four recording flags, each visited screen is captured and each pair recorded as
+    walked. The captures carry `scope: unknown`, so they are never "fresh".
+
+### Drift: what ordinary replay records when the app changed
+
+When `journey replay` on an approved flow meets a change at an edge, it stops that path and
+writes the fact into the flow. No model is called.
+
+| Code | Seen when |
+|---|---|
+| `drift.locator_missing` | the act's control is gone (e.g. a renamed button) |
+| `drift.locator_ambiguous` | the act's control matches more than one element |
+| `drift.wrong_screen` | after the edge, the URL is not the destination's pattern |
+| `drift.screen_changed` | the URL matches, but the controls differ from the cached screen (similarity under 0.8) |
+| `drift.expect_failed` | the destination's `expect` is not all visible |
+
+The entry is `{edge, act, code, seen, at}` (`at` = the project's HEAD). The flow becomes
+`status: draft`, `approved: null` under the journey-flow writer lock, after re-reading the source:
+a concurrent edit is refused (`replay.source_changed`), never merged. The command exits `1` with
+the drift code. Replay refuses the flow from then on until the owner approves again;
+`journey approve` alone clears `drift`.
+
+### Heal: repair one broken edge with the model
+
+```sh
+graphhelm journey replay checkout --heal --manifest <routes.json> --route <route-id> [--allow-act ...]
+```
+
+- Runs on an **approved** flow. The browser stays at the broken edge, and the acts already done
+  there are kept and not repeated.
+- The model sees only that edge (from, to, the destination's URL and expectations, its old acts,
+  the drift code, the kept prefix) and the current redacted page. It never sees other edges,
+  screens or secret values. The same proposal and `--allow-act` rules as explore apply.
+- At most **eight** acts per edge, prefix included. `giveUp`, `newScreen`, or `done` before the
+  destination is reached ends the heal.
+- **A repair counts only when the edge's original destination URL pattern and every original
+  expectation are observed.** An act that lands anywhere else is not a repair. The model cannot
+  rename or weaken the destination.
+- **On success:** only that edge's acts are replaced. The drift is kept with `healed: true`, and the
+  flow is a draft (`approved: null`). The path then continues deterministically. The cache is not
+  republished for the draft.
+- **On failure:** the old acts stay, the unhealed drift is written as above, `data.healFailure`
+  names why (`heal.gave_up`, `heal.destination_unobserved`, `heal.edge_budget`, or a proposal or
+  permission code), and the exit code is `1`.
+- A healed draft is not trusted by replaying it. The owner reviews it, then runs `journey approve`.
+
+### Bounds
+
+- Explore and replay each run in a contained worker under **one 180 s budget**. On expiry the
+  worker's whole process tree (browser, driver, model subprocess) is terminated; a cleanup not
+  observed to finish is reported as `replay.cleanup_uncertain`, never as success.
+- Each model call is also bounded by its route's `timeoutSeconds` (default 300 s), with the
+  subprocess tree killed on expiry. Replies are capped at 16 MiB.
+- Not observed on a Linux host: that a worker timeout also kills a native model subprocess there.
+
+### Observer versions these were proved with
+
+Driver protocol `graphhelm-journey-driver/1` (`.graphhelm/observers/journey_driver.mjs` must be
+byte-identical to the binary's copy, else `replay.observer_missing`), Node 22.22, `@playwright/test`
+1.63.0 with its Chromium, on Windows 11. The browser tests are opt-in:
+`GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> cargo test -p graphhelm-cli --test journey_replay_browser --test journey_explore_browser -- --ignored`.
+
+### Still open
+
+- Calibrating the 0.8 screen-identity threshold on two real apps (false merges and splits).
+- Rebinding the cache after an approved heal; a browser case for an edge broken mid-way through
+  several acts.
+- None of this is a generic JPD certification: a screenshot or a model's `done` is evidence of
+  what was observed, not proof of a business goal.
+
+Design: [`docs/specs/2026-10-06-journey-explore-design.md`](../specs/2026-10-06-journey-explore-design.md).
+Plan: [`docs/superpowers/plans/2026-10-07-journey-explore-phase-3.md`](../superpowers/plans/2026-10-07-journey-explore-phase-3.md).
 
 ## See also
 

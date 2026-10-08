@@ -21,6 +21,10 @@ const CACHE_SCHEMA: &str = "https://p50.dev/schemas/journey-replay-cache.schema.
 const FRAME: usize = 64 * 1024;
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024;
 const OP_BUDGET: Duration = Duration::from_secs(30);
+// How long a caller waits for OwnedChild::cleanup to report. Cleanup runs the process-tree
+// terminate first and only then its own one-second reap window, so this wait must outlast
+// both; an equal one-second wait raced the terminate and reported cleanup_uncertain.
+const CLEANUP_OBSERVE: Duration = Duration::from_secs(5);
 // The independent supervisor bounds waiting, including startup and the worker's
 // blocking storage/Git/record calls. Kill/reap gets a separate one-second observer.
 // OS scheduler failure and an inconclusive cleanup are reported uncertain, not success.
@@ -274,7 +278,7 @@ fn supervise_owned(
     // observer. No error path silently drops a live pipe-owning group.
     let status = owned
         .cleanup()
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(CLEANUP_OBSERVE)
         .map_err(|_| failure("replay.cleanup_uncertain", "/worker", 1))?
         .map_err(|()| failure("replay.cleanup_uncertain", "/worker", 1))?;
     result.map(|bytes| (status, bytes))
@@ -383,7 +387,7 @@ impl Driver {
         {
             owned
                 .cleanup()
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(CLEANUP_OBSERVE)
                 .map_err(|_| failure("replay.cleanup_uncertain", path, 1))?
                 .map_err(|()| failure("replay.cleanup_uncertain", path, 1))?;
         }
@@ -585,7 +589,7 @@ impl Driver {
         let owned = self.owned.take().unwrap();
         owned
             .cleanup()
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(CLEANUP_OBSERVE)
             .map_err(|_| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?
             .map_err(|()| failure("replay.cleanup_uncertain", "/observer/close/cleanup", 1))?;
         Ok(())

@@ -114,6 +114,21 @@ describe("foldTaskEvents slices (#460)", () => {
     expect(tasks[1].headSha).toBe("dddddddd");
   });
 
+  // gh-claude-2's BLOCK on a87a28ad: one lane claims two slices before opening either PR (the
+  // DELIVERY rule asks for exactly that). The second claim must not take over the first.
+  it("keeps two claims of one lane apart, and the first PR joins the first claim", () => {
+    const claim = (sequence: number, branch: string) =>
+      record(sequence, "task.claimed", "gh-claude-4", { ...issue, issue: 356, lane: "gh-claude-4", branch });
+    const tasks = foldTaskEvents([
+      claim(1, "issue-356-heal"), claim(2, "issue-356-explore"),
+      record(3, "task.pr_opened", "gh-claude-4", { ...issue, pr: 456, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" }),
+    ]);
+    expect(tasks.map((task) => [task.branch, task.pr, task.step]).sort()).toEqual([
+      ["issue-356-explore", null, "implement"],
+      ["issue-356-heal", 456, "review"],
+    ]);
+  });
+
   it("shows the second claim as its own slice before it has a PR", () => {
     const tasks = foldTaskEvents(records.slice(0, 4));
     expect(tasks.map((task) => [task.pr, task.step])).toEqual([[456, "review"], [null, "implement"]]);

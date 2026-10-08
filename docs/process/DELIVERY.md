@@ -58,6 +58,23 @@ only the surface the promise needs, prove with the smallest adequate observer. B
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
 body.
 
+**Which tests a change reaches** is computed, not guessed (#361):
+`python tools/reached-tests/reached_tests.py [--base origin/main] [--head HEAD]` reads the diff and
+the workspace graph (`cargo metadata --no-deps`, no build) and prints the commands. Its rules:
+- a changed integration-test file reaches only its own target, or its module in a test bundle;
+- `tests/support/` or a fixture reaches its package's tests;
+- a crate's source reaches that crate and every crate that depends on it;
+- a file a crate embeds (`include_str!`) reaches that crate, and an extension package reaches the
+  tests that read it at run time plus `graphhelm extension validate`;
+- Studio files reach `npx vitest related` for those files plus `tsc`, and a `tools/<tool>/` change
+  reaches that tool's own tests;
+- docs reach nothing.
+
+The fmt, clippy and workspace-guard lines below are included whenever Rust is reached. Run what it
+prints, in the slot, instead of the whole battery. A path no rule maps is listed as "not mapped"
+and is the author's to check by hand. When `graphhelm` is on PATH the Keel plan's class and proof
+are printed beside the commands.
+
 **Without a Runtime** (a cloud or CI session with no `.graphhelm/` and no Runtime to post to), the
 delivery still runs on the CLI alone: write the card in the PR body (`Promise:`, `Scope:`,
 `Proof:` lines), save the body to a file, and run
@@ -115,7 +132,9 @@ merged like any other, and the review says what was not observed.
   For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
   card names, on the head, and pastes its summary.
 - The reviewer **runs the tests the change reaches** on that head and names each command and its
-  result in the review. A review that does not run them is not a review.
+  result in the review. A review that does not run them is not a review. The reached set is what
+  `tools/reached-tests/reached_tests.py --base <merge base> --head <head>` prints (§3), plus
+  anything the reviewer judges it misses.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the
   review: `graphhelm --json keel check --diff <base>..<head> --card <card.json>`, where `<base>` is
   the merge base with `main` and the card is the one in the PR body saved as JSON

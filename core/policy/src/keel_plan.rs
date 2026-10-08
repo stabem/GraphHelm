@@ -107,7 +107,7 @@ fn is_code(path: &str) -> bool {
 /// Plainly prose (review of #405): only these are docs. Every other path that is no invariant, no
 /// screen and no source file (a policy like `keel.yaml`, a schema, a fixture, an unknown file) is
 /// not plainly docs, so the plan is ambiguous and takes the stricter class (spec §6).
-fn is_prose(path: &str) -> bool {
+pub fn is_prose(path: &str) -> bool {
     const PROSE: [&str; 4] = [".md", ".txt", ".rst", ".adoc"];
     PROSE
         .iter()

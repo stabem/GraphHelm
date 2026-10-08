@@ -804,3 +804,46 @@ fn keel_plan_treats_unclassified_non_prose_paths_as_ambiguous() {
     );
     assert_eq!(traced["data"]["plan"]["decidedBy"], "rules", "{traced}");
 }
+
+/// Review of #406 (coordinator decision): Jev may choose among the strict classes but never below
+/// the floor the paths set. A non-prose path (here `keel.yaml`) cannot become docs with proof
+/// `none`, whatever Jev answers; the clamp is recorded in `keel.plan`. Credible regression: a
+/// confident "docs" reply turning a policy edit into an unreviewed, unproven change. Cost: one
+/// temp repository, two CLI runs, no network.
+#[test]
+fn keel_plan_never_lets_jev_lower_a_non_prose_path_to_docs() {
+    let repo = repository(&[]);
+    let fixture = repo.path().join("jev.json");
+    let args = [
+        "--task",
+        "issue-406",
+        "--paths",
+        "extensions/builtin/graphhelm-development-contracts/policies/keel.yaml",
+        "--judge-fixture",
+        fixture.to_str().unwrap(),
+    ];
+    fs::write(&fixture, b"{\"answers\": {}}").unwrap();
+    let (_, first, _) = plan(repo.path(), &args);
+    let digest = first["data"]["plan"]["jev"]["requestSha256"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{first}"))
+        .to_owned();
+    let reply = serde_json::json!({"answers": {digest: {
+        "model": "jev-latest",
+        "answers": {"task_class": {"type": "choice", "choice": "docs",
+            "probabilities": {"docs": 0.99}, "confidence": 0.99}},
+        "usage": {"input_tokens": 1, "output_tokens": 1}
+    }}});
+    fs::write(&fixture, serde_json::to_vec(&reply).unwrap()).unwrap();
+    let (code, clamped, _) = plan(repo.path(), &args);
+    assert_eq!(code, 0, "{clamped}");
+    let record = &clamped["data"]["plan"];
+    assert_eq!(record["decidedBy"], "jev", "{record}");
+    assert_ne!(record["proof"], "none", "{record}");
+    assert_ne!(record["delegation"]["tier"], "small", "{record}");
+    assert_eq!(
+        record["jev"]["clamp"],
+        serde_json::json!({"from": "docs", "to": "code"}),
+        "the clamp is recorded: {record}"
+    );
+}

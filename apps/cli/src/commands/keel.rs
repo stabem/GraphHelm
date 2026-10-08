@@ -781,7 +781,18 @@ fn ask_jev(
     let threshold = f64::from(rules.jev_threshold_percent) / 100.0;
     match class {
         Some(class) if confidence >= threshold => {
-            keel_plan::decide(&planned, class.max(floor), "jev", Some(record), rules)
+            // Review of #406: Jev chooses among the strict classes, never below the floor the
+            // paths set. A path that is not plain prose cannot become docs with proof `none`.
+            let floor = if planned.paths.iter().any(|path| !keel_plan::is_prose(path)) {
+                floor.max(TaskClass::Code)
+            } else {
+                floor
+            };
+            let decided = class.max(floor);
+            if decided != class {
+                record["clamp"] = serde_json::json!({"from": choice, "to": decided});
+            }
+            keel_plan::decide(&planned, decided, "jev", Some(record), rules)
         }
         _ => keel_plan::decide(
             &planned,

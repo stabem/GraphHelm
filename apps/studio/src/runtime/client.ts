@@ -84,6 +84,7 @@ export const RUNTIME_READ_TIMEOUT_MS = 60_000;
 /** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
  * it at its own run budget (180 s), so the request waits longer than a read. */
 const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
+const RUNTIME_WATCH_TIMEOUT_MS = 15 * 60_000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
@@ -1912,6 +1913,19 @@ export class RuntimeClient {
   async closeLive(sessionId: string): Promise<{ sessionId: string; closed: boolean }> {
     const id = checkedId(sessionId, "sessionId");
     return this.#request<{ sessionId: string; closed: boolean }>({ method: "DELETE", path: `/v1/journeys/sessions/${encodeURIComponent(id)}` });
+  }
+
+  /** Watch a flow (#462): `POST /v1/journey-flows/{id}/watch`. A headed browser plays it on the
+   * owner's screen; the Runtime answers when the play ends, and the `mode: "watch"` row in
+   * `liveSessions()` carries the step being played meanwhile. Never proof; never approval. */
+  async watchFlow(flowId: string, path?: string): Promise<Record<string, unknown>> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<Record<string, unknown>>({
+      // A play (and the app it may start first) can outlast the live-act timeout; the step lit
+      // meanwhile comes from the sessions poll, so this wait only bounds a stuck Runtime.
+      method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/watch`, timeoutMs: RUNTIME_WATCH_TIMEOUT_MS,
+      body: path ? { path } : {},
+    });
   }
 
   /** The project's journey-flow sources for review (#353): `GET /v1/journey-flows`. */

@@ -579,6 +579,32 @@ describe("live team layout", () => {
     await userEvent.click(card);
     expect(screen.getByRole("dialog", { name: "Cart detail" })).toHaveTextContent("Captured in run demo-deploy (not the selected run)");
   });
+
+  // #465: one source of truth for which journey is on screen. The map below followed its own
+  // picker while the list above had another journey selected, and a draft showed proof labels
+  // ("Not captured yet", Open live) where the owner's only actions are Watch and Approve.
+  it("the journey map follows the list, has no picker of its own, and is not shown for a draft", async () => {
+    const step = (stepId: string) => ({ stepId, screen: { screenId: stepId, title: stepId, scopePaths: ["src"] }, capture: null, promises: [] });
+    const view = { head: "abc", journeys: [
+      { contractId: "checkout", title: "Checkout", arrows: [], steps: [step("cart")] },
+      { contractId: "paid", title: "Paid order", arrows: [], steps: [step("receipt")] },
+    ] };
+    const flowOf = (id: string, status: string, approvable: boolean) => ({ id, title: `${id} flow`, status, approvable, drift: [], findings: [],
+      approved: status === "approved" ? { revision: "a".repeat(40), digest: "sha256:b" } : null,
+      screens: [{ id: "s", url: "/", state: "stable" }], edges: [], paths: {} });
+    const journeyFlows = vi.fn(async () => ({ flows: [flowOf("checkout", "draft", true), flowOf("paid", "approved", false)] }));
+    await open(stubClient({ journeys: vi.fn(async () => view), journeyFlows }));
+    await userEvent.click(screen.getByRole("tab", { name: "Journey" }));
+    expect(await screen.findByRole("article", { name: "Journey checkout flow" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Journey" })).toBeNull();
+    expect(screen.queryByText("Not captured yet")).toBeNull();
+
+    await userEvent.click(within(screen.getByRole("list", { name: "Journeys" })).getByRole("button", { name: /^paid flow/ }));
+    const map = await screen.findByRole("region", { name: "Journey" });
+    expect(within(map).queryByRole("combobox")).toBeNull();
+    expect(within(map).getByRole("button", { name: "receipt, open detail" })).toBeInTheDocument();
+    expect(within(map).queryByRole("button", { name: "cart, open detail" })).toBeNull();
+  });
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */

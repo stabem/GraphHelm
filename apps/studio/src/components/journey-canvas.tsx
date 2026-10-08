@@ -37,6 +37,8 @@ export interface JourneyCanvasProps {
   opening?: Array<{ contractId: string; stepId: string }>;
   onOpenLive?: (contractId: string, stepId: string) => Promise<void>;
   onCloseLive?: (sessionId: string) => Promise<void>;
+  /** #465: the journey list above already chose the journey; no second picker here. */
+  pickerHidden?: boolean;
 }
 
 export const UNKNOWN_CAUSE: Record<CaptureUnknownCause, string> = {
@@ -184,7 +186,7 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
 
   return (
     <section className="journey-canvas" aria-label="Journey">
-      {view.journeys.length > 1 && (
+      {view.journeys.length > 1 && !props.pickerHidden && (
         <label className="journey-picker">Journey{" "}
           <select value={journey.contractId} onChange={(event) => { setDetail(null); onSelectContract(event.target.value); }}>
             {view.journeys.map((candidate) => {

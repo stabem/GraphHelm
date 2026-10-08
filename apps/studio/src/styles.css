@@ -2809,6 +2809,26 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .journey-flow-status { margin: 0; font-size: 0.85rem; color: var(--dim); }
 .journey-flow-approve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .journey-failure { margin: 0.5rem 0 0; font-size: 0.85rem; opacity: 0.85; overflow-wrap: anywhere; }
+/* #465: the owner's approval screen: a compact list of journeys, the chosen one as numbered steps
+   (Does / Sees), the step a Watch is playing lit, Watch and Approve side by side. */
+.journey-flow-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 2px 0 0; list-style: none; max-height: 168px; overflow-y: auto; flex: 0 0 auto; }
+.journey-flow-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: baseline; width: 100%; padding: 6px 10px; border: 1px solid var(--edge); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.journey-flow-row[aria-pressed="true"] { border-color: var(--signal); background: var(--signal-wash); }
+.journey-flow-row-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journey-flow-row-status, .journey-flow-row-steps { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.journey-flow-row[data-status="draft"] .journey-flow-row-status { color: var(--text); }
+.journey-flow-detail { outline: none; }
+.journey-flow-note { margin: 4px 0 0; font-size: 0.85rem; color: var(--dim); }
+.journey-flow-steps { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.journey-flow-step { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-sm); }
+.journey-flow-step[aria-current="step"] { border-color: var(--signal); background: var(--signal-wash); }
+.journey-flow-step-number { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-pill); border: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
+.journey-flow-step[aria-current="step"] .journey-flow-step-number { border-color: var(--signal); color: var(--text); }
+.journey-flow-step-text { display: grid; gap: 2px; font-size: 13px; }
+.journey-flow-watch { margin: 8px 0 0; font-size: 0.85rem; }
+.journey-flow-path + .journey-flow-path { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--edge); }
+.journey-flow-path-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.journey-flow-path-head h4 { margin: 0; font-size: 13px; }
 
 /* Tab panels preserve the canvas height without changing the column layout. */
 .scene > [role="tabpanel"] { height: 100%; min-height: 0; }
@@ -2819,7 +2839,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
    the canvas is never pushed thousands of pixels below the fold. */
 #studio-panel-journeys { display: flex; flex-direction: column; box-sizing: border-box; padding-bottom: var(--dock-reserve, 72px); }
 #studio-panel-journeys[hidden] { display: none; }
-#studio-panel-journeys > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 50%; overflow-y: auto; }
+#studio-panel-journeys > .journey-flows { flex: 0 1 auto; min-height: 0; max-height: 62%; overflow-y: auto; }
+/* #465: a draft has no proof map below; its journey takes the whole panel. */
+#studio-panel-journeys > .journey-flows:last-child { max-height: none; flex: 1 1 auto; }
 #studio-panel-journeys > .journey-canvas { flex: 1 1 auto; height: auto; }
 .cited-records { z-index: 20; }
 

@@ -47,7 +47,7 @@ export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
   return (
     <section className="task-graphs" aria-label="Tasks">
       {tasks.map((task) => (
-        <div key={task.taskId} className="task-graph" role="group" aria-label={title(task)}>
+        <div key={task.key} className="task-graph" role="group" aria-label={title(task)}>
           <div className="task-graph-head">
             {task.repoUrl !== null && task.issue !== null
               ? <a href={`${task.repoUrl}/issues/${task.issue}`} target="_blank" rel="noreferrer">{title(task)}</a>

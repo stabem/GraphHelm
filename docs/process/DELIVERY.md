@@ -158,7 +158,10 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 
-`taskId` is `issue-<N>` for the whole life of the task. `repo` is the GitHub `owner/name` (here
+`taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
+task with one slice per PR (#460): record `task.claimed` with the new slice's own branch before its
+`pr_opened`, and the Studio draws each slice as its own graph, so merging one slice never hides the
+next. `repo` is the GitHub `owner/name` (here
 `stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`.
 The Runtime refuses a `task.*` signal whose `source.id`, or whose `lane` / `reviewer` (on a
 verdict) / `merger`, is not the actor recording it (`GHCLI038_ACTOR_MISMATCH`).

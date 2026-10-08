@@ -143,8 +143,14 @@ guidance alone (paper, section 7).
 |---|---|
 | Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the task record when the change has a known observer and no expanded-route risk. Runtime- or security-affecting config follows the expanded route below and needs behavioral evidence. |
 | A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
+| User-visible: the scope touches a screen's `scopePaths` of a compiled journey | The three-line card naming the journeys touched (`journeys:`), and the journeys replayed green at the head (`graphhelm journey replay <id>`, captures fresh). No new unit test is asked for; one may be added when it names a defect the journey cannot observe. |
 | New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
-| The expanded route: persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow above. |
+| The expanded route: persistence, permissions, compatibility, security, external effects, runtime-affecting config, concurrency, destructive operations | The full card, the JPD flow above, **and a test that names the defect (Law 3), whether or not a journey also covers the change**. The invariant classes and their paths are in `keel.yaml` `invariants`; `keel check` reports `keel.invariant.<class>`. |
+
+Since `keel.yaml` 1.4.0 (#382) `keel check` reports, as signals only, `keel.journey.card_missing_journey`
+(a changed path touches a journey's screen the card does not name) and `keel.journey.replay_not_green`
+(a named journey's touched step has no clean capture taken at the head, or its flow records a drift
+there). They are not a gate until the first end-to-end replay on this repository has run.
 
 For example, changing a comment-only display label can use the direct route; changing a Runtime
 timeout or permission setting needs an observer of the resulting behavior, even if the diff is one

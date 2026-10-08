@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 41] = [
+const TOOLS: [ToolSpec; 42] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start). Minimal \
@@ -94,6 +94,16 @@ const TOOLS: [ToolSpec; 41] = [
                       fresh, stale (naming the changed files) or unknown (naming the cause), and \
                       the walked arrows between steps. Identical on CLI, HTTP and MCP. Read-only.",
         schema: optional_execution_schema,
+    },
+    ToolSpec {
+        name: "keel_plan",
+        description: "Plan one task under the shipped keel.yaml (POST /v1/keel/plan; \
+                      `graphhelm keel plan`): classifies its paths (invariant class, user-visible \
+                      screen, code, docs) and returns the graphhelm-task-plan-v1 record with the \
+                      review count, proof type, skills, delegation and shortest path to done. \
+                      Read-only. The briefing carries only a plan the owner \
+                      recorded (`graphhelm keel plan --events ...`).",
+        schema: keel_plan_schema,
     },
     ToolSpec {
         name: "workspace_list",
@@ -475,6 +485,17 @@ fn topology_schema() -> serde_json::Value {
             },
         }),
         &["file"],
+    )
+}
+
+fn keel_plan_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "task": {"type": "string"},
+            "paths": {"type": "array", "items": {"type": "string"}},
+            "promise": {"type": "string"}
+        }),
+        &["task", "paths"],
     )
 }
 
@@ -1538,6 +1559,20 @@ pub(crate) fn call(
                 None,
             )
         }),
+        "keel_plan" => {
+            let body = serde_json::json!({
+                "task": arguments.get("task").cloned().unwrap_or(serde_json::Value::Null),
+                "paths": arguments.get("paths").cloned().unwrap_or(serde_json::Value::Null),
+                "promise": arguments.get("promise").cloned().unwrap_or_else(|| "".into()),
+            });
+            Ok(api.request(
+                "POST",
+                &url::segment_path(&["v1", "keel", "plan"]),
+                Some(&body),
+                None,
+                None,
+            ))
+        }
         "workspace_list" => Ok(api.request(
             "GET",
             &url::segment_path(&["v1", "workspaces"]),

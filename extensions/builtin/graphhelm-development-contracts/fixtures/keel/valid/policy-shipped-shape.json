@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
+  "version": "1.5.0",
   "card": {
     "maxScopePaths": 12,
     "maxExportedSymbols": 8,
@@ -28,5 +28,55 @@
     "strikesPerRung": 2,
     "creditPerProvenPromise": 1,
     "windowNodes": 20
+  },
+  "journeyFirst": true,
+  "invariants": {
+    "security": [
+      "core/policy/",
+      "apps/cli/src/commands/serve/mod.rs",
+      "apps/cli/src/commands/mcp/tools.rs",
+      "core/events/src/key.rs"
+    ],
+    "persistence": [
+      "core/events/"
+    ],
+    "concurrency": [
+      "core/events/src/local.rs",
+      "apps/cli/src/commands/serve/"
+    ],
+    "destructive": [
+      "apps/cli/src/commands/workspace.rs"
+    ],
+    "compatibility": [
+      "schemas/",
+      "core/protocols/"
+    ]
+  },
+  "plan": {
+    "reviews": {
+      "docs": 1,
+      "code": 1,
+      "user_visible": 1,
+      "invariant": 1
+    },
+    "delegation": {
+      "docs": [
+        "small",
+        "low"
+      ],
+      "code": [
+        "standard",
+        "medium"
+      ],
+      "user_visible": [
+        "standard",
+        "medium"
+      ],
+      "invariant": [
+        "large",
+        "high"
+      ]
+    },
+    "jevThresholdPercent": 80
   }
 }

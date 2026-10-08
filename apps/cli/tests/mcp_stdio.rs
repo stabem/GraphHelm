@@ -597,13 +597,15 @@ fn tool_envelope(reply: &serde_json::Value) -> (bool, serde_json::Value) {
 /// would have been reported as naming one that "does not exist" -- the guard failing honest work
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
-const MCP_TOOL_NAMES: [&str; 41] = [
+const MCP_TOOL_NAMES: [&str; 42] = [
     "start",
     "list",
     "topology",
     "status",
     "briefing",
     "journeys",
+    // #382 phase B: the task planner, a read beside the project reads.
+    "keel_plan",
     // #360: the agent-workspace read and the owner-only sweep, beside the project reads.
     "workspace_list",
     "workspace_sweep",

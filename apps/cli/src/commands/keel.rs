@@ -7,6 +7,7 @@ use graphhelm_execution::{
     valid_journey_id,
 };
 use graphhelm_policy::keel::{self as policy_keel, Card, Finding, JourneyScreen, KeelPolicy};
+use graphhelm_policy::keel_plan;
 use graphhelm_policy::keel_prove::{self, ProveOptions};
 use graphhelm_protocols::Diagnostic;
 
@@ -175,8 +176,20 @@ pub(super) fn check(
         &policy,
     );
     let mut report = report;
+    let changed: Vec<String> = report
+        .changed_paths
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    if policy.journey_first {
+        report.findings.extend(missing_journeys(
+            repo,
+            card.as_ref().map(|(card, _)| card),
+            &changed,
+        ));
+    }
     if let Some((card, _)) = card.as_ref().filter(|(card, _)| !card.journeys.is_empty()) {
-        match journey_findings(repo, head, card, records.as_ref()) {
+        match journey_findings(repo, head, card, records.as_ref(), &changed) {
             Ok(findings) => report.findings.extend(findings),
             Err(outcome) => return *outcome,
         }
@@ -261,13 +274,82 @@ impl ScopeHistory for AtHead {
     }
 }
 
+/// Spec #382 §3, advisory: every compiled journey whose screen a changed path touches must be
+/// named in the card's `journeys`; one `keel.journey.card_missing_journey` per journey that is not
+/// (or per touched journey when there is no card), naming the touching path and step.
+fn missing_journeys(repo: &Path, card: Option<&Card>, changed: &[String]) -> Vec<Finding> {
+    let (contracts, _) = super::journeys::contracts(repo);
+    contracts
+        .iter()
+        .filter(|contract| card.is_none_or(|card| !card.journeys.contains(&contract.contract_id)))
+        .filter_map(|contract| {
+            contract.steps.iter().find_map(|step| {
+                let screen = step.screen.as_ref()?;
+                let path = changed.iter().find(|path| {
+                    screen
+                        .scope_paths
+                        .iter()
+                        .any(|scope| policy_keel::paths_touch(path, scope))
+                })?;
+                Some(Finding {
+                    rule: "keel.journey.card_missing_journey".to_owned(),
+                    path: Some(path.clone()),
+                    detail: format!(
+                        "{}/{}: this change touches the screen; name `{}` in the card's journeys \
+                         and replay it at the head",
+                        contract.contract_id, step.step_id, contract.contract_id
+                    ),
+                    blocking: false,
+                })
+            })
+        })
+        .collect()
+}
+
+/// The steps of flow `<id>.journey.yaml` that a recorded drift touches: the `from` and `to`
+/// screens of every edge a `drift` entry names. Empty when there is no flow or it does not parse.
+fn drifted_steps(repo: &Path, id: &str) -> Vec<(String, String)> {
+    let file = repo
+        .join(".graphhelm")
+        .join("journeys")
+        .join(format!("{id}.journey.yaml"));
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    let Ok(flow) = serde_yaml_ng::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let empty = Vec::new();
+    let edges = flow["edges"].as_array().unwrap_or(&empty);
+    flow["drift"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|drift| {
+            let edge_id = drift["edge"].as_str()?;
+            let edge = edges.iter().find(|edge| edge["id"] == edge_id)?;
+            let code = drift["code"].as_str().unwrap_or("drift");
+            Some(
+                [edge["from"].as_str(), edge["to"].as_str()]
+                    .into_iter()
+                    .flatten()
+                    .map(move |step| (step.to_owned(), format!("{code} on edge {edge_id}"))),
+            )
+        })
+        .flatten()
+        .collect()
+}
+
 /// Spec §6.3, advisory: the card's journeys folded at the range head; one warning per touched
 /// screen whose newest capture is not fresh there, and one per contract that cannot be read.
+/// Since 1.4.0 (#382) also one `keel.journey.replay_not_green` per step a changed path touches
+/// that has no capture taken at the head, or that a recorded drift of its flow touches.
 fn journey_findings(
     repo: &Path,
     head: &str,
     card: &Card,
     records: Option<&JourneyRecords>,
+    changed: &[String],
 ) -> Result<Vec<Finding>, Box<Outcome>> {
     let object = format!("{head}^{{commit}}");
     let head_sha = match Command::new("git")
@@ -326,15 +408,49 @@ fn journey_findings(
     };
     let history = AtHead {
         git: GitHistory::new(repo),
-        head: head_sha,
+        head: head_sha.clone(),
     };
     let view = fold_journeys(&contracts, &captures, &transitions, &history);
     let mut screens = Vec::new();
     for journey in view.journeys {
+        let drifted = drifted_steps(repo, &journey.contract_id);
         for step in journey.steps {
             let Some(screen) = step.screen else {
                 continue;
             };
+            let touching = changed.iter().find(|path| {
+                screen
+                    .scope_paths
+                    .iter()
+                    .any(|scope| policy_keel::paths_touch(path, scope))
+            });
+            if let Some(path) = touching {
+                let at_head = step
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.revision == head_sha && !capture.dirty);
+                let mut reasons: Vec<String> = drifted
+                    .iter()
+                    .filter(|(drifted_step, _)| *drifted_step == step.step_id)
+                    .map(|(_, reason)| reason.clone())
+                    .collect();
+                if !at_head {
+                    reasons.insert(0, "no clean capture taken at the head".to_owned());
+                }
+                if !reasons.is_empty() {
+                    findings.push(Finding {
+                        rule: "keel.journey.replay_not_green".to_owned(),
+                        path: Some(path.clone()),
+                        detail: format!(
+                            "{}/{}: {}; run `graphhelm journey replay` at the head",
+                            journey.contract_id,
+                            step.step_id,
+                            reasons.join("; ")
+                        ),
+                        blocking: false,
+                    });
+                }
+            }
             let not_fresh = match step.capture {
                 None => Some(if records.is_some() {
                     "no capture of this step was read".to_owned()
@@ -487,6 +603,129 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
         card.entry(key).or_insert(value);
     }
     serde_json::Value::Object(card)
+}
+
+/// The `keel.plan` signal kind and its description protocol (#382 phase B).
+pub(crate) const PLAN_KIND: &str = "keel.plan";
+const PLAN_COMMAND: &str = "keel.plan";
+
+/// The repository's HEAD commit, or an empty revision outside git.
+fn head_of(repo: &Path) -> String {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// The plan a task's paths get under the shipped policy, as JSON (`graphhelm-task-plan-v1`).
+pub(crate) fn plan_value(
+    repo: &Path,
+    task: &str,
+    paths: &[String],
+    promise: &str,
+) -> Result<serde_json::Value, Outcome> {
+    if !valid_journey_id(task) {
+        return Err(input_error(
+            "--task must match ^[a-z0-9][a-z0-9._-]{0,127}$ without `..`",
+            "/task",
+        ));
+    }
+    if let Some(bad) = paths.iter().position(|path| {
+        path.is_empty()
+            || path.starts_with('/')
+            || path.contains('\\')
+            || path.split('/').any(|part| part == "..")
+    }) {
+        return Err(input_error(
+            "paths are repository-relative, forward slashes, without `..`",
+            &format!("/paths/{bad}"),
+        ));
+    }
+    let policy: KeelPolicy = serde_yaml_ng::from_str(KEEL_POLICY).map_err(|error| {
+        Outcome::internal(
+            PLAN_COMMAND,
+            format!("shipped keel.yaml unreadable: {error}"),
+        )
+    })?;
+    let Some(rules) = policy.plan.clone() else {
+        return Err(Outcome::internal(
+            PLAN_COMMAND,
+            "shipped keel.yaml has no plan section",
+        ));
+    };
+    let (contracts, _) = super::journeys::contracts(repo);
+    let journeys = contracts
+        .into_iter()
+        .map(|contract| {
+            let scopes = contract
+                .steps
+                .into_iter()
+                .filter_map(|step| step.screen)
+                .flat_map(|screen| screen.scope_paths)
+                .collect();
+            (contract.contract_id, scopes)
+        })
+        .collect();
+    let input = keel_plan::PlanInput {
+        task_id: task.to_owned(),
+        revision: head_of(repo),
+        paths: paths.to_vec(),
+        promise: promise.to_owned(),
+        journeys,
+    };
+    serde_json::to_value(keel_plan::plan(&input, &policy, &rules))
+        .map_err(|error| Outcome::internal(PLAN_COMMAND, error.to_string()))
+}
+
+/// `graphhelm keel plan`: print the plan; with records, also record it as one `keel.plan` signal.
+pub fn plan(
+    repo: &Path,
+    task: &str,
+    paths: &[String],
+    promise: &str,
+    records: Option<JourneyRecords>,
+) -> Outcome {
+    let value = match plan_value(repo, task, paths, promise) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let Some(records) = records else {
+        return Outcome::success(PLAN_COMMAND, serde_json::json!({"plan": value}));
+    };
+    let signal = serde_json::json!({
+        "id": super::execution::idempotency_key("keel-plan").as_str(),
+        "type": PLAN_KIND,
+        "source": {"type": "test", "id": "keel-planner"},
+        "severity": "low",
+        "description": value.to_string(),
+        "evidence": [format!("graphhelm keel plan --task {task}")],
+        "emittedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    let keyring = super::execution::signal::SignalKeyring {
+        directory: records.keyring.clone(),
+        key_id: records.key_id.clone(),
+    };
+    match super::execution::signal::execute(
+        &records.events,
+        Some(&records.execution),
+        &serde_json::to_vec(&signal).expect("a JSON value serializes"),
+        None,
+        super::execution::owner_actor(),
+        super::execution::idempotency_key("keel-plan-recorded"),
+        Some(&keyring),
+        &[],
+    ) {
+        Ok(recorded) => Outcome::success(
+            PLAN_COMMAND,
+            serde_json::json!({"plan": value, "recorded": recorded}),
+        ),
+        Err(failure) => failure.into_outcome(PLAN_COMMAND),
+    }
 }
 
 #[cfg(test)]

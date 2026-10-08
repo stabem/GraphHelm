@@ -55,6 +55,11 @@ pub struct Briefing {
     pub next_step: NextStep,
     /// The last sequence this briefing was folded from: 0 for an empty history.
     pub as_of_sequence: u64,
+    /// A COPY of the newest `keel.plan` record on this execution (#382 phase B), never
+    /// recomputed. The fold cannot open sealed evidence, so this is `None` here and filled by the
+    /// surface that holds the keyring; absent when nothing planned the task or no keyring was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<serde_json::Value>,
 }
 
 /// One decision somebody made about this execution.
@@ -187,6 +192,7 @@ pub fn briefing_view(
         unevaluated: answer.silence_unevaluated().to_vec(),
         next_step: next_step(projection, answer),
         as_of_sequence: history.last().map_or(0, |event| event.sequence),
+        plan: None,
     }
 }
 

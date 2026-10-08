@@ -587,6 +587,84 @@ impl Harness {
     }
 }
 
+fn diagnostics_with(reply: &Value, code: &str) -> Vec<String> {
+    reply["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == code)
+        .map(|d| d["message"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// #382 phase A: a diff touching a journey's screen must name that journey in its card, and the
+/// journey must have been replayed green at the head. Credible regression: a screen change ships
+/// with a card that never mentions its journey, or with a stale capture, and nothing says so.
+/// Existing coverage only checks freshness for journeys the card already names. Cost: the shared
+/// temp project, a few CLI runs.
+#[test]
+fn keel_check_names_a_touched_journey_the_card_omits_and_a_replay_missing_at_the_head() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    std::fs::write(harness.project.join("web/cart/Line.tsx"), "line 2").unwrap();
+    git(&harness.project, &["commit", "-qam", "edit cart"]);
+
+    let card = harness.scratch.path().join("plain-card.json");
+    std::fs::write(
+        &card,
+        serde_json::to_vec(&json!({"promise": "the cart renders",
+            "scopePaths": ["web/cart/Line.tsx"], "proof": "npx playwright test"}))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = graphhelm()
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--repo",
+        ])
+        .arg(&harness.project)
+        .arg("--card")
+        .arg(&card)
+        .output()
+        .unwrap();
+    let reply = envelope(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a signal, not a gate: {reply}"
+    );
+    let missing = diagnostics_with(&reply, "keel.journey.card_missing_journey");
+    assert_eq!(missing.len(), 1, "{reply}");
+    assert!(missing[0].contains("cart/open-cart"), "{reply}");
+
+    let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        diagnostics_with(&reply, "keel.journey.card_missing_journey").is_empty(),
+        "{reply}"
+    );
+    let not_green = diagnostics_with(&reply, "keel.journey.replay_not_green");
+    assert_eq!(not_green.len(), 1, "{reply}");
+    assert!(
+        not_green[0].contains("no clean capture taken at the head"),
+        "{reply}"
+    );
+
+    harness.capture("open-cart", &[]);
+    let (code, reply) = harness.keel_check(&["web/cart/Line.tsx"], true);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        diagnostics_with(&reply, "keel.journey.replay_not_green").is_empty(),
+        "a clean capture at the head is green: {reply}"
+    );
+}
+
 fn journey_warnings(reply: &Value) -> Vec<String> {
     reply["diagnostics"]
         .as_array()
@@ -666,5 +744,65 @@ fn keel_check_warns_on_a_missing_contract_and_ignores_untouched_screens() {
             .iter()
             .any(|d| d["code"] == "keel.journey.contract_unreadable" && d["severity"] == "warning"),
         "{reply}"
+    );
+}
+
+/// #382 phase B: a plan recorded on a run is what the briefing hands the next agent. Credible
+/// regression: the briefing drops or recomputes the plan, or serves a plan it cannot open. No
+/// existing test reads a signal back into the briefing. Cost: the shared temp project, three CLI
+/// runs.
+#[test]
+fn a_recorded_keel_plan_reaches_the_briefing() {
+    if !git_available() {
+        return;
+    }
+    let harness = prepared();
+    let output = graphhelm()
+        .args([
+            "--json",
+            "keel",
+            "plan",
+            "--task",
+            "issue-7",
+            "--paths",
+            "web/cart/Line.tsx",
+            "--repo",
+        ])
+        .arg(&harness.project)
+        .arg("--events")
+        .arg(&harness.events)
+        .args(["--execution", RUN, "--keyring"])
+        .arg(&harness.keyring)
+        .args(["--key-id", KEY_ID])
+        .output()
+        .unwrap();
+    let recorded = envelope(&output);
+    assert_eq!(output.status.code(), Some(0), "{recorded}");
+    assert_eq!(
+        recorded["data"]["plan"]["journeys"],
+        json!(["cart"]),
+        "{recorded}"
+    );
+    assert_eq!(recorded["data"]["plan"]["proof"], "journey");
+
+    let briefing = |with_keyring: bool| {
+        let mut command = graphhelm();
+        command
+            .args(["--json", "execution", "briefing", "--events"])
+            .arg(&harness.events)
+            .args(["--execution", RUN]);
+        if with_keyring {
+            command
+                .arg("--keyring")
+                .arg(&harness.keyring)
+                .args(["--key-id", KEY_ID]);
+        }
+        envelope(&command.output().unwrap())
+    };
+    let read = briefing(true);
+    assert_eq!(read["data"]["plan"], recorded["data"]["plan"], "{read}");
+    assert!(
+        briefing(false)["data"].get("plan").is_none(),
+        "without a keyring the briefing omits the plan rather than guessing"
     );
 }

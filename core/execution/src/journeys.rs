@@ -76,7 +76,8 @@ pub struct StepAction {
     pub kind: String,
     /// The target's value: an accessible name, a label, visible text or a URL.
     pub target: String,
-    /// How the target is located (`accessible_name`, `label`, `url`, ...).
+    /// How the target is located (the contract target strategy: `accessible_name`, `label`,
+    /// `visible_text`, `stable_product_id`, ...).
     pub strategy: String,
 }
 

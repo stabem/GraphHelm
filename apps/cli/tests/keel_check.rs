@@ -100,7 +100,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["command"], "keel");
-    assert_eq!(reply["data"]["policyVersion"], "1.3.0");
+    assert_eq!(reply["data"]["policyVersion"], "1.5.0");
     assert_eq!(reply["data"]["cardDeclared"], true);
     assert_eq!(reply["data"]["surface"]["changedFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newPublicSymbols"], 1);
@@ -584,4 +584,151 @@ fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
         ),
         "{reply}"
     );
+}
+
+/// #382 phase A: a change under an invariant class of `keel.yaml` 1.4.0 is reported by class, so a
+/// reviewer sees that a journey cannot be its proof. Credible regression: the class lists or the
+/// prefix comparison stop matching and persistence changes ship with journey-only proof. Cost: one
+/// temp git repository and one CLI run.
+#[test]
+fn a_diff_under_an_invariant_path_reports_its_class() {
+    let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let (code, reply) = run(
+        repo.path(),
+        Some(&card(
+            scratch.path(),
+            &["src", "core/events/src/journal.rs"],
+        )),
+    );
+    assert_eq!(code, 0, "warnings never refuse: {reply}");
+    let found: Vec<&Value> = reply["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "keel.invariant.persistence")
+        .collect();
+    assert_eq!(found.len(), 1, "{reply}");
+    assert_eq!(found[0]["path"], "core/events/src/journal.rs");
+    assert_eq!(found[0]["severity"], "warning");
+    let (_, plain) = run(repo.path(), None);
+    assert!(
+        !codes(&plain).iter().any(|c| c == "keel.invariant.security"),
+        "an untouched class is silent: {plain}"
+    );
+}
+
+fn plan(repo: &Path, args: &[&str]) -> (i32, Value, Vec<u8>) {
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args(["--json", "keel", "plan", "--repo", repo.to_str().unwrap()])
+        .args(args)
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    (output.status.code().unwrap(), reply, output.stdout)
+}
+
+/// #382 phase B: the planner is deterministic and takes the highest class of the task's paths.
+/// Credible regressions: an order- or clock-dependent record (two runs disagree), a code path
+/// downgrading an invariant task, or a promise that names a permission while touching only docs
+/// being planned as docs. Cost: one temp git repository, four CLI runs, no network.
+#[test]
+fn keel_plan_is_deterministic_and_takes_the_highest_class() {
+    let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
+    let args = [
+        "--task",
+        "issue-382",
+        "--paths",
+        "src/lib.rs",
+        "core/events/src/journal.rs",
+    ];
+    let (code, first, first_bytes) = plan(repo.path(), &args);
+    assert_eq!(code, 0, "{first}");
+    let (_, _, second_bytes) = plan(repo.path(), &args);
+    assert_eq!(first_bytes, second_bytes, "two runs must be byte-identical");
+    let record = &first["data"]["plan"];
+    assert_eq!(record["schema"], "graphhelm-task-plan-v1");
+    assert_eq!(
+        record["classes"],
+        serde_json::json!(["code", "invariant"]),
+        "{record}"
+    );
+    assert_eq!(
+        record["invariantClasses"],
+        serde_json::json!(["persistence"])
+    );
+    assert_eq!(record["proof"], "tests");
+    assert_eq!(
+        record["reviews"], 1,
+        "one review for every class (owner decision)"
+    );
+    assert_eq!(
+        record["delegation"],
+        serde_json::json!({"kind": "implementer", "tier": "large", "effort": "high"})
+    );
+    assert_eq!(record["decidedBy"], "rules");
+    assert_eq!(record["revision"].as_str().unwrap().len(), 40, "{record}");
+
+    let (code, docs) = {
+        let (code, reply, _) = plan(
+            repo.path(),
+            &[
+                "--task",
+                "issue-1",
+                "--paths",
+                "docs/a.md",
+                "--promise",
+                "fix the permission check",
+            ],
+        );
+        (code, reply)
+    };
+    assert_eq!(code, 0, "{docs}");
+    assert_eq!(docs["data"]["plan"]["classes"], serde_json::json!(["docs"]));
+    assert_eq!(
+        docs["data"]["plan"]["decidedBy"], "fallback_strict",
+        "{docs}"
+    );
+    assert_eq!(docs["data"]["plan"]["delegation"]["tier"], "large");
+    let (code, bad, _) = plan(repo.path(), &["--task", "issue-1", "--paths", "../etc"]);
+    assert_eq!(code, 3, "{bad}");
+}
+
+/// Review of #405 (gh-claude-5's BLOCK): a path that is no invariant, no screen and no source file
+/// is not plainly docs. A policy (`keel.yaml`) or a schema was planned as docs with proof `none`
+/// and no keel; spec §6 calls that ambiguous and takes the stricter answer. Also: a promise word
+/// must start with an invariant stem, so `trace` never reads as `race`. Cost: one temp repository,
+/// three CLI runs.
+#[test]
+fn keel_plan_treats_unclassified_non_prose_paths_as_ambiguous() {
+    let repo = repository(&[]);
+    for path in [
+        "extensions/builtin/graphhelm-development-contracts/policies/keel.yaml",
+        "extensions/builtin/graphhelm-development-contracts/schemas/task-plan.schema.json",
+    ] {
+        let (code, reply, _) = plan(repo.path(), &["--task", "issue-405", "--paths", path]);
+        assert_eq!(code, 0, "{reply}");
+        let record = &reply["data"]["plan"];
+        assert_eq!(record["decidedBy"], "fallback_strict", "{path}: {record}");
+        assert_eq!(record["delegation"]["tier"], "large", "{path}: {record}");
+        assert_ne!(record["proof"], "none", "{path}: {record}");
+    }
+    let (_, prose, _) = plan(
+        repo.path(),
+        &["--task", "issue-405", "--paths", "docs/guide.md"],
+    );
+    assert_eq!(prose["data"]["plan"]["decidedBy"], "rules", "{prose}");
+    let (_, traced, _) = plan(
+        repo.path(),
+        &[
+            "--task",
+            "issue-405",
+            "--paths",
+            "src/lib.rs",
+            "--promise",
+            "add a trace line",
+        ],
+    );
+    assert_eq!(traced["data"]["plan"]["decidedBy"], "rules", "{traced}");
 }

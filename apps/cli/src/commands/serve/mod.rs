@@ -638,6 +638,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
         .route("/v1/journeys", get(routes::project_journeys))
+        .route("/v1/keel/plan", post(routes::keel_plan))
         .route("/v1/workspaces", get(routes::workspaces))
         .route("/v1/workspaces/sweep", post(routes::sweep_workspaces))
         .route("/v1/journey-flows", get(routes::journey_flows))

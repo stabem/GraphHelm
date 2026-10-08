@@ -97,6 +97,21 @@ class TaskRecordTest(unittest.TestCase):
         self.assertTrue(out.startswith("already recorded "), out)
         self.assertNotIn("REFUSED", out)
 
+    def test_a_second_reviewer_on_the_same_head_is_a_new_record(self):
+        # D: a reassignment on an unchanged head must be recorded, not read as a retry.
+        for reviewer in ("lane-b", "lane-c"):
+            code, out = self.run_step("--lane", "lane-a", "review_assigned", "--issue", "9", "--pr", "19",
+                                      "--head", HEAD_A, "--reviewer", reviewer)
+            self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
+
+    def test_a_changed_verdict_on_the_same_head_is_a_new_record(self):
+        # E: BLOCK, a body-only fix, then APPROVE by the same reviewer on the same head.
+        for verdict, comment in (("BLOCK", "c1"), ("APPROVE", "c2")):
+            code, out = self.run_step("--lane", "lane-b", "review_verdict", "--issue", "9", "--pr", "19",
+                                      "--head", HEAD_A, "--verdict", verdict,
+                                      "--comment-url", f"https://github.com/o/r/pull/19#{comment}")
+            self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
+
     def test_a_non_loopback_url_is_refused_before_the_token_is_read_or_sent(self):
         with self.assertRaises(SystemExit) as refused:
             self.run_step("--lane", "lane-a", "claimed", "--issue", "9", "--branch", "b", url="http://example.com:8793")

@@ -19,7 +19,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Team}, {role: button, name: Reset layout}, {role: button, name: Graph file}, {role: heading, name: Steps without a bot}, {role: button, name: Details}]
-    scope: [apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/components/rail.tsx, apps/studio/src/components/team-canvas.tsx, apps/studio/src/components/right-panel.tsx]
 edges:
   - id: run.details
     from: run

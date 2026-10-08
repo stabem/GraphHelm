@@ -37,7 +37,7 @@ screens:
     url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Canvas}, {role: region, name: Team}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts, apps/studio/src/runtime/client.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/legality.ts]
 edges:
   - id: actions.cancel
     from: actions

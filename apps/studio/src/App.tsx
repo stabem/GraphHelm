@@ -87,6 +87,7 @@ import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
 import type { JourneyFlowsView, JourneysView, LiveSession } from "./runtime/types";
 import { JourneyFlows } from "./components/journey-flows";
+import { SaidLinks, type SaidLinkContext } from "./components/said";
 import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type QuestionItem, type StepItem } from "./runtime/needs-you";
@@ -2058,6 +2059,13 @@ export default function App({
   const botNameOf = useCallback((id: string) => botNames[id] ?? id, [botNames]);
   // #393: one thread per task, opened by the run's task.* records.
   const runTasks = taskGraphs?.executionId === selected ? taskGraphs.tasks : null;
+  // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
+  // records) and a journey id it names opens the Journey tab on that journey.
+  const saidLinks = useMemo<SaidLinkContext>(() => ({
+    repoUrl: runTasks?.find((task) => task.repoUrl !== null)?.repoUrl ?? null,
+    journeyIds: new Set([...(flowsRead.view?.flows.map((flow) => flow.id) ?? []), ...(journeysView?.journeys.map((journey) => journey.contractId) ?? [])]),
+    onOpenJourney: (journeyId: string) => { setJourneyContract(journeyId); setJourneyDetail(null); setCanvasTab("journey"); },
+  }), [runTasks, flowsRead.view, journeysView]);
   const threads = useMemo(() => chatThreads(workMessages, team.bots, OPERATOR_ACTOR.id, runTasks ?? [], clock),
     [workMessages, team, runTasks, clock]);
   const [thread, setThread] = useState(EVERYONE);
@@ -2560,6 +2568,7 @@ export default function App({
   };
 
   return (
+    <SaidLinks.Provider value={saidLinks}>
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
@@ -3445,5 +3454,6 @@ export default function App({
         )}
       </div>
     </div>
+    </SaidLinks.Provider>
   );
 }

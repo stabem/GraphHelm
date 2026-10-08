@@ -24,6 +24,7 @@ import type { ReplySuggestion } from "../runtime/types";
 import type { Bot } from "../runtime/team";
 import { EVERYONE, parseMention, type ChatThread } from "../runtime/threads";
 import { ago, hueOf } from "./format";
+import { SaidText } from "./said";
 
 export interface ChatColumnProps {
   threads: ChatThread[];
@@ -231,7 +232,7 @@ export function ChatColumn(props: ChatColumnProps) {
               <span className="chat-avatar" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
               <div>
                 <p className="chat-meta"><strong>{name}</strong>{message.to !== null && <> → {props.names[message.to] ?? (message.to === "studio-operator" ? "you" : message.to)}</>} · {ago(message.at)}</p>
-                <p className="chat-text">{message.text}</p>
+                <div className="chat-text said-body"><SaidText text={message.text} author={message.sender} /></div>
               </div>
             </li>
           );

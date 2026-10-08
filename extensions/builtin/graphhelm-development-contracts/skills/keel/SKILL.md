@@ -34,7 +34,8 @@ execution, as `keel.card` and `keel.proof` signals threaded by `replyTo`; outsid
 
 When lanes coordinate through an execution, the step that writes an identity line also records its
 `task.*` signal (`task.claimed`, `task.pr_opened`, `task.review_assigned`, `task.review_verdict`,
-`task.merged`), with your own actor (`GRAPHHELM_ACTOR`) as `source.id`. The document shape is
+`task.merged`), signed as your own lane; one command per step:
+`python tools/task-record/task_record.py --lane <you> <step> --issue <N> ...` (GraphHelm checkout). The document shape is
 `schemas/task-event.schema.json` in this package; the steps are in `docs/process/DELIVERY.md`,
 "Task records". The Runtime refuses a task record signed by another actor.
 

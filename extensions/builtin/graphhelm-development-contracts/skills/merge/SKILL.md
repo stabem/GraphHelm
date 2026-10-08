@@ -10,11 +10,9 @@ Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approvin
 ## Emits and reads
 
 - Reads: the approval comment (its head sha), the PR body and commit messages.
-- Emits: the squash merge, and the record `task.merged` (`pr`, `mergeSha`, `closes`, `merger`)
-  after reading what landed. Record it as a signal whose `type` is the kind and whose `description` is one
-  `graphhelm-task-event-v1` document, with your own actor (`GRAPHHELM_ACTOR=<lane>`): the
-  Runtime refuses a lane that is not the recorder (`GHCLI038_ACTOR_MISMATCH`). Fields and
-  doors: `docs/process/DELIVERY.md` "Task records".
+- Emits: the squash merge, and the record `task.merged` after reading what landed, signed as
+  your own lane: `python tools/task-record/task_record.py --lane <you> merged --issue <N> --pr <P> --merge-sha <sha> [--closes <N>...]`
+  (from a GraphHelm checkout; token and defaults: `docs/process/DELIVERY.md` "Task records").
 
 ## Method
 

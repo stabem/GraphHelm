@@ -441,3 +441,45 @@ fn discover_and_token_file_together_are_refused() {
         .unwrap();
     assert!(!output.status.success());
 }
+
+/// #380: discovery hands an MCP session the Runtime's agent session token, never the owner
+/// token. Observed by breaking the owner token file after `serve` has read it: a bridge that
+/// still discovers the owner token cannot authenticate, one that discovers the agent token can.
+#[test]
+fn project_discovery_hands_out_the_agent_token_not_the_owner_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join("registry");
+    let project = dir.path().join("project");
+    let events = project.join(".graphhelm").join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let port = free_port();
+    let _runtime = serve_with_project(&events, port, &registry, Some(&project));
+    assert!(
+        events.with_extension("agent.token").is_file(),
+        "serve mints the agent session token beside the owner token"
+    );
+    std::fs::write(events.with_extension("token"), "not-a-token").unwrap();
+
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let reply = bridge.list();
+    assert!(
+        authorized(&reply),
+        "discovery must use the agent token: {reply}"
+    );
+}
+
+/// #380: an owner-typed MCP session is never discovered; it names the owner token explicitly.
+#[test]
+fn discover_with_an_owner_actor_type_is_refused() {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["mcp", "--discover", "--actor", "a", "--actor-type", "owner"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("--token-file"),
+        "the refusal names the owner door: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}

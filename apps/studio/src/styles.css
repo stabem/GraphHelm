@@ -2832,3 +2832,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .jev-absent-note { margin: 4px 0; font-size: 12px; color: var(--dim); }
 .chat-agent-filter { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); padding: 4px 12px; }
 .chat-tab-needs { color: var(--signal); font-weight: 600; }
+
+/* #409: Open live at a step, and the chip the Runtime's session list reports for it. */
+.journey-live { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.journey-live-open { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--edge); background: var(--surface); color: var(--text); cursor: pointer; }
+.journey-live-chip { font-size: 12px; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--edge); color: var(--dim); overflow-wrap: anywhere; }
+.journey-live-chip[data-state="opening"] { border-style: dashed; }
+.journey-live-chip[data-state="pass"] { color: var(--live); border-color: var(--live); }
+.journey-live-chip[data-state="fail"], .journey-live-chip[data-state="drift"] { color: var(--danger); border-color: var(--danger); }
+.journey-live-detail { display: grid; gap: 6px; font-size: 13px; }
+.journey-live-error { color: var(--danger); font-size: 12px; }

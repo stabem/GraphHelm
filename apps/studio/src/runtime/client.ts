@@ -39,6 +39,8 @@ import type {
   RecordedActor,
   RuntimeEvent,
   WireActorType,
+  LiveAct,
+  LiveSessionsView,
 } from "./types";
 
 /** The actor id the human interface records. */
@@ -79,6 +81,9 @@ const REPLY_SUGGESTIONS_REQUEST_TIMEOUT_MS = 120_000;
  * Runtime reopen and re-verify the project's whole journal, so on a large project they take
  * longer than the ordinary budget: 10s left a real run (2026-10-05) unopenable forever. */
 export const RUNTIME_READ_TIMEOUT_MS = 60_000;
+/** A live open replays cached acts in a real browser before it answers (#409): the Runtime bounds
+ * it at its own run budget (180 s), so the request waits longer than a read. */
+const RUNTIME_LIVE_TIMEOUT_MS = 200_000;
 
 /** An identifier bound the same way the Runtime bounds an `OpaqueId`. */
 const MAX_ID_LENGTH = 128;
@@ -317,7 +322,7 @@ export interface MutationOptions {
 }
 
 interface RequestOptions {
-  method: "GET" | "POST" | "PUT";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   body?: unknown;
   headers?: Record<string, string>;
@@ -362,6 +367,16 @@ function stableEmittedAt(idempotencyKey: string): string {
 
 /** Refuses an id the Runtime would refuse anyway, before it costs a request - and before it is
  * interpolated into a path. */
+/** A journey contract, flow or step id (#409): the journey id rule of `core/execution/src/journeys.rs`
+ * (`^[a-z0-9][a-z0-9._-]{0,127}$`, no `..`), narrower than an opaque id so a path can never be
+ * spelled into a route. */
+function checkedJourneyId(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(value) || value.includes("..")) {
+    throw new RuntimeError(`${field} is not a journey id.`, 0, []);
+  }
+  return value;
+}
+
 function checkedId(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LENGTH) {
     throw new RuntimeError(`${field} must be a non-empty identifier of at most ${MAX_ID_LENGTH} characters.`, 0, []);
@@ -1867,6 +1882,36 @@ export class RuntimeClient {
       path: `/v1/executions/${encodeURIComponent(id)}/journeys`,
       timeoutMs: RUNTIME_READ_TIMEOUT_MS,
     });
+  }
+
+  /** The live journey sessions the Runtime holds (#409, phase C #398): `GET /v1/journeys/sessions`.
+   * The Journey tab's chip is read from this list, never from an open reply. */
+  async liveSessions(): Promise<LiveSessionsView> {
+    return this.#request<LiveSessionsView>({ method: "GET", path: "/v1/journeys/sessions", timeoutMs: RUNTIME_READ_TIMEOUT_MS });
+  }
+
+  /** Open a journey live at a step (#409): `POST /v1/journeys/{contractId}/open`, the same path as
+   * `graphhelm journey open`. Synchronous on the Runtime: a drift or a failed expectation comes
+   * back as a refusal with the Runtime's own message while the browser stays open. */
+  async openLive(contractId: string, options: { stepId: string; path?: string; executionId?: string }): Promise<Record<string, unknown>> {
+    const id = checkedJourneyId(contractId, "contractId");
+    const stepId = checkedJourneyId(options.stepId, "stepId");
+    return this.#request<Record<string, unknown>>({
+      method: "POST", path: `/v1/journeys/${encodeURIComponent(id)}/open`, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS,
+      body: { stepId, ...(options.path ? { path: options.path } : {}), ...(options.executionId ? { executionId: checkedId(options.executionId, "executionId") } : {}) },
+    });
+  }
+
+  /** One act into a live session (#409): `POST /v1/journeys/sessions/{id}/act`. */
+  async actLive(sessionId: string, act: LiveAct): Promise<Record<string, unknown>> {
+    const id = checkedId(sessionId, "sessionId");
+    return this.#request<Record<string, unknown>>({ method: "POST", path: `/v1/journeys/sessions/${encodeURIComponent(id)}/act`, body: act, timeoutMs: RUNTIME_LIVE_TIMEOUT_MS });
+  }
+
+  /** Close a live session (#409): `DELETE /v1/journeys/sessions/{id}`. */
+  async closeLive(sessionId: string): Promise<{ sessionId: string; closed: boolean }> {
+    const id = checkedId(sessionId, "sessionId");
+    return this.#request<{ sessionId: string; closed: boolean }>({ method: "DELETE", path: `/v1/journeys/sessions/${encodeURIComponent(id)}` });
   }
 
   /** The project's journey-flow sources for review (#353): `GET /v1/journey-flows`. */

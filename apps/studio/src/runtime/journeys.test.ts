@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CaptureView, JourneyView, RuntimeEvent } from "./types";
-import { beforeAfterPairs, captureAge, captureDocuments, journeySummary } from "./journeys";
+import type { CaptureView, JourneyView, LiveSession, RuntimeEvent } from "./types";
+import { beforeAfterPairs, captureAge, captureDocuments, journeySummary, liveChipFor } from "./journeys";
 
 function capture(over: Partial<CaptureView>): CaptureView {
   return { signalId: "s", sequence: 1, imageEvidenceId: "img", revision: "abc", dirty: false, viewport: { width: 1, height: 1 },
@@ -73,5 +73,33 @@ describe("beforeAfterPairs", () => {
     const pairs = beforeAfterPairs(docs);
     expect(pairs.map((p) => [p.stepId, p.pr, p.before.sequence, p.after.sequence])).toEqual([["pay", 8, 4, 5], ["cart", 7, 2, 3]]);
     expect(pairs[0]).toMatchObject({ contractId: "checkout", observer: "kit-1", actorId: "kit-1" });
+  });
+});
+
+/* #409 (journey-first spec §5 point 5, §9 row D): the Journey tab's live chip is read from the
+ * Runtime's session list, never from the Open live click. These cells catch a chip that trusts the
+ * click, one that shows another step's session, or a capture reader that drops `phase: live`
+ * (phase C records one per live visit). Cost: pure functions, milliseconds. */
+describe("live sessions on the Journey tab", () => {
+  const session = (over: Partial<LiveSession>): LiveSession => ({ sessionId: "s-1", contractId: "checkout", flowId: "checkout", path: "main",
+    stepId: "pay", state: "pass", code: null, at: "pay", screen: null, since: "2026-10-08T03:00:00Z", lastActAt: null, expiresAt: null, ...over });
+
+  it("finds the newest session at a step and names its state, code and place", () => {
+    const sessions = [session({ sessionId: "old", since: "2026-10-08T02:00:00Z", state: "fail", code: "driver.expectation_failed" }),
+      session({ sessionId: "new", state: "drift", code: "drift.locator_missing", at: "cart.checkout/0" })];
+    expect(liveChipFor("checkout", "pay", sessions)).toEqual({ sessionId: "new", state: "drift", label: "drift at cart.checkout/0", code: "drift.locator_missing" });
+    expect(liveChipFor("checkout", "cart", sessions)).toBeNull();
+    expect(liveChipFor("other", "pay", sessions)).toBeNull();
+  });
+
+  it("labels pass, fail and unknown as the owner reads them", () => {
+    expect(liveChipFor("checkout", "pay", [session({ state: "pass" })])?.label).toBe("at step · pass");
+    expect(liveChipFor("checkout", "pay", [session({ state: "fail", code: "driver.expectation_failed" })])?.label).toBe("at step · fail · driver.expectation_failed");
+    expect(liveChipFor("checkout", "pay", [session({ state: "unknown", code: null })])?.label).toBe("at step · unknown");
+  });
+
+  it("keeps a capture recorded with phase live (phase C) instead of dropping it", () => {
+    const docs = captureDocuments([cap(1)], envs({ 1: doc({ phase: "live" }) }));
+    expect(docs.map((d) => d.phase)).toEqual(["live"]);
   });
 });

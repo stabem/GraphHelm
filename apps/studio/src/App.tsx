@@ -85,7 +85,7 @@ import { HandoverCard } from "./components/handover-card";
 import { RightPanel } from "./components/right-panel";
 import { JourneyCanvas } from "./components/journey-canvas";
 import { beforeAfterPairs, captureDocuments, type BeforeAfterPair } from "./runtime/journeys";
-import type { JourneyFlowsView, JourneysView } from "./runtime/types";
+import type { JourneyFlowsView, JourneysView, LiveSession } from "./runtime/types";
 import { JourneyFlows } from "./components/journey-flows";
 import { ChatColumn, NEEDS_YOU } from "./components/chat-column";
 import { botKeyOf, teamLinks, teamModel } from "./runtime/team";
@@ -2061,6 +2061,11 @@ export default function App({
   // where the cards now live (spec §8); otherwise on Everyone.
   const [threadChosen, setThreadChosen] = useState(false);
   useEffect(() => { setThread(EVERYONE); setThreadOpened({}); setThreadChosen(false); }, [selected]);
+  // #410: the landing is real thread state, so unread tracking marks the thread actually shown.
+  const needsCount = needs.items.length;
+  useEffect(() => {
+    if (!threadChosen && thread === EVERYONE && needsCount > 0) setThread(NEEDS_YOU);
+  }, [threadChosen, thread, needsCount]);
   useEffect(() => {
     const newest = threads.find((candidate) => candidate.key === thread)?.messages.at(-1)?.sequence ?? 0;
     setThreadOpened((current) => current[thread] === newest ? current : { ...current, [thread]: newest });
@@ -2077,6 +2082,37 @@ export default function App({
   const nativeKeys = useMemo(() => new Set(Object.keys(nativePersonaLinks)), [nativePersonaLinks]);
 
   const [canvasTab, setCanvasTab] = useState<"team" | "journey">("team");
+  // #409: the live sessions the Runtime holds, read on every tick while the Journey tab is open;
+  // the chip on a card is read from this list, never from the Open live click. `null` until the
+  // Runtime answered once (an older Runtime without the route keeps the controls hidden).
+  const [liveSessions, setLiveSessions] = useState<LiveSession[] | null>(null);
+  const [liveOpening, setLiveOpening] = useState<Array<{ contractId: string; stepId: string }>>([]);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client === null || !connected || canvasTab !== "journey") return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => client.liveSessions()).then((view) => {
+      if (!cancelled) setLiveSessions(view.sessions);
+    }, () => { /* no live route, or a refused read: the controls stay as they were */ });
+    return () => { cancelled = true; };
+  }, [connected, canvasTab, clock, lastJpdSequence, liveOpening]);
+  const openLive = useCallback(async (contractId: string, stepId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected.");
+    const key = { contractId, stepId };
+    setLiveOpening((current) => [...current, key]);
+    try {
+      await client.openLive(contractId, { stepId, ...(selected === "" ? {} : { executionId: selected }) });
+    } finally {
+      setLiveOpening((current) => current.filter((entry) => entry.contractId !== contractId || entry.stepId !== stepId));
+    }
+  }, [selected]);
+  const closeLive = useCallback(async (sessionId: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected.");
+    await client.closeLive(sessionId);
+    setLiveSessions((current) => current === null ? current : current.filter((session) => session.sessionId !== sessionId));
+  }, []);
   const [mobileTab, setMobileTab] = useState<"chat" | "team" | "journeys">("team");
   const [graphFileOpen, setGraphFileOpen] = useState(false);
   const [answering, setAnswering] = useState<{ asker: string; signalId: string | null; task?: string | null } | null>(null);
@@ -2758,7 +2794,7 @@ export default function App({
               ))}
             </div>
             <ChatColumn
-              threads={threadsWithAnswer} selected={!threadChosen && thread === EVERYONE && needs.items.length > 0 ? NEEDS_YOU : thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
+              threads={threadsWithAnswer} selected={thread} onSelect={(key) => { setThread(key); setThreadChosen(true); setAnswering(null); setHighlight(null); }} unread={unread}
               bots={team.bots} names={botNames} openingCount={openingCount}
               cardCount={needs.items.length}
               cards={<QuestionCards items={needs.items} names={botNames} busy={busy || saying === "chat"}
@@ -2906,7 +2942,8 @@ export default function App({
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}
                 executionId={selected}
                 events={eventList} botName={botNameOf} beforeAfter={beforeAfter} onOpenRecords={openRecords}
-                detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail} />
+                detailStepId={journeyDetail} onDetailStepChange={setJourneyDetail}
+                {...(liveSessions === null ? {} : { liveSessions, opening: liveOpening, onOpenLive: openLive, onCloseLive: closeLive })} />
             )}
             </div>
             {citedRecords !== null && citedRecords.executionId === selected && (

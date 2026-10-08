@@ -6,8 +6,8 @@
 import { useState } from "react";
 
 import type { BeforeAfterPair } from "../runtime/journeys";
-import { captureAge } from "../runtime/journeys";
-import type { ArrowView, CaptureUnknownCause, CaptureView, JourneysView, RuntimeEvent, StepAction, StepView } from "../runtime/types";
+import { captureAge, liveChipFor } from "../runtime/journeys";
+import type { ArrowView, CaptureUnknownCause, CaptureView, JourneysView, LiveSession, RuntimeEvent, StepAction, StepView } from "../runtime/types";
 import { ago } from "./format";
 import { useImageUrl } from "./use-image-url";
 
@@ -30,6 +30,13 @@ export interface JourneyCanvasProps {
   /** Optional control of the open detail (the right panel's before/after rows open one). */
   detailStepId?: string | null;
   onDetailStepChange?: (stepId: string | null) => void;
+  /** #409: the Runtime's live sessions (`GET /v1/journeys/sessions`); the chip on a card is read
+   * from here, never from the Open live click. Absent means the Runtime has no live route yet. */
+  liveSessions?: LiveSession[];
+  /** Steps whose open request is still pending: the card says "opening" until the list answers. */
+  opening?: Array<{ contractId: string; stepId: string }>;
+  onOpenLive?: (contractId: string, stepId: string) => Promise<void>;
+  onCloseLive?: (sessionId: string) => Promise<void>;
 }
 
 export const UNKNOWN_CAUSE: Record<CaptureUnknownCause, string> = {
@@ -113,6 +120,45 @@ function Arrow({ arrow, next }: { arrow: ArrowView | undefined; next: StepView }
   );
 }
 
+/** #409 (spec §5 point 5): Open live on a step, and the chip the session list reports for it. The
+ * chip never follows the click: a pending request shows "opening", and the state comes only from
+ * `liveSessions`, so a session that fails, drifts or closes is shown as the Runtime says. */
+function LiveControls({ contractId, step, sessions, opening, onOpenLive }: { contractId: string; step: StepView; sessions: LiveSession[];
+  opening: Array<{ contractId: string; stepId: string }>; onOpenLive: (contractId: string, stepId: string) => Promise<void> }) {
+  const [error, setError] = useState<string | null>(null);
+  const chip = liveChipFor(contractId, step.stepId, sessions);
+  const pending = opening.some((entry) => entry.contractId === contractId && entry.stepId === step.stepId);
+  const open = () => {
+    setError(null);
+    onOpenLive(contractId, step.stepId).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
+  return (
+    <div className="journey-live">
+      <button type="button" className="journey-live-open" aria-label={`Open live at ${titleOf(step)}`} disabled={pending} onClick={open}>Open live</button>
+      {(pending || chip !== null) && (
+        <span className="journey-live-chip" role="status" aria-label={`Live session at ${titleOf(step)}`} data-state={pending && chip === null ? "opening" : chip?.state}>
+          {pending && chip === null ? "opening" : `${chip?.label}${chip?.state === "drift" && chip.code ? ` · ${chip.code}` : ""}`}
+        </span>
+      )}
+      {error !== null && <p className="journey-live-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+function LiveDetail({ chip, session, onCloseLive }: { chip: NonNullable<ReturnType<typeof liveChipFor>>; session: LiveSession | undefined; onCloseLive: (sessionId: string) => Promise<void> }) {
+  const [closing, setClosing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <section className="journey-live-detail" aria-label="Live session">
+      <p><strong>Live session</strong> · {chip.label}{session?.at && chip.state !== "drift" ? ` · at ${session.at}` : ""}{session?.since ? ` · since ${ago(session.since)}` : ""}{session?.lastActAt ? ` · last act ${ago(session.lastActAt)}` : ""}</p>
+      <button type="button" disabled={closing} onClick={() => { setClosing(true); setError(null); onCloseLive(chip.sessionId).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setClosing(false)); }}>
+        {closing ? "Closing…" : "Close live session"}
+      </button>
+      {error !== null && <p className="journey-live-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 export function JourneyCanvas(props: JourneyCanvasProps) {
   const { view, contractId, onSelectContract, loadImage, events, botName, beforeAfter, onOpenRecords } = props;
   const [ownDetail, setOwnDetail] = useState<string | null>(null);
@@ -169,6 +215,9 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
                 )}
                 {capture !== null && <Freshness capture={capture} />}
               </button>
+              {props.onOpenLive !== undefined && (
+                <LiveControls contractId={journey.contractId} step={step} sessions={props.liveSessions ?? []} opening={props.opening ?? []} onOpenLive={props.onOpenLive} />
+              )}
               {next !== undefined && <Arrow arrow={arrow} next={next} />}
             </li>
           );
@@ -187,6 +236,9 @@ export function JourneyCanvas(props: JourneyCanvasProps) {
             <p className="journey-source">Captured in run <code>{detailCapture.executionId}</code>{fromOtherRun(detailCapture) ? " (not the selected run)" : ""}</p>
           )}
           {detailCapture !== null && <Freshness capture={detailCapture} />}
+          {props.onCloseLive !== undefined && liveChipFor(journey.contractId, detail.stepId, props.liveSessions ?? []) !== null && (
+            <LiveDetail chip={liveChipFor(journey.contractId, detail.stepId, props.liveSessions ?? [])!} session={(props.liveSessions ?? []).find((candidate) => candidate.sessionId === liveChipFor(journey.contractId, detail.stepId, props.liveSessions ?? [])!.sessionId)} onCloseLive={props.onCloseLive} />
+          )}
           {detailCapture?.freshness === "stale" && detailCapture.changedFiles.length > 0 && (
             <ul className="journey-files" aria-label="Changed files">
               {detailCapture.changedFiles.map((file) => <li key={file}>{file}</li>)}

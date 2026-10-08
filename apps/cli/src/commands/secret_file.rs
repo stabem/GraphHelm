@@ -87,6 +87,28 @@ pub(crate) fn ensure_token(events: &Path) -> Result<(Provision, String), SecretF
     ensure(&token_path(events), "bearer token")
 }
 
+/// The agent session token beside an owner token file: `events.token` → `events.agent.token`
+/// (#380). Derived from the owner token's path so a discovery record, which names only that
+/// path, locates both.
+pub(crate) fn agent_token_beside(owner_token: &Path) -> PathBuf {
+    let mut name = owner_token.file_stem().map_or_else(
+        || std::ffi::OsString::from("events"),
+        std::ffi::OsStr::to_os_string,
+    );
+    name.push(".agent");
+    name.push(TOKEN_SUFFIX);
+    owner_token.with_file_name(name)
+}
+
+/// Creates the agent session token beside `events` on first use and validates it thereafter.
+/// It authenticates agent sessions and is never accepted where the owner token is required.
+pub(crate) fn ensure_agent_token(events: &Path) -> Result<(Provision, String), SecretFileError> {
+    ensure(
+        &agent_token_beside(&token_path(events)),
+        "agent session token",
+    )
+}
+
 /// Creates the file at `path` with a fresh secret if it does not exist, then reads and validates
 /// whatever is there. `what` names the file's role in every diagnostic (`bearer token`,
 /// `sealing key`).

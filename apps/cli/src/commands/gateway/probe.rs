@@ -32,6 +32,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 struct Check {
     name: &'static str,
     ok: bool,
+    /// The configured executable path when the spawn failed because it does not exist (#370).
+    missing_program: Option<String>,
 }
 
 pub(super) struct ProbeResult {
@@ -166,6 +168,7 @@ fn probe_direct_api(
             Check {
                 name: "credential",
                 ok: true,
+                missing_program: None,
             },
             "available",
         ),
@@ -177,6 +180,7 @@ fn probe_direct_api(
             Check {
                 name: "credential",
                 ok: false,
+                missing_program: None,
             },
             "auth_required",
         ),
@@ -191,6 +195,7 @@ fn probe_direct_api(
             Check {
                 name: "credentialStoreIntact",
                 ok: false,
+                missing_program: None,
             },
             "unavailable",
         ),
@@ -210,7 +215,10 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
         .command()
         .expect("native_runtime routes carry command — enforced by manifest validation");
 
-    let mut command = Command::new(&command_spec.program);
+    let program = graphhelm_model_gateway::runtime::resolve_program(std::path::Path::new(
+        &command_spec.program,
+    ));
+    let mut command = Command::new(&program);
     command
         .arg("--version")
         .env_clear()
@@ -224,9 +232,15 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(_) => {
+            // A path (not a bare name) that is not a file is the updater case of #370: name it.
+            let is_path = program
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty());
             return Check {
                 name: "runtime",
                 ok: false,
+                missing_program: (is_path && !program.is_file())
+                    .then(|| command_spec.program.clone()),
             };
         }
     };
@@ -238,6 +252,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
                 return Check {
                     name: "runtime",
                     ok: status.success(),
+                    missing_program: None,
                 };
             }
             Ok(None) => {
@@ -247,6 +262,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
                     return Check {
                         name: "runtime",
                         ok: false,
+                        missing_program: None,
                     };
                 }
                 std::thread::sleep(POLL_INTERVAL);
@@ -255,6 +271,7 @@ fn probe_native_runtime(route: &ModelRoute) -> Check {
                 return Check {
                     name: "runtime",
                     ok: false,
+                    missing_program: None,
                 };
             }
         }
@@ -267,7 +284,13 @@ pub(super) fn render(result: ProbeResult) -> serde_json::Value {
         "checks": result
             .checks
             .iter()
-            .map(|check| json!({"name": check.name, "ok": check.ok}))
+            .map(|check| {
+                let mut rendered = json!({"name": check.name, "ok": check.ok});
+                if let Some(program) = &check.missing_program {
+                    rendered["missingProgram"] = program.clone().into();
+                }
+                rendered
+            })
             .collect::<Vec<_>>(),
         "health": result.health,
     })

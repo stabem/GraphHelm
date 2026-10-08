@@ -136,6 +136,15 @@ fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Ou
             "/actorType",
         ));
     }
+    // #380: discovery only ever yields the agent session token, so an owner session must name
+    // the owner token itself; the declared type alone never selects the owner credential.
+    if args.discover && args.actor_type == "owner" {
+        return Err(refuse(
+            "an owner session is not discovered: pass --url with --token-file naming the owner \
+             token (discovery hands out only the agent session token)",
+            "/actorType",
+        ));
+    }
     if let Some(effort) = args.effort.as_deref()
         && !matches!(effort, "low" | "medium" | "high")
     {

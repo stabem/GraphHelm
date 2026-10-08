@@ -244,6 +244,10 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
 
 export type TaskStep = "implement" | "review" | "merge" | "merged";
 
+export type StrayVerdict =
+  | { reason: "unrecorded"; reviewer: string; verdict: string; headSha: string; record: TaskEventRecord }
+  | { reason: "superseded"; reviewer: string; verdict: string; headSha: string; supersededBy: string };
+
 export interface TaskState {
   taskId: string;
   issue: number | null;
@@ -259,7 +263,26 @@ export interface TaskState {
   mergeSha: string | null;
   /** `https://github.com/<owner>/<repo>`, read off a verdict's comment URL; links need it. */
   repoUrl: string | null;
+  /** #457: verdicts that do not speak for the current head, newest last, each with its reason: a head
+   * no `pr_opened` has named yet (applied if that `pr_opened` arrives later, e.g. a back-fill), or an
+   * older recorded head that a newer push superseded. Dropping them drew "no review" where one exists. */
+  strayVerdicts: StrayVerdict[];
+  /** Every head a `pr_opened` named, in order. */
+  recordedHeads: string[];
   lastSequence: number;
+}
+
+function applyVerdict(state: TaskState, event: TaskEventRecord): void {
+  if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
+  // Old logs carry no `repo`: a verdict's comment URL still names the repository.
+  state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
+  if (event.verdict === "BLOCK") {
+    state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
+    state.step = "review";
+  } else {
+    state.blockedBy = null;
+    state.step = "merge";
+  }
 }
 
 /** Folds records in sequence order into one state per task (spec §7): a new head re-arms review
@@ -269,7 +292,7 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
     const state = tasks.get(event.taskId) ?? {
       taskId: event.taskId, issue: null, pr: null, lane: null, headSha: null, journeys: [],
-      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, lastSequence: 0,
+      step: "implement" as TaskStep, blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 0,
     };
     if (state.step === "merged") continue;
     state.lastSequence = event.sequence;
@@ -286,23 +309,26 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         state.headSha = event.headSha ?? state.headSha;
         state.journeys = event.journeys ?? state.journeys;
         state.step = "review";
+        if (event.headSha !== undefined && !state.recordedHeads.includes(event.headSha)) state.recordedHeads.push(event.headSha);
+        // A verdict that arrived before this head's pr_opened (a back-fill) now speaks for it.
+        for (const stray of state.strayVerdicts.filter((entry) => entry.reason === "unrecorded" && entry.headSha === state.headSha)) {
+          state.strayVerdicts.splice(state.strayVerdicts.indexOf(stray), 1);
+          if (stray.reason === "unrecorded") applyVerdict(state, stray.record);
+        }
         break;
       case "task.review_assigned":
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
         break;
       case "task.review_verdict":
         // A verdict on a head other than the current one says nothing about the current one.
-        if (event.headSha !== state.headSha) break;
-        if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
-        // Old logs carry no `repo`: a verdict's comment URL still names the repository.
-        state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
-        if (event.verdict === "BLOCK") {
-          state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
-          state.step = "review";
-        } else {
-          state.blockedBy = null;
-          state.step = "merge";
+        if (event.headSha !== state.headSha) {
+          const base = { reviewer: event.reviewer ?? "", verdict: event.verdict ?? "", headSha: event.headSha ?? "" };
+          state.strayVerdicts.push(event.headSha !== undefined && state.recordedHeads.includes(event.headSha)
+            ? { ...base, reason: "superseded", supersededBy: state.headSha ?? "" }
+            : { ...base, reason: "unrecorded", record: event });
+          break;
         }
+        applyVerdict(state, event);
         break;
       case "task.merged":
         state.pr = event.pr ?? state.pr;

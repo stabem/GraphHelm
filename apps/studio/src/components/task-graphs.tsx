@@ -27,9 +27,13 @@ function Node({ task, step, label }: { task: TaskState; step: Exclude<TaskStep, 
   const order = STEPS.findIndex((entry) => entry.step === step);
   const current = STEPS.findIndex((entry) => entry.step === task.step);
   const state = task.step === "merged" || order < current ? "done" : order === current ? "current" : "next";
+  // #458: the merge sha short, as everywhere else in the Studio, linked when the repository is known.
+  const merge = task.mergeSha === null ? null : task.repoUrl !== null && /^[0-9a-f]{7,64}$/.test(task.mergeSha)
+    ? <a href={`${task.repoUrl}/commit/${task.mergeSha}`} target="_blank" rel="noreferrer">{task.mergeSha.slice(0, 8)}</a>
+    : task.mergeSha.slice(0, 8);
   const who = step === "implement" ? task.lane
     : step === "review" ? (task.reviewers.length > 0 ? task.reviewers.join(", ") : null)
-    : task.mergeSha;
+    : merge;
   return (
     <li className={`task-node task-node-${state}`} aria-current={state === "current" ? "step" : undefined}>
       <span className="task-node-label">{label}</span>
@@ -64,6 +68,12 @@ export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
                 blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}
               </a>
             : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
+          {task.strayVerdicts.map((stray, index) => (
+            <p key={index} className="task-graph-stray">
+              {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
+                ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
+            </p>
+          ))}
         </div>
       ))}
     </section>

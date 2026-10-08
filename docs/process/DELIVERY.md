@@ -153,7 +153,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
 | take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo` |
-| open the PR (§3) | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
+| open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
@@ -185,6 +185,10 @@ python tools/task-record/task_record.py --lane <you> merged          --issue <N>
   `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.
   `--dry-run` prints the request without sending it. `--url` must be a loopback host
   (`127.0.0.1`, `localhost`, `::1`); any other is refused before the token is read.
+- **Every push is a `pr_opened`.** A verdict counts only on a head that has a `pr_opened`
+  record; a fix head without one leaves its verdicts outside the graph (shown as a verdict on an
+  unrecorded head). Record `pr_opened` after each push, and `review_assigned` again when the
+  reviewer changes.
 - **Repeated steps.** The record id and its `Idempotency-Key` end with a hash of the lane, the kind
   and the record without `at`. Any change is a new record: a new head in the fix loop, a second
   reviewer, a changed verdict on the same head. Run the same commands with the new values; no

@@ -5823,7 +5823,6 @@ fn nt_open_child_directory(
     Ok((unsafe { File::from_raw_handle(handle) }, created))
 }
 
-#[cfg(windows)]
 /// Sizes of the plain files directly in `directory`, by name, from ONE directory listing (#185).
 /// On Windows the listing carries each entry's size and attributes, so no file is opened. An
 /// entry that is not a plain file, is a reparse point, or cannot be read is left out, and the
@@ -5851,6 +5850,7 @@ fn listed_plain_file_sizes(directory: &Path) -> BTreeMap<String, u64> {
     sizes
 }
 
+#[cfg(windows)]
 fn validate_opened_regular(file: &File) -> Result<(), EventRepositoryError> {
     let metadata = file.metadata()?;
     if !metadata.is_file() || is_reparse_point(&metadata) {

@@ -2942,7 +2942,7 @@ export default function App({
             )}
             </div>
             <div id="studio-panel-journeys" role="tabpanel" aria-labelledby="studio-tab-journeys" hidden={canvasTab !== "journey"}>
-            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} />}
+            {canvasTab === "journey" && <JourneyFlows view={flowsRead.view} failure={flowsRead.failure} onApprove={approveFlow} focusFlowId={journeyContract} />}
             {canvasTab === "journey" && (
               <JourneyCanvas view={journeysView} failed={journeysFailed} failure={journeysFailure} contractId={journeyContract} onSelectContract={setJourneyContract}
                 loadImage={(id, run) => (clientRef.current === null ? Promise.reject(new Error("no client")) : clientRef.current.readImage(run ?? selected, id))}

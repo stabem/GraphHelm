@@ -2799,6 +2799,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* Journey-flow review (#353): one card per flow above the journey canvas. */
 .journey-flows { display: flex; flex-direction: column; gap: 8px; padding: 12px 12px 0; }
 .journey-flow { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 12px; }
+.journey-flow[aria-current="true"] { border-color: var(--signal); }
 .journey-flow-status { margin: 0; font-size: 0.85rem; color: var(--dim); }
 .journey-flow-approve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .journey-failure { margin: 0.5rem 0 0; font-size: 0.85rem; opacity: 0.85; overflow-wrap: anywhere; }

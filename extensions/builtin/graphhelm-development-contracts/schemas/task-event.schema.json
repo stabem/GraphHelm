@@ -17,7 +17,8 @@
         "issue": {"$ref": "#/$defs/positive"},
         "lane": {"$ref": "#/$defs/actor"},
         "branch": {"type": "string", "minLength": 1, "maxLength": 256},
-        "plan": {"type": "object"}
+        "plan": {"type": "object"},
+        "repo": {"$ref": "#/$defs/repo"}
       }
     },
     {
@@ -33,7 +34,8 @@
         "pr": {"$ref": "#/$defs/positive"},
         "headSha": {"$ref": "#/$defs/sha"},
         "journeys": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}},
-        "lane": {"$ref": "#/$defs/actor"}
+        "lane": {"$ref": "#/$defs/actor"},
+        "repo": {"$ref": "#/$defs/repo"}
       }
     },
     {
@@ -91,6 +93,7 @@
     "actor": {"type": "string", "minLength": 1, "maxLength": 128},
     "positive": {"type": "integer", "minimum": 1},
     "sha": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
-    "at": {"type": "string", "minLength": 1, "maxLength": 64}
+    "at": {"type": "string", "minLength": 1, "maxLength": 64},
+    "repo": {"description": "owner/name of the GitHub repository the task's issue and PR live in (#420); the Studio links them from it.", "type": "string", "maxLength": 140, "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/(\\.\\.?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,97}|[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99})$"}
   }
 }

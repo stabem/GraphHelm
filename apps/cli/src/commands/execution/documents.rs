@@ -187,6 +187,8 @@ pub(crate) fn validate_task_event(
             .is_some_and(|s| !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control))
     };
     let is_actor = |key: &str| document[key].as_str() == Some(actor_id);
+    // #420: optional `owner/name`, the same rule as `task-event.schema.json` `$defs.repo`.
+    let repo = || document.get("repo").is_none_or(|repo| repo.as_str().is_some_and(valid_repo));
     let numbers = |key: &str| {
         document[key]
             .as_array()
@@ -211,12 +213,13 @@ pub(crate) fn validate_task_event(
             count("issue")
                 && is_actor("lane")
                 && short("branch", 256)
-                && (document.get("plan").is_none() || document["plan"].is_object()),
-            &["issue", "lane", "branch", "plan"],
+                && (document.get("plan").is_none() || document["plan"].is_object())
+                && repo(),
+            &["issue", "lane", "branch", "plan", "repo"],
         ),
         "task.pr_opened" => (
-            count("pr") && sha("headSha") && ids("journeys") && is_actor("lane"),
-            &["pr", "headSha", "journeys", "lane"],
+            count("pr") && sha("headSha") && ids("journeys") && is_actor("lane") && repo(),
+            &["pr", "headSha", "journeys", "lane", "repo"],
         ),
         "task.review_assigned" => (
             count("pr")
@@ -253,6 +256,25 @@ pub(crate) fn validate_task_event(
     } else {
         Err(invalid())
     }
+}
+
+/// `owner/name` of a GitHub repository (#420): an owner of 1-39 ASCII letters, digits or `-` not
+/// starting with `-`; a name of 1-100 of letters, digits, `_`, `.` or `-` that is not `.`, `..` or
+/// all dots. The same rule as `task-event.schema.json` `$defs.repo`.
+fn valid_repo(repo: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return false;
+    };
+    let owner_ok = (1..=39).contains(&owner.len())
+        && !owner.starts_with('-')
+        && owner.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let name_ok = (1..=100).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+        && name.trim_start_matches('.').len() + 2 >= name.len()
+        && name.bytes().any(|b| b != b'.');
+    repo.len() <= 140 && owner_ok && name_ok
 }
 
 /// Reserved notice contracts cannot accept arbitrary prose through the generic signal command.

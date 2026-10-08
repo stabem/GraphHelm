@@ -167,12 +167,23 @@ export interface TaskEventRecord {
   reviewer?: string;
   verdict?: Verdict;
   commentUrl?: string;
+  /** `owner/name` of the GitHub repository, from the record that opens the task (#420). */
+  repo?: string;
   mergeSha?: string;
   closes?: number[];
 }
 
 function count(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** `owner/name` (#420): absent is `null`, malformed is `false` (the record is refused). */
+function repository(value: unknown): string | null | false {
+  if (value === undefined) return null;
+  // The same rule as `task-event.schema.json` `$defs.repo` and the Runtime's admission.
+  return typeof value === "string" && value.length <= 140
+    && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(\.\.?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,97}|[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99})$/.test(value)
+    ? value : false;
 }
 
 function sha(value: unknown): string | null {
@@ -190,17 +201,21 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
   const base = { actorId, taskId };
   switch (kind) {
     case "task.claimed": {
+      const repo = repository(document.repo);
+      if (repo === false) return null;
       const issue = count(document.issue);
       const lane = text(document.lane, 128);
       const branch = text(document.branch, 256);
-      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch } : null;
+      return issue !== null && lane === actorId && branch !== null ? { ...base, kind, issue, lane, branch, ...(repo === null ? {} : { repo }) } : null;
     }
     case "task.pr_opened": {
+      const repo = repository(document.repo);
+      if (repo === false) return null;
       const pr = count(document.pr);
       const headSha = sha(document.headSha);
       const lane = text(document.lane, 128);
       const journeys = Array.isArray(document.journeys) && document.journeys.every((id) => taskIdentity(id) !== null) ? document.journeys as string[] : null;
-      return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys } : null;
+      return pr !== null && headSha !== null && lane === actorId && journeys !== null ? { ...base, kind, pr, headSha, lane, journeys, ...(repo === null ? {} : { repo }) } : null;
     }
     case "task.review_assigned": {
       const pr = count(document.pr);
@@ -260,10 +275,12 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
     state.lastSequence = event.sequence;
     switch (event.kind) {
       case "task.claimed":
+        state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.issue = event.issue ?? state.issue;
         state.lane = event.lane ?? state.lane;
         break;
       case "task.pr_opened":
+        state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.pr = event.pr ?? state.pr;
         state.lane = event.lane ?? state.lane;
         state.headSha = event.headSha ?? state.headSha;
@@ -277,7 +294,8 @@ export function foldTaskEvents(records: TaskEventRecord[]): TaskState[] {
         // A verdict on a head other than the current one says nothing about the current one.
         if (event.headSha !== state.headSha) break;
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
-        state.repoUrl = /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
+        // Old logs carry no `repo`: a verdict's comment URL still names the repository.
+        state.repoUrl ??= /^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//.exec(event.commentUrl ?? "")?.[1] ?? state.repoUrl;
         if (event.verdict === "BLOCK") {
           state.blockedBy = { reviewer: event.reviewer ?? "", headSha: event.headSha ?? "", commentUrl: event.commentUrl ?? "" };
           state.step = "review";

@@ -152,13 +152,14 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 
 | Step | Kind | Fields besides `schema`, `taskId`, `revision`, `at` |
 |---|---|---|
-| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan` |
-| open the PR (§3) | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane` |
+| take the issue (§1) | `task.claimed` | `issue`, `lane`, `branch`, optional `plan`, optional `repo` |
+| open the PR (§3) | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 
-`taskId` is `issue-<N>` for the whole life of the task. Record through the MCP `signal` tool or
+`taskId` is `issue-<N>` for the whole life of the task. `repo` is the GitHub `owner/name` (here
+`stabem/GraphHelm`); the Studio links the task's issue and PR from it, so name it on `task.claimed`. Record through the MCP `signal` tool or
 `graphhelm execution signal --signal <file>`. The Runtime refuses a `task.*` signal whose
 `source.id`, or whose `lane` / `reviewer` (on a verdict) / `merger`, is not the actor recording it
 (`GHCLI038_ACTOR_MISMATCH`), so each lane needs its own actor: export `GRAPHHELM_ACTOR=<your

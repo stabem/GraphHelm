@@ -138,6 +138,21 @@ def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = document(args, now)
+    code, signal_id, reply = send(args, doc, now)
+    errors = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
+    words = [key for key in ("title", "summary") if key in doc]
+    if code == 1 and errors == {"GHCLI003_SIGNAL_INVALID"} and words:
+        # #498: a Runtime built before #486 refuses these keys. The step itself matters more than
+        # its words, so it is sent again without them, loudly: an old Runtime must be noticed.
+        print(f"task_record: warning: the Runtime refused {signal_id} with GHCLI003; it predates task "
+              f"titles (#486), so the step is sent again without title/summary. Restart it on a current build.",
+              file=sys.stderr)
+        code, signal_id, reply = send(args, {k: v for k, v in doc.items() if k not in words}, now)
+    return report(code, signal_id, reply)
+
+
+def send(args, doc, now):
+    """POSTs one record; returns (0 ok / 1 refused / 2 already recorded, signal id, reply)."""
     # The id and key are the record's content without its timestamp: the same step sent again is
     # the same key (a retry), and any change (a new head, a second reviewer, a changed verdict) is
     # a new key, so a GHE003 conflict on it can only be a retry of this exact record.
@@ -157,7 +172,7 @@ def main(argv):
         sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
     if args.dry_run:
         print(json.dumps({"url": url, "headers": headers, "body": body}, indent=1))
-        return 0
+        return 3, signal_id, {}
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={**headers, "Authorization": f"Bearer {token}"})
@@ -178,13 +193,21 @@ def main(argv):
     if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
         # The key is this record's content, so a conflict on it is this record already committed
         # with an earlier timestamp.
+        return 2, signal_id, reply
+    return (0 if ok else 1), signal_id, reply
+
+
+def report(code, signal_id, reply):
+    if code == 3:  # --dry-run printed the request
+        return 0
+    if code == 2:
         print(f"already recorded {signal_id}")
         return 0
-    print(f"{'recorded' if ok else 'REFUSED'} {signal_id}")
+    print(f"{'recorded' if code == 0 else 'REFUSED'} {signal_id}")
     for d in reply.get("diagnostics", []):
         if d.get("severity") == "error":
             print(f"  {d.get('code')} {d.get('path')}: {d.get('message')}")
-    return 0 if ok else 1
+    return code
 
 
 if __name__ == "__main__":

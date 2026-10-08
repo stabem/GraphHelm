@@ -1,0 +1,31 @@
+schema: graphhelm.journey-flow/1
+id: studio-refuse-question
+title: "Owner answers, or refuses, a question an agent asked"
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, ambiguous_behavior]
+screens:
+  - id: asked
+    title: "A question card waits in Needs you (demo asker: planner)"
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Needs you}, {role: heading, name: planner asks}, {role: button, name: Answer}, {role: button, name: Refuse}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts, apps/studio/src/graph/ledger.ts, apps/studio/src/components/chat-column.tsx, apps/studio/src/runtime/client.ts]
+  - id: refused
+    title: The refusal is recorded; the card leaves Needs you
+    url: /?session=studio-fixture
+    state: success
+    expect: [{role: region, name: Team}, {role: article, name: Implementação concluída is blocked.}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/beacon.tsx, apps/studio/src/runtime/needs-you.ts]
+edges:
+  - id: asked.refuse
+    from: asked
+    to: refused
+    acts:
+      - {kind: activate, role: button, name: Refuse}
+paths:
+  main: [asked.refuse]
+drift: []

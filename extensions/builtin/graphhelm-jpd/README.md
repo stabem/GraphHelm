@@ -43,6 +43,8 @@ route suspected instruction injection through the existing policy and typed-sign
 - `journey-contract`: specify the observable user journey and its failure contract.
 - `journey-map`: map journeys into an existing project from zero (screens, contracts, Playwright
   tests, first capture baseline).
+- `journey-prove`: prove mapped journeys at a revision (fixture script, the owner approves, observer,
+  `journey replay` in state order, read the map, deliver the proof).
 
 The schemas, policies, evaluators and fixtures of the earlier skills (council, defect, capsule,
 retry and verification contracts) stay in this package as contracts; their skills were folded into

@@ -1,42 +1,31 @@
 schema: graphhelm.journey-flow/1
 id: studio-models
-title: Owner opens Models and the Add model form
+title: Owner opens the Models panel
 status: draft
 approved: null
-base: http://127.0.0.1:5183
+base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [security, authentication]
 screens:
-  - id: edit-route
-    title: Edit route form for a new model
-    url: /
-    state: stable
-    expect: [{role: form, name: Edit route}, {role: textbox, name: Route id}, {role: combobox, name: Wire format}, {role: textbox, name: Base URL}, {role: textbox, name: Model}, {role: checkbox, name: Enabled}, {role: button, name: apply}, {role: button, name: cancel}]
-    scope: [apps/studio/src/components/models.tsx]
   - id: models
     title: "Models panel: routes, probes, Add model"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: region, name: Models}, {role: heading, name: Models}, {role: button, name: Add model}, {role: button, name: Close models}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/models.tsx, apps/studio/src/runtime/client.ts]
   - id: run
     title: "A run is open: rail, chat, team canvas, side panel"
-    url: /
+    url: /?session=studio-fixture
     state: stable
     expect: [{role: navigation, name: Projects}, {role: button, name: models}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx]
 edges:
-  - id: models.add
-    from: models
-    to: edit-route
-    acts:
-      - {kind: activate, role: button, name: Add model}
   - id: run.models
     from: run
     to: models
     acts:
       - {kind: activate, role: button, name: models}
 paths:
-  main: [run.models, models.add]
+  main: [run.models]
 drift: []

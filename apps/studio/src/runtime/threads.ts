@@ -131,3 +131,12 @@ export function describeActivity(item: ActivityItem, names: Record<string, strin
     : `${who} said “${words}”`;
   return { sequence: item.sequence, text, at: item.occurredAt };
 }
+
+/** #414: the thread the chat moves to on its own, or `null` to stay. A run that needs the owner
+ * lands on Needs you once, only while the owner has not chosen a thread; when the last card
+ * settles, Needs you hands back to Everyone so unread is tracked on the thread actually shown. */
+export function autoThread(input: { thread: string; chosen: boolean; landed: boolean; cards: number }): string | null {
+  if (input.thread === "needs-you" && input.cards === 0) return EVERYONE;
+  if (input.thread === EVERYONE && !input.chosen && !input.landed && input.cards > 0) return "needs-you";
+  return null;
+}

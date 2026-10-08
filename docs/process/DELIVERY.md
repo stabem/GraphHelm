@@ -176,9 +176,10 @@ python tools/task-record/task_record.py --lane <you> review_verdict  --issue <N>
 python tools/task-record/task_record.py --lane <you> merged          --issue <N> --pr <P> --merge-sha <sha>
 ```
 
-- **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory
-  (here `.graphhelm/events.agent.token` in the checkout the `gh-team` Runtime serves, the default
-  `--token-file`). A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
+- **Token.** The Runtime's agent session token, `<events>.agent.token` beside its events directory:
+  `<the Runtime's --project>/.graphhelm/events.agent.token`. The default `--token-file` is that
+  path relative to the current directory, which is right only inside the checkout the Runtime
+  serves; from a lane worktree pass `--token-file` with the Runtime checkout's absolute path. A Runtime mints it at start (D-058, #397); a Runtime started by an older binary
   has none until it restarts. Never use the owner's `events.token` for a lane record.
 - **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
   `revision` is the step's position (claimed 1 … merged 5), `closes` defaults to `--issue`.

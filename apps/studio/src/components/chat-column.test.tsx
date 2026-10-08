@@ -18,7 +18,7 @@ const msg = (sequence: number, sender: string, to: string | null, text: string):
   replyTo: null, text, at: null, provenance: "stored", acknowledged: false });
 // #393: the agent-to-agent message is tagged with its task, so it lands in that task's thread.
 const TASK = { taskId: "issue-384", issue: 384, pr: null, lane: "kit-1", headSha: null, journeys: [], step: "implement" as const,
-  blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], lastSequence: 2 };
+  blockedBy: null, reviewers: [], mergeSha: null, repoUrl: null, strayVerdicts: [], recordedHeads: [], lastSequence: 2 };
 const THREADS = chatThreads([msg(1, "coordinator", null, "Plan ready"), { ...msg(2, "kit-1", "kit-2", "Take the cart"), task: "issue-384" }],
   BOTS, "studio-operator", [TASK]);
 

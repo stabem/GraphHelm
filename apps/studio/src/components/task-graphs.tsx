@@ -70,7 +70,8 @@ export function TaskGraphs({ tasks, onOpenJourney }: TaskGraphsProps) {
             : <p className="task-graph-blocked">blocked by {task.blockedBy.reviewer} at {task.blockedBy.headSha.slice(0, 8)}</p>)}
           {task.strayVerdicts.map((stray, index) => (
             <p key={index} className="task-graph-stray">
-              {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, a head with no pr_opened record
+              {stray.verdict} by {stray.reviewer} on {stray.headSha.slice(0, 8)}, {stray.reason === "superseded"
+                ? `superseded by ${stray.supersededBy.slice(0, 8)}` : "a head with no pr_opened record"}
             </p>
           ))}
         </div>

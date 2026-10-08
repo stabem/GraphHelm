@@ -36,7 +36,7 @@ describe("composerMode", () => {
   it("routes each tab to the right composer", () => {
     expect(composerMode(THREADS[0], new Set())).toBe("record+principal");
     expect(composerMode(THREADS[0], new Set(["t-1"]))).toBe("native");
-    expect(composerMode(THREADS[1], new Set())).toBe("none");
+    expect(composerMode(THREADS[1], new Set())).toBe("record");
     expect(composerMode({ key: "direct:t-1", kind: "direct", label: "x", participants: ["t-1"], messages: [] }, new Set(["t-1"]))).toBe("native");
     expect(composerMode({ key: "direct:kit-1", kind: "direct", label: "x", participants: ["kit-1"], messages: [] }, new Set())).toBe("record");
   });
@@ -54,7 +54,15 @@ describe("ChatColumn", () => {
   it("explains that a task tab shows recorded messages, not native chats", () => {
     render(<ChatColumn {...props({ selected: "task:issue-384" })} />);
     expect(screen.getByText(/recorded messages/i)).toHaveTextContent("not their native chats");
-    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  });
+
+  // #396 (spec §8): speaking inside a task thread tags the message with that task.
+  it("sends what is written in a task thread tagged with its task", async () => {
+    const p = props({ selected: "task:issue-384", onSend: vi.fn(async () => true) });
+    render(<ChatColumn {...p} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), "@loja kit 2 rebase please");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(p.onSend).toHaveBeenCalledWith("rebase please", "kit-2", null, "issue-384");
   });
 
   it("folds a merged or quiet task thread under older until asked", async () => {

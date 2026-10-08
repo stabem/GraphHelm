@@ -1696,6 +1696,7 @@ export default function App({
       via: string = "run",
       replyTo: string | null = null,
       kind: "operator_note" | "actor_alias" | "owner_refusal" = "operator_note",
+      task: string | null = null,
     ): Promise<boolean> => {
       const client = clientRef.current;
       if (!client || selected === "") return false;
@@ -1717,6 +1718,7 @@ export default function App({
           // The receipt the ledger settles by. Without it, an answer sent through the banner's
           // own button never retired the question it answered.
           ...(replyTo === null ? {} : { replyTo }),
+          ...(task === null ? {} : { task }),
           ...(kind === "operator_note" ? {} : { kind }),
         });
         if (evidence.result === "refused") {
@@ -2769,9 +2771,9 @@ export default function App({
                     if (first) setFocus({ kind: "node", id: first.id });
                   }} />
               </aside>}
-              onSend={async (text, to, replyTo) => {
+              onSend={async (text, to, replyTo, task) => {
                 // The Answering chip stays until the answer is confirmed, so a refused one can be retried.
-                const ok = await say(text, to, "chat", replyTo);
+                const ok = await say(text, to, "chat", replyTo, "operator_note", task ?? null);
                 if (ok) setAnswering(null);
                 return ok;
               }}

@@ -38,7 +38,7 @@ export interface ChatColumnProps {
   nativeKeys: ReadonlySet<string>;
   principal: ReactNode;
   /** Resolves true only once the Runtime confirmed the message; the draft is kept otherwise. */
-  onSend: (text: string, to: string | null, replyTo: string | null) => Promise<boolean>;
+  onSend: (text: string, to: string | null, replyTo: string | null, task?: string | null) => Promise<boolean>;
   sending: boolean;
   sendError: string;
   answering: { asker: string; signalId: string | null } | null;
@@ -50,8 +50,8 @@ export interface ChatColumnProps {
 
 export function composerMode(thread: ChatThread | undefined, nativeKeys: ReadonlySet<string>): "record" | "native" | "record+principal" | "none" {
   if (thread === undefined || thread.kind === "everyone") return nativeKeys.size > 0 ? "native" : "record+principal";
-  // #393: a task thread is read here; speaking into it (tagging the task) arrives with H2.
-  if (thread.kind === "task") return "none";
+  // #396: speaking inside a task thread records a message tagged with that task.
+  if (thread.kind === "task") return "record";
   return nativeKeys.has(thread.participants[0]) ? "native" : "record";
 }
 
@@ -91,6 +91,7 @@ export function ChatColumn(props: ChatColumnProps) {
     let ok: boolean;
     if (props.answering !== null) ok = await props.onSend(text, props.answering.asker, props.answering.signalId);
     else if (thread?.kind === "direct") ok = await props.onSend(text, thread.participants[0], null);
+    else if (thread?.kind === "task") { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null, thread.key.slice("task:".length)); }
     else { const target = parseMention(text, props.bots); ok = await props.onSend(target.text, target.to, null); }
     // A refused or unconfirmed send keeps its words; only a delivered one clears its own thread.
     if (ok) setDraftFor(key, "");

@@ -188,7 +188,11 @@ pub(crate) fn validate_task_event(
     };
     let is_actor = |key: &str| document[key].as_str() == Some(actor_id);
     // #420: optional `owner/name`, the same rule as `task-event.schema.json` `$defs.repo`.
-    let repo = || document.get("repo").is_none_or(|repo| repo.as_str().is_some_and(valid_repo));
+    let repo = || {
+        document
+            .get("repo")
+            .is_none_or(|repo| repo.as_str().is_some_and(valid_repo))
+    };
     let numbers = |key: &str| {
         document[key]
             .as_array()
@@ -267,7 +271,9 @@ fn valid_repo(repo: &str) -> bool {
     };
     let owner_ok = (1..=39).contains(&owner.len())
         && !owner.starts_with('-')
-        && owner.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        && owner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
     let name_ok = (1..=100).contains(&name.len())
         && name
             .bytes()

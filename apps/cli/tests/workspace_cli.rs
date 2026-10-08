@@ -628,3 +628,52 @@ Authorization: Bearer {token}
     stream.read_to_end(&mut raw).unwrap();
     support::parse_response(&String::from_utf8_lossy(&raw)).unwrap()
 }
+
+/// Review of #417 (coordinator): `--clean-workspace` from a directory that is no cargo workspace
+/// used to report `cleaned: null` and run the command anyway, against whatever another lane left
+/// in the shared target. It must fail closed: refuse, name why, never run the command, and free
+/// the slot. Credible regression: the fail-open path coming back. Cost: one CLI run, no cargo build.
+#[test]
+fn clean_workspace_that_cannot_clean_refuses_and_never_runs_the_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let not_a_workspace = dir.path().join("plain");
+    std::fs::create_dir_all(&not_a_workspace).unwrap();
+    let log = dir.path().join("log.txt");
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .current_dir(&not_a_workspace)
+        .args([
+            "--json",
+            "workspace",
+            "slot",
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .args(["--lane", "lane-a", "--clean-workspace", "--"])
+        .args(marker_command(&log, "a", 10))
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["ok"], false, "{reply}");
+    let diagnostic = &reply["diagnostics"][0];
+    assert_eq!(diagnostic["path"], "/cleanWorkspace", "{reply}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("no cargo workspace"),
+        "the refusal says why: {reply}"
+    );
+    assert!(
+        !log.exists(),
+        "the command must not run after a failed clean"
+    );
+    let tickets = root.join(".graphhelm-workspaces").join("slot");
+    let left = std::fs::read_dir(&tickets)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ticket"))
+        .count();
+    assert_eq!(left, 0, "the refusal frees the slot");
+}

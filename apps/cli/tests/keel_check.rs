@@ -847,3 +847,87 @@ fn keel_plan_never_lets_jev_lower_a_non_prose_path_to_docs() {
         "the clamp is recorded: {record}"
     );
 }
+
+/// #426: the generated `<id>.json` contracts are git-ignored, so a fresh clone holds only the
+/// committed `*.journey.yaml` flows. Plan and check must read those flows (projected in memory as
+/// `journey compile` would), and say so when a touched flow is a draft or no journey exists at all.
+/// Credible regression: the readers go back to the generated JSON and journey-first falls silent in
+/// every reviewer's clone. Cost: one temp git repository, one approve, five CLI runs.
+#[test]
+fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
+    let flow = include_str!("fixtures/journey_flow/checkout.journey.yaml");
+    let draft = flow
+        .replace("id: checkout", "id: browse")
+        .replace("app/cart/page.tsx", "app/browse/page.tsx");
+    let repo = tempfile::tempdir().unwrap();
+    let root = repo.path();
+    git(root, &["init", "-q"]);
+    for path in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+        "app/browse/page.tsx",
+    ] {
+        fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        fs::write(root.join(path), "export {}\n").unwrap();
+    }
+    let journeys = root.join(".graphhelm/journeys");
+    fs::create_dir_all(&journeys).unwrap();
+    fs::write(journeys.join("checkout.journey.yaml"), flow).unwrap();
+    fs::write(journeys.join("browse.journey.yaml"), draft).unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "flows"]);
+    let approve = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .current_dir(root)
+        .args(["--json", "journey", "approve", "checkout"])
+        .output()
+        .unwrap();
+    assert!(
+        approve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approve.stdout)
+    );
+    // What a clone holds: the approved flow is committed, its generated contract is not.
+    fs::remove_file(journeys.join("checkout.json")).unwrap();
+    git(root, &["add", ".graphhelm/journeys/checkout.journey.yaml"]);
+    git(root, &["commit", "-q", "-m", "approve"]);
+    fs::write(root.join("app/cart/page.tsx"), "export const x = 1\n").unwrap();
+    fs::write(root.join("app/browse/page.tsx"), "export const y = 1\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "change"]);
+
+    let (code, reply, _) = plan(
+        root,
+        &["--task", "t-1", "--paths", "app/cart/page.tsx", "app/browse/page.tsx"],
+    );
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["plan"]["journeys"], serde_json::json!(["checkout"]), "{reply}");
+    assert_eq!(reply["data"]["plan"]["proof"], "journey", "{reply}");
+    assert!(
+        codes(&reply).iter().any(|c| c == "keel.journey.flow_draft"),
+        "a touched draft flow is named: {reply}"
+    );
+
+    let (code, reply) = run(root, None);
+    assert_eq!(code, 0, "{reply}");
+    let found = codes(&reply);
+    assert!(
+        found.iter().any(|c| c == "keel.journey.card_missing_journey"),
+        "{reply}"
+    );
+    assert!(found.iter().any(|c| c == "keel.journey.flow_draft"), "{reply}");
+
+    let bare = repository(&[]);
+    let (code, reply, _) = plan(bare.path(), &["--task", "t-2", "--paths", "src/lib.rs"]);
+    assert_eq!(code, 0, "{reply}");
+    assert!(
+        codes(&reply).iter().any(|c| c == "keel.journey.none"),
+        "no flow and no contract is said, not implied: {reply}"
+    );
+    let (_, reply) = run(bare.path(), None);
+    assert!(
+        codes(&reply).iter().any(|c| c == "keel.journey.none"),
+        "{reply}"
+    );
+}
